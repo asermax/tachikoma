@@ -88,9 +88,12 @@ what to produce, and how to validate completion.
 |-------|----------|-------------|
 | `title` | Yes | Human-readable step title (non-empty string) |
 | `required` | No | If `false`, the step may be skipped when not applicable (default: `true`) |
+| `condition` | No | Natural-language predicate; auto-advance halts so the agent decides start vs skip (see [Composing Workflows](#composing-workflows)) |
+| `composes` | No | Run another workflow to completion when this step activates |
+| `loop` | No | Run another workflow once per agent-supplied item |
 | `*` | No | Custom fields are preserved as step metadata but are not interpreted by the engine |
 
-`skippable: true` is a deprecated alias for `required: false` — use `required` in new workflows.
+`skippable: true` is a deprecated alias for `required: false` — use `required` in new workflows. `composes` and `loop` are mutually exclusive on one step.
 
 ### Body Content
 
@@ -122,6 +125,59 @@ Workflow state survives context loss and restarts:
 - Resume from the current step — all progress is preserved
 
 Instances abandoned across sessions are expired automatically after a configurable staleness window.
+
+## Composing Workflows
+
+Beyond a flat sequence, a step can pull in another workflow. This lets you share reusable sub-sequences, iterate over a list, and branch — all driven by the **single top-level workflow ID**. When a sub-workflow is active, your `update_workflow_state` calls route to its steps automatically, and responses carry a breadcrumb (`parent/step > child/step`) so you know where you are.
+
+A composition reference is `<workflow>` for a workflow in the same skill, or `<skill>/<workflow>` to reach across skills. A composed step's own `instructions.md` body is not shown — the child's steps carry the instructions.
+
+### `composes` — run a sub-workflow inline
+
+```yaml
+---
+title: "Process the inbox note"
+composes: process-inbox-note
+---
+```
+
+When this step activates, the engine starts `process-inbox-note`, returns its first step, and you drive it like any workflow. When its last step completes, this step auto-completes and the parent's next step starts — one continuous run.
+
+A `composes` step can also be `required: false` or carry a `condition`: skipping it (or failing its condition) advances the parent **without** running the sub-workflow.
+
+### `loop` — run a sub-workflow once per item
+
+```yaml
+---
+title: "Handle every pending reminder"
+loop: send-one-reminder
+---
+```
+
+A loop step does not auto-start. When the cascade reaches it, it halts and asks you to start it with an `items` list:
+
+```
+update_workflow_state(workflow_id, "03-handle", action="start", items=["r1", "r2", "r3"])
+```
+
+`items` is a list of opaque strings — IDs, filenames, whatever the sub-workflow knows how to interpret. The loop target runs once per item, in order; completing one iteration spawns the next. The current item appears in the breadcrumb (`... (item: r2)`) and in `query_workflow`. Pass `items=[]` to complete the loop step with zero iterations. `items` is required on a loop step and rejected anywhere else.
+
+### `condition` — branch on a natural-language predicate
+
+```yaml
+---
+title: "Escalate to the user"
+condition: "the issue could not be resolved automatically"
+---
+```
+
+When auto-advance reaches a condition step it halts and shows you the predicate. You evaluate it against the current context and either `action="start"` (condition holds) or `action="skip"` (it does not). A condition makes the step skippable even if it is `required`.
+
+### Authoring rules
+
+- `composes` and `loop` cannot both be on one step.
+- Composition graphs must be acyclic — `A composes B`, `B composes A`, or a step composing its own workflow are rejected at load with a warning, as are references to missing or empty workflows. Check the logs after adding composition.
+- Document composed/looped sub-workflows in SKILL.md like any other workflow so they can also be started on their own.
 
 ## Step Design Patterns
 

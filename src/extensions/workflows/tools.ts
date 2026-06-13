@@ -1,18 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
-import type { StepDefinition, WorkflowDefinition } from "./loader.ts";
-import { STEP_STATES, type StepSnapshot, type StepStates } from "./model.ts";
+import {
+  type CascadeDeps,
+  getSnapshotStep,
+  renderBreadcrumb,
+  runCascade,
+  stepToSnapshot,
+  type UpdateAction,
+} from "./cascade.ts";
+import { resolveComposes } from "./composition.ts";
+import type { WorkflowDefinition } from "./loader.ts";
+import { STEP_STATES, type StepSnapshot } from "./model.ts";
 import type { WorkflowStateRepository } from "./repository.ts";
 import type { WorkflowStateRecord } from "./schema.ts";
 
-export interface WorkflowToolDeps {
+export interface WorkflowToolDeps extends CascadeDeps {
   repository: WorkflowStateRepository;
   findWorkflow: (skillName: string, workflowName: string) => WorkflowDefinition | null;
   scratchpadDir: string;
@@ -27,7 +36,6 @@ export const EndActionSchema = StringEnum(["complete", "abort"] as const, {
   description: "Whether the workflow ended successfully or was abandoned",
 });
 
-export type UpdateAction = Static<typeof UpdateActionSchema>;
 export type EndAction = Static<typeof EndActionSchema>;
 
 const ACTION_PAST_TENSE: Record<UpdateAction, string> = {
@@ -45,22 +53,6 @@ export const deleteScratchpad = (path: string): void => {
     // Best-effort cleanup — a leftover scratchpad never blocks the workflow.
   }
 };
-
-const stepToSnapshot = (step: StepDefinition): StepSnapshot => ({
-  id: step.id,
-  title: step.title,
-  required: step.required,
-  path: dirname(step.instructionsPath),
-});
-
-const findNextPendingStep = (
-  stepStates: StepStates,
-  snapshot: StepSnapshot[],
-): StepSnapshot | null =>
-  snapshot.find((step) => (stepStates[step.id] ?? STEP_STATES.pending) === "pending") ?? null;
-
-const getSnapshotStep = (snapshot: StepSnapshot[], stepId: string): StepSnapshot | null =>
-  snapshot.find((step) => step.id === stepId) ?? null;
 
 const readStepInstructions = (step: StepSnapshot): string | null => {
   try {
@@ -83,46 +75,18 @@ const buildStepResponse = (step: StepSnapshot, prefix: string): string => {
 const formatUtc = (date: Date): string =>
   `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
 
-/**
- * Validate a step transition against the current states and the frozen definition.
- * Returns null when valid, an error message otherwise.
- */
-export const validateTransition = (
-  stepStates: StepStates,
-  stepId: string,
-  action: UpdateAction,
-  snapshot: StepSnapshot[],
-): string | null => {
-  const step = getSnapshotStep(snapshot, stepId);
-
-  if (step == null) {
-    const validIds = snapshot.map((candidate) => candidate.id).join(", ");
-    return `Invalid step '${stepId}'. Valid steps: ${validIds}`;
-  }
-
-  const currentState = stepStates[stepId] ?? STEP_STATES.pending;
-
-  if (currentState === "completed" || currentState === "skipped") {
-    return `Step '${stepId}' is already ${currentState}. Cannot change a completed or skipped step.`;
-  }
-
-  if (action === "start" && currentState !== "pending") {
-    return `Step '${stepId}' is already ${currentState}. Can only start a pending step.`;
-  }
-
-  if (action === "complete" && currentState !== "started") {
-    return `Step '${stepId}' is ${currentState}. Must start a step before completing it.`;
-  }
-
-  if (action === "skip") {
-    if (step.required) return `Step '${stepId}' is required and cannot be skipped.`;
-    if (currentState !== "pending") {
-      return `Step '${stepId}' is ${currentState}. Can only skip a pending step.`;
-    }
-  }
-
-  return null;
-};
+const stepListMarkers = (step: {
+  required: boolean;
+  condition: string | null;
+  composes: string | null;
+  loop: string | null;
+}): string =>
+  [
+    step.required ? "" : " (skippable)",
+    step.condition != null ? ` (if: ${step.condition})` : "",
+    step.composes != null ? ` (composes: ${step.composes})` : "",
+    step.loop != null ? ` (loop: ${step.loop})` : "",
+  ].join("");
 
 // ---- handlers (testable without pi) ---------------------------------------------
 
@@ -163,7 +127,7 @@ export const handleStartWorkflow = (
   writeFileSync(scratchpadPath, `# Workflow: ${workflowName}\n\nWorkflow ID: ${workflowId}\n`);
 
   const definitionSnapshot = definition.steps.map(stepToSnapshot);
-  const stepStates: StepStates = Object.fromEntries(
+  const stepStates = Object.fromEntries(
     definition.steps.map((step) => [step.id, STEP_STATES.pending]),
   );
 
@@ -181,10 +145,9 @@ export const handleStartWorkflow = (
     throw error;
   }
 
-  const stepLines = definition.steps.map((step, index) => {
-    const skipMarker = step.required ? "" : " (skippable)";
-    return `${index + 1}. **${step.title}** (\`${step.id}\`)${skipMarker}`;
-  });
+  const stepLines = definition.steps.map(
+    (step, index) => `${index + 1}. **${step.title}** (\`${step.id}\`)${stepListMarkers(step)}`,
+  );
 
   return [
     `Workflow started: **${workflowName}**`,
@@ -199,6 +162,8 @@ export const handleStartWorkflow = (
       '- Use `action="complete"` to finish a started step — this **auto-starts** the next ' +
       "step and returns its instructions (no separate start call needed)\n" +
       '- Use `action="skip"` to skip a skippable step — also auto-starts the next step\n' +
+      '- A step marked `(loop: ...)` needs `action="start"` with `items=[...]`; a step marked ' +
+      "`(if: ...)` halts so you can decide to start or skip it\n" +
       "- When the last step is completed, the workflow is **auto-finalized** " +
       "(no need to call `end_workflow`)",
     "## Recovery",
@@ -210,62 +175,101 @@ export const handleStartWorkflow = (
 export const handleUpdateWorkflowState = (
   deps: WorkflowToolDeps,
   workflowId: string,
-  stepId: string,
+  step: string,
   action: UpdateAction,
+  items?: string[],
 ): string => {
-  const state = deps.repository.get(workflowId);
+  const result = runCascade(deps, workflowId, step, action, items);
 
-  if (state == null) throw new Error(`Workflow '${workflowId}' not found or no longer active.`);
+  deps.repository.applyMutationBatch(result.batch);
 
-  const transitionError = validateTransition(
-    state.stepStates,
-    stepId,
-    action,
-    state.definitionSnapshot,
-  );
+  const { outcome, breadcrumbParts, deepestSnapshot, scratchpadPath } = result;
+  const past = ACTION_PAST_TENSE[action];
 
-  if (transitionError != null) throw new Error(transitionError);
-
-  const stepStates: StepStates = { ...state.stepStates };
-  // Present after a passing validation; narrows the type without a cast.
-  const step = getSnapshotStep(state.definitionSnapshot, stepId);
-
-  if (step == null) throw new Error(`Invalid step '${stepId}'.`);
-
-  if (action === "start") {
-    stepStates[stepId] = STEP_STATES.started;
-    deps.repository.update(workflowId, { stepStates, currentStep: stepId });
-
-    return buildStepResponse(step, `Step **${step.title}** (\`${stepId}\`) started.`);
-  }
-
-  stepStates[stepId] = action === "complete" ? STEP_STATES.completed : STEP_STATES.skipped;
-
-  const next = findNextPendingStep(stepStates, state.definitionSnapshot);
-
-  if (next == null) {
-    deps.repository.update(workflowId, { stepStates, currentStep: null });
-    deps.repository.softDelete(workflowId);
-    deleteScratchpad(state.scratchpadPath);
-
-    const states = Object.values(stepStates);
-    const completed = states.filter((value) => value === "completed").length;
-    const skipped = states.filter((value) => value === "skipped").length;
+  if (outcome.finalizedTopLevel) {
+    deleteScratchpad(scratchpadPath);
 
     return (
       "Workflow complete and finalized! " +
-      `All steps finished (${completed} completed, ${skipped} skipped).`
+      `All steps finished (${outcome.completedCount} completed, ${outcome.skippedCount} skipped).`
     );
   }
 
-  stepStates[next.id] = STEP_STATES.started;
-  deps.repository.update(workflowId, { stepStates, currentStep: next.id });
+  if (outcome.haltedAtLoopStep != null) {
+    const halted = getSnapshotStep(deepestSnapshot, outcome.haltedAtLoopStep);
+    const title = halted?.title ?? outcome.haltedAtLoopStep;
 
-  return buildStepResponse(
-    next,
-    `Step \`${stepId}\` ${ACTION_PAST_TENSE[action]}. ` +
-      `Next step **${next.title}** (\`${next.id}\`) started.`,
-  );
+    return (
+      `Step \`${step}\` ${past}.\n\n` +
+      `The next step **${title}** (\`${outcome.haltedAtLoopStep}\`) is a loop step. ` +
+      `Call \`update_workflow_state(workflow_id="${workflowId}", ` +
+      `step="${outcome.haltedAtLoopStep}", action="start", items=[...])\` to begin iterating, ` +
+      "or `items=[]` to skip with zero iterations."
+    );
+  }
+
+  if (outcome.haltedAtConditionStep != null) {
+    const halted = getSnapshotStep(deepestSnapshot, outcome.haltedAtConditionStep);
+    const title = halted?.title ?? outcome.haltedAtConditionStep;
+
+    return (
+      `Step \`${step}\` ${past}.\n\n` +
+      `The next step **${title}** (\`${outcome.haltedAtConditionStep}\`) has a condition to evaluate:\n\n` +
+      `**Condition**: ${halted?.condition}\n\n` +
+      "Evaluate this condition based on the current context.\n" +
+      `- If it passes: call \`update_workflow_state(workflow_id="${workflowId}", ` +
+      `step="${outcome.haltedAtConditionStep}", action="start")\`\n` +
+      `- If it does not pass: call \`update_workflow_state(workflow_id="${workflowId}", ` +
+      `step="${outcome.haltedAtConditionStep}", action="skip")\``
+    );
+  }
+
+  const activeStepId = outcome.activeStepId;
+
+  if (activeStepId == null) throw new Error("Cascade produced no active step.");
+
+  const stepInfo = getSnapshotStep(deepestSnapshot, activeStepId);
+
+  if (stepInfo == null) throw new Error(`Active step '${activeStepId}' missing from snapshot.`);
+
+  const prefix =
+    action === "start" && activeStepId === step
+      ? `Step **${stepInfo.title}** (\`${activeStepId}\`) started.`
+      : `Step \`${step}\` ${past}. Next step **${stepInfo.title}** (\`${activeStepId}\`) started.`;
+
+  const response = buildStepResponse(stepInfo, prefix);
+  const breadcrumb = breadcrumbParts.length > 1 ? renderBreadcrumb(breadcrumbParts) : "";
+
+  return breadcrumb.length > 0 ? `${breadcrumb}\n\n${response}` : response;
+};
+
+// ---- query rendering -----------------------------------------------------------
+
+const renderLoopStepBlocks = (state: WorkflowStateRecord): string => {
+  if (state.loopState == null) return "";
+
+  const blocks = Object.entries(state.loopState).map(([stepId, entry]) => {
+    const step = getSnapshotStep(state.definitionSnapshot, stepId);
+    const title = step?.title ?? stepId;
+    const count = entry.items.length;
+
+    const itemsLine =
+      count === 0
+        ? "Items (0): (none) — completed with zero iterations"
+        : `Items (${count}): ${entry.items.map((i) => `\`${i}\``).join(", ")}`;
+
+    let iterationLine: string;
+
+    if (entry.index >= count) {
+      iterationLine = `Current iteration: ${count} / ${count} (complete)`;
+    } else {
+      iterationLine = `Current iteration: ${entry.index + 1} / ${count}\n- Current item: \`${entry.items[entry.index]}\``;
+    }
+
+    return `### Loop step: ${title} (\`${stepId}\`)\n\n- ${itemsLine}\n- ${iterationLine}`;
+  });
+
+  return blocks.join("\n\n");
 };
 
 const renderStateView = (state: WorkflowStateRecord): string => {
@@ -273,6 +277,8 @@ const renderStateView = (state: WorkflowStateRecord): string => {
     (step) =>
       `- **${step.title}** (\`${step.id}\`): ${state.stepStates[step.id] ?? STEP_STATES.pending}`,
   );
+
+  const loopBlocks = renderLoopStepBlocks(state);
 
   return [
     "## Workflow State",
@@ -284,29 +290,147 @@ const renderStateView = (state: WorkflowStateRecord): string => {
       `- **Created**: ${formatUtc(state.createdAt)}\n` +
       `- **Updated**: ${formatUtc(state.updatedAt)}`,
     `### Steps\n\n${stepLines.join("\n")}`,
+    ...(loopBlocks.length > 0 ? [loopBlocks] : []),
   ].join("\n\n");
 };
 
-export const handleQueryWorkflow = (deps: WorkflowToolDeps, workflowId?: string): string => {
-  if (workflowId != null) {
-    const state = deps.repository.get(workflowId);
+interface Corruption {
+  workflowName: string;
+  stepId: string;
+  target: string;
+}
 
-    if (state == null) throw new Error(`Workflow '${workflowId}' not found or no longer active.`);
+/** Active composition steps whose target is no longer registered (skill reloaded). */
+const detectCorruptedTargets = (
+  deps: WorkflowToolDeps,
+  chain: WorkflowStateRecord[],
+): Corruption[] => {
+  const corrupted: Corruption[] = [];
 
-    return renderStateView(state);
+  for (const layer of chain) {
+    for (const stepDef of layer.definitionSnapshot) {
+      if (stepDef.composes == null) continue;
+      if (layer.stepStates[stepDef.id] !== STEP_STATES.started) continue;
+
+      try {
+        const target = resolveComposes(stepDef.composes, layer.skillName);
+
+        if (deps.findWorkflow(target.skillName, target.workflowName) == null) {
+          corrupted.push({
+            workflowName: layer.workflowName,
+            stepId: stepDef.id,
+            target: `${target.skillName}/${target.workflowName}`,
+          });
+        }
+      } catch {
+        corrupted.push({
+          workflowName: layer.workflowName,
+          stepId: stepDef.id,
+          target: stepDef.composes,
+        });
+      }
+    }
   }
 
-  const active = deps.repository.listActive();
+  return corrupted;
+};
 
-  if (active.length === 0) return "No active workflows.";
+const formatCorruption = (corrupted: Corruption[]): string =>
+  [
+    "> ⚠️  **Workflow definition corruption detected.**",
+    ">",
+    ...corrupted.map(
+      (c) =>
+        `> - Step \`${c.workflowName}/${c.stepId}\` references \`${c.target}\`, no longer registered.`,
+    ),
+    ">",
+    "> The active workflow cannot proceed safely. Abort it with `end_workflow(action='abort')`.",
+  ].join("\n");
 
-  const lines = active.map(
-    (state) =>
-      `- **${state.workflowName}** (skill: \`${state.skillName}\`) — ID: \`${state.id}\`, ` +
-      `current step: \`${state.currentStep ?? "none"}\`, started: ${formatUtc(state.createdAt)}`,
-  );
+const deriveChainItems = (chain: WorkflowStateRecord[]): (string | null)[] => {
+  const items: (string | null)[] = [];
 
-  return `## Active Workflows\n\n${lines.join("\n")}`;
+  chain.forEach((layer, index) => {
+    const parent = chain[index - 1];
+
+    if (index === 0 || parent == null) {
+      items.push(null);
+      return;
+    }
+
+    const entry = layer.parentStepId != null ? parent.loopState?.[layer.parentStepId] : undefined;
+    const item = entry != null && entry.index >= 0 ? entry.items[entry.index] : undefined;
+
+    items.push(item ?? items[index - 1] ?? null);
+  });
+
+  return items;
+};
+
+export const handleQueryWorkflow = (deps: WorkflowToolDeps, workflowId?: string): string => {
+  if (workflowId == null) {
+    const active = deps.repository.listActive();
+
+    if (active.length === 0) return "No active workflows.";
+
+    const lines = active.map(
+      (state) =>
+        `- **${state.workflowName}** (skill: \`${state.skillName}\`) — ID: \`${state.id}\`, ` +
+        `current step: \`${state.currentStep ?? "none"}\`, started: ${formatUtc(state.createdAt)}`,
+    );
+
+    return `## Active Workflows\n\n${lines.join("\n")}`;
+  }
+
+  const chain = deps.repository.getActiveChain(workflowId);
+  const head = chain[0];
+
+  if (head == null) throw new Error(`Workflow '${workflowId}' not found or no longer active.`);
+
+  if (head.parentWorkflowId != null) {
+    return [
+      renderStateView(head),
+      "> This is a composed child. Access via the top-level workflow for the full nested view.",
+      `> Parent workflow ID: \`${head.parentWorkflowId}\``,
+    ].join("\n\n");
+  }
+
+  const corrupted = detectCorruptedTargets(deps, chain);
+  const parts: string[] = [];
+
+  if (chain.length > 1) {
+    const items = deriveChainItems(chain);
+    const breadcrumb = renderBreadcrumb(
+      chain.map((layer, index) => ({
+        workflowName: layer.workflowName,
+        stepId: layer.currentStep,
+        item: items[index] ?? null,
+      })),
+    );
+
+    if (breadcrumb.length > 0) parts.push(`> ${breadcrumb}`);
+  }
+
+  parts.push(renderStateView(head));
+
+  for (const child of chain.slice(1)) {
+    const childSteps = child.definitionSnapshot.map(
+      (step) =>
+        `  - **${step.title}** (\`${step.id}\`): ${child.stepStates[step.id] ?? STEP_STATES.pending}`,
+    );
+    const childLoops = renderLoopStepBlocks(child);
+
+    parts.push(
+      `### Active Child: ${child.workflowName}\n\n` +
+        `- **ID**: ${child.id}\n- **Current Step**: ${child.currentStep ?? "none"}\n\n` +
+        `#### Steps\n\n${childSteps.join("\n")}` +
+        (childLoops.length > 0 ? `\n\n${childLoops}` : ""),
+    );
+  }
+
+  const view = parts.join("\n\n");
+
+  return corrupted.length > 0 ? `${formatCorruption(corrupted)}\n\n${view}` : view;
 };
 
 export const handleEndWorkflow = (
@@ -318,14 +442,22 @@ export const handleEndWorkflow = (
 
   if (state == null) throw new Error(`Workflow '${workflowId}' not found or no longer active.`);
 
-  if (!deps.repository.softDelete(workflowId)) {
-    throw new Error(`Failed to end workflow '${workflowId}'.`);
+  if (state.parentWorkflowId != null) {
+    throw new Error(
+      `Workflow '${workflowId}' is a composed child. End its top-level workflow instead.`,
+    );
   }
+
+  const ids = deps.repository.abortCascade(workflowId);
+
+  if (ids.length === 0) throw new Error(`Failed to end workflow '${workflowId}'.`);
 
   deleteScratchpad(state.scratchpadPath);
 
   const label = action === "complete" ? "completed" : "aborted";
-  return `Workflow **${state.workflowName}** ${label}. State cleaned up.`;
+  const count = ids.length > 1 ? ` (${ids.length} records cleaned up)` : "";
+
+  return `Workflow **${state.workflowName}** ${label}.${count} State cleaned up.`;
 };
 
 // ---- pi tool registration -------------------------------------------------------
@@ -364,18 +496,35 @@ export const registerWorkflowTools = (pi: ExtensionAPI, deps: WorkflowToolDeps):
     label: "Update workflow state",
     description:
       "Update a workflow step's state. Validates the transition and returns step " +
-      "instructions. Completing or skipping a step auto-starts the next pending step and " +
-      "returns its instructions. When all steps are done, the workflow is auto-finalized " +
-      "(cleaned up).",
+      "instructions. Completing or skipping a step auto-starts the next pending step. " +
+      "A loop step requires `items` on the start action (each item runs the loop target " +
+      "once); a step with a condition halts auto-advance so you decide start vs skip. " +
+      "When all steps are done, the workflow is auto-finalized (cleaned up).",
     promptSnippet: "update_workflow_state: start, complete, or skip a workflow step",
     parameters: Type.Object({
       workflow_id: WORKFLOW_ID_PARAM,
       step: Type.String({ description: "The step identifier (directory name)" }),
       action: UpdateActionSchema,
+      items: Type.Optional(
+        Type.Array(Type.String(), {
+          description:
+            "Required when starting a loop step: opaque references the loop target iterates " +
+            "over, one run per item. Pass [] to skip a loop step with zero iterations. " +
+            "Rejected on non-loop steps and on non-start actions.",
+        }),
+      ),
     }),
 
     async execute(_toolCallId, params) {
-      return text(handleUpdateWorkflowState(deps, params.workflow_id, params.step, params.action));
+      return text(
+        handleUpdateWorkflowState(
+          deps,
+          params.workflow_id,
+          params.step,
+          params.action,
+          params.items,
+        ),
+      );
     },
   });
 
@@ -384,7 +533,8 @@ export const registerWorkflowTools = (pi: ExtensionAPI, deps: WorkflowToolDeps):
     label: "Query workflow",
     description:
       "Query workflow state for recovery after context loss. With workflow_id, returns the " +
-      "full state including all step statuses; without it, lists all active workflows.",
+      "full state including the active composed/loop child path; without it, lists all active " +
+      "top-level workflows.",
     promptSnippet: "query_workflow: inspect active workflows and their step states",
     parameters: Type.Object({
       workflow_id: Type.Optional(
@@ -402,8 +552,9 @@ export const registerWorkflowTools = (pi: ExtensionAPI, deps: WorkflowToolDeps):
     label: "End workflow",
     description:
       "End a workflow instance. Primarily used to abort a workflow in progress — normal " +
-      "completion happens automatically when the last step is completed. Removes the " +
-      "workflow state and its scratchpad file.",
+      "completion happens automatically when the last step is completed. Aborting a " +
+      "top-level workflow tears down any composed/loop children too. Removes the workflow " +
+      "state and its scratchpad file.",
     promptSnippet: "end_workflow: abort or close out a workflow instance",
     parameters: Type.Object({
       workflow_id: WORKFLOW_ID_PARAM,

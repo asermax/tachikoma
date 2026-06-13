@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 import type { Logger } from "../../log.ts";
+import { refKey } from "./composition.ts";
 
 export interface StepDefinition {
   /** Step identifier (matches the directory name). */
@@ -14,6 +15,12 @@ export interface StepDefinition {
   scriptsPath: string | null;
   /** When false, the step can be skipped. */
   required: boolean;
+  /** Natural-language predicate; when set the cascade halts so the agent decides start/skip. */
+  condition: string | null;
+  /** Reference to a sub-workflow run to completion when the step activates. */
+  composes: string | null;
+  /** Reference to a sub-workflow iterated once per agent-supplied item. */
+  loop: string | null;
   /** Extensible frontmatter fields beyond the reserved keys. */
   properties: Record<string, unknown>;
 }
@@ -26,7 +33,29 @@ export interface WorkflowDefinition {
   path: string;
 }
 
-const RESERVED_STEP_KEYS = ["title", "required", "skippable"];
+const RESERVED_STEP_KEYS = ["title", "required", "skippable", "condition", "composes", "loop"];
+
+/**
+ * Read an optional string-typed frontmatter field, warning and falling back to
+ * null when present but mistyped — a bad value never rejects the whole step.
+ */
+const optionalString = (
+  frontmatter: Record<string, unknown>,
+  key: string,
+  context: { skillName: string; workflowName: string; step: string },
+  log: Logger,
+): string | null => {
+  const value = frontmatter[key];
+
+  if (value == null) return null;
+
+  if (typeof value !== "string") {
+    log.warn({ ...context }, `step has invalid ${key} type (expected string) — treated as unset`);
+    return null;
+  }
+
+  return value;
+};
 
 const isDirectory = (path: string): boolean => {
   try {
@@ -93,6 +122,11 @@ const loadStep = (
     required = frontmatter.skippable !== true;
   }
 
+  const fieldContext = { ...context, step: stepId };
+  const condition = optionalString(frontmatter, "condition", fieldContext, log);
+  const composes = optionalString(frontmatter, "composes", fieldContext, log);
+  const loop = optionalString(frontmatter, "loop", fieldContext, log);
+
   const properties = Object.fromEntries(
     Object.entries(frontmatter).filter(([key]) => !RESERVED_STEP_KEYS.includes(key)),
   );
@@ -107,6 +141,9 @@ const loadStep = (
     referencesPath: isDirectory(referencesPath) ? referencesPath : null,
     scriptsPath: isDirectory(scriptsPath) ? scriptsPath : null,
     required,
+    condition,
+    composes,
+    loop,
     properties,
   };
 };
@@ -136,6 +173,25 @@ export const loadSkillWorkflows = (
   return listDirectories(workflowsDir).map((workflowName) =>
     loadWorkflow(join(workflowsDir, workflowName), skillName, workflowName, log),
   );
+};
+
+/**
+ * Load every workflow across every skill under the skills root, keyed by
+ * `skill/workflow`. Used at bootstrap to validate the composition graph.
+ */
+export const loadAllWorkflows = (
+  skillsRoot: string,
+  log: Logger,
+): Map<string, WorkflowDefinition> => {
+  const all = new Map<string, WorkflowDefinition>();
+
+  for (const skillName of listDirectories(skillsRoot)) {
+    for (const def of loadSkillWorkflows(join(skillsRoot, skillName), skillName, log)) {
+      all.set(refKey(skillName, def.workflowName), def);
+    }
+  }
+
+  return all;
 };
 
 /**

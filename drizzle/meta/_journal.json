@@ -15,6 +15,13 @@
       "when": 1781306872162,
       "tag": "0001_extensions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1781317612929,
+      "tag": "0002_workflow_composition",
+      "breakpoints": true
     }
   ]
 }

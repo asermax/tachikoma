@@ -5,7 +5,8 @@ import { Type } from "typebox";
 
 import { defineExtension } from "../api.ts";
 import { createStaleWorkflowCleanup, DEFAULT_STALE_HOURS } from "./cleanup.ts";
-import { findWorkflow } from "./loader.ts";
+import { validateWorkflowGraph } from "./composition.ts";
+import { findWorkflow, loadAllWorkflows } from "./loader.ts";
 import { WorkflowStateRepository } from "./repository.ts";
 import { registerWorkflowTools } from "./tools.ts";
 
@@ -39,6 +40,14 @@ export default defineExtension<WorkflowsConfig>({
 
     app.bootstrap("ensure-scratchpad-dir", async () => {
       await mkdir(scratchpadDir, { recursive: true });
+    });
+
+    // Surface authoring errors (cycles, missing/empty/conflicting composition
+    // targets) at startup; the cascade still guards against cycles at runtime.
+    app.bootstrap("validate-workflow-graph", async () => {
+      for (const reason of validateWorkflowGraph(loadAllWorkflows(skillsDir, app.log)).warnings) {
+        app.log.warn({ extension: "workflows" }, `workflow rejected — ${reason}`);
+      }
     });
 
     app.agent.use((pi) => {

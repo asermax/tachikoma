@@ -11,7 +11,7 @@ Explain how directory-based workflow definitions become database-persisted step 
 
 ## Problem Context
 
-Agents are unreliable at executing long ordered procedures from prose alone: steps get skipped, order drifts, and context compaction erases progress. The workflow engine moves the source of truth out of the conversation — definitions live on disk inside skills, instance state lives in SQLite — and makes the tools the only way to transition state. The engine deliberately starts from the flat core — no composition, loops, or conditions.
+Agents are unreliable at executing long ordered procedures from prose alone: steps get skipped, order drifts, and context compaction erases progress. The workflow engine moves the source of truth out of the conversation — definitions live on disk inside skills, instance state lives in SQLite — and makes the tools the only way to transition state. Beyond the flat sequence, steps compose: a step can run another workflow to completion (`composes`), iterate one per agent-supplied item (`loop`), or gate on a natural-language predicate (`condition`). A cascade engine collapses these nested transitions into single tool calls so the agent experiences one continuous run addressed by a single top-level ID.
 
 **Constraints:**
 - State must survive context compaction, session replacement, and process restarts
@@ -29,13 +29,14 @@ Agents are unreliable at executing long ordered procedures from prose alone: ste
 ```
 disk definitions          db instance state
 loader.ts  ──snapshot──▶  repository.ts / schema.ts
-     │                          ▲
-     └────── tools.ts handlers ─┘   (validateTransition + auto-start cascade)
-                 ▲
+     │                          ▲   (applyMutationBatch / abortCascade / chains)
+     │                          │
+     └─ tools.ts handlers ─ cascade.ts ─ composition.ts
+                 ▲          (runCascade)   (resolve/validate + mutation types)
         registerWorkflowTools (pi)      cleanup.ts (post-processor)
 ```
 
-`loader.ts` reads definitions fresh from disk. `handleStartWorkflow` freezes the step list into a `definition_snapshot` and seeds the scratchpad; from then on, `handleUpdateWorkflowState` validates transitions against the snapshot, auto-starts the next pending step, and auto-finalizes when nothing pending remains. `query_workflow` doubles as the recovery tool. `cleanup.ts` expires abandoned instances at session close.
+`loader.ts` reads definitions fresh from disk. `handleStartWorkflow` freezes the step list into a `definition_snapshot` and seeds the scratchpad. From then on, `handleUpdateWorkflowState` delegates to `runCascade` (`cascade.ts`), which reads the active chain, routes the transition to the deepest layer, auto-advances across composition/loop boundaries, and stages every change as a `MutationBatch` the repository applies atomically. `composition.ts` holds the pure helpers — `resolveComposes`, cycle/reference validation, and the mutation/outcome types. `query_workflow` doubles as the recovery tool and renders the nested view. `cleanup.ts` expires abandoned stacks at session close. For a flat workflow (no `composes`/`loop`/`condition`) the chain is one layer and the cascade reduces to the original auto-start behavior.
 
 ## Components
 
@@ -43,12 +44,14 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/workflows/index.ts` | Wiring: config, repository, scratchpad bootstrap, per-session tool registration, cleanup processor registration | `findWorkflow` closure binds the skills dir so tools never see paths |
-| `src/extensions/workflows/loader.ts` | Parse workflow/step directories into `WorkflowDefinition`/`StepDefinition` | Fresh filesystem read per call; invalid steps skipped with warnings, never fatal; `skippable` kept as a deprecated alias of `required: false` |
-| `src/extensions/workflows/model.ts` | `STEP_STATES` const map, `StepStates`, `StepSnapshot` | Snapshot keeps the step *path* so instruction bodies are read live at activation |
-| `src/extensions/workflows/schema.ts` | `workflow_states` drizzle table | JSON columns for `step_states` and `definition_snapshot`; indexes on skill/workflow and the active-lookup pair |
-| `src/extensions/workflows/repository.ts` | `WorkflowStateRepository` CRUD | Every read filters `deleted_at IS NULL`; `getActive(skill, workflow)` backs the one-active-instance rule; `listStale(thresholdMs)` for cleanup |
-| `src/extensions/workflows/tools.ts` | `validateTransition`, the four `handle*` functions, `registerWorkflowTools` | Handlers are pure functions over `WorkflowToolDeps` — pi registration is a thin `execute` that wraps the string result |
+| `src/extensions/workflows/index.ts` | Wiring: config, repository, scratchpad bootstrap, graph validation, per-session tool registration, cleanup processor registration | `findWorkflow` closure binds the skills dir so tools never see paths; a bootstrap hook runs `validateWorkflowGraph` and logs rejections |
+| `src/extensions/workflows/loader.ts` | Parse workflow/step directories into `WorkflowDefinition`/`StepDefinition`; `loadAllWorkflows` for graph validation | Fresh filesystem read per call; invalid steps skipped with warnings, never fatal; `condition`/`composes`/`loop` parsed as optional strings; `skippable` kept as a deprecated alias of `required: false` |
+| `src/extensions/workflows/model.ts` | `STEP_STATES` const map, `StepStates`, `StepSnapshot`, `LoopState` | Snapshot keeps the step *path* plus `condition`/`composes`/`loop` so the cascade reads structure from the frozen snapshot |
+| `src/extensions/workflows/schema.ts` | `workflow_states` drizzle table | JSON columns for `step_states`, `definition_snapshot`, and `loop_state`; nullable `parent_workflow_id`/`parent_step_id` link children; indexes on skill/workflow, the active-lookup pair, and the parent lookup |
+| `src/extensions/workflows/composition.ts` | `resolveComposes`, `detectCycles`, `validateWorkflowGraph`; `Mutation`/`MutationBatch`/`CascadeOutcome`/`BreadcrumbPart` types | Pure, SDK/DB-free so cycle and reference validation are testable in isolation |
+| `src/extensions/workflows/cascade.ts` | `runCascade` (the engine), `validateTransition`, `stepToSnapshot`, `renderBreadcrumb` | Synchronous (better-sqlite3 is sync); stages a `MutationBatch` and throws on routing failure so state is untouched; a depth guard backstops cycles at runtime |
+| `src/extensions/workflows/repository.ts` | `WorkflowStateRepository` CRUD + chains + `applyMutationBatch`/`abortCascade` | Every read filters `deleted_at IS NULL`; `getActive`/`listActive` are top-level only; `getActiveChain` walks a stack; batch apply and abort run in a single transaction; `listStale` is subtree-aware |
+| `src/extensions/workflows/tools.ts` | The four `handle*` functions, nested query rendering, `registerWorkflowTools` | Handlers are pure functions over `WorkflowToolDeps` — pi registration is a thin `execute` that wraps the string result |
 | `src/extensions/workflows/cleanup.ts` | `createStaleWorkflowCleanup` post-processor | Depends on `Pick<WorkflowStateRepository, "listStale" \| "softDelete">`; per-record error isolation |
 
 ## Key Decisions
@@ -90,6 +93,42 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 - Pro: recovery guidance reduces to "call `query_workflow()` then `query_workflow(workflow_id=...)`"
 - Con: two response shapes behind one tool name
 
+### Cascade engine staging an atomic MutationBatch
+
+**Choice**: `runCascade` walks the active chain entirely in memory — applying the transition, descending into spawned children, advancing parents when children finish — and emits an ordered `MutationBatch` (`update`/`create`/`softDelete`) that the repository applies in one transaction. It throws on any routing/validation failure before staging side effects.
+**Why**: A single agent tool call can ripple across several layers (complete a child's last step → finalize child → complete the parent's composition step → start the parent's next step → spawn the next loop iteration). Computing the whole effect first, then committing atomically, keeps nested state consistent even if a spawn fails mid-cascade — the batch rolls back and the agent sees an error with state untouched.
+**Alternatives Considered**:
+- Mutate the database step-by-step inside the walk: simpler to write, but a failure halfway leaves a half-advanced stack
+- Recurse with the model in the loop (one tool call per layer): defeats the "one continuous run" goal and multiplies latency
+
+**Consequences**:
+- Pro: nested transitions are all-or-nothing; handlers stay synchronous and pure over the chain
+- Con: the engine holds a mirror of the chain's mutable state, which must track the real records faithfully
+
+### Address nested runs by the top-level ID, route to the deepest layer
+
+**Choice**: Children carry `parent_workflow_id`/`parent_step_id`; the agent only ever names the top-level ID, and the cascade resolves the active chain and applies the transition at the deepest layer. Child IDs are rejected by `update_workflow_state` and `end_workflow`.
+**Why**: The agent should not have to track which sub-workflow it is "inside" — that is bookkeeping the engine already has. One stable ID per run also means recovery (`query_workflow`) and abort have a single handle, and the one-active-instance rule cleanly applies to top-levels only.
+**Consequences**:
+- Pro: the agent drives arbitrarily deep nesting with one ID and a breadcrumb to orient
+- Con: routing errors must name the deepest layer's workflow and valid steps, since the agent's mental model can lag the real depth
+
+### Loop iterations are repeated composition children; conditions halt and delegate
+
+**Choice**: A `loop` step spawns the target as a fresh composition child per item, tracking `{items, index}` in a `loop_state` JSON column on the parent; iteration N+1 spawns in the same call that finalizes N. A `condition` step halts auto-advance and asks the agent to `start` (passes) or `skip` (fails) — the agent is the evaluator, and a condition makes a required step skippable.
+**Why**: Reusing the composition machinery means iterations inherit every step-level semantic (nested composition, conditions, snapshots) for free. Delegating condition evaluation to the agent avoids a second model round-trip inside a tool call and keeps the engine deterministic — it never calls a model.
+**Consequences**:
+- Pro: batch processes and branches need no new execution model; the engine stays model-free and testable
+- Con: loop items are opaque strings the target must interpret; a careless condition step the agent always starts is just a normal step with a prompt
+
+### Validate the composition graph at bootstrap, guard depth at runtime
+
+**Choice**: `validateWorkflowGraph` runs once at bootstrap over every workflow, rejecting cycles, `composes`+`loop` steps, and missing/empty/rejected targets (rejection cascades). Because the loader reads fresh on every call, the cascade additionally caps nesting depth to backstop a cycle introduced by a mid-session edit.
+**Why**: A composition cycle would spin the cascade's auto-advance forever inside one tool call. Bootstrap validation gives authors early, specific warnings; the runtime depth guard guarantees termination regardless of edits between reloads.
+**Consequences**:
+- Pro: authoring mistakes surface at startup, not mid-run; infinite loops are structurally impossible
+- Con: a workflow edited to introduce a cycle after bootstrap fails at runtime with a depth error rather than a load-time warning until the next reload
+
 ## System Behavior
 
 ### Scenario: Auto-start cascade and auto-finalize
@@ -116,8 +155,20 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **When**: `handleStartWorkflow` propagates the error
 **Then**: The scratchpad file is deleted before rethrowing — no orphan files for instances that never existed.
 
+### Scenario: Completing a child resumes the parent in one call
+
+**Given**: A `outer` workflow whose `02-sub` step `composes: inner`, with the agent on `inner`'s last step
+**When**: The agent calls `update_workflow_state(outer_id, <inner_last_step>, "complete")`
+**Then**: In one response the cascade marks the child's step complete, finds nothing pending in the child, soft-deletes it, marks `outer`'s `02-sub` complete, auto-starts `outer`'s next step, and returns that step's instructions — the whole `MutationBatch` (update child, soft-delete child, update parent) commits atomically.
+
+### Scenario: Loop iterates then resumes; abort tears down the stack
+
+**Given**: A `02-each` step `loop: handle-one`, started with `items=["x","y"]`
+**When**: The agent completes each `handle-one` run in turn, then later aborts the top-level
+**Then**: Completing iteration `x` spawns iteration `y` in the same call (breadcrumb suffix `(item: y)`); completing `y` exhausts the loop, marks `02-each` complete, and resumes the parent. An `end_workflow(outer_id, "abort")` at any point soft-deletes the root and every active descendant in one transaction.
+
 ## Notes
 
 - Scratchpad deletion is best-effort (`deleteScratchpad` swallows fs errors): a leftover file must never block a state transition
-- `tests/workflows/helpers.ts` mirrors the table DDL until central migrations are regenerated; the real migration lives in `drizzle/0001_extensions.sql`
-- Composition, loops, condition steps, and `required_skills` are intentionally absent (see spec Notes); `validateTransition` is the seam where they would re-enter
+- Tests run the real central migrations (`drizzle/`): `0001_extensions.sql` creates `workflow_states`, `0002_workflow_composition.sql` adds the parent links and `loop_state` column additively (safe for existing databases)
+- `required_skills` injection is intentionally absent: skill loading is pi-native (progressive disclosure), so a composition step relies on pi rather than the engine resolving skill chains into the tool response
