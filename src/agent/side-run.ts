@@ -28,6 +28,8 @@ export interface HeadlessRunOptions {
   /** Extra in-process tools for this run (their names are enabled automatically). */
   customTools?: ToolDefinition[];
   tier?: ModelTier;
+  /** Explicit "provider/model-id[:thinkingLevel]" reference; overrides `tier` when set. */
+  model?: string;
 }
 
 export interface HeadlessRunResult {
@@ -100,11 +102,13 @@ export class SideRunner {
     tools = [],
     customTools,
     tier = "processor",
+    model,
   }: HeadlessRunOptions): Promise<HeadlessRunResult> {
     const session = await this.manager.open({
       inMemory: true,
       bare: true,
       tier,
+      ...(model != null ? { model } : {}),
       tools: [...tools, ...(customTools ?? []).map((tool) => tool.name)],
       ...(customTools != null ? { customTools } : {}),
       ...(system != null ? { systemPrompt: system } : {}),

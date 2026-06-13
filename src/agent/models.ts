@@ -95,22 +95,30 @@ export class ModelTiers {
     const ref = this.configuredRef(tier);
 
     if (ref != null) {
-      const model = this.registry.find(ref.provider, ref.id);
-
-      if (model == null) {
-        throw new Error(
-          `Model "${ref.provider}/${ref.id}" (${tier} tier) not found in pi's model registry`,
-        );
-      }
-
-      return {
-        model,
-        ...(ref.thinkingLevel != null ? { thinkingLevel: ref.thinkingLevel } : {}),
-        fromPiDefaults: false,
-      };
+      return { ...this.resolveRefStrict(ref, `${tier} tier`), fromPiDefaults: false };
     }
 
     return { ...this.resolvePiDefault(tier), fromPiDefaults: true };
+  }
+
+  /** Resolve an explicit "provider/model-id[:thinkingLevel]" reference against the registry. */
+  resolveRef(ref: string): ResolvedTier {
+    return { ...this.resolveRefStrict(parseModelRef(ref), `"${ref}"`), fromPiDefaults: false };
+  }
+
+  private resolveRefStrict(ref: ModelRef, context: string): Omit<ResolvedTier, "fromPiDefaults"> {
+    const model = this.registry.find(ref.provider, ref.id);
+
+    if (model == null) {
+      throw new Error(
+        `Model "${ref.provider}/${ref.id}" (${context}) not found in pi's model registry`,
+      );
+    }
+
+    return {
+      model,
+      ...(ref.thinkingLevel != null ? { thinkingLevel: ref.thinkingLevel } : {}),
+    };
   }
 
   private resolvePiDefault(tier: ModelTier): Omit<ResolvedTier, "fromPiDefaults"> {

@@ -75,6 +75,7 @@ export const createDelegateTool = ({
       system: agent.systemPrompt,
       tools: agent.tools ?? DEFAULT_AGENT_TOOLS,
       prompt: params.task,
+      ...(agent.model != null ? { model: agent.model } : {}),
     });
 
     const { content, truncated } = truncateTail(result.text);

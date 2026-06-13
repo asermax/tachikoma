@@ -35,8 +35,8 @@ Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 |-----------|----------------|---------------|
 | `src/extensions/skills/index.ts` | Extension wiring: `ensure-skills-dir` bootstrap hook, `resources_discover` contributing the workspace and repo-root `skills/` paths, reload registration, conditional `delegate_to_agent` registration | Built-in skills resolved relative to the module (`../../../skills` → repo root) so they ship with the install; tool registered only when `discover()` finds at least one agent at session creation, so an agent-less workspace advertises no dead tool |
 | `src/extensions/skills/reload.ts` | `registerReload`: the `/reload` command (calls `ctx.reload()`) and the `reload_resources` tool that queues `/reload` as a follow-up | Reload must run in command context, so the tool re-injects `/reload` via `pi.sendUserMessage(..., { deliverAs: "followUp" })` rather than reloading inline |
-| `src/extensions/skills/agents.ts` | `discoverSkillAgents`: scan skills root for `agents/*.md`, parse frontmatter via pi's `parseFrontmatter` | Synchronous fs reads (small trees, called at session creation and tool execution); per-file error isolation — one bad definition never blocks the rest; names namespaced `<skill>/<agent>` |
-| `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; `tools` accepts YAML list or comma-separated string (matches pi's subagent example) |
+| `src/extensions/skills/agents.ts` | `discoverSkillAgents`: scan skills root for `agents/*.md`, parse frontmatter via pi's `parseFrontmatter` | Synchronous fs reads (small trees, called at session creation and tool execution); per-file error isolation — one bad definition never blocks the rest; names namespaced `<skill>/<agent>`; optional `model` parsed as a non-empty string (validated against the registry only at delegation time) — a non-string value warns and falls back to `null` rather than dropping the agent |
+| `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; `tools` accepts YAML list or comma-separated string (matches pi's subagent example); a declared `model` is threaded into `side.run` to pin the delegated run's model |
 
 ## Key Decisions
 
@@ -93,6 +93,12 @@ Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 **When**: The main agent calls `delegate_to_agent(agent="research/scout", task="find sources on X")`
 **Then**: A headless side session runs with the file body as system prompt and only `read`/`grep` available; its final assistant text returns as the tool result, tail-truncated with an `[output truncated]` marker if oversized.
 
+### Scenario: Delegation to an agent with a declared model
+
+**Given**: `skills/research/agents/analyst.md` declares `model: anthropic/claude-opus-4-5:high`
+**When**: The main agent delegates to `research/analyst`
+**Then**: The headless run is pinned to that model (the `model` reference flows `delegate.ts` → `side.run` → `manager.open` → `ModelTiers.resolveRef`); an agent without a `model` falls back to the side-runner's default tier.
+
 ### Scenario: Unknown agent name
 
 **Given**: The agent mistypes the namespace
@@ -107,5 +113,5 @@ Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 
 ## Notes
 
-- The headless runner (`SideRunner.run`) opens a bare in-memory pi session: nothing persisted, no Tachikoma extensions, processor-tier model by default
+- The headless runner (`SideRunner.run`) opens a bare in-memory pi session: nothing persisted, no Tachikoma extensions, processor-tier model by default; an optional `model` reference on the run options pins the model instead, resolved through `ModelTiers.resolveRef` (same `provider/model-id[:thinkingLevel]` form as `[agent]` tier config)
 - Tests: `tests/skills/agents.test.ts` (discovery against tmp-dir fixtures), `tests/skills/delegate.test.ts` (tool behavior against a faked runner)

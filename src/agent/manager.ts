@@ -33,6 +33,8 @@ export interface OpenSessionOptions {
   customTools?: ToolDefinition[];
   systemPrompt?: string;
   tier?: ModelTier;
+  /** Explicit "provider/model-id[:thinkingLevel]" reference; pins the model over `tier`. */
+  model?: string;
 }
 
 export class AgentManager {
@@ -93,11 +95,17 @@ export class AgentManager {
           ? SessionManager.open(options.sessionFile, workspace.sessionsDir)
           : SessionManager.create(workspace.root, workspace.sessionsDir);
 
-    // A configured role pins the model (and optional thinking suffix); an unset
-    // chain omits both so pi's full resolution applies — session restore first,
-    // then settings defaults, then the first credentialed model.
+    // An explicit model reference pins the model directly; otherwise a configured
+    // role pins the model (and optional thinking suffix). An unset chain omits both
+    // so pi's full resolution applies — session restore first, then settings
+    // defaults, then the first credentialed model.
     const tier = options.tier ?? "main";
-    const configured = this.tiers.configuredRef(tier) != null ? this.tiers.resolve(tier) : null;
+    const configured =
+      options.model != null
+        ? this.tiers.resolveRef(options.model)
+        : this.tiers.configuredRef(tier) != null
+          ? this.tiers.resolve(tier)
+          : null;
 
     const { session, modelFallbackMessage } = await createAgentSession({
       cwd: workspace.root,

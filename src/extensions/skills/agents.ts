@@ -10,6 +10,8 @@ export interface SkillAgent {
   name: string;
   description: string;
   tools: string[] | null;
+  /** "provider/model-id[:thinkingLevel]" reference; null runs on the side-runner's default tier. */
+  model: string | null;
   systemPrompt: string;
   skill: string;
 }
@@ -54,10 +56,23 @@ const parseTools = (raw: unknown): string[] | null => {
   return null;
 };
 
+// A model reference resolves at delegation time; here we only require a non-empty string,
+// so a malformed value never drops the rest of the agent — it just reverts to the default tier.
+const parseModel = (raw: unknown): string | null => {
+  if (raw == null) return null;
+
+  if (typeof raw === "string") {
+    const model = raw.trim();
+    return model.length > 0 ? model : null;
+  }
+
+  return null;
+};
+
 /**
  * Discover agent definitions bundled inside skill packages: markdown files under
  * each skill's agents/ directory, with frontmatter metadata (description required;
- * name and tools optional) and the body as the agent's system prompt.
+ * name, tools, and model optional) and the body as the agent's system prompt.
  *
  * Invalid agent files are logged and skipped so one bad definition never blocks the rest.
  */
@@ -82,10 +97,17 @@ export const discoverSkillAgents = (skillsRoot: string, log: Logger): SkillAgent
             ? frontmatter.name
             : stem;
 
+        const model = parseModel(frontmatter.model);
+
+        if (frontmatter.model != null && model == null) {
+          log.warn({ skill, agent: file }, "skill agent has invalid model — using default tier");
+        }
+
         agents.push({
           name: `${skill}/${name}`,
           description: frontmatter.description,
           tools: parseTools(frontmatter.tools),
+          model,
           systemPrompt: body,
           skill,
         });

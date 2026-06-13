@@ -26,7 +26,7 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 
 ## Design Overview
 
-`AgentManager` is the single construction path for every pi session. It owns the process-wide `AuthStorage`/`ModelRegistry`/`ModelTiers`, and `open(options)` varies along three axes: persistence (`SessionManager.create` / `.open(sessionFile)` / `.inMemory`), binding (all registered factories and prompt builders, or `bare`), and model (`tier`). A fresh `DefaultResourceLoader` is built per open, which is what makes session replacement in the coordinator a plain re-open.
+`AgentManager` is the single construction path for every pi session. It owns the process-wide `AuthStorage`/`ModelRegistry`/`ModelTiers`, and `open(options)` varies along three axes: persistence (`SessionManager.create` / `.open(sessionFile)` / `.inMemory`), binding (all registered factories and prompt builders, or `bare`), and model (`tier`, or an explicit `model` reference that pins the model over the tier). A fresh `DefaultResourceLoader` is built per open, which is what makes session replacement in the coordinator a plain re-open.
 
 `streamPrompt` is the only bridge from pi's push events to the domain: it subscribes, runs `prompt()`, queues mapped events, and yields them as an async iterable whose termination doubles as the exchange-end signal. `SideRunner` sits beside the session machinery for non-conversational LLM work, going straight to pi-ai's `completeSimple` for text and JSON, and to a bare in-memory session when tool use is needed.
 
@@ -36,8 +36,8 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/agent/manager.ts` | Auth/model-registry ownership; `open()` builds sessions (loader, session manager mode, settings, model) | Auth fallback to machine-level pi login; fresh loader per open; `bare` axis for headless work |
-| `src/agent/models.ts` | `MODEL_TIERS` const map, `parseModelRef`, `ModelTiers.ref/resolve` | `provider/model-id` strings resolved against pi's registry; fail fast at resolve time |
+| `src/agent/manager.ts` | Auth/model-registry ownership; `open()` builds sessions (loader, session manager mode, settings, model) | Auth fallback to machine-level pi login; fresh loader per open; `bare` axis for headless work; an explicit `model` option pins the model over the `tier` chain (used by skill-agent delegation) |
+| `src/agent/models.ts` | `MODEL_TIERS` const map, `parseModelRef`, `ModelTiers.ref/resolve/resolveRef` | `provider/model-id` strings resolved against pi's registry; `resolveRef` resolves an explicit (non-tier) reference for callers that pin a model directly; fail fast at resolve time |
 | `src/agent/adapter.ts` | `streamPrompt`: pi `session.subscribe()` events → `AgentEvent` async iterable | Pull-based queue with promise wake; terminal `result`/`error` event; per-exchange cost/usage from `agent_end`; surrogate sanitization on emitted content; unsubscribe in `finally` |
 | `src/agent/errors.ts` | `classifyError`: failure message → `{ errorKind, recoverable }` | Pattern-matched kinds (auth/billing/encoding/provider/unknown); only auth and billing are non-recoverable |
 | `src/agent/sanitize.ts` | `sanitizeText`: strip lone UTF-8 surrogate code points | Pure helper; valid surrogate pairs preserved, only unpaired halves removed |

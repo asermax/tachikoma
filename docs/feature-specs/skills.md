@@ -20,9 +20,10 @@ Skills give the agent packaged expertise: Agent Skills-format directories from b
 | R1 | Two skill sources are contributed via the `resources_discover` event in every agent session: the workspace skills directory (`{workspace}/skills/`) and the built-in authoring skills shipped in the repo-root `skills/` directory; discovery, progressive disclosure, and `/skill:` commands are pi-native |
 | R2 | Skills follow the Agent Skills standard (`SKILL.md` with YAML frontmatter) — no Tachikoma-specific skill format exists |
 | R3 | Markdown files under `<skill>/agents/` are discovered as agent definitions, namespaced as `<skill>/<agent>` to prevent cross-skill collisions |
-| R4 | Agent frontmatter: `description` is required (missing means the file is skipped with a warning); `name` defaults to the file stem; `tools` accepts a YAML list or a comma-separated string; the markdown body is the agent's system prompt |
+| R4 | Agent frontmatter: `description` is required (missing means the file is skipped with a warning); `name` defaults to the file stem; `tools` accepts a YAML list or a comma-separated string; `model` is an optional `provider/model-id[:thinkingLevel]` reference (a non-string value is warned and ignored, leaving the agent on the default tier); the markdown body is the agent's system prompt |
 | R5 | A `delegate_to_agent` tool is registered when at least one agent exists at session creation; it runs the named agent headlessly with its own system prompt and tool set and returns the agent's final answer as the tool result (tail-truncated, with a truncation marker) |
 | R6 | Agents that declare no tools run with the default read-only set: `read`, `grep`, `find`, `ls` |
+| R6a | An agent that declares a `model` runs its headless delegation on that model; an agent without one runs on the side-runner's default tier |
 | R7 | Invalid agent files are logged and skipped; a missing skills root or agents directory yields empty discovery, never an error |
 | R8 | Agent discovery re-runs at every session creation and on every `delegate_to_agent` execution, so new and edited agents apply without a restart |
 | R9 | The extension can be disabled via `[extensions.skills] enabled = false` (default enabled) |
@@ -48,17 +49,20 @@ The session factory answers pi's `resources_discover` event with the workspace s
 - Given `skills/research/agents/scout.md` with a `description` and a YAML `tools` list, when discovery runs, then an agent named `research/scout` is returned with those tools and the body as its system prompt
 - Given frontmatter declaring `name: pathfinder`, when discovery runs, then the agent is named `research/pathfinder` (explicit name wins over the file stem)
 - Given `tools: read, ls` as a comma-separated string, when discovery runs, then the tools parse to `["read", "ls"]`
+- Given `model: anthropic/claude-opus-4-5:high`, when discovery runs, then the agent's `model` is that reference; an agent without `model` discovers as `null`
+- Given a non-string `model` value, when discovery runs, then a warning is logged and the agent loads with `model` `null` (the bad field never drops the agent)
 - Given an agent file without a `description`, when discovery runs, then the file is skipped with a warning and other agents still load
 - Given a skill without an `agents/` directory, or a missing skills root, when discovery runs, then an empty list is returned
 
-### Delegation (R5, R6)
+### Delegation (R5, R6, R6a)
 
-The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists discovered agents in its description and runs the chosen agent in an isolated headless session via `app.agent.side.run`.
+The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists discovered agents in its description and runs the chosen agent in an isolated headless session via `app.agent.side.run`, passing the agent's declared `model` when set.
 
 **Acceptance Criteria**:
 - Given discovered agents, when the tool description is built, then each agent appears as `<skill>/<name>: <description>`
 - Given a delegation call with a known agent, when the tool executes, then the headless run uses the agent's system prompt, its declared tools, and the task as the prompt; the agent's final text is the tool result
 - Given an agent with no declared tools, when delegated to, then the run uses the default read-only tool set
+- Given an agent that declares a `model`, when delegated to, then the headless run is pinned to that model; an agent without a `model` runs on the side-runner's default tier
 - Given an unknown agent name, when the tool executes, then it throws an error listing the available agents (no run is attempted)
 - Given no agents exist at session creation, then the tool is not registered for that session
 

@@ -109,4 +109,26 @@ describe("ModelTiers", () => {
 
     expect(() => tiers.resolve("main")).toThrow(/not found/);
   });
+
+  describe("resolveRef", () => {
+    it("resolves an explicit reference with its thinking suffix", () => {
+      const tiers = new ModelTiers(
+        agentConfig(),
+        fakeRegistry({ anthropic: ["claude-opus-4-5"] }),
+        fakeSettings(),
+      );
+
+      const resolved = tiers.resolveRef("anthropic/claude-opus-4-5:high");
+
+      expect(resolved.model.id).toBe("claude-opus-4-5");
+      expect(resolved.thinkingLevel).toBe("high");
+      expect(resolved.fromPiDefaults).toBe(false);
+    });
+
+    it("throws when the referenced model is unknown to the registry", () => {
+      const tiers = new ModelTiers(agentConfig(), fakeRegistry({ anthropic: [] }), fakeSettings());
+
+      expect(() => tiers.resolveRef("anthropic/claude-nonexistent")).toThrow(/not found/);
+    });
+  });
 });

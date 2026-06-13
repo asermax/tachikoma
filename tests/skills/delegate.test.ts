@@ -13,6 +13,7 @@ const agents: SkillAgent[] = [
     name: "research/scout",
     description: "Finds sources",
     tools: ["read", "grep"],
+    model: null,
     systemPrompt: "You are a scout.",
     skill: "research",
   },
@@ -20,7 +21,16 @@ const agents: SkillAgent[] = [
     name: "research/writer",
     description: "Drafts summaries",
     tools: null,
+    model: null,
     systemPrompt: "You write.",
+    skill: "research",
+  },
+  {
+    name: "research/analyst",
+    description: "Deep analysis",
+    tools: null,
+    model: "anthropic/claude-opus-4-5:high",
+    systemPrompt: "You analyze.",
     skill: "research",
   },
 ];
@@ -53,7 +63,25 @@ describe("delegate_to_agent tool", () => {
       tools: ["read", "grep"],
       prompt: "find sources on topic X",
     });
+    expect(run.mock.calls[0]?.[0]).not.toHaveProperty("model");
     expect(result.content).toEqual([{ type: "text", text: "found three sources" }]);
+  });
+
+  it("runs an agent with its declared model frontmatter on that model", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "analysis" });
+    const tool = makeTool({ run });
+
+    await tool.execute(
+      "call-model",
+      { agent: "research/analyst", task: "analyze X" },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "anthropic/claude-opus-4-5:high" }),
+    );
   });
 
   it("falls back to the default read-only tool set", async () => {

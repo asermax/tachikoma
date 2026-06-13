@@ -37,10 +37,42 @@ describe("discoverSkillAgents", () => {
         name: "research/scout",
         description: "Finds sources",
         tools: ["read", "grep"],
+        model: null,
         systemPrompt: "You are a scout.",
         skill: "research",
       },
     ]);
+  });
+
+  it("parses an explicit model reference from frontmatter", async () => {
+    await writeAgent(
+      "research",
+      "analyst.md",
+      "---\ndescription: Analyzes\nmodel: anthropic/claude-opus-4-5:high\n---\n\nBody.",
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.model).toBe(
+      "anthropic/claude-opus-4-5:high",
+    );
+  });
+
+  it("defaults model to null when not declared", async () => {
+    await writeAgent("research", "scout.md", "---\ndescription: Finds sources\n---\n\nBody.");
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.model).toBeNull();
+  });
+
+  it("warns and falls back to null on an invalid model type, keeping the agent", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\nmodel:\n  - not-a-string\n---\n\nBody.",
+    );
+
+    const agents = discoverSkillAgents(skillsRoot, fakeLog);
+
+    expect(agents[0]?.name).toBe("research/scout");
+    expect(agents[0]?.model).toBeNull();
   });
 
   it("prefers an explicit frontmatter name and parses comma-separated tools", async () => {
