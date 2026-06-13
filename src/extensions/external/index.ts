@@ -10,6 +10,7 @@ import { createExternalToolsFactory } from "./tools.ts";
 
 interface ExternalConfig {
   sources: string[];
+  setupTimeoutMs: number;
 }
 
 /**
@@ -23,6 +24,11 @@ export default defineExtension<ExternalConfig>({
 
   configSchema: Type.Object({
     sources: Type.Array(Type.String(), { default: [] }),
+    setupTimeoutMs: Type.Number({
+      default: 30_000,
+      description:
+        "Milliseconds before a third-party extension's setup is treated as hung and skipped.",
+    }),
   }),
 
   async setup(app) {
@@ -43,7 +49,7 @@ export default defineExtension<ExternalConfig>({
       const extension = await loadExtensionModule(source, app.log);
 
       if (extension != null) {
-        app.registerExtension(extension);
+        app.registerExtension(extension, { setupTimeoutMs: app.extensionConfig.setupTimeoutMs });
         app.log.info({ source, extension: extension.name }, "external extension registered");
       }
     }

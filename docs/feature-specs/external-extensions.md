@@ -19,11 +19,11 @@ There is no separate manifest-based plugin system (manifests, namespaced skill r
 | ID | Requirement |
 |----|-------------|
 | R0 | Load out-of-tree extensions satisfying the `defineExtension` contract (DES-001); no separate plugin/manifest system exists |
-| R1 | `[extensions.external]` config declares `sources`: an array of paths (file or directory); `~` is expanded and relative paths resolve against the workspace root |
+| R1 | `[extensions.external]` config declares `sources`: an array of paths (file or directory); `~` is expanded and relative paths resolve against the workspace root. It also declares `setupTimeoutMs` (default 30000): the hang guard applied to each third-party `setup` |
 | R2 | Agent-installed extensions (records in the extension's namespaced KV state) load alongside configured sources; the combined set is deduplicated by path |
 | R3 | A source resolves to its module file: a `.ts`/`.js` file directly, or `index.ts`/`index.js` inside a directory; anything else is not loadable |
 | R4 | The module's default export is validated before registration: non-empty `name` string, `setup` function, and (when present) an object `configSchema`; invalid exports are rejected with a stated reason |
-| R5 | Loading is error-isolated: unresolvable sources, import failures, and invalid shapes are logged as warnings and skipped — one bad extension never aborts startup |
+| R5 | Third-party extensions are error-isolated across their whole startup, not just loading: unresolvable sources, import failures, and invalid shapes are logged and skipped (load phase); a third-party `setup` that throws or hangs past `[extensions.external].setupTimeoutMs` (default 30000) is logged as a warning and skipped (setup phase); and a bootstrap hook a third-party extension registers is isolated when hooks run — one bad extension never aborts startup. First-party (built-in) extensions are *not* isolated: their `setup` and bootstrap-hook failures propagate so core bugs surface (bootstrap matches core-shell R14) |
 | R6 | Valid extensions register via `app.registerExtension` and load in the same startup pass after the first-party list (see [core-shell](./core-shell.md) R12/R13), receiving the full AppContext including `[extensions.<name>]` config validated against their `configSchema` |
 | R7 | Third-party extensions persist via `app.state` (namespaced key-value store); they have no migration access |
 | R8 | `install_extension(source, alias)`: git sources (`https://`, `git@`, `ssh://`, `file://` prefixes or a `.git` suffix) are cloned into `{workspace}/.tachikoma/extensions/<alias>`; other sources are recorded in place (no copy); the alias must match `[a-z0-9][a-z0-9-]*` and must not collide with an existing install |
@@ -45,6 +45,16 @@ A source path becomes a registered extension only if it resolves to a module who
 - Given a missing path, a non-module file (e.g. `readme.md`), or a directory without an index module, when loaded, then `null` is returned and a warning names the source
 - Given a module whose default export lacks `name` or `setup`, or whose `configSchema` is not an object, when loaded, then it is skipped with a warning containing the validation reason
 - Given a module that throws at import time, when loaded, then it is skipped with a warning carrying the error
+
+### Startup Isolation (R5)
+
+A third-party extension is isolated across its entire startup — both its `setup` and any bootstrap hook it registers; a built-in one is not.
+
+**Acceptance Criteria**:
+- Given a registered third-party extension whose `setup` throws, when the host runs it, then a warning names the extension, that extension is skipped, and the remaining extensions and startup proceed
+- Given a third-party `setup` that never settles, when it exceeds `setupTimeoutMs`, then it is treated as hung, logged, and skipped, and startup proceeds
+- Given a third-party extension that registered a bootstrap hook which throws, when bootstrap hooks run, then the hook is logged and skipped and the remaining hooks proceed
+- Given a first-party (built-in) extension whose `setup` or bootstrap hook throws, when the host runs it, then the error propagates and aborts startup (core bugs are not swallowed; bootstrap matches core-shell R14)
 
 ### Startup Loading (R1, R2, R6, R7)
 

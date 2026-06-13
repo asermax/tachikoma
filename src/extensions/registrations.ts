@@ -12,6 +12,8 @@ import type {
 export interface BootstrapHook {
   name: string;
   hook: () => void | Promise<void>;
+  /** Hooks from third-party extensions are isolated; first-party hooks fail hard. */
+  external?: boolean;
 }
 
 /** Mutable registries filled by extensions during setup and read by core at runtime. */

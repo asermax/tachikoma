@@ -135,8 +135,17 @@ export interface AppContext<C = unknown> {
   bootstrap(name: string, hook: () => void | Promise<void>): void;
   /** Surface a progress line through the active channel while processing. */
   status(text: string): void;
-  /** Enqueue another extension for loading (external extension support). */
-  registerExtension(extension: TachikomaExtension<never>): void;
+  /**
+   * Enqueue a third-party extension for loading (external extension support).
+   * The host isolates these: a throwing or hanging `setup` is logged and skipped
+   * rather than aborting startup. `setupTimeoutMs` bounds the hang guard.
+   */
+  registerExtension(extension: TachikomaExtension<never>, options?: RegisterExtensionOptions): void;
+}
+
+export interface RegisterExtensionOptions {
+  /** Milliseconds before an external `setup` is considered hung and skipped. */
+  setupTimeoutMs?: number;
 }
 
 // ---- extension definition -----------------------------------------------------

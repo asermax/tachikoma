@@ -26,6 +26,26 @@ export interface HostServices {
   regs: Registrations;
 }
 
+/** Fallback when the `external` extension does not declare its own setup timeout. */
+export const DEFAULT_EXTERNAL_SETUP_TIMEOUT_MS = 30_000;
+
+interface QueuedExtension {
+  extension: TachikomaExtension<never>;
+  /** Third-party extensions are isolated on setup; first-party fail hard. */
+  external: boolean;
+  setupTimeoutMs?: number;
+}
+
+const withTimeout = <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout>;
+
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`setup timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
+
 export class ExtensionHost {
   private readonly services: HostServices;
 
@@ -33,29 +53,63 @@ export class ExtensionHost {
     this.services = services;
   }
 
-  private readonly queue: TachikomaExtension<never>[] = [];
+  private readonly queue: QueuedExtension[] = [];
 
   async load(extensions: TachikomaExtension<never>[]): Promise<void> {
-    this.queue.push(...extensions);
+    this.queue.push(...extensions.map((extension) => ({ extension, external: false })));
 
-    // Extensions may enqueue further extensions (plugins) while loading.
+    // Extensions may enqueue further extensions (third-party) while loading.
     for (let index = 0; index < this.queue.length; index += 1) {
-      const extension = this.queue[index] as TachikomaExtension<never>;
-      const app = this.buildContext(extension);
+      const { extension, external, setupTimeoutMs } = this.queue[index] as QueuedExtension;
+      const app = this.buildContext(extension, external);
 
-      await extension.setup(app as AppContext<never>);
-      this.services.log.debug({ extension: extension.name }, "extension loaded");
+      // First-party setups fail hard — a core bug must surface, not be swallowed.
+      // External (third-party) setups are isolated: a throw or hang skips that one
+      // extension and lets startup continue (see external-extensions design).
+      if (!external) {
+        await extension.setup(app as AppContext<never>);
+        this.services.log.debug({ extension: extension.name }, "extension loaded");
+        continue;
+      }
+
+      try {
+        await withTimeout(
+          Promise.resolve(extension.setup(app as AppContext<never>)),
+          setupTimeoutMs ?? DEFAULT_EXTERNAL_SETUP_TIMEOUT_MS,
+        );
+        this.services.log.debug({ extension: extension.name }, "external extension loaded");
+      } catch (error) {
+        this.services.log.warn(
+          { extension: extension.name, err: error },
+          "external extension setup failed or timed out — skipping",
+        );
+      }
     }
   }
 
   async bootstrap(): Promise<void> {
-    for (const { name, hook } of this.services.regs.bootstrapHooks) {
+    for (const { name, hook, external } of this.services.regs.bootstrapHooks) {
       this.services.log.debug({ hook: name }, "bootstrap hook");
-      await hook();
+
+      // Mirror the setup-phase rule: a third-party hook is isolated, a first-party
+      // hook fails hard (core-shell R14) so core bootstrap bugs surface.
+      if (!external) {
+        await hook();
+        continue;
+      }
+
+      try {
+        await hook();
+      } catch (error) {
+        this.services.log.warn(
+          { hook: name, err: error },
+          "external bootstrap hook failed — skipping",
+        );
+      }
     }
   }
 
-  private buildContext(extension: TachikomaExtension<never>): AppContext {
+  private buildContext(extension: TachikomaExtension<never>, external = false): AppContext {
     const { services } = this;
     const log = componentLogger(services.log, extension.name);
 
@@ -107,11 +161,16 @@ export class ExtensionHost {
       },
 
       bootstrap: (name, hook) =>
-        services.regs.bootstrapHooks.push({ name: `${extension.name}:${name}`, hook }),
+        services.regs.bootstrapHooks.push({ name: `${extension.name}:${name}`, hook, external }),
 
       status: (text) => services.coordinator.status(text),
 
-      registerExtension: (nested) => this.queue.push(nested),
+      registerExtension: (nested, options) =>
+        this.queue.push({
+          extension: nested,
+          external: true,
+          setupTimeoutMs: options?.setupTimeoutMs,
+        }),
     };
   }
 }
