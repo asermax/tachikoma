@@ -2,13 +2,13 @@ import { type Static, Type } from "typebox";
 
 import { defineExtension } from "../api.ts";
 import { createCoreContextProcessor } from "../context/processor.ts";
-import { createTranscriptArchiveProcessor } from "./archive.ts";
+import { createTranscriptArchiveProcessor, pruneTranscripts } from "./archive.ts";
 import { createExtractionProcessor } from "./extraction.ts";
 import { createMemoryIndexProvider } from "./indexes.ts";
 import { ensureMemoryLayout, MEMORY_STORES } from "./layout.ts";
 import { runMaintenanceTick } from "./maintenance.ts";
 
-const MemoryConfigSchema = Type.Object({
+export const MemoryConfigSchema = Type.Object({
   enabled: Type.Boolean({ default: true }),
   /** Cap on the rendered conversation injected into extraction prompts (tail-priority). */
   maxTranscriptChars: Type.Number({ default: 24000 }),
@@ -22,12 +22,15 @@ const MemoryConfigSchema = Type.Object({
       recentDays: Type.Number({ default: 15 }),
       weeklyThresholdMonths: Type.Number({ default: 3 }),
       monthlyThresholdMonths: Type.Number({ default: 12 }),
+      // Transcript archives are pruned by age (deterministic, no agent run); 0 keeps them forever.
+      transcriptsSchedule: Type.String({ default: "50 3 * * *" }),
+      transcriptRetentionDays: Type.Number({ default: 90 }),
     },
     { default: {} },
   ),
 });
 
-type MemoryConfig = Static<typeof MemoryConfigSchema>;
+export type MemoryConfig = Static<typeof MemoryConfigSchema>;
 
 /**
  * Long-term memory: a git-versioned markdown store under workspace `memories/`
@@ -88,6 +91,10 @@ export default defineExtension<MemoryConfig>({
       );
       app.scheduler.cron("memory-preferences-maintenance", maintenance.preferencesSchedule, () =>
         runMaintenanceTick("preferences", deps),
+      );
+
+      app.scheduler.cron("memory-transcripts-maintenance", maintenance.transcriptsSchedule, () =>
+        pruneTranscripts(workspaceRoot, maintenance.transcriptRetentionDays, app.log),
       );
     }
   },

@@ -1,8 +1,11 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
+import type { Logger } from "../../log.ts";
 import type { PostProcessor } from "../api.ts";
 import { transcriptsDir } from "./layout.ts";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const headerSessionId = (raw: string): string | null => {
   const newline = raw.indexOf("\n");
@@ -52,3 +55,49 @@ export const createTranscriptArchiveProcessor = (workspaceRoot: string): PostPro
     }
   },
 });
+
+/**
+ * Deletes archived transcripts older than the retention window. Filenames are
+ * pi session ids, not dates, so age is read from each file's mtime (stamped at
+ * archive write = session close). Deterministic host-side deletion — unlike the
+ * store maintenance ticks, no headless agent runs. Never throws; a retention of
+ * 0 (or less) disables pruning and keeps transcripts forever.
+ */
+export const pruneTranscripts = async (
+  workspaceRoot: string,
+  retentionDays: number,
+  log: Logger,
+  now: () => Date = () => new Date(),
+): Promise<void> => {
+  if (retentionDays <= 0) return;
+
+  const dir = transcriptsDir(workspaceRoot);
+
+  let names: string[];
+
+  try {
+    names = await readdir(dir);
+  } catch {
+    return;
+  }
+
+  const cutoff = now().getTime() - retentionDays * DAY_MS;
+  let removed = 0;
+
+  for (const name of names) {
+    if (!name.endsWith(".jsonl")) continue;
+
+    const path = join(dir, name);
+
+    try {
+      if ((await stat(path)).mtimeMs >= cutoff) continue;
+
+      await unlink(path);
+      removed++;
+    } catch (error) {
+      log.warn({ path, err: error }, "failed to prune transcript");
+    }
+  }
+
+  if (removed > 0) log.info({ removed, retentionDays }, "pruned old transcripts");
+};
