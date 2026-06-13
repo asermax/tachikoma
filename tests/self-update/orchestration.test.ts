@@ -1,13 +1,16 @@
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NOTIFY_EVENT } from "../../src/extensions/notifications/payload.ts";
 import { runCheck } from "../../src/extensions/self-update/checker.ts";
 import type {
+  DevInstallDetector,
   Installer,
   RegistryClient,
   Restarter,
 } from "../../src/extensions/self-update/seams.ts";
 import { reconcileStartup } from "../../src/extensions/self-update/startup.ts";
 import { SelfUpdateState } from "../../src/extensions/self-update/state.ts";
+import { createRestartToolFactory } from "../../src/extensions/self-update/tools.ts";
 import { runUpgrade } from "../../src/extensions/self-update/upgrade.ts";
 import type { Logger } from "../../src/log.ts";
 
@@ -37,6 +40,10 @@ const createState = () => {
 
 const registryReturning = (version: string | null): RegistryClient => ({
   fetchLatest: async () => version,
+});
+
+const devInstallReturning = (isDev: boolean): DevInstallDetector => ({
+  isDevInstall: async () => isDev,
 });
 
 beforeEach(() => {
@@ -154,6 +161,7 @@ describe("runUpgrade", () => {
         registry: registryReturning("2.1.0"),
         installer,
         restarter,
+        devInstall: devInstallReturning(false),
         state,
         currentVersion: CURRENT,
         log: fakeLog,
@@ -178,6 +186,7 @@ describe("runUpgrade", () => {
       registry: registryReturning("2.0.1"),
       installer: { install },
       restarter,
+      devInstall: devInstallReturning(false),
       state,
       currentVersion: CURRENT,
       log: fakeLog,
@@ -199,6 +208,7 @@ describe("runUpgrade", () => {
       registry: registryReturning("2.1.0"),
       installer: { install },
       restarter: createRestarter(),
+      devInstall: devInstallReturning(false),
       state,
       currentVersion: CURRENT,
       log: fakeLog,
@@ -221,6 +231,7 @@ describe("runUpgrade", () => {
         registry: registryReturning("2.1.0"),
         installer: { install },
         restarter,
+        devInstall: devInstallReturning(false),
         state,
         currentVersion: CURRENT,
         log: fakeLog,
@@ -231,6 +242,76 @@ describe("runUpgrade", () => {
     expect(state.getUpgradeMarker()).toBeNull();
     expect(state.getFailedVersion()).toBe("2.1.0");
     expect(restarter.restart).not.toHaveBeenCalled();
+  });
+
+  it("refuses to install from a development install and leaves state untouched", async () => {
+    const state = createState();
+    const install = vi.fn(async () => {});
+    const restarter = createRestarter();
+
+    const outcome = await runUpgrade({
+      registry: registryReturning("2.1.0"),
+      installer: { install },
+      restarter,
+      devInstall: devInstallReturning(true),
+      state,
+      currentVersion: CURRENT,
+      log: fakeLog,
+      now,
+    });
+
+    expect(outcome.status).toBe("dev-install");
+    expect(install).not.toHaveBeenCalled();
+    expect(state.getUpgradeMarker()).toBeNull();
+    expect(restarter.restart).not.toHaveBeenCalled();
+  });
+
+  it("proceeds with the install when not a development install", async () => {
+    const state = createState();
+    const install = vi.fn(async () => {});
+    const restarter = createRestarter();
+
+    await expect(
+      runUpgrade({
+        registry: registryReturning("2.1.0"),
+        installer: { install },
+        restarter,
+        devInstall: devInstallReturning(false),
+        state,
+        currentVersion: CURRENT,
+        log: fakeLog,
+        now,
+      }),
+    ).rejects.toThrow("__restart__");
+
+    expect(install).toHaveBeenCalledWith("2.1.0");
+    expect(restarter.restart).toHaveBeenCalledOnce();
+  });
+});
+
+describe("createRestartToolFactory", () => {
+  interface CapturedTool {
+    name: string;
+    execute: () => Promise<unknown>;
+  }
+
+  it("registers restart_self and restarts via the Restarter seam on execute", async () => {
+    const restart = vi.fn(() => {
+      throw new Error("__restart__");
+    });
+    const restarter = { restart } as unknown as Restarter;
+
+    let captured: CapturedTool | null = null;
+    const pi = { registerTool: (tool: CapturedTool) => (captured = tool) };
+
+    createRestartToolFactory(() => restarter)(pi as unknown as Parameters<ExtensionFactory>[0]);
+
+    expect(captured).not.toBeNull();
+    const tool = captured as unknown as CapturedTool;
+    expect(tool.name).toBe("restart_self");
+
+    await expect(tool.execute()).rejects.toThrow("__restart__");
+    expect(restart).toHaveBeenCalledOnce();
   });
 });
 

@@ -1,12 +1,13 @@
 import type { Logger } from "../../log.ts";
 import { decideUpgrade, UPGRADE_GATES } from "./decisions.ts";
-import type { Installer, RegistryClient, Restarter } from "./seams.ts";
+import type { DevInstallDetector, Installer, RegistryClient, Restarter } from "./seams.ts";
 import type { SelfUpdateState } from "./state.ts";
 
 export interface UpgradeDeps {
   registry: RegistryClient;
   installer: Installer;
   restarter: Restarter;
+  devInstall: DevInstallDetector;
   state: SelfUpdateState;
   currentVersion: string;
   log: Logger;
@@ -14,7 +15,7 @@ export interface UpgradeDeps {
 }
 
 export interface UpgradeOutcome {
-  status: "started" | "up-to-date" | "registry-unavailable" | "blocked-failed";
+  status: "started" | "up-to-date" | "registry-unavailable" | "blocked-failed" | "dev-install";
   detail: string;
 }
 
@@ -36,6 +37,7 @@ export const runUpgrade = async ({
   registry,
   installer,
   restarter,
+  devInstall,
   state,
   currentVersion,
   log,
@@ -66,6 +68,16 @@ export const runUpgrade = async ({
   }
 
   const target = latestVersion as string;
+
+  if (await devInstall.isDevInstall()) {
+    log.warn({ to: target }, "refusing to self-upgrade from a development install");
+
+    return {
+      status: "dev-install",
+      detail:
+        "Refusing to self-upgrade from a development install (linked or source checkout). Upgrade manually from your working tree instead.",
+    };
+  }
 
   state.setUpgradeMarker({
     previousVersion: currentVersion,

@@ -4,6 +4,7 @@ import { defineExtension } from "../api.ts";
 import { type NotifyEmitter, runCheck } from "./checker.ts";
 import {
   CommandInstaller,
+  NpmGlobalDevInstallDetector,
   NpmRegistryClient,
   PACKAGE_NAME,
   ProcessRestarter,
@@ -11,7 +12,7 @@ import {
 } from "./seams.ts";
 import { reconcileStartup } from "./startup.ts";
 import { SelfUpdateState } from "./state.ts";
-import { createUpgradeToolFactory } from "./tools.ts";
+import { createRestartToolFactory, createUpgradeToolFactory } from "./tools.ts";
 import type { UpgradeDeps } from "./upgrade.ts";
 
 interface SelfUpdateConfig {
@@ -58,6 +59,7 @@ export default defineExtension<SelfUpdateConfig>({
     const registry = new NpmRegistryClient(app.log);
     const installer = new CommandInstaller(app.extensionConfig.installCommand, app.log);
     const restarter = new ProcessRestarter(app.log);
+    const devInstall = new NpmGlobalDevInstallDetector(app.log);
     const emit: NotifyEmitter = (event, payload) => app.events.emit(event, payload);
 
     app.log.info({ currentVersion }, "self-update active");
@@ -70,12 +72,14 @@ export default defineExtension<SelfUpdateConfig>({
       registry,
       installer,
       restarter,
+      devInstall,
       state,
       currentVersion,
       log: app.log,
     });
 
     app.agent.use(createUpgradeToolFactory(upgradeDeps));
+    app.agent.use(createRestartToolFactory(() => restarter));
 
     app.scheduler.cron("self-update-check", app.extensionConfig.checkCron, () =>
       runCheck({ registry, state, currentVersion, emit, log: app.log }),

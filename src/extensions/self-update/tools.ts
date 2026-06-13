@@ -1,9 +1,12 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import type { Restarter } from "./seams.ts";
 import { runUpgrade, type UpgradeDeps } from "./upgrade.ts";
 
 export const UpgradeSelfParams = Type.Object({});
+
+export const RestartSelfParams = Type.Object({});
 
 /**
  * pi extension factory exposing the `upgrade_self` tool. On a successful upgrade
@@ -32,6 +35,31 @@ export const createUpgradeToolFactory =
           content: [{ type: "text", text: outcome.detail }],
           details: undefined,
         };
+      },
+    });
+  };
+
+/**
+ * pi extension factory exposing the `restart_self` tool. Restarts the process
+ * via the Restarter seam WITHOUT upgrading, so the call does not return on
+ * success; the agent should treat any returned text as "did not restart".
+ */
+export const createRestartToolFactory =
+  (restarter: () => Restarter): ExtensionFactory =>
+  (pi) => {
+    pi.registerTool({
+      name: "restart_self",
+      label: "Restart Tachikoma",
+      description:
+        "Restart Tachikoma without upgrading, to pick up configuration or state changes. This re-execs the current version in place; on success the process restarts and the tool call does not return.",
+      promptSnippet: "Restart Tachikoma in place to pick up config/state changes (no upgrade)",
+      promptGuidelines: [
+        "Only call restart_self when the user explicitly asks to restart Tachikoma without upgrading (e.g. to apply config or state changes).",
+        "A successful restart re-execs the process, so you will not see a tool result; tell the user the restart is starting before calling it.",
+      ],
+      parameters: RestartSelfParams,
+      async execute() {
+        return restarter().restart();
       },
     });
   };

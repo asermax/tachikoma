@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
@@ -26,6 +26,15 @@ export interface Installer {
 export interface Restarter {
   /** Replace the current process with a fresh boot of the (now installed) version. */
   restart(): never;
+}
+
+export interface DevInstallDetector {
+  /**
+   * True when the running copy looks like a development/editable install (e.g.
+   * `npm link` or a checkout outside the global node_modules root), where a
+   * self-upgrade would clobber the developer's working tree.
+   */
+  isDevInstall(): Promise<boolean>;
 }
 
 export const PACKAGE_NAME = "@asermax/tachikoma";
@@ -111,6 +120,66 @@ export class ProcessRestarter implements Restarter {
     const result = spawnSync(process.execPath, process.argv.slice(1), { stdio: "inherit" });
 
     process.exit(result.status ?? 0);
+  }
+}
+
+/**
+ * Detects an editable/development install of the global npm package. A global
+ * install lives under `<prefix>/lib/node_modules/<pkg>` as a real directory; a
+ * `npm link` makes that path a symlink into the dev checkout, and a checkout run
+ * straight from source resolves outside the global node_modules root entirely.
+ * Either case means a self-upgrade would overwrite or bypass the dev tree.
+ */
+export class NpmGlobalDevInstallDetector implements DevInstallDetector {
+  private readonly log: Logger;
+
+  constructor(log: Logger) {
+    this.log = log;
+  }
+
+  async isDevInstall(): Promise<boolean> {
+    const here = dirname(fileURLToPath(import.meta.url));
+
+    try {
+      const globalRoot = this.resolveGlobalRoot();
+
+      if (globalRoot == null) {
+        this.log.warn("could not resolve npm global root; treating install as development");
+        return true;
+      }
+
+      // A linked package surfaces as a symlink at the package dir inside the
+      // global root; walk up from this module to that directory and inspect it.
+      const packageDir = resolve(here, "..", "..", "..");
+      const realPackageDir = await realpath(packageDir);
+      const realGlobalRoot = await realpath(globalRoot);
+
+      if (!realPackageDir.startsWith(`${realGlobalRoot}/`)) return true;
+
+      const linkedEntry = join(realGlobalRoot, PACKAGE_NAME);
+      const stats = await lstat(linkedEntry);
+
+      return stats.isSymbolicLink();
+    } catch (error) {
+      this.log.warn(
+        { err: error },
+        "dev-install detection failed; treating install as development",
+      );
+      return true;
+    }
+  }
+
+  private resolveGlobalRoot(): string | null {
+    const result = spawnSync("npm", ["root", "-g"], {
+      encoding: "utf8",
+      timeout: REGISTRY_TIMEOUT_MS,
+    });
+
+    if (result.status !== 0 || typeof result.stdout !== "string") return null;
+
+    const root = result.stdout.trim();
+
+    return root === "" ? null : root;
   }
 }
 
