@@ -1,3 +1,14 @@
+# [2.3.0](https://github.com/asermax/tachikoma/compare/v2.2.0...v2.3.0) (2026-06-13)
+
+
+### Features
+
+* **extensions:** scope tool factories to sessions via sessionScopes ([eb6bd52](https://github.com/asermax/tachikoma/commit/eb6bd5271fe534caf2731c33e9f028a762e2818f))
+* **log:** persist structured logs to a rotated file for daemon runs ([b2f6902](https://github.com/asermax/tachikoma/commit/b2f69020b1ce57eeaa35861afad37f8cc085d8a7))
+* **notifications:** drain held + pending notices on shutdown ([4d7df69](https://github.com/asermax/tachikoma/commit/4d7df693fba9fd85e13b4b4a78a5457c5b80a854))
+* **scheduler:** single-flight every() interval jobs ([b9085bc](https://github.com/asermax/tachikoma/commit/b9085bc836e6290dece59f2d6d6987087c5f0b72))
+* **tasks:** run background tasks on a persistent pi session ([b44a48c](https://github.com/asermax/tachikoma/commit/b44a48cd0f64943f52eb305774124d58c3b7ee7a))
+
 # [2.2.0](https://github.com/asermax/tachikoma/compare/v2.1.0...v2.2.0) (2026-06-13)
 
 
