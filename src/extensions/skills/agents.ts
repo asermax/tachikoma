@@ -103,10 +103,19 @@ export const discoverSkillAgents = (skillsRoot: string, log: Logger): SkillAgent
           log.warn({ skill, agent: file }, "skill agent has invalid model — using default tier");
         }
 
+        const tools = parseTools(frontmatter.tools);
+
+        if (frontmatter.tools != null && tools == null) {
+          log.warn(
+            { skill, agent: file },
+            "skill agent has invalid tools format — using default tool set",
+          );
+        }
+
         agents.push({
           name: `${skill}/${name}`,
           description: frontmatter.description,
-          tools: parseTools(frontmatter.tools),
+          tools,
           model,
           systemPrompt: body,
           skill,

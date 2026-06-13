@@ -94,6 +94,25 @@ describe("discoverSkillAgents", () => {
     expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.tools).toBeNull();
   });
 
+  it("warns and falls back to the default tool set on malformed tools, keeping the agent", async () => {
+    const warn = vi.mocked(fakeLog.warn).mockClear();
+
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\ntools:\n  nested: true\n---\n\nBody.",
+    );
+
+    const agents = discoverSkillAgents(skillsRoot, fakeLog);
+
+    expect(agents[0]?.name).toBe("research/scout");
+    expect(agents[0]?.tools).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      { skill: "research", agent: "scout.md" },
+      "skill agent has invalid tools format — using default tool set",
+    );
+  });
+
   it("skips agents without a description", async () => {
     await writeAgent("research", "broken.md", "---\ntools: read\n---\n\nNo description.");
     await writeAgent("research", "valid.md", "---\ndescription: Works\n---\n\nBody.");
