@@ -1,5 +1,6 @@
 import type { TachikomaExtension } from "./api.ts";
 import boundary from "./boundary/index.ts";
+import commands from "./commands/index.ts";
 import context from "./context/index.ts";
 import detachedProcesses from "./detached-processes/index.ts";
 import external from "./external/index.ts";
@@ -15,6 +16,7 @@ import workflows from "./workflows/index.ts";
 
 /** First-party extensions, in load order. */
 export const firstPartyExtensions = [
+  commands,
   context,
   memory,
   projects,

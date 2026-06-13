@@ -58,17 +58,32 @@ export class Coordinator {
   }
 
   submit(message: InboundMessage): void {
+    // "/queue …" opts out of steering: the message waits for the next exchange.
+    const queued = message.text.startsWith("/queue ");
+    const normalized = queued
+      ? {
+          ...message,
+          text: message.text.slice("/queue ".length).trim(),
+          metadata: { ...message.metadata, queued: true },
+        }
+      : message;
+
     // Messages arriving mid-exchange steer the live run instead of waiting in line.
-    if (this.exchanging && this.active != null && message.metadata.origin !== "system") {
+    if (
+      !queued &&
+      this.exchanging &&
+      this.active != null &&
+      normalized.metadata.origin !== "system"
+    ) {
       const session = this.active.session;
 
       void session
-        .steer(renderPrompt(message))
-        .catch((error) => this.log.error({ err: error }, "steering failed — queueing instead"));
+        .steer(renderPrompt(normalized))
+        .catch((error) => this.log.error({ err: error }, "steering failed — message dropped"));
       return;
     }
 
-    this.inbox.push(message);
+    this.inbox.push(normalized);
     this.wake?.();
     this.wake = null;
   }
@@ -219,6 +234,9 @@ export class Coordinator {
 
     try {
       await this.runInboundMiddleware(message);
+
+      // A middleware (e.g. the commands extension) fully handled the message.
+      if (message.metadata.handled === true) return;
 
       const active = await this.ensureSession(message.channel);
       const blocks = await this.collectContext(message, active.record);
