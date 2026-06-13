@@ -5,7 +5,7 @@ import { type Static, Type } from "typebox";
 
 import { expandHome } from "../../workspace.ts";
 import { defineExtension } from "../api.ts";
-import { TelegramChannel } from "./channel.ts";
+import { type ChannelMessageStore, TelegramChannel } from "./channel.ts";
 import { CHANNEL_NAME } from "./inbound.ts";
 import { ensureMediaDir } from "./media.ts";
 import { registerTelegramTools } from "./tools.ts";
@@ -48,19 +48,24 @@ export default defineExtension<TelegramConfig>({
 
     const bot = new Bot(botToken);
     const mediaDir = join(app.workspace.dataDir, "media");
+
+    const store: ChannelMessageStore = {
+      record: (messageId, sessionId, direction) =>
+        app.sessions.recordChannelMessage(CHANNEL_NAME, messageId, sessionId, direction),
+      findSessionId: (messageId) =>
+        app.sessions.findSessionByMessageId(CHANNEL_NAME, messageId)?.id ?? null,
+    };
+
+    const currentSessionId = () => app.sessions.current()?.id ?? null;
+
     const channel = new TelegramChannel(bot, {
       chatId,
       allowMedia,
       pushNotifications,
       mediaDir,
       stop: () => app.sessions.abortExchange(),
-      store: {
-        record: (messageId, sessionId, direction) =>
-          app.sessions.recordChannelMessage(CHANNEL_NAME, messageId, sessionId, direction),
-        findSessionId: (messageId) =>
-          app.sessions.findSessionByMessageId(CHANNEL_NAME, messageId)?.id ?? null,
-      },
-      currentSessionId: () => app.sessions.current()?.id ?? null,
+      store,
+      currentSessionId,
     });
 
     app.bootstrap("media-dir", () => ensureMediaDir(mediaDir, app.log));
@@ -82,6 +87,8 @@ export default defineExtension<TelegramConfig>({
         allowedRoots,
         getLastInboundMessageId: () => channel.lastInboundMessageId,
         getLastOutboundMessageId: () => channel.lastOutboundMessageId,
+        store,
+        currentSessionId,
       });
     });
   },

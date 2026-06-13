@@ -18,6 +18,7 @@ import { Mutex } from "./mutex.ts";
 import type { ChannelMessageDirection } from "./schema.ts";
 import { deliverText, startTyping } from "./sending.ts";
 import { StreamRenderer } from "./streaming.ts";
+import { formatToolActivity } from "./tool-labels.ts";
 
 /** Persists message id ↔ session mappings so a reply-to can be force-routed. */
 export interface ChannelMessageStore {
@@ -182,7 +183,7 @@ export class TelegramChannel implements Channel {
               break;
 
             case "tool-start":
-              await renderer.showTransient(`⚙ ${event.toolName}`);
+              await renderer.showTransient(`🔧 ${formatToolActivity(event.toolName, event.args)}`);
               break;
 
             case "status":

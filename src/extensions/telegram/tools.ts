@@ -6,6 +6,7 @@ import type { InlineKeyboardMarkup, ReactionTypeEmoji } from "grammy/types";
 import { type Static, Type } from "typebox";
 
 import { buildInlineKeyboard, validateButtons } from "./buttons.ts";
+import type { ChannelMessageStore } from "./channel.ts";
 
 /** Narrow grammY API surface the tools call — fakeable in tests. */
 export interface ToolApi {
@@ -55,6 +56,10 @@ export interface ToolDeps {
   allowedRoots: string[];
   getLastInboundMessageId: () => number | null;
   getLastOutboundMessageId: () => number | null;
+  /** Record/lookup message↔session mappings for reply-to routing. */
+  store: ChannelMessageStore;
+  /** Id of the session currently receiving messages, for outbound recording. */
+  currentSessionId: () => number | null;
 }
 
 // ---- send_telegram_file -------------------------------------------------------
@@ -225,7 +230,7 @@ const ButtonsParams = Type.Object({
 });
 
 export const handleSendMessageWithButtons = async (
-  deps: Pick<ToolDeps, "api" | "chatId">,
+  deps: Pick<ToolDeps, "api" | "chatId" | "store" | "currentSessionId">,
   params: Static<typeof ButtonsParams>,
 ): Promise<string> => {
   validateButtons(params.buttons);
@@ -233,6 +238,11 @@ export const handleSendMessageWithButtons = async (
   const sent = await deps.api.sendMessage(deps.chatId, params.prompt, {
     reply_markup: buildInlineKeyboard(params.buttons, params.singleUse ?? true),
   });
+
+  // Map the prompt to the current session so a reply (or tap) routes back to
+  // the session that asked the question, mirroring regular outbound recording.
+  const sessionId = deps.currentSessionId();
+  if (sessionId != null) deps.store.record(String(sent.message_id), sessionId, "outgoing");
 
   return `Buttons sent (message_id: ${sent.message_id})`;
 };

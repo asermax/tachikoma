@@ -163,22 +163,30 @@ describe("pinning", () => {
 });
 
 describe("handleSendMessageWithButtons", () => {
+  const buttonDeps = (
+    api: ToolApi,
+    overrides: Partial<Parameters<typeof handleSendMessageWithButtons>[0]> = {},
+  ) => ({
+    api,
+    chatId: 42,
+    store: { record: vi.fn(), findSessionId: vi.fn(() => null) },
+    currentSessionId: () => 100 as number | null,
+    ...overrides,
+  });
+
   it("sends the prompt with a packed inline keyboard", async () => {
     const api = fakeApi();
 
-    const result = await handleSendMessageWithButtons(
-      { api, chatId: 42 },
-      {
-        prompt: "Proceed?",
-        buttons: [
-          [
-            { label: "Yes", value: "yes" },
-            { label: "No", value: "no" },
-          ],
-          [{ label: "Cancel", value: "cancel" }],
+    const result = await handleSendMessageWithButtons(buttonDeps(api), {
+      prompt: "Proceed?",
+      buttons: [
+        [
+          { label: "Yes", value: "yes" },
+          { label: "No", value: "no" },
         ],
-      },
-    );
+        [{ label: "Cancel", value: "cancel" }],
+      ],
+    });
 
     expect(result).toBe("Buttons sent (message_id: 11)");
     expect(api.sendMessage).toHaveBeenCalledWith(42, "Proceed?", {
@@ -197,19 +205,47 @@ describe("handleSendMessageWithButtons", () => {
   it("packs multi-use callbacks when singleUse is false", async () => {
     const api = fakeApi();
 
-    await handleSendMessageWithButtons(
-      { api, chatId: 42 },
-      { prompt: "Pick", buttons: [[{ label: "A", value: "a" }]], singleUse: false },
-    );
+    await handleSendMessageWithButtons(buttonDeps(api), {
+      prompt: "Pick",
+      buttons: [[{ label: "A", value: "a" }]],
+      singleUse: false,
+    });
 
     expect(api.sendMessage).toHaveBeenCalledWith(42, "Pick", {
       reply_markup: { inline_keyboard: [[{ text: "A", callback_data: "btnN:a" }]] },
     });
   });
 
+  it("records the prompt as an outgoing message for the current session", async () => {
+    const api = fakeApi();
+    const record = vi.fn();
+
+    await handleSendMessageWithButtons(
+      buttonDeps(api, { store: { record, findSessionId: vi.fn(() => null) } }),
+      { prompt: "Proceed?", buttons: [[{ label: "Yes", value: "yes" }]] },
+    );
+
+    expect(record).toHaveBeenCalledWith("11", 100, "outgoing");
+  });
+
+  it("skips recording when no session is active", async () => {
+    const api = fakeApi();
+    const record = vi.fn();
+
+    await handleSendMessageWithButtons(
+      buttonDeps(api, {
+        store: { record, findSessionId: vi.fn(() => null) },
+        currentSessionId: () => null,
+      }),
+      { prompt: "Proceed?", buttons: [[{ label: "Yes", value: "yes" }]] },
+    );
+
+    expect(record).not.toHaveBeenCalled();
+  });
+
   it("rejects invalid button layouts before sending", async () => {
     const api = fakeApi();
-    const base = { api, chatId: 42 };
+    const base = buttonDeps(api);
 
     await expect(handleSendMessageWithButtons(base, { prompt: "x", buttons: [] })).rejects.toThrow(
       /at least one row/,
