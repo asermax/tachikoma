@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!drizzle"]
+    "includes": ["**", "!drizzle", "!.pi"]
   },
   "formatter": {
     "enabled": true,
