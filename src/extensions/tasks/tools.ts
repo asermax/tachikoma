@@ -61,6 +61,40 @@ export const QueryTaskInstancesParams = Type.Object({
   limit: Type.Optional(Type.Number({ description: "Maximum entries to return (default 20)" })),
 });
 
+export const GetTaskParams = Type.Object({
+  task: Type.String({
+    description: "ID or exact name of the task definition to inspect (get IDs from list_tasks)",
+  }),
+});
+
+export const DeleteTaskParams = Type.Object({
+  task: Type.String({
+    description: "ID or exact name of the task definition to delete (get IDs from list_tasks)",
+  }),
+});
+
+export const RunTaskNowParams = Type.Object({
+  task: Type.Optional(
+    Type.String({
+      description:
+        "ID or exact name of an existing task definition to run immediately (by-reference mode)",
+    }),
+  ),
+  prompt: Type.Optional(
+    Type.String({
+      description: "Ad-hoc instruction to run immediately without a stored definition",
+    }),
+  ),
+  type: Type.Optional(
+    StringEnum(["session", "background"] as const, {
+      description: "Ad-hoc task type — 'session' or 'background' (default 'background')",
+    }),
+  ),
+  name: Type.Optional(
+    Type.String({ description: "Human-readable label for an ad-hoc run (ad-hoc mode only)" }),
+  ),
+});
+
 const describeDefinition = (
   definition: TaskDefinitionRecord,
   timezone: string | undefined,
@@ -177,6 +211,107 @@ export const handleQueryTaskInstances = (
   return lines.join("\n");
 };
 
+export const handleGetTask = (
+  { repository, timezone }: ToolDeps,
+  args: Static<typeof GetTaskParams>,
+): string => {
+  const definition = repository.resolveDefinition(args.task);
+
+  if (definition == null) throw new Error(`Task '${args.task}' not found.`);
+
+  const lastFired =
+    definition.lastFiredAt != null ? formatInTimezone(definition.lastFiredAt, timezone) : "never";
+
+  const lines = [
+    `# ${definition.name}`,
+    "",
+    `- ID: ${definition.id}`,
+    `- Type: ${definition.taskType}`,
+    `- Status: ${definition.enabled ? "✓ enabled" : "✗ disabled"}`,
+    `- Schedule: ${formatSchedule(definition.schedule, timezone)}`,
+    `- Last run: ${lastFired}`,
+    `- Created: ${formatInTimezone(definition.createdAt, timezone)}`,
+  ];
+
+  const latest = repository.getLatestInstanceForDefinition(definition.id);
+
+  if (latest != null) {
+    lines.push(
+      "",
+      "## Latest instance",
+      `- [${latest.id}] ${latest.status} — scheduled for ${formatInTimezone(latest.scheduledFor, timezone)}`,
+    );
+
+    if (latest.result != null) lines.push(`- Result: ${latest.result}`);
+  }
+
+  lines.push("", "## Prompt", "", definition.prompt);
+
+  return lines.join("\n");
+};
+
+export const handleDeleteTask = (
+  { repository }: ToolDeps,
+  args: Static<typeof DeleteTaskParams>,
+): string => {
+  const definition = repository.resolveDefinition(args.task);
+
+  if (definition == null) throw new Error(`Task '${args.task}' not found.`);
+
+  repository.deleteDefinition(definition.id);
+
+  return `Task '${definition.name}' deleted.`;
+};
+
+export const handleRunTaskNow = (
+  { repository, now }: ToolDeps,
+  args: Static<typeof RunTaskNowParams>,
+): string => {
+  const byReference = args.task != null;
+  const adHoc = args.prompt != null;
+
+  if (byReference && adHoc) {
+    throw new Error("Provide exactly one of 'task' or 'prompt', not both.");
+  }
+
+  if (!byReference && !adHoc) {
+    throw new Error("Either 'task' or 'prompt' is required.");
+  }
+
+  // Ad-hoc instances carry the prompt directly; by-reference instances snapshot
+  // the definition's prompt without mutating the definition (schedule, enabled,
+  // and lastFiredAt are untouched, so auto-disabled one-shots still run).
+  if (byReference) {
+    if (args.name != null) throw new Error("'name' can only be used with 'prompt'.");
+
+    const definition = repository.resolveDefinition(args.task as string);
+
+    if (definition == null) throw new Error(`Task '${args.task}' not found.`);
+
+    const instance = repository.createInstance({
+      definitionId: definition.id,
+      taskType: definition.taskType,
+      prompt: definition.prompt,
+      scheduledFor: now(),
+    });
+
+    return `${definition.taskType} task '${definition.name}' queued. Instance ID: ${instance.id}`;
+  }
+
+  const taskType = args.type ?? "background";
+
+  const instance = repository.createInstance({
+    definitionId: null,
+    taskType,
+    prompt: args.prompt as string,
+    scheduledFor: now(),
+  });
+
+  const label = args.name ?? (args.prompt as string).slice(0, 80);
+
+  return `${taskType} task '${label}' queued. Instance ID: ${instance.id}`;
+};
+
 const textResult = (text: string) => ({
   content: [{ type: "text" as const, text }],
   details: undefined,
@@ -228,6 +363,51 @@ export const createTaskToolsFactory =
       parameters: ListTasksParams,
       async execute(_toolCallId, params) {
         return textResult(handleListTasks(deps, params));
+      },
+    });
+
+    pi.registerTool({
+      name: "get_task",
+      label: "Get Task",
+      description:
+        "Fetch the full details of a single task definition by ID or exact name, including its complete prompt and a summary of its most recent instance.",
+      promptSnippet: "Inspect one scheduled task definition in full",
+      promptGuidelines: [
+        "Use get_task to read a task's full prompt or check its latest run before editing it.",
+      ],
+      parameters: GetTaskParams,
+      async execute(_toolCallId, params) {
+        return textResult(handleGetTask(deps, params));
+      },
+    });
+
+    pi.registerTool({
+      name: "delete_task",
+      label: "Delete Task",
+      description:
+        "Permanently delete a task definition by ID or exact name. This cannot be undone — to keep it but stop it firing, use update_task with enabled=false instead.",
+      promptSnippet: "Permanently remove a scheduled task definition",
+      promptGuidelines: [
+        "Prefer update_task with enabled=false over delete_task unless the user wants the task gone for good.",
+      ],
+      parameters: DeleteTaskParams,
+      async execute(_toolCallId, params) {
+        return textResult(handleDeleteTask(deps, params));
+      },
+    });
+
+    pi.registerTool({
+      name: "run_task_now",
+      label: "Run Task Now",
+      description:
+        "Run a task immediately, bypassing the schedule. By-reference: pass 'task' (ID or name) of an existing definition — its prompt is snapshotted and the definition is left unchanged. Ad-hoc: pass 'prompt' (and optionally 'type' and a readable 'name') to fire a one-off task with no stored definition. Provide exactly one of 'task' or 'prompt'. The queued instance is dispatched on the next scheduler tick.",
+      promptSnippet: "Run a task right now (by reference or ad-hoc)",
+      promptGuidelines: [
+        "Use run_task_now when the user wants a scheduled task to run immediately, or to fire a one-off background job without scheduling it.",
+      ],
+      parameters: RunTaskNowParams,
+      async execute(_toolCallId, params) {
+        return textResult(handleRunTaskNow(deps, params));
       },
     });
 

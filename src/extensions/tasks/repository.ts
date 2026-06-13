@@ -77,6 +77,23 @@ export class TaskRepository {
     return this.db.select().from(taskDefinitions).where(eq(taskDefinitions.id, id)).get() ?? null;
   }
 
+  getDefinitionByName(name: string): TaskDefinitionRecord | null {
+    return (
+      this.db.select().from(taskDefinitions).where(eq(taskDefinitions.name, name)).get() ?? null
+    );
+  }
+
+  /** Resolve a definition by exact ID, falling back to an exact name match. */
+  resolveDefinition(idOrName: string): TaskDefinitionRecord | null {
+    return this.getDefinition(idOrName) ?? this.getDefinitionByName(idOrName);
+  }
+
+  deleteDefinition(id: string): boolean {
+    return (
+      this.db.delete(taskDefinitions).where(eq(taskDefinitions.id, id)).returning().all().length > 0
+    );
+  }
+
   listEnabledDefinitions(): TaskDefinitionRecord[] {
     return this.db.select().from(taskDefinitions).where(eq(taskDefinitions.enabled, true)).all();
   }
@@ -120,6 +137,17 @@ export class TaskRepository {
 
   getInstance(id: string): TaskInstanceRecord | null {
     return this.db.select().from(taskInstances).where(eq(taskInstances.id, id)).get() ?? null;
+  }
+
+  getLatestInstanceForDefinition(definitionId: string): TaskInstanceRecord | null {
+    return (
+      this.db
+        .select()
+        .from(taskInstances)
+        .where(eq(taskInstances.definitionId, definitionId))
+        .orderBy(desc(taskInstances.createdAt))
+        .get() ?? null
+    );
   }
 
   getPendingInstances(taskType: TaskType): TaskInstanceRecord[] {

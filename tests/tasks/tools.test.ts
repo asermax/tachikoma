@@ -4,8 +4,11 @@ import type { AppDatabase } from "../../src/db/index.ts";
 import { TaskRepository } from "../../src/extensions/tasks/repository.ts";
 import {
   handleCreateTask,
+  handleDeleteTask,
+  handleGetTask,
   handleListTasks,
   handleQueryTaskInstances,
+  handleRunTaskNow,
   handleUpdateTask,
   type ToolDeps,
 } from "../../src/extensions/tasks/tools.ts";
@@ -203,5 +206,160 @@ describe("handleQueryTaskInstances", () => {
 
   it("reports when nothing matches", () => {
     expect(handleQueryTaskInstances(deps, { status: "failed" })).toBe("No task instances found.");
+  });
+});
+
+describe("handleGetTask", () => {
+  it("returns full details by id, including the latest instance summary", () => {
+    const definition = repository.createDefinition({
+      name: "briefing",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "background",
+      prompt: "do the briefing in full detail",
+    });
+    const instance = repository.createInstance({
+      definitionId: definition.id,
+      taskType: "background",
+      prompt: definition.prompt,
+      scheduledFor: current,
+    });
+    repository.updateInstance(instance.id, { status: "completed", result: "all done" });
+
+    const message = handleGetTask(deps, { task: definition.id });
+
+    expect(message).toContain("# briefing");
+    expect(message).toContain(`- ID: ${definition.id}`);
+    expect(message).toContain("- Type: background");
+    expect(message).toContain("do the briefing in full detail");
+    expect(message).toContain("## Latest instance");
+    expect(message).toContain(instance.id);
+    expect(message).toContain("Result: all done");
+  });
+
+  it("resolves a definition by exact name", () => {
+    repository.createDefinition({
+      name: "named task",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "session",
+      prompt: "prompt",
+    });
+
+    expect(handleGetTask(deps, { task: "named task" })).toContain("# named task");
+  });
+
+  it("throws for an unknown task", () => {
+    expect(() => handleGetTask(deps, { task: "missing" })).toThrow("Task 'missing' not found.");
+  });
+});
+
+describe("handleDeleteTask", () => {
+  it("deletes a definition by id", () => {
+    const definition = repository.createDefinition({
+      name: "doomed",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "session",
+      prompt: "prompt",
+    });
+
+    expect(handleDeleteTask(deps, { task: definition.id })).toBe("Task 'doomed' deleted.");
+    expect(repository.getDefinition(definition.id)).toBeNull();
+  });
+
+  it("deletes a definition by exact name", () => {
+    const definition = repository.createDefinition({
+      name: "delete me",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "session",
+      prompt: "prompt",
+    });
+
+    expect(handleDeleteTask(deps, { task: "delete me" })).toBe("Task 'delete me' deleted.");
+    expect(repository.getDefinition(definition.id)).toBeNull();
+  });
+
+  it("throws for an unknown task", () => {
+    expect(() => handleDeleteTask(deps, { task: "missing" })).toThrow("Task 'missing' not found.");
+  });
+});
+
+describe("handleRunTaskNow", () => {
+  it("queues an instance by reference, snapshotting the prompt without mutating the definition", () => {
+    const definition = repository.createDefinition({
+      name: "reference task",
+      schedule: { type: "once", at: "2026-08-01T09:00:00.000Z" },
+      taskType: "background",
+      prompt: "reference prompt",
+      enabled: false,
+    });
+
+    const message = handleRunTaskNow(deps, { task: definition.id });
+
+    expect(message).toContain("background task 'reference task' queued.");
+
+    const instances = repository.queryInstances({ definitionId: definition.id });
+    expect(instances).toHaveLength(1);
+    expect(instances[0]).toMatchObject({
+      taskType: "background",
+      prompt: "reference prompt",
+      status: "pending",
+      scheduledFor: current,
+    });
+
+    // The auto-disabled one-shot definition is left untouched.
+    expect(repository.getDefinition(definition.id)).toMatchObject({
+      enabled: false,
+      lastFiredAt: null,
+    });
+  });
+
+  it("queues an ad-hoc instance with an inline prompt and explicit type", () => {
+    const message = handleRunTaskNow(deps, {
+      prompt: "ad-hoc work",
+      type: "session",
+      name: "quick job",
+    });
+
+    expect(message).toContain("session task 'quick job' queued.");
+
+    const instances = repository.queryInstances({ taskType: "session" });
+    expect(instances).toHaveLength(1);
+    expect(instances[0]).toMatchObject({
+      definitionId: null,
+      prompt: "ad-hoc work",
+      status: "pending",
+    });
+  });
+
+  it("defaults an ad-hoc run to background", () => {
+    handleRunTaskNow(deps, { prompt: "background by default" });
+
+    expect(repository.queryInstances({ taskType: "background" })).toHaveLength(1);
+  });
+
+  it("rejects providing both task and prompt", () => {
+    expect(() => handleRunTaskNow(deps, { task: "x", prompt: "y" })).toThrow(
+      "Provide exactly one of 'task' or 'prompt', not both.",
+    );
+  });
+
+  it("rejects providing neither task nor prompt", () => {
+    expect(() => handleRunTaskNow(deps, {})).toThrow("Either 'task' or 'prompt' is required.");
+  });
+
+  it("rejects 'name' in by-reference mode", () => {
+    const definition = repository.createDefinition({
+      name: "task",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "background",
+      prompt: "prompt",
+    });
+
+    expect(() => handleRunTaskNow(deps, { task: definition.id, name: "label" })).toThrow(
+      "'name' can only be used with 'prompt'.",
+    );
+  });
+
+  it("throws for an unknown referenced task", () => {
+    expect(() => handleRunTaskNow(deps, { task: "missing" })).toThrow("Task 'missing' not found.");
   });
 });

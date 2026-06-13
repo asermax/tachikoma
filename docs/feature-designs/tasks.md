@@ -44,13 +44,13 @@ tasks-tick (60s)
 |-----------|----------------|---------------|
 | `src/extensions/tasks/index.ts` | Wiring: config, crash-recovery bootstrap, tick orchestration, tool registration | Single every-60s job instead of per-concern loops |
 | `src/extensions/tasks/schema.ts` | Drizzle tables and type maps | Schedule stored as a JSON discriminated union (`cron` expression / `once` ISO instant); `since` and `updatedAt` columns anchor stale-cron prevention and the waiting sweep |
-| `src/extensions/tasks/repository.ts` | All SQL access | Stamps `since` (definitions) and `updatedAt` (instances) on every update; period-aware duplicate query keyed on exact `scheduledFor` |
+| `src/extensions/tasks/repository.ts` | All SQL access | Stamps `since` (definitions) and `updatedAt` (instances) on every update; period-aware duplicate query keyed on exact `scheduledFor`; `resolveDefinition` (ID then exact name), `deleteDefinition`, and `getLatestInstanceForDefinition` back the get/delete/run-now tools |
 | `src/extensions/tasks/schedule.ts` | Parse and format schedules | A croner probe distinguishes cron from one-shot input (`getPattern()` is undefined for datetimes); timezone handling delegated entirely to croner |
 | `src/extensions/tasks/generation.ts` | One generation pass | Anchor = `lastFiredAt`, else current hour start minus 1 s; advances past `since` instead of skipping the definition |
 | `src/extensions/tasks/session-delivery.ts` | One session-delivery pass | Marks the instance `completed` at handoff; rolls back to `pending` if the handoff throws |
 | `src/extensions/tasks/executor.ts` | Background evaluator loop + `BackgroundRunner` dispatcher | One ephemeral `side.run` per iteration; continuation prompt carries task, progress excerpt, and evaluator observation; in-flight map prevents double dispatch and caps concurrency at `backgroundMaxConcurrent` |
 | `src/extensions/tasks/expiration.ts` | Waiting-instance timeout sweep | Threshold on `updatedAt`; `onExpired` callback lets `index.ts` own user notice + event emission |
-| `src/extensions/tasks/tools.ts` | Agent-facing tools | Pure handlers over `ToolDeps`; the pi factory only wraps them in `registerTool` calls |
+| `src/extensions/tasks/tools.ts` | Agent-facing tools | Pure handlers over `ToolDeps`; the pi factory only wraps them in `registerTool` calls; `run_task_now` creates a pending instance and returns — dispatch is the existing tick path, not a direct executor call |
 
 ## Key Decisions
 
@@ -103,6 +103,16 @@ tasks-tick (60s)
 **Consequences**:
 - Pro: Deterministic loop termination semantics; cheap classifier-tier model suffices
 - Con: A persistently broken evaluator burns all iterations before failing the task
+
+### `run_task_now` queues, the tick dispatches
+
+**Choice**: `run_task_now` only inserts a `pending` instance with `scheduledFor = now` (by-reference snapshots the definition's prompt and type; ad-hoc carries an inline prompt with `definitionId = null` and a defaulted-`background` type). It does not call the executor or session-delivery passes directly — the next `tasks-tick` picks the instance up exactly as it would a generated one. `get_task` and `delete_task` resolve their target through `repository.resolveDefinition`, which tries an exact ID match then an exact name.
+**Why**: Reusing the generation→dispatch path means an on-demand run is indistinguishable from a scheduled firing downstream (same lifecycle, concurrency cap, evaluator loop, idle gating), so there is no second dispatch surface to keep in sync. Snapshotting the prompt instead of mutating the definition lets an auto-disabled one-shot be re-run without resurrecting its schedule. ID-or-name resolution keeps the tools usable from conversation where the agent often has the human name, not the UUID.
+**Consequences**:
+- Pro: One dispatch path; an immediate run inherits the concurrency cap and double-dispatch protection for free
+- Pro: By-reference runs never mutate the definition, so schedule/enabled/`lastFiredAt` stay authoritative
+- Con: Worst-case latency before an on-demand instance starts is one tick interval (60 s); it is not run synchronously
+- Con: Name resolution matches the first exact-name row — duplicate names are resolved arbitrarily (IDs disambiguate)
 
 ### Status payloads and user notices travel separately
 

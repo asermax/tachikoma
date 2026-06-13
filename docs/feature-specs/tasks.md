@@ -6,7 +6,7 @@
 
 The tasks extension gives Tachikoma scheduled work. Persistent task definitions describe what the agent should do and when — a recurring cron expression or a one-shot ISO datetime — and task instances represent individual firings generated from those definitions. Session instances are delivered into the conversation as idle-gated proactive messages; background instances run autonomously through an evaluator loop in ephemeral pi side sessions.
 
-The agent manages definitions conversationally through registered tools (`create_task`, `update_task`, `list_tasks`, `query_task_instances`). All scheduling state lives in SQLite, so definitions and pending instances survive restarts.
+The agent manages definitions conversationally through registered tools (`create_task`, `update_task`, `get_task`, `delete_task`, `list_tasks`, `run_task_now`, `query_task_instances`). All scheduling state lives in SQLite, so definitions and pending instances survive restarts.
 
 ## User Stories
 
@@ -36,6 +36,9 @@ The agent manages definitions conversationally through registered tools (`create
 | R15 | A definition whose schedule cannot be evaluated is skipped with an error log; the generation pass continues with the remaining definitions |
 | R16 | In-flight background executions are tracked across ticks so a slow run is never dispatched twice |
 | R17 | Concurrent background executions are capped at `backgroundMaxConcurrent` (default 3); when the cap is reached the dispatcher stops for the tick and the remaining pending instances are picked up on a later tick as slots free |
+| R18 | `get_task` fetches a single definition by ID or exact name (ID tried first), returning its full prompt, schedule, status, and a summary of its most recent instance; an unknown reference fails with a clear error |
+| R19 | `delete_task` permanently removes a definition by ID or exact name (ID tried first); an unknown reference fails with a clear error |
+| R20 | `run_task_now` queues a pending instance scheduled for now (dispatched on the next tick) in one of two mutually-exclusive modes: by-reference (`task` = ID or name) snapshots the definition's prompt and type without mutating the definition, so even an auto-disabled one-shot runs; ad-hoc (`prompt`, optional `type` defaulting to `background`, optional `name`) fires a one-off instance with no parent definition. Providing both or neither, or `name` in by-reference mode, fails with a clear error |
 
 ## Behaviors
 
@@ -86,7 +89,7 @@ Background instances execute autonomously: each iteration runs an ephemeral head
 - Given a `waiting` instance whose `updatedAt` is older than the wait timeout, when the expiration pass runs, then it is marked `failed` with a timeout reason and a failure notice is delivered; fresher waiting instances and non-waiting instances are untouched
 - Given instances were left `running` when the process died, when the crash-recovery bootstrap hook runs at startup, then they are marked `failed` with a restart reason
 
-### Task Tools (R14)
+### Task Tools (R14, R18, R19, R20)
 
 The task management tools are registered into every conversational agent session via `app.agent.use` (DES-001).
 
@@ -94,3 +97,7 @@ The task management tools are registered into every conversational agent session
 - Given the agent calls `update_task` with a new schedule, then `lastFiredAt` resets to null so the new schedule is treated as fresh; updates without a schedule leave it untouched
 - Given the agent calls `list_tasks`, then enabled definitions are listed with ID, name, type, schedule, and last-fired time (formatted in the configured timezone); `archived=true` lists disabled definitions instead
 - Given the agent calls `query_task_instances` with filters, then matching instances are listed newest-first with status, schedule time, parent definition, and result
+- Given the agent calls `get_task` with an ID or exact name, then the full definition is returned (name, ID, type, status, schedule, last-run, created time, full prompt) plus a summary of its most recent instance when one exists; an unknown reference throws `Task '<ref>' not found.`
+- Given the agent calls `delete_task` with an ID or exact name, then the matching definition is removed and a confirmation naming the task is returned; an unknown reference throws `Task '<ref>' not found.`
+- Given the agent calls `run_task_now` with `task` (ID or name), then a pending instance is created with the definition's prompt, type, and `scheduledFor = now`, leaving the definition's `enabled`, `schedule`, and `lastFiredAt` unchanged; the next tick dispatches it through the normal session-delivery or background path
+- Given the agent calls `run_task_now` with `prompt` (and optional `type`/`name`), then a pending instance with no parent definition is created (type defaults to `background`); providing both `task` and `prompt`, neither, or `name` alongside `task` throws a clear error
