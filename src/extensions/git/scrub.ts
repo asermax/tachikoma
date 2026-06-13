@@ -74,14 +74,9 @@ export const scrubPaths = async (
     };
   }
 
-  if (!(await isFilterRepoAvailable(cwd))) {
-    return {
-      code: SCRUB_RESULT.notInstalled,
-      message:
-        "Cannot scrub: `git filter-repo` is not installed. Install it (e.g. `pip install git-filter-repo` or your distro package) and retry.",
-    };
-  }
-
+  // Validate the request fully (state + path existence, both git-only checks)
+  // before the external-tool gate, so a malformed request is reported the same
+  // way regardless of whether filter-repo happens to be installed.
   const missingPaths = await pathsAbsentFromHistory(cwd, paths);
 
   if (missingPaths.length > 0) {
@@ -89,6 +84,14 @@ export const scrubPaths = async (
       code: SCRUB_RESULT.pathsNotFound,
       message: `Cannot scrub: paths not found in git history: ${missingPaths.join(", ")}. Provide paths that exist in the repository's history.`,
       missingPaths,
+    };
+  }
+
+  if (!(await isFilterRepoAvailable(cwd))) {
+    return {
+      code: SCRUB_RESULT.notInstalled,
+      message:
+        "Cannot scrub: `git filter-repo` is not installed. Install it (e.g. `pip install git-filter-repo` or your distro package) and retry.",
     };
   }
 
