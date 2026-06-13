@@ -30,6 +30,7 @@ export interface ExecutorDeps {
   deliver: (delivery: Delivery) => void;
   notify: (notification: TaskNotification) => void;
   maxIterations: number;
+  maxConcurrent: number;
   timezone: string | undefined;
   now: () => Date;
   log: Logger;
@@ -221,7 +222,9 @@ export const executeBackgroundInstance = async (
 
 /**
  * Tick-driven dispatcher for background instances. In-flight executions are
- * tracked across ticks so a slow run is never dispatched twice.
+ * tracked across ticks so a slow run is never dispatched twice, and a hard
+ * concurrency cap bounds how many run at once — surplus pending instances are
+ * left untouched and picked up on a later tick as slots free.
  */
 export class BackgroundRunner {
   private readonly deps: ExecutorDeps;
@@ -233,6 +236,8 @@ export class BackgroundRunner {
 
   tick(): void {
     for (const instance of this.deps.repository.getPendingInstances("background")) {
+      if (this.inFlight.size >= this.deps.maxConcurrent) break;
+
       if (this.inFlight.has(instance.id)) continue;
 
       const run = executeBackgroundInstance(this.deps, instance)

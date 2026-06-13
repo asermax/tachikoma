@@ -27,7 +27,7 @@ let repository: TaskRepository;
 
 const now = () => current;
 
-const makeDeps = (side: BackgroundSide, maxIterations = 10) => {
+const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) => {
   const deliver = vi.fn<(delivery: Delivery) => void>();
   const notify = vi.fn<(notification: TaskNotification) => void>();
 
@@ -37,6 +37,7 @@ const makeDeps = (side: BackgroundSide, maxIterations = 10) => {
     deliver,
     notify,
     maxIterations,
+    maxConcurrent,
     timezone: "UTC",
     now,
     log: fakeLog,
@@ -189,5 +190,56 @@ describe("BackgroundRunner", () => {
 
     expect(side.run).toHaveBeenCalledTimes(1);
     expect(repository.getInstance(instance.id)?.status).toBe("completed");
+  });
+
+  it("never runs more than maxConcurrent instances at once", async () => {
+    let active = 0;
+    let peak = 0;
+    const releases: Array<() => void> = [];
+
+    const run = vi.fn().mockImplementation(() => {
+      active += 1;
+      peak = Math.max(peak, active);
+
+      return new Promise<{ text: string }>((resolve) => {
+        releases.push(() => {
+          active -= 1;
+          resolve({ text: "done" });
+        });
+      });
+    });
+    const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
+
+    const runner = new BackgroundRunner(makeDeps({ run, classify }, 10, 2));
+
+    for (let i = 0; i < 5; i += 1) pendingInstance();
+
+    runner.tick();
+    await Promise.resolve();
+
+    // Only the cap is dispatched; the other three pending instances wait.
+    expect(active).toBe(2);
+    expect(run).toHaveBeenCalledTimes(2);
+
+    // Free both slots; a later tick fills them with the next pending instances.
+    releases.shift()?.();
+    releases.shift()?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    runner.tick();
+    await Promise.resolve();
+    expect(active).toBe(2);
+
+    while (releases.length > 0) {
+      releases.shift()?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      runner.tick();
+      await Promise.resolve();
+    }
+
+    await runner.drain();
+
+    expect(peak).toBeLessThanOrEqual(2);
+    expect(run).toHaveBeenCalledTimes(5);
   });
 });

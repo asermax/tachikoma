@@ -48,7 +48,7 @@ tasks-tick (60s)
 | `src/extensions/tasks/schedule.ts` | Parse and format schedules | A croner probe distinguishes cron from one-shot input (`getPattern()` is undefined for datetimes); timezone handling delegated entirely to croner |
 | `src/extensions/tasks/generation.ts` | One generation pass | Anchor = `lastFiredAt`, else current hour start minus 1 s; advances past `since` instead of skipping the definition |
 | `src/extensions/tasks/session-delivery.ts` | One session-delivery pass | Marks the instance `completed` at handoff; rolls back to `pending` if the handoff throws |
-| `src/extensions/tasks/executor.ts` | Background evaluator loop + `BackgroundRunner` dispatcher | One ephemeral `side.run` per iteration; continuation prompt carries task, progress excerpt, and evaluator observation; in-flight map prevents double dispatch |
+| `src/extensions/tasks/executor.ts` | Background evaluator loop + `BackgroundRunner` dispatcher | One ephemeral `side.run` per iteration; continuation prompt carries task, progress excerpt, and evaluator observation; in-flight map prevents double dispatch and caps concurrency at `backgroundMaxConcurrent` |
 | `src/extensions/tasks/expiration.ts` | Waiting-instance timeout sweep | Threshold on `updatedAt`; `onExpired` callback lets `index.ts` own user notice + event emission |
 | `src/extensions/tasks/tools.ts` | Agent-facing tools | Pure handlers over `ToolDeps`; the pi factory only wraps them in `registerTool` calls |
 
@@ -86,6 +86,16 @@ tasks-tick (60s)
 - Pro: Context per iteration is bounded regardless of run length
 - Con: Tool-call history and intermediate file state knowledge are lost between iterations — only the text excerpt survives
 
+### Concurrency cap on background dispatch
+
+**Choice**: `BackgroundRunner` holds an in-flight `Map<instanceId, Promise>` and, per tick, dispatches pending background instances only while `inFlight.size < maxConcurrent` (`backgroundMaxConcurrent`, default 3); once the cap is hit it breaks out of the loop and leaves the surplus pending. Freed slots are filled on subsequent ticks (or sooner — the runner re-evaluates on every 60 s tick), and the existing in-flight map still prevents double dispatch of a slow run.
+**Why**: Dispatching every pending instance was unbounded — a backlog could spawn dozens of simultaneous side runs, each driving an LLM loop, producing an API-request burst and memory pressure. A simple size check against a configurable ceiling bounds the blast radius without needing a queue or a real semaphore primitive, since the tick already re-polls pending work.
+**Alternatives Considered**: A promise-based semaphore that admits queued instances the instant a slot frees (vs. waiting for the next tick). Rejected as overkill — the 60 s tick re-poll is a sufficient and simpler drain mechanism, and instances stay durably `pending` in SQLite rather than held in memory.
+**Consequences**:
+- Pro: Hard ceiling on concurrent side runs / API burst; surplus work stays durably pending in the DB
+- Pro: Reuses the existing in-flight map — no new dedup surface
+- Con: A freed slot is only refilled on the next tick, so worst-case dispatch latency for a queued instance is one tick interval
+
 ### Evaluator is a strict, best-effort classifier
 
 **Choice**: `evaluateCompletion` classifies the agent response as `complete`/`continue`/`error` using an ordered-rules system prompt that explicitly forbids qualitative review; any evaluator exception is mapped to `continue`.
@@ -122,6 +132,12 @@ tasks-tick (60s)
 **When**: The runner dispatches it; iteration 1 returns mid-workflow text (`continue`), iteration 2 announces completion (`complete`)
 **Then**: Iteration 2's prompt embedded the task, iteration 1's excerpt, and the evaluator observation; the instance ends `completed` with the evaluator reason as result, the final text is delivered idle-gated, and a `completed` status payload is emitted.
 
+### Scenario: more pending background instances than the concurrency cap
+
+**Given**: Five pending background instances and `backgroundMaxConcurrent = 2`
+**When**: The runner ticks
+**Then**: Only two are dispatched (marked `running` and added to the in-flight map); the loop breaks once the map reaches the cap and the other three stay `pending`. As each in-flight run settles and leaves the map, a later tick dispatches the next pending instances — never more than two run at once.
+
 ### Scenario: channel handoff fails for a session task
 
 **Given**: A pending session instance and a delivery function that throws (e.g. no channel up)
@@ -131,5 +147,5 @@ tasks-tick (60s)
 ## Notes
 
 - The `waiting` status, `userResponse` column, and expiration sweep exist, but nothing currently transitions an instance into `waiting` — an `await_response`/respond flow has not been built yet; the sweep is dormant until a producer lands.
-- Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `sessionTaskMaxHoldSeconds` (900), `backgroundMaxIterations` (10), `waitTimeoutSeconds` (7200). The tick interval is a module constant.
+- Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `sessionTaskMaxHoldSeconds` (900), `backgroundMaxIterations` (10), `backgroundMaxConcurrent` (3), `waitTimeoutSeconds` (7200). The tick interval is a module constant.
 - Background runs use the `processor` model tier and pi built-in tools only (`read, bash, edit, write, grep, find, ls`); Tachikoma extension tools (tasks, notifications) are not bound into side runs.

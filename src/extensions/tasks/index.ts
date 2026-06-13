@@ -12,6 +12,7 @@ interface TasksConfig {
   timezone?: string;
   sessionTaskMaxHoldSeconds: number;
   backgroundMaxIterations: number;
+  backgroundMaxConcurrent: number;
   waitTimeoutSeconds: number;
 }
 
@@ -30,6 +31,9 @@ export default defineExtension<TasksConfig>({
     timezone: Type.Optional(Type.String()),
     sessionTaskMaxHoldSeconds: Type.Number({ default: 900 }),
     backgroundMaxIterations: Type.Number({ default: 10 }),
+    // Cap on concurrent background runs — surplus pending instances wait for a
+    // free slot on a later tick, bounding the side-run / API burst they cause.
+    backgroundMaxConcurrent: Type.Number({ default: 3 }),
     waitTimeoutSeconds: Type.Number({ default: 7200 }),
   }),
 
@@ -53,6 +57,7 @@ export default defineExtension<TasksConfig>({
       // User-facing output goes through deliver(); this signal is for other extensions.
       notify: (notification) => app.events.emit("tasks:instance-finished", notification),
       maxIterations: app.extensionConfig.backgroundMaxIterations,
+      maxConcurrent: app.extensionConfig.backgroundMaxConcurrent,
       timezone,
       now,
       log: app.log,

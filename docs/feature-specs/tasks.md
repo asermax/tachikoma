@@ -35,6 +35,7 @@ The agent manages definitions conversationally through registered tools (`create
 | R14 | Agent-facing tools: `create_task`, `update_task` (partial updates; `enabled=false` archives instead of deleting; a schedule change resets `lastFiredAt`), `list_tasks` (active by default, `archived=true` for disabled), `query_task_instances` (filter by status, type, definition) |
 | R15 | A definition whose schedule cannot be evaluated is skipped with an error log; the generation pass continues with the remaining definitions |
 | R16 | In-flight background executions are tracked across ticks so a slow run is never dispatched twice |
+| R17 | Concurrent background executions are capped at `backgroundMaxConcurrent` (default 3); when the cap is reached the dispatcher stops for the tick and the remaining pending instances are picked up on a later tick as slots free |
 
 ## Behaviors
 
@@ -67,7 +68,7 @@ Pending session instances are injected into the conversation as agent turns thro
 - Given the delivery handoff throws, then the instance is rolled back to `pending` with `startedAt` cleared and is retried on the next tick
 - Given pending background instances, when the session delivery pass runs, then they are not delivered
 
-### Background Execution (R9, R10, R11, R12, R16)
+### Background Execution (R9, R10, R11, R12, R16, R17)
 
 Background instances execute autonomously: each iteration runs an ephemeral headless pi session, then a classifier decides whether the workflow is finished.
 
@@ -77,6 +78,7 @@ Background instances execute autonomously: each iteration runs an ephemeral head
 - Given the evaluator returns `complete`, then the instance is marked `completed` with the evaluator's reason as result, the final agent text is delivered idle-gated, and a `completed` status payload is emitted on the `notify` event
 - Given the evaluator returns `error`, the iteration cap is reached, or the run throws, then the instance is marked `failed` and a failure notice is delivered alongside a `failed` status payload
 - Given a run spans multiple ticks, then the runner does not dispatch the same instance twice
+- Given more pending background instances than `backgroundMaxConcurrent`, when the tick dispatches, then at most `backgroundMaxConcurrent` run at once and the surplus stay pending until a slot frees on a later tick
 
 ### Expiration and Crash Recovery (R7, R13)
 
