@@ -45,14 +45,14 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/extensions/workflows/index.ts` | Wiring: config, repository, scratchpad bootstrap, graph validation, per-session tool registration, cleanup processor registration | `findWorkflow` closure binds the skills dir so tools never see paths; a bootstrap hook runs `validateWorkflowGraph` and logs rejections |
-| `src/extensions/workflows/loader.ts` | Parse workflow/step directories into `WorkflowDefinition`/`StepDefinition`; `loadAllWorkflows` for graph validation | Fresh filesystem read per call; invalid steps skipped with warnings, never fatal; `condition`/`composes`/`loop` parsed as optional strings; `skippable` kept as a deprecated alias of `required: false` |
-| `src/extensions/workflows/model.ts` | `STEP_STATES` const map, `StepStates`, `StepSnapshot`, `LoopState` | Snapshot keeps the step *path* plus `condition`/`composes`/`loop` so the cascade reads structure from the frozen snapshot |
+| `src/extensions/workflows/loader.ts` | Parse workflow/step directories into `WorkflowDefinition`/`StepDefinition`; `loadAllWorkflows` for graph validation | Fresh filesystem read per call; invalid steps skipped with warnings, never fatal (missing `instructions.md`, missing/invalid `title`, or a non-boolean `required` each skip the step); `condition`/`composes`/`loop` parsed as optional strings; `skippable` kept as a deprecated alias of `required: false` |
+| `src/extensions/workflows/model.ts` | `STEP_STATES` const map, `StepStates`, `StepSnapshot`, `LoopState` | `StepSnapshot` carries `id`, `title`, `required`, the step *path*, and `condition`/`composes`/`loop`: the structural fields let the cascade read structure from the frozen snapshot, while `required`/`title`/`id` drive `validateTransition` (required-ness for skip validation) and response rendering — so a running workflow survives definition edits on disk |
 | `src/extensions/workflows/schema.ts` | `workflow_states` drizzle table | JSON columns for `step_states`, `definition_snapshot`, and `loop_state`; nullable `parent_workflow_id`/`parent_step_id` link children; indexes on skill/workflow, the active-lookup pair, and the parent lookup |
 | `src/extensions/workflows/composition.ts` | `resolveComposes`, `detectCycles`, `validateWorkflowGraph`; `Mutation`/`MutationBatch`/`CascadeOutcome`/`BreadcrumbPart` types | Pure, SDK/DB-free so cycle and reference validation are testable in isolation |
 | `src/extensions/workflows/cascade.ts` | `runCascade` (the engine), `validateTransition`, `stepToSnapshot`, `renderBreadcrumb` | Synchronous (better-sqlite3 is sync); stages a `MutationBatch` and throws on routing failure so state is untouched; a depth guard backstops cycles at runtime |
 | `src/extensions/workflows/repository.ts` | `WorkflowStateRepository` CRUD + chains + `applyMutationBatch`/`abortCascade` | Every read filters `deleted_at IS NULL`; `getActive`/`listActive` are top-level only; `getActiveChain` walks a stack; batch apply and abort run in a single transaction; `listStale` is subtree-aware |
 | `src/extensions/workflows/tools.ts` | The four `handle*` functions, nested query rendering, `registerWorkflowTools` | Handlers are pure functions over `WorkflowToolDeps` — pi registration is a thin `execute` that wraps the string result |
-| `src/extensions/workflows/cleanup.ts` | `createStaleWorkflowCleanup` post-processor | Depends on `Pick<WorkflowStateRepository, "listStale" \| "softDelete">`; per-record error isolation |
+| `src/extensions/workflows/cleanup.ts` | `createStaleWorkflowCleanup` post-processor | Depends on `Pick<WorkflowStateRepository, "listStale" \| "abortCascade">`; uses `abortCascade` so a stale stack is torn down whole (root + descendants), never leaving orphan child rows; deletes the scratchpad only when the cascade removed at least one row; per-record error isolation |
 
 ## Key Decisions
 
@@ -147,7 +147,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 
 **Given**: An instance last updated 25 hours ago and another updated 1 hour ago, with `staleHours = 24`
 **When**: The session closes and post-processing runs
-**Then**: The old instance is soft-deleted and its scratchpad removed; the fresh one survives. A repository failure is logged and the processor still resolves — session close never fails on cleanup.
+**Then**: The old instance is torn down via `abortCascade` (the root and its whole descendant subtree soft-deleted in one transaction, so no orphan child rows linger) and its scratchpad removed; the fresh one survives. A repository failure is logged and the processor still resolves — session close never fails on cleanup.
 
 ### Scenario: Failed start leaves no debris
 

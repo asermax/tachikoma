@@ -30,6 +30,7 @@ Skills give the agent packaged expertise: Agent Skills-format directories from b
 | R8 | Agent discovery re-runs at every session creation and on every `delegate_to_agent` execution, so new and edited agents apply without a restart |
 | R9 | The extension can be disabled via `[extensions.skills] enabled = false` (default enabled) |
 | R10 | A `/reload` command and a `reload_resources` tool reload skills, prompts, and extensions from disk into the running session; the tool queues `/reload` as a follow-up (reload must run in command context) so additions and edits apply mid-session without a restart |
+| R11 | The session factory (skill sources + `delegate_to_agent` + reload) is registered with `{ background: true }`, opting it into autonomous background task runs, so those runs also receive the skill sources and the `delegate_to_agent` tool (not just conversational sessions) |
 
 ## Behaviors
 

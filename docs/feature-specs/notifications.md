@@ -24,7 +24,7 @@ A `notify_user` tool lets the agent itself emit notifications through the same p
 | R3 | Urgent notifications bypass accumulation and are delivered with `gate: "immediate"` |
 | R4 | Non-urgent notifications accumulate over a flush window (`flushWindowSeconds`, default 30); the flush delivers one message with `gate: "idle"` and `maxHoldSeconds` (default 900) |
 | R5 | A flush with a single item is formatted as one notification with a source/time header; multiple items become one digest enumerating each item with its severity and source |
-| R6 | The `notify_user` tool lets the agent emit a notification (text, optional title and severity, default `info`); the payload is emitted on the `notify` event with source `agent`, and empty text is rejected |
+| R6 | The `notify_user` tool lets the agent emit a notification (text, optional title and severity, default `info`); the payload is emitted on the `notify` event with source `agent`, and empty text is rejected. It is registered with `{ background: true }`, so it is available to both conversational sessions and background task runs |
 | R7 | A TTL dedup guard suppresses a notification whose `(source + text)` key was already seen within `dedupTtlSeconds` (default 60); suppression applies before severity routing (urgent included), is logged at info, and expired keys are pruned opportunistically |
 | R8 | Every delivery carries a `priority` derived from severity (`urgent` highest, then `warning`, then `info`) so the conversation loop orders notices ahead of lower-severity ones — and ahead of unprioritized deliveries (default 0) — when several flush together; a digest takes the highest priority among its items |
 
@@ -76,7 +76,7 @@ The `notify` event is a shared, loosely-typed channel; the router only acts on p
 
 ### Agent Tool (R6)
 
-The `notify_user` tool is registered into conversational agent sessions via `app.agent.use` (DES-001).
+The `notify_user` tool is registered via `app.agent.use(..., { background: true })` (DES-001), so it is bound into both conversational agent sessions and autonomous background task runs — a background task can notify the user directly through the tool.
 
 **Acceptance Criteria**:
 - Given the agent calls `notify_user` with text and no severity, then an `info` payload with source `agent` is emitted on the `notify` event and follows the normal accumulation path

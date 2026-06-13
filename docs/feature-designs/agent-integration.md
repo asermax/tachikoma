@@ -37,9 +37,9 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/agent/manager.ts` | Auth/model-registry ownership; `open()` builds sessions (loader, session manager mode, settings, model) | Auth fallback to machine-level pi login; fresh loader per open; `bare` axis for headless work; an explicit `model` option pins the model over the `tier` chain (used by skill-agent delegation); an opt-in `isolatePrompt` spreads `isolatedLoaderOptions()` (`appendSystemPromptOverride: () => []`, `noContextFiles`, `noSkills`) into the loader so a delegated subagent never inherits pi's append / project context files / skills catalog ([DES-005](../design/DES-005-base-prompt-ownership.md)); `selectExtensionFactories` resolves which factories bind — the background subset (`bindBackgroundFactories`), none (`bare`), or all — so background task runs get a curated capability slice |
-| `src/agent/models.ts` | `MODEL_TIERS` const map, `parseModelRef`, `ModelTiers.ref/resolve/resolveRef` | `provider/model-id` strings resolved against pi's registry; `resolveRef` resolves an explicit (non-tier) reference for callers that pin a model directly; fail fast at resolve time |
+| `src/agent/models.ts` | `MODEL_TIERS` const map, `parseModelRef`, `ModelTiers.configuredRef/resolve/resolveRef` | `provider/model-id` strings resolved against pi's registry; `configuredRef` returns the configured reference for a tier after applying the fallback chain; `resolveRef` resolves an explicit (non-tier) reference for callers that pin a model directly; fail fast at resolve time |
 | `src/agent/adapter.ts` | `streamPrompt`: pi `session.subscribe()` events → `AgentEvent` async iterable | Pull-based queue with promise wake; terminal `result`/`error` event; per-exchange cost/usage from `agent_end`; surrogate sanitization on emitted content; unsubscribe in `finally` |
-| `src/agent/errors.ts` | `classifyError`: failure message → `{ errorKind, recoverable }` | Pattern-matched kinds (auth/billing/encoding/provider/unknown); only auth and billing are non-recoverable |
+| `src/agent/errors.ts` | `classifyErrorKind`: failure message → `ErrorKind`; `classifyError`: failure message → `{ errorKind, recoverable }` | Pattern-matched kinds (auth/billing/encoding/provider/unknown); `classifyError` wraps `classifyErrorKind` and adds the recoverable flag; only auth and billing are non-recoverable; both are exported for callers that need just the kind |
 | `src/agent/sanitize.ts` | `sanitizeText`: strip lone UTF-8 surrogate code points | Pure helper; valid surrogate pairs preserved, only unpaired halves removed |
 | `src/agent/side-run.ts` | `SideRunner.complete/classify/run` | `completeSimple` for one-shots; prompt-engineered JSON + validation + single retry for classify; disposable bare session for `run`, which forwards `isolatePrompt` to `open()` for fully isolated delegated prompts, and `backgroundExtensions` to bind the background-factory subset while dropping the hard tool allowlist (so the bound tools stay active) |
 | `src/extensions/host.ts` | Exposes the layer as `app.agent` | One `SideRunner` per extension, bound to that extension's logger |
@@ -61,7 +61,7 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 
 ### Model tiers resolved through pi's `ModelRegistry`
 
-**Choice**: A four-tier split (`agent`/`searcher`/`processor`/`classifier`) as config strings `provider/model-id`, resolved via `registry.find()` with a workspace `models.json` overlay; resolution failures throw.
+**Choice**: A four-tier split (`main`/`searcher`/`processor`/`classifier`) as config strings `provider/model-id`, resolved via `registry.find()` with a workspace `models.json` overlay; resolution failures throw.
 **Why**: Tiers let every consumer ask for a role, not a model, so cost tuning is one config edit. Going through the registry (instead of pi-ai's static `getModel`) keeps custom providers and `models.json` entries usable, and validates that auth knows the provider.
 **Alternatives Considered**:
 - Hardcoded models per call site: the exact sprawl the role-based config exists to eliminate
@@ -140,5 +140,5 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 ## Notes
 
 - `SettingsManager.create(workspace.root, workspace.piDir)` keeps pi settings inside the data dir alongside auth and `models.json` — nothing under `~/.pi` is written unless the machine-level auth store is the active one.
-- Default tiers (config): `agent`/`searcher` → `anthropic/claude-opus-4-5`, `processor`/`classifier` → `anthropic/claude-haiku-4-5`.
+- No tier has a built-in default: all four `[agent]` fields are `Type.Optional(Type.String())` with no schema default (`src/config/schema.ts`). The `provider/model-id` strings shown in the generated config template (`main`/`searcher` → `anthropic/claude-opus-4-5`, `processor`/`classifier` → `anthropic/claude-haiku-4-5`) are commented-out example values, not active defaults. An unset chain defers to pi's own resolution (settings `defaultProvider`/`defaultModel`, else the first credentialed model).
 - `run()` returns only final text; structured output from tool-using runs would need pi's `terminate: true` pattern, deliberately not built yet.

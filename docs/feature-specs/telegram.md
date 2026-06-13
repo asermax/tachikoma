@@ -22,10 +22,10 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | ID | Requirement |
 |----|-------------|
 | R0 | The extension registers a `telegram` channel when `[extensions.telegram]` provides `botToken` and `chatId`; with either unset it logs that the channel is disabled and registers nothing |
-| R1 | The bot token is validated (`bot.init()` / `getMe`) before long polling starts; polling subscribes to `message`, `callback_query`, and `message_reaction` updates |
+| R1 | The bot token is validated (`bot.init()` / `getMe`) before long polling starts; after init the channel registers two bot commands in Telegram's command menu via `setMyCommands` — `/new` ("Start a new conversation, ignoring the current topic") and `/queue` ("Queue a message for the next turn instead of interrupting"), the channel-agnostic prefixes the coordinator parses; a `setMyCommands` failure is logged as a warning and does not block startup. Polling subscribes to `message`, `callback_query`, and `message_reaction` updates |
 | R2 | Only updates from the configured `chatId` are processed; messages from other chats, callback taps from other user IDs, and reactions from other user IDs are dropped (taps are still acknowledged first) |
 | R3 | Inbound text is trimmed and submitted to the runtime with the Telegram message ID in metadata; empty or whitespace-only messages are dropped |
-| R4 | `respond()` consumes the exchange event stream through a progressive `StreamRenderer`: it sends a message early and edits it as `text` events stream in (throttled, no-op edits skipped), surfaces `tool-start` (`⚙ <tool>`) and `status` events as a transient italic line that the next text replaces, refreshes a typing indicator throughout, and finalizes the message when the stream ends; `error` events are sent immediately as `⚠️ Error: …` notices |
+| R4 | `respond()` consumes the exchange event stream through a progressive `StreamRenderer`: it sends a message early and edits it as `text` events stream in (throttled, no-op edits skipped), surfaces `tool-start` (`🔧 <friendly activity>`, a wrench glyph plus an args-aware present-progressive label from `formatToolActivity` — e.g. "Reading <path>", "Running: <command>" — falling back to a humanized tool name) and `status` events as a transient italic line that the next text replaces, refreshes a typing indicator throughout, and finalizes the message when the stream ends; `error` events are sent immediately as `⚠️ Error: …` notices — a recoverable error sends just `⚠️ Error: <message>`, while a non-recoverable one appends a second paragraph: `This needs your attention — the next message won't recover on its own.` |
 | R5 | Outbound text is split at Telegram's 4096-character (UTF-16) limit, preferring paragraph boundaries, then line boundaries, then a hard split that never cuts a surrogate pair |
 | R6 | Messages are sent with `parse_mode: "Markdown"`; on a Telegram entity-parse rejection the same text is resent as plain text; other send errors propagate |
 | R7 | All channel sends (`respond()` and `deliver()`) are serialized through a FIFO mutex so two send sequences never interleave their API calls, and a rejected task does not stall the queue |
@@ -36,7 +36,7 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | R12 | Each agent session registers five tools: `send_telegram_file`, `react_to_message`, `pin_message`, `unpin_message`, `send_message_with_buttons`; failures throw from `execute` |
 | R13 | `send_telegram_file` resolves workspace-relative paths, requires an existing regular file under an allowed root (workspace, system temp dir, configured `extraFileRoots`), names the allowed roots on rejection, and auto-detects photo/audio/video/document from the extension |
 | R14 | `pin_message` pins the channel's last outbound message audibly (the pin delivers the push notification); `react_to_message` defaults to the user's last inbound message; both fail when no target message exists |
-| R15 | `send_message_with_buttons` validates the layout (≥1 row, ≥1 button per row, non-empty labels, values ≤58 UTF-8 bytes, ≤100 buttons) and sends an inline keyboard whose `callback_data` encodes the value and the single-use flag |
+| R15 | `send_message_with_buttons` validates the layout (≥1 row, ≥1 button per row, non-empty labels, non-empty values, values ≤58 UTF-8 bytes, ≤100 buttons) and sends an inline keyboard whose `callback_data` encodes the value and the single-use flag |
 | R16 | Button taps are acknowledged immediately (before authorization), unpacked from the wire format, routed as a framed inbound turn carrying the tapped value; single-use taps remove the keyboard via a detached call whose failure never blocks routing |
 | R17 | A `/stop` text message aborts the in-flight agent run instead of being submitted as a turn; it is acknowledged with `⏹ Stopped.` and the abort wires to the coordinator's exchange abort |
 | R18 | An authorized emoji reaction is surfaced to the agent as an inbound turn that names the emoji(s) added and/or removed; a reaction update whose emoji set is unchanged is dropped |
@@ -52,7 +52,7 @@ The extension wires one `Bot` instance shared by the channel and the agent tools
 
 **Acceptance Criteria**:
 - Given `botToken` is `""` or `chatId` is `0`, when the extension sets up, then it logs that the channel is disabled and registers no channel, hook, or tools
-- Given valid config, when `start()` runs, then `bot.init()` validates the token before polling begins and polling runs detached with `allowed_updates: ["message", "callback_query", "message_reaction"]`
+- Given valid config, when `start()` runs, then `bot.init()` validates the token before polling begins, `setMyCommands` registers the `/new` and `/queue` menu commands (a failure is logged and ignored), and polling runs detached with `allowed_updates: ["message", "callback_query", "message_reaction"]`
 - Given a message from a chat other than `chatId`, when received, then it is ignored without response
 - Given polling or update handling throws, when the error surfaces, then it is logged via `bot.catch` / the polling catch handler and the process continues
 
@@ -91,11 +91,12 @@ The channel renders each exchange progressively under the mutex: a `StreamRender
 **Acceptance Criteria**:
 - Given an exchange starts, when events are being consumed, then a typing chat action is sent and refreshed every 5 seconds until the stream ends
 - Given `text` events stream in, when the renderer flushes, then it sends or edits the streaming message at most once per ~1500 ms, skips edits that would not change the rendered text, and never edits more than the elapsed throttle window allows
-- Given a `tool-start` or `status` event arrives, when handled, then a transient italic line (`_⚙ <tool>_` for tool starts, the status text otherwise) is shown below the streamed text and is dropped as soon as more text arrives
+- Given a `tool-start` or `status` event arrives, when handled, then a transient italic line (`🔧 <friendly activity>` for tool starts — a wrench glyph plus the args-aware `formatToolActivity` label, e.g. "Reading <path>"; the status text otherwise) is shown below the streamed text and is dropped as soon as more text arrives
 - Given the streamed text grows past the 4096-character edit limit, when the renderer flushes, then full chunks are finalized in place (paragraph > line > hard split, surrogate-safe) and only the tail keeps streaming
 - Given the stream ends with non-blank text, when `finalize()` runs, then the streaming message is upgraded to its final chunked form bypassing the throttle and the last sent message ID becomes the pin target; an exchange that produced no text deletes the streaming message
 - Given a streaming send or edit fails, when the renderer marks itself broken, then it stops editing and `finalize()` deletes the partial message and resends the full text fresh via `sendChunked`
-- Given an `error` event arrives mid-stream, when handled, then `⚠️ Error: <message>` is sent immediately and consumption continues
+- Given a recoverable `error` event arrives mid-stream, when handled, then `⚠️ Error: <message>` is sent immediately and consumption continues
+- Given a non-recoverable `error` event arrives mid-stream, when handled, then `⚠️ Error: <message>` plus the paragraph "This needs your attention — the next message won't recover on its own." is sent immediately and consumption continues
 - Given Telegram rejects a send with a "can't parse entities" error, when the fallback runs, then the identical text is resent without `parse_mode` and the message is delivered unformatted
 - Given a `respond()` and a `deliver()` overlap, when both run, then the mutex serializes them FIFO and their API calls never interleave
 
@@ -124,7 +125,7 @@ The channel renders each exchange progressively under the mutex: a `StreamRender
 - Given a valid file, when sent, then the extension selects `sendPhoto`/`sendAudio`/`sendVideo`/`sendDocument` (case-insensitive extension match, document fallback) with the optional caption
 - Given no `messageId` argument, when `react_to_message` runs, then it targets the last inbound message and throws if none exists; the emoji string is passed through so the Telegram API rejects unsupported emoji
 - Given a response was sent, when `pin_message` runs, then the last outbound message is pinned with `disable_notification: false` and its ID is returned; with no outbound message it throws
-- Given an invalid button layout (empty rows, blank label, value over 58 bytes, over 100 buttons), when `send_message_with_buttons` validates, then it throws naming the offending row/field before any API call
+- Given an invalid button layout (empty rows, blank label, empty value, value over 58 bytes, over 100 buttons), when `send_message_with_buttons` validates, then it throws naming the offending row/field before any API call (an empty label throws "has an empty label"; an empty value throws "has an empty value")
 
 ### Button Taps (R16)
 

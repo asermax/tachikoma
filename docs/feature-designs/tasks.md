@@ -21,7 +21,7 @@ pi deliberately provides no scheduling, idle gating, or buffered delivery — th
 
 **Interactions:**
 - Channel delivery (`conversation-loop.md` / [telegram.md](../feature-specs/telegram.md)): all user-facing output goes through `app.channels.deliver`
-- Notifications extension: task status payloads share the `notify` app event but are deliberately not user notifications (see [notifications.md](notifications.md))
+- Notifications extension: task status payloads ride the tasks extension's own `tasks:instance-finished` app event (not the `notify` event, which notifications/detached-processes own) and are deliberately not user notifications; user-facing output goes through `app.channels.deliver` (see [notifications.md](notifications.md))
 - Agent manager: `app.agent.side.run` (ephemeral headless sessions) and `app.agent.side.classify` (structured classification) power background execution
 
 ## Design Overview
@@ -149,7 +149,7 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 ### Status payloads and user notices travel separately
 
-**Choice**: Completion and failure emit two things: user-facing text via `app.channels.deliver`, and a structured `{ source, instanceId, status, message }` payload on the `notify` app event. The notifications extension deliberately ignores these payloads (no `text` field — see [notifications.md](notifications.md)).
+**Choice**: Completion and failure emit two things: user-facing text via `app.channels.deliver`, and a structured `{ source, instanceId, status, message }` payload on the tasks extension's own `tasks:instance-finished` app event (the `notify` event is owned by notifications/detached-processes; tasks never emit to it). Cross-extension consumers subscribe to `tasks:instance-finished`; this is not a user notification.
 **Why**: User notices need task-specific formatting and idle gating now; the bus payload is a machine-readable signal for future consumers (e.g. task-aware context providers) without coupling tasks to the notifications format or double-delivering to the user.
 **Consequences**:
 - Pro: Tasks own their user-facing wording; bus consumers get typed-ish data, not prose
@@ -216,4 +216,4 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 - The `waiting` lifecycle is live: a background run pauses via the `ask_user` tool (the producer), `respond_to_task` (main session) supplies the reply, the background dispatch pass resumes the instance, and the expiration sweep fails an instance whose question goes unanswered past `waitTimeoutSeconds`. State is persisted on `task_instances` via the `question` and `resumeContext` columns (migration `0003_tasks_waiting_resume`) alongside the existing `userResponse`.
 - Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `sessionTaskMaxHoldSeconds` (900), `backgroundMaxIterations` (10), `backgroundMaxConcurrent` (3), `waitTimeoutSeconds` (7200), `runningTimeoutSeconds` (1800, the stuck-running threshold), `oneShotRetentionSeconds` (172800 = 48 h, the one-shot retention window). The tick (60 s) and cleanup (3600 s) intervals are module constants.
 - The maintenance sweeps reuse the existing timestamp columns (`startedAt`/`updatedAt` on instances, `lastFiredAt`/`completedAt` for retention) — no schema change or migration was needed.
-- Background runs use the `processor` model tier and pi built-in tools (`read, bash, edit, write, grep, find, ls`) plus two per-run custom tools, `notify_user` and `ask_user`; Tachikoma extension tools (tasks, notifications) are not bound into side runs.
+- Background runs use the `processor` model tier and pi built-in tools (`read, bash, edit, write, grep, find, ls`) plus two per-run custom tools, `notify_user` and `ask_user`. They **also** bind the curated set of opted-in extension tools: `executor.ts` passes `backgroundExtensions: true` to `side.run` (executor.ts), and the task tools factory itself is registered with `{ background: true }` (index.ts), so the background-opted factories (skills + `delegate_to_agent`, git, projects, detached-processes, notifications, task tools) are all bound into side runs — see the "Background runs are capable, not sandboxed" decision above. `respond_to_task` is the one task tool deliberately kept foreground-only (its interactive factory is registered without `background: true`), since a background run must never answer another instance's waiting question.

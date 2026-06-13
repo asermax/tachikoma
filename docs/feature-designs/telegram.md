@@ -176,7 +176,11 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 
 ## Notes
 
-- `respond()` renders `text`, `tool-start`, `status`, and `error` events; `tool-end` and `thinking` events reach the event switch but have no rendering and fall through the `default` branch.
+- `respond()` renders `text`, `tool-start`, `status`, and `error` events, and handles `result` in its own `case 'result':` branch (it logs the exchange's `costUsd`/`totalTokens` and session id via `runtime.log.info`, no user-facing output). Only `tool-end` and `thinking` reach the event switch without rendering and fall through the `default` branch — `result` does not fall through.
+- A `tool-start` line is rendered as `🔧 <friendly activity>`, the wrench glyph plus an args-aware present-progressive label from `formatToolActivity` (`tool-labels.ts`) — e.g. "Reading <path>", "Running: <command>", "Searching for '<pattern>'" — falling back to a humanized (MCP-stripped, title-cased) tool name for tools without a specific label.
+- On `start()`, after `bot.init()`, the channel calls `bot.api.setMyCommands` to register the `/new` and `/queue` prefix commands in Telegram's command menu (discoverability for the coordinator-parsed prefixes); a failure is caught and logged as a warning so it never blocks polling.
+- `sendErrorNotice` sends two distinct forms: a recoverable error is `⚠️ Error: <message>`; a non-recoverable one appends a second paragraph ("This needs your attention — the next message won't recover on its own.").
+- Button validation rejects both an empty label and an empty value (each with its own message) in addition to the ≤58-byte value and ≤100-button limits.
 - `status()` routes through the active `StreamRenderer` when one exists (showing the transient line); with no in-flight exchange it falls back to a typing chat action to signal liveness.
 - The `pushNotifications` flag only affects `deliver()`; `respond()`'s streaming sends use default notification behavior.
 - `react_to_message` passes the emoji through rather than validating against Telegram's evolving allowed set — the API rejection is surfaced to the agent.

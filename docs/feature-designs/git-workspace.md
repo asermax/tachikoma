@@ -32,14 +32,17 @@ The extension (`src/extensions/git/index.ts`) wires a bootstrap hook, two pi ext
 session close ─► git-commit (finalize)
                    ├─ commitAll: add -A → diffstat → side.complete → commit
                    └─ smartPush: abort stale rebase → fetch → detectDivergence
-                        ├─ AHEAD     → push
+                        ├─ AHEAD     → push → PUSHED
                         ├─ DIVERGED  → rebase --autostash
                         │               ├─ clean    → push → REBASE_SUCCEEDED
                         │               ├─ conflict → resolver agent ×N → push → AGENT_RESOLVED
                         │               │               └─ unresolved → abort → REBASE_FAILED
-                        │               └─ no-start → REBASE_FAILED
+                        │               ├─ no-start → REBASE_FAILED
+                        │               └─ rebase ok but push fails → PUSH_FAILED
                         └─ UP_TO_DATE/BEHIND → NOTHING_TO_PUSH
 ```
+
+Note: a rebase that succeeds (clean or agent-resolved) followed by a *push* failure returns `PUSH_FAILED`, distinct from `REBASE_FAILED`. On the pull side, `smartPull` treats a local-*ahead* branch the same as equal — both return `UP_TO_DATE` (it never pushes from a pull).
 
 ## Components
 

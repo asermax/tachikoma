@@ -72,7 +72,7 @@ The `sync-projects` bootstrap hook brings every registered submodule up to date 
 - Given no submodules are registered, when the hook runs, then it creates `projects/` (idempotent) and completes as a no-op
 - Given the workspace was freshly cloned on a new machine, when the hook runs, then each submodule is initialized, populated, and checked out to its default branch
 - Given an initialized submodule behind its remote, when the hook runs, then `smartPull` fast-forwards it to the remote head
-- Given a submodule has uncommitted changes, when the hook runs, then its sync is skipped (`DIRTY_SKIPPED`) with a warning
+- Given a submodule has uncommitted changes, when the hook runs, then init and default-branch checkout still execute unconditionally (the hook has no dirty guard); only the `smartPull` step detects the dirty tree and returns `DIRTY_SKIPPED` with a warning, so the local commits are not rebased away
 - Given a submodule sync fails, when the first attempt errors, then the full sequence retries once; a second failure is logged and the remaining submodules continue (startup is never aborted)
 
 ### Session-Close Commit and Push (R8, R9)
@@ -84,5 +84,6 @@ The `projects-commit` post-processor preserves work in every dirty project befor
 - Given message generation fails, when committing, then the deterministic fallback `Update <name> files (YYYY-MM-DD)` is used and the push still proceeds
 - Given a project with a clean tree, when the processor runs, then it is left untouched and no side completion is made
 - Given a push fails or the remote has conflicting divergence, when the processor runs, then a warning is logged and the commits remain local (retried by the next startup sync)
+- Given `smartPush` returns `NOTHING_TO_PUSH` (the project was already up-to-date with the remote), when the processor checks the result, then because `NOTHING_TO_PUSH` is *not* in `PUSH_SUCCESS` (which is `PUSHED`/`REBASE_SUCCEEDED`/`AGENT_RESOLVED`), the same "push failed — changes remain committed locally" warning is logged even though nothing was actually wrong
 - Given multiple dirty projects, when the processor runs, then they are processed in parallel and one project's failure does not affect the others
 - Given the processor completes, when the `finalize`-phase workspace commit runs, then the updated submodule pointers are committed alongside other workspace changes ([git-workspace.md](git-workspace.md))

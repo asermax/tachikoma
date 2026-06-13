@@ -19,13 +19,14 @@ A terminal channel for developing against the agent locally: a readline prompt r
 |----|-------------|
 | R0 | The extension registers a `ReplChannel` (name `repl`) via `app.channels.register`; the core shell starts whichever channel is selected (see [core-shell](core-shell.md)) |
 | R1 | Non-empty input lines are trimmed and submitted as inbound text messages; empty lines just re-prompt |
-| R2 | Agent events stream to stdout: `text` is buffered per exchange and rendered as styled markdown on the next non-text event (or at `result`); `tool-start` as a dim line with a gear marker and the tool name; `status` dim; `error` in red with an `error:` prefix; `result` prints a newline and re-prompts |
+| R2 | Agent events stream to stdout: `text` is buffered per exchange and rendered as styled markdown on the next non-text event (or at `result`); `tool-start` as a dim line with a gear marker and the tool name; `status` dim; `error` in red with an `error:` prefix (a non-recoverable error additionally appends ` (<errorKind>, not recoverable)`); `result` prints a dim cost/token summary line (`· $<cost> · <tokens> tokens`) when `event.result` is non-null, then a blank line, then re-prompts |
 | R3 | `thinking` and `tool-end` events are not rendered |
 | R4 | Non-text events that interrupt buffered text are preceded by a newline so status lines never splice into a sentence |
 | R5 | Background deliveries (`deliver`) print the delivery text on its own line with an inbox marker, then re-prompt |
 | R6 | Closing stdin (Ctrl+D) detaches the readline interface and signals SIGINT so shutdown flows through the app's regular signal path; an exchange still rendering must not touch the closed interface |
 | R7 | Streamed agent text is rendered through a markdown renderer supporting headings, bold, italic, inline code, fenced code blocks, and list bullets via ANSI styling; rendering operates on finalized buffered text (not per-chunk) because inline spans can straddle stream chunks |
 | R8 | While an exchange is streaming, Ctrl-C (SIGINT) aborts the in-flight exchange via the coordinator's abort API rather than killing the process; when idle, Ctrl-C and Ctrl-D keep the existing shutdown behavior |
+| R9 | `ReplChannel` implements the optional `Channel.status(text)` method, printing the text as a dim `· <text>` line to stdout, so coordinator/extension progress lines (`app.status`) surface in the terminal |
 
 ## Behaviors
 
@@ -40,13 +41,15 @@ A terminal channel for developing against the agent locally: a readline prompt r
 **Acceptance Criteria**:
 - Given the agent streams text, when chunks arrive, then they are buffered and rendered as styled markdown when flushed (on the next non-text event or at `result`)
 - Given a tool starts mid-stream, when the event arrives, then buffered text is flushed (terminated by a newline) before the dim tool line prints
-- Given the exchange ends, when the `result` event arrives, then buffered text is flushed, a blank line is printed, and the prompt returns
-- Given an error event, then `error: <message>` prints in red and the loop continues
+- Given the exchange ends, when the `result` event arrives, then buffered text is flushed; if `event.result` is non-null a dim `· $<cost> · <tokens> tokens` summary line is printed (cost to 4 decimals, total tokens), then a blank line is printed and the prompt returns
+- Given a recoverable error event, then `error: <message>` prints in red and the loop continues
+- Given a non-recoverable error event, then `error: <message> (<errorKind>, not recoverable)` prints in red and the loop continues
 
 ### Markdown Rendering (R7)
 
 **Acceptance Criteria**:
 - Given streamed text containing headings, bold/italic spans, inline code, fenced code, or list items, when it is flushed, then it is rendered with ANSI styling and markdown markers (`#`, `**`, backticks, fences) are not shown verbatim
+- Given a fenced code block, when it is rendered, then the fence delimiter lines (the opening and closing ` ``` `) are stripped entirely (consumed, never written) and only the lines inside the fence are emitted, dim-styled
 - Given plain prose, then it passes through unchanged
 
 ### Ctrl-C Exchange Interrupt (R8)

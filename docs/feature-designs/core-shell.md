@@ -31,12 +31,16 @@ Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the 
 1. `loadConfig` — parse TOML (smol-toml), generate the commented default on first run, validate with TypeBox
 2. `createRootLogger` — pino to stderr, pretty or JSON per `logging.pretty`
 3. `Workspace.ensure()` — create the `{workspace}/.tachikoma/pi/sessions` chain
-4. `createDatabase` + `runMigrations` — better-sqlite3 with WAL/foreign-keys pragmas, drizzle migrations from `drizzle/`
-5. `EventBus`, `Scheduler`, `createRegistrations()` — passive services
-6. `AgentManager`, `SessionRegistry`, `Coordinator` — runtime consumers of the registrations
-7. `host.load(firstPartyExtensions)` — extension setups in list order, then `host.bootstrap()` runs all hooks
-8. `coordinator.recoverDanglingSessions()` — close and post-process sessions a previous run left open
-9. Channel resolution (`--channel` flag or `channels.default`), `channel.start`, then `coordinator.run(signal)` until SIGINT/SIGTERM aborts
+4. `adaptConfig` (legacy config translation — its result is `Object.assign`-ed into `config` in place so translated values flow through the rest of the wiring), then `adaptWorkspace` (legacy workspace migration) — both from `src/migration/`
+5. `createDatabase` + `runMigrations` — better-sqlite3 with WAL/foreign-keys pragmas, drizzle migrations from `drizzle/`
+6. `adaptWorkspaceData` — legacy data migration, after the schema exists (`src/migration/`)
+7. `EventBus`, `Scheduler`, `createRegistrations()` — passive services
+8. `AgentManager`, `SessionRegistry`, `Coordinator` — runtime consumers of the registrations
+9. `host.load(firstPartyExtensions)` — extension setups in list order, then `host.bootstrap()` runs all hooks
+10. `coordinator.recoverDanglingSessions()` — close and post-process sessions a previous run left open
+11. Channel resolution (`--channel` flag or `channels.default`), `channel.start`, then `coordinator.run(signal)` until SIGINT/SIGTERM aborts
+
+The three `adapt*` calls are best-effort legacy migrations (see [migration](../feature-designs/migration.md)); they sit between workspace creation and the runtime services so translated config/workspace/data is in place before anything reads it.
 
 Shutdown is the reverse tail: the abort signal wakes the coordinator loop, whose `finally` closes the active session (running post-processing); `runApp`'s `finally` then stops the channel and the scheduler.
 
@@ -62,7 +66,7 @@ Shutdown is the reverse tail: the abort signal wakes the coordinator loop, whose
 | `src/extensions/api.ts` | `AppContext`, pipeline contracts (`ContextProvider`, `ExchangeProcessor`, `PostProcessor`, `InboundMiddleware`), `defineExtension` | `defineExtension` is identity — purely a typing aid for the `C` config parameter |
 | `src/extensions/registrations.ts` | `Registrations`: mutable arrays/maps filled during setup, read by core at runtime | Plain data object — the seam between host and coordinator/agent |
 | `src/extensions/host.ts` | `ExtensionHost`: queue-based `load()`, per-extension `buildContext()`, `bootstrap()` | Context built fresh per extension: child logger, validated config section, namespaced KV state |
-| `src/extensions/index.ts` | `firstPartyExtensions` load order | `commands, context, memory, projects, git, boundary, skills, workflows, tasks, detached-processes, notifications, repl, telegram, external` |
+| `src/extensions/index.ts` | `firstPartyExtensions` load order | `commands, context, memory, projects, git, boundary, skills, workflows, tasks, detached-processes, notifications, self-update, repl, telegram, external` (15 extensions) |
 
 ## Key Decisions
 
@@ -112,8 +116,11 @@ Shutdown is the reverse tail: the abort signal wakes the coordinator loop, whose
 **Alternatives Considered**:
 - A separate plugin-loading phase after first-party load: duplicates the context-building logic and creates two extension kinds
 
+Setup failures are isolated by provenance. A first-party extension's `setup()` failure propagates and aborts startup (a core bug must surface). An external (third-party) extension is wrapped: its setup runs under `withTimeout` (default `DEFAULT_EXTERNAL_SETUP_TIMEOUT_MS = 30_000` ms, overridable per queued extension via `setupTimeoutMs`), and any throw or timeout is caught, logged as a warning ("external extension setup failed or timed out — skipping"), and that one extension is skipped while the rest of the pass continues. The same first-party-fails-hard / external-is-isolated rule governs bootstrap hooks (`bootstrap()`).
+
 **Consequences**:
 - Pro: one loading mechanism; external extensions get the exact same `AppContext` (minus migrations — they must use `app.state` per DES-001)
+- Pro: a broken or hanging third-party extension cannot abort startup or wedge the load loop
 - Con: load order of external extensions depends on where `external` sits in the first-party list (last, by design)
 
 ### Fire-and-forget event bus emission
@@ -141,9 +148,9 @@ Shutdown is the reverse tail: the abort signal wakes the coordinator loop, whose
 
 ### Scenario: Bootstrap hook failure
 
-**Given**: An extension's bootstrap hook throws
+**Given**: A first-party extension's bootstrap hook throws
 **When**: `host.bootstrap()` runs the hooks sequentially
-**Then**: The error propagates out of `runApp`; `main.ts` prints the stack and exits with code 1. No channel ever starts. On the next run the hook executes again (hooks are idempotent by convention, DES-002).
+**Then**: The error propagates out of `runApp`; `main.ts` prints the stack and exits with code 1. No channel ever starts. On the next run the hook executes again (hooks are idempotent by convention, DES-002). An *external* extension's hook is instead isolated — caught, logged as a warning, and skipped — so a third-party hook failure never aborts startup.
 
 ### Scenario: SIGINT during an idle conversation
 

@@ -88,9 +88,9 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 
 ### Scenario: Session closes with no transcript
 
-**Given**: A session record whose `piSessionFile` is null
+**Given**: A `PostProcessorContext` whose `transcriptPath` is null (the coordinator fills it from the session record's `piSessionFile`, so this is a session that produced no transcript)
 **When**: Post-processing reaches `core-context`
-**Then**: The processor logs a debug line and returns without issuing a headless run.
+**Then**: The processor's `process({ transcriptPath, log })` sees `transcriptPath == null`, logs a debug line, and returns without issuing a headless run.
 
 ### Scenario: All staged signals have expired
 

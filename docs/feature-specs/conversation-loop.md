@@ -33,9 +33,9 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R11 | On startup, sessions left open by a previous run are closed and post-processed (dangling recovery) |
 | R12 | Resuming closes the current session, reopens the target record (`closedAt` cleared, `lastResumedAt` set), and opens a fresh pi session from the stored transcript file |
 | R13 | `closeIfIdle()` closes the active session only when no exchange is in flight (returning whether it closed), so time-based policies in extensions can never dispose a streaming session |
-| R14 | Background deliveries gated `immediate` send at once; `idle`-gated deliveries (the default) are held while an exchange is in flight or a session is active, then flushed when the in-flight exchange completes or `maxHoldSeconds` expires. A flush orders held items by descending `priority` (default 0) with a stable sort, so higher-priority items lead and same-priority items keep arrival order |
+| R14 | Background deliveries gated `immediate` send at once; `idle`-gated deliveries (the default) are held while an exchange is in flight or a session is active, then flushed when the in-flight exchange completes or `maxHoldSeconds` expires. A flush orders held items by descending `priority` (default 0) with a stable sort, so higher-priority items lead and same-priority items keep arrival order. A delivery's `target` (default `"user"`) selects the dispatch path: `"user"` renders through `channel.deliver()`, while `"agent"` instead re-submits the delivery text to the coordinator inbox as a system-origin message (`origin: "system"`, `boundary: "skip"`) so the agent acts on it as a prompt rather than the channel rendering it |
 | R15 | `status(text)` surfaces pipeline progress as `status` events on the app event bus; the coordinator emits per-provider and per-processor status lines |
-| R16 | A message submitted while an exchange is in flight (with an active session and non-system origin) is routed into the live run via the pi session's `steer()` instead of being queued; a `/queue ` prefix opts out — the prefix is stripped, the message is tagged `queued` and waits in the inbox for the next exchange. A `steer()` failure is logged and the message dropped. `abortExchange()` aborts the in-flight run on request |
+| R16 | A message submitted while an exchange is in flight (with an active session and non-system origin) is routed into the live run via the pi session's `steer()` instead of being queued. Two leading-slash prefixes opt out of steering: `/queue ` strips the prefix, tags the message `queued`, and waits in the inbox for the next exchange; `/new ` strips the prefix, tags the message `forceNew` (honored downstream by the boundary extension, which closes the active session), and likewise skips steering. A `steer()` failure is logged and the message dropped. `abortExchange()` aborts the in-flight run on request |
 
 ## Behaviors
 
@@ -47,6 +47,7 @@ The coordinator owns an in-memory inbox drained by a single promise-woken loop (
 - Given two messages submitted while idle, when the loop runs, then the second exchange starts only after the first completes
 - Given a message arrives while an exchange is in flight (active session, non-system origin, no `/queue` prefix), when `submit()` runs, then it calls the active session's `steer()` with the rendered prompt and does not enqueue a new exchange; a `steer()` rejection is logged and the message dropped
 - Given a `/queue `-prefixed message arrives mid-exchange, when `submit()` runs, then the prefix is stripped, the message is tagged `queued`, and it waits in the inbox to run as the next exchange (no steering)
+- Given a `/new `-prefixed message arrives mid-exchange, when `submit()` runs, then the prefix is stripped, the message is tagged `forceNew`, and it skips steering to wait in the inbox (the boundary extension then opens a fresh session for it)
 - Given `abortExchange()` is called, when an exchange is in flight, then the active session's run is aborted
 - Given an exchange throws, when the loop catches it, then the error is logged and the next inbox message is processed normally
 - Given the abort signal fires, when the loop exits, then held deliveries are force-flushed and the active session is closed (post-processing runs)
@@ -67,6 +68,7 @@ Middleware composes as a `next()`-style chain ahead of session resolution — th
 
 **Acceptance Criteria**:
 - Given multiple registered middleware, when a message arrives, then they run in registration order, each controlling whether `next()` proceeds
+- Given a middleware sets `message.metadata.handled === true` (e.g. the commands extension fully handled the message), when the chain returns, then `handle()` short-circuits — `ensureSession`, context gathering, `streamPrompt`, and exchange processors are all skipped
 - Given middleware calls `context.closeSession()`, when it returns, then the active session is closed (post-processing runs) before the exchange opens a fresh session
 - Given middleware calls `context.resumeSession(record)`, when it returns, then the resumed session is the active session for the exchange
 - Given no session is active (cold start), when middleware runs, then `context.session` is null
@@ -112,6 +114,7 @@ Phased, idempotent processing of the closed session's transcript.
 - Given a record whose `postProcessingState` already marks a processor `completed`, when post-processing runs again (e.g. dangling recovery), then that processor is skipped
 - Given all phases finish, when state is persisted, then `session:post-processed` is emitted with the per-processor state map
 - Given a processor runs, when it is invoked, then it receives the session record, the pi transcript path, and a processor-bound child logger
+- Given a headless or background run that has no per-session close lifecycle, when `app.sessions.runPostProcessors(context)` is called, then the registered post-processors run once in phase order, error-isolated, with no per-processor completion-state tracking (processors that require a transcript no-op when `transcriptPath` is null)
 
 ### Idle Close (R13)
 
@@ -131,6 +134,8 @@ Background-originated output (`app.channels.deliver`) is gated so it lands at co
 - Given an idle-gated delivery while an exchange is in flight or a session is active, when it is submitted, then it is held
 - Given held deliveries, when the in-flight exchange completes, then they are flushed ordered by descending `priority`; items of equal priority keep their arrival order (stable sort)
 - Given a held delivery with `maxHoldSeconds`, when the hold timer expires, then all held deliveries are force-flushed even mid-exchange
+- Given a delivery with `target: "agent"`, when it is sent (after gating), then instead of `channel.deliver()` the coordinator re-submits its text to the inbox as a system-origin message (`origin: "system"`, `boundary: "skip"`), so the agent processes it as a prompt
+- Given a delivery with no `target` or `target: "user"`, when it is sent, then `channel.deliver()` renders it through the active channel
 - Given `channel.deliver()` throws, when a delivery is sent, then the error is logged; other deliveries are unaffected
 
 ### Processing Status (R15)

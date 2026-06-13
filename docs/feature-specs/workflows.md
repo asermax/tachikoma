@@ -34,7 +34,7 @@ Steps can also compose other workflows. A step may declare `composes` (run a sub
 | R9 | `query_workflow` with an ID returns the full state view (skill, workflow, current step, scratchpad path, timestamps, per-step states); without an ID it lists all active workflows — the recovery path after context loss |
 | R10 | `end_workflow` (actions `complete`/`abort`) soft-deletes the instance and removes its scratchpad; normal completion is handled by auto-finalize, so the tool is primarily for aborting |
 | R11 | All reads exclude soft-deleted records; ended or stale-cleaned IDs answer with a "not found or no longer active" error |
-| R12 | A session-close post-processor soft-deletes instances whose `updated_at` is older than a configurable threshold (default 24 hours) and removes their scratchpads; failures are isolated per record and never propagate |
+| R12 | A session-close post-processor tears down stale instances whose `updated_at` is older than a configurable threshold (default 24 hours) via `abortCascade`, which atomically soft-deletes the root and every transitive descendant (children spawned by composes/loop steps), then removes their scratchpads; failures are isolated per record and never propagate. Cleanup considers the whole active stack (R25) so a stale root with no surviving descendants is fully torn down, leaving no orphan child rows |
 | R13 | Configuration: `[extensions.workflows]` supports `enabled` (default true) and `staleHours` (default 24) |
 | R14 | Scratchpads live under `{workspace}/.tachikoma/scratchpads/`, created by a bootstrap hook; the scratchpad is seeded with the workflow name and ID; if instance creation fails after the scratchpad is written, the file is rolled back |
 | R15 | A step may declare `composes: <workflow>` (same-skill) or `composes: <skill>/<workflow>` (cross-skill); activating it spawns the referenced child workflow, runs it to completion, then auto-completes the parent step and resumes the parent — one continuous nested run from the agent's view |
@@ -59,7 +59,7 @@ Steps can also compose other workflows. A step may declare `composes` (run a sub
 **Acceptance Criteria**:
 - Given step directories `02-review`, `01-plan`, when the workflow loads, then steps are ordered `01-plan`, `02-review` with frontmatter titles, `required` flags, and extra keys in `properties`
 - Given a step with `skippable: true`, when loaded, then it behaves as `required: false` and a deprecation warning is logged
-- Given a step directory without `instructions.md`, or with a missing/invalid `title`, when loaded, then the step is skipped with a warning and remaining steps load
+- Given a step directory without `instructions.md`, with a missing/invalid `title`, or whose `required` frontmatter is present but not a boolean, when loaded, then the step is skipped with a warning and remaining steps load
 - Given a step containing `references/`, when loaded, then `referencesPath` is set and `scriptsPath` is null (and vice versa)
 - Given a step declares `condition`, `composes`, or `loop`, when loaded, then each is preserved as a string on the step definition; a non-string value logs a warning and is treated as unset (the step still loads)
 - Given a workflow directory that does not exist, when looked up, then the result is null and `start_workflow` reports the workflow as not found
@@ -107,7 +107,7 @@ Four pi tools registered per agent session (`registerWorkflowTools` in `src/exte
 `createStaleWorkflowCleanup` (`src/extensions/workflows/cleanup.ts`) registers a `main`-phase post-processor that runs when a session closes.
 
 **Acceptance Criteria**:
-- Given an active instance untouched for longer than `staleHours`, when a session closes, then the instance is soft-deleted and its scratchpad removed; fresher instances are untouched
+- Given an active instance untouched for longer than `staleHours`, when a session closes, then `abortCascade` soft-deletes it together with its whole descendant subtree (so no orphan child rows remain) and its scratchpad is removed; fresher instances are untouched
 - Given an active child keeps a stale root's subtree fresh, when cleanup runs, then the whole stack is preserved; only stacks whose entire subtree exceeds `staleHours` are expired
 - Given the repository fails while listing or deleting, when cleanup runs, then errors are logged and the processor resolves without throwing — session close is never blocked
 

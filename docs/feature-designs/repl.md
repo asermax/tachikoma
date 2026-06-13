@@ -32,8 +32,8 @@ One class, `ReplChannel` in `src/extensions/repl/index.ts`, implementing `Channe
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/repl/index.ts` | `ReplChannel` (input loop + rendering) and the `defineExtension` wiring | `node:readline` over a TUI library; streamed text is buffered per exchange and flushed through `renderMarkdown` so interrupting events flush a newline first; a `streaming` flag gates Ctrl-C between abort and exit; `thinking`/`tool-end` intentionally unrendered |
-| `src/extensions/repl/markdown.ts` | `renderMarkdown`: pure markdown-to-ANSI line renderer | Line-oriented, zero-dependency; covers headings/bold/italic/inline-code/fences/lists; operates on finalized text rather than per-chunk because inline spans can straddle stream chunks |
+| `src/extensions/repl/index.ts` | `ReplChannel` (input loop + rendering, the optional `status()` method) and the `defineExtension` wiring | `node:readline` over a TUI library; streamed text is buffered per exchange and flushed through `renderMarkdown` so interrupting events flush a newline first; a `streaming` flag gates Ctrl-C between abort and exit; `thinking`/`tool-end` intentionally unrendered; a non-recoverable `error` appends `(<errorKind>, not recoverable)`; on `result` a dim `· $<cost> · <tokens> tokens` line prints before the blank-line re-prompt when `result` is present; `status(text)` prints a dim `· <text>` line |
+| `src/extensions/repl/markdown.ts` | `renderMarkdown`: pure markdown-to-ANSI line renderer | Line-oriented, zero-dependency; covers headings/bold/italic/inline-code/fences/lists; operates on finalized text rather than per-chunk because inline spans can straddle stream chunks; fence-delimiter lines (the ` ``` ` open/close) are consumed and never emitted — only the lines inside the fence are written (dim-styled) |
 
 ## Key Decisions
 
@@ -72,6 +72,12 @@ One class, `ReplChannel` in `src/extensions/repl/index.ts`, implementing `Channe
 **Given**: The agent is streaming text and then invokes a tool
 **When**: the `tool-start` event arrives after `text` events
 **Then**: the buffered text is rendered as markdown and flushed (terminated by a newline), the dim tool line prints, and subsequent text buffers afresh.
+
+### Scenario: Exchange completes with accounting
+
+**Given**: An exchange streamed to completion
+**When**: the terminal `result` event arrives carrying a non-null `result`
+**Then**: buffered text is flushed, a dim `· $<cost> · <tokens> tokens` summary line prints (cost from `result.costUsd` to 4 decimals, `result.usage.totalTokens`), then a blank line, then the prompt returns. A `result` event with a null `result` (e.g. an immediate abort) skips the summary line and just re-prompts.
 
 ### Scenario: Ctrl-C during an exchange
 

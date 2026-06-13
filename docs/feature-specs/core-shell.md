@@ -32,7 +32,7 @@ The core shell is everything that runs before and around conversations: configur
 | R11 | pi runs against a dedicated agent dir at `{workspace}/.tachikoma/pi` so Tachikoma never collides with a user's own pi install; pi session transcripts live under `{workspace}/.tachikoma/pi/sessions` |
 | R12 | First-party extensions load in the order listed in `src/extensions/index.ts`; each extension's `setup(app)` runs once, in order |
 | R13 | Extensions may enqueue further extensions during setup via `app.registerExtension()` (external extension support); enqueued extensions load in the same pass, after the current list |
-| R14 | Bootstrap hooks registered via `app.bootstrap(name, hook)` run after all extension setups complete, sequentially in registration order, named `<extension>:<name>`; a failing hook aborts startup |
+| R14 | Bootstrap hooks registered via `app.bootstrap(name, hook)` run after all extension setups complete, sequentially in registration order, named `<extension>:<name>`; a failing first-party hook aborts startup (propagates), while a failing external (third-party) hook is isolated — caught, logged as a warning, and skipped so startup continues |
 | R15 | The channel is selected by the `--channel` flag or `channels.default`; an unknown channel name fails startup with a message listing available channels |
 | R16 | On SIGINT/SIGTERM the main loop exits, the active session closes (running post-processing), the channel stops, and the scheduler stops all jobs |
 
@@ -98,16 +98,17 @@ The core shell is everything that runs before and around conversations: configur
 ### Extension Loading and Bootstrap (R12, R13, R14)
 
 **Acceptance Criteria**:
-- Given the first-party list (`commands`, `context`, `memory`, `projects`, `git`, `boundary`, `skills`, `workflows`, `tasks`, `detached-processes`, `notifications`, `repl`, `telegram`, `external`), when the host loads, then setups run in that order and each receives an `AppContext` with a component-bound logger, validated `extensionConfig`, and a namespaced `KeyValueState`
+- Given the first-party list (`commands`, `context`, `memory`, `projects`, `git`, `boundary`, `skills`, `workflows`, `tasks`, `detached-processes`, `notifications`, `self-update`, `repl`, `telegram`, `external`), when the host loads, then setups run in that order and each receives an `AppContext` with a component-bound logger, validated `extensionConfig`, and a namespaced `KeyValueState`
 - Given an extension calls `app.registerExtension(nested)` during setup, when loading continues, then the nested extension's setup runs after the remaining queued extensions in the same pass
 - Given extensions registered bootstrap hooks, when `host.bootstrap()` runs after all setups, then hooks execute sequentially in registration order — an extension may rely on services registered by earlier extensions but not later ones
-- Given a bootstrap hook throws, when startup runs, then the error propagates and the process exits non-zero
+- Given a first-party bootstrap hook throws, when startup runs, then the error propagates and the process exits non-zero
+- Given an external (third-party) bootstrap hook throws, when `host.bootstrap()` runs, then the error is caught and logged as a warning, that hook is skipped, and startup continues
 
 ### Startup and Shutdown (R15, R16)
 
 **Acceptance Criteria**:
 - Given `tachikoma --channel telegram`, when the app starts, then the `telegram` channel is used regardless of `channels.default`
 - Given an unknown channel name, when startup resolves the channel, then it fails with an error listing the available channel names
-- Given startup completes, when the order is observed, then it is: config → logging → workspace → database + migrations → extension host load → bootstrap hooks → dangling-session recovery → channel start → coordinator main loop
+- Given startup completes, when the order is observed, then it is: config → logging → workspace.ensure → `adaptConfig` (legacy config translation, applied in place) → `adaptWorkspace` (legacy workspace migration) → database + migrations → `adaptWorkspaceData` (legacy data migration) → extension host load → bootstrap hooks → dangling-session recovery → channel start → coordinator main loop. The three `adapt*` steps are best-effort legacy migrations from `src/migration/` (see [migration](migration.md))
 - Given sessions were left open by a previous run, when the app starts, then they are closed and their post-processing runs before the channel starts
 - Given SIGINT or SIGTERM, when received, then the coordinator loop exits, the active session is closed (post-processing runs), the channel stops, and the scheduler stops all jobs

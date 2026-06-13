@@ -113,5 +113,5 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 ## Notes
 
 - Config lives under `[extensions.notifications]`: `flushWindowSeconds` (30), `maxHoldSeconds` (900), `dedupTtlSeconds` (60).
-- The `notify_user` tool is bound to conversational sessions via `app.agent.use`; background side runs are bare (no Tachikoma tools), so background task agents currently cannot call it — task outcome notices come from the executor instead ([tasks.md](tasks.md)).
+- The `notify_user` tool is bound via `app.agent.use(..., { background: true })`, so it reaches both conversational sessions and autonomous background task runs — a background task agent can call `notify_user` directly (alongside the executor's own task-outcome notices, see [tasks.md](tasks.md)).
 - The flush timer is unref'd so a pending window never keeps the process alive; notices pending at shutdown are dropped (they are ephemeral by design).

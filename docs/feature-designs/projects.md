@@ -36,9 +36,9 @@ One extension (`src/extensions/projects/index.ts`) wires four pieces onto the ap
 |-----------|----------------|---------------|
 | `src/extensions/projects/index.ts` | `defineExtension` wiring; honors `enabled` config flag | Registers hook, provider, tools factory, and processor; no logic of its own |
 | `src/extensions/projects/git.ts` | Submodule plumbing: list/init/add/remove, default-branch resolution, `ProjectState` + `describeProjectState` | One state-line format shared by the tool and the context provider; dirty count derived from porcelain output |
-| `src/extensions/projects/hooks.ts` | `syncProjects` bootstrap: ensure `projects/`, init → checkout default branch → `smartPull` per submodule | `Promise.allSettled` parallelism; whole sequence retried once per submodule; failures logged, never abort startup |
+| `src/extensions/projects/hooks.ts` | `syncProjects` bootstrap: ensure `projects/`, init → checkout default branch → `smartPull` per submodule | `Promise.allSettled` parallelism; whole sequence retried once per submodule; failures logged, never abort startup; no dirty guard — init and checkout run unconditionally, and only `smartPull` returns `DIRTY_SKIPPED` for a dirty tree |
 | `src/extensions/projects/context-provider.ts` | `projects`-tagged context block before every prompt | Always returns a block (empty-state guidance), so the agent knows `register_project` exists; per-project failures excluded with a warning |
-| `src/extensions/projects/processor.ts` | `projects-commit` post-processor (`preFinalize`): commit + push each dirty project | `commitAll` with `Update <name> files (date)` fallback; push outcome checked against `PUSH_SUCCESS`; parallel with per-project isolation |
+| `src/extensions/projects/processor.ts` | `projects-commit` post-processor (`preFinalize`): commit + push each dirty project | `commitAll` with `Update <name> files (date)` fallback; push outcome checked against `PUSH_SUCCESS` — which excludes `NOTHING_TO_PUSH`, so an already-up-to-date push is logged as a "push failed" warning; parallel with per-project isolation |
 | `src/extensions/projects/tools.ts` | `register_project`, `deregister_project`, `list_projects` handlers and the pi factory | Handlers exported standalone; registration cleans up partial state on failure; deregistration guards dirty trees behind `force` |
 
 ## Key Decisions

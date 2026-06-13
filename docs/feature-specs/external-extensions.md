@@ -30,7 +30,7 @@ There is no separate manifest-based plugin system (manifests, namespaced skill r
 | R9 | Installation verifies the source contains a loadable, valid extension module before recording it; a failed git install removes the clone and persists nothing |
 | R10 | `update_extension(alias)` runs `git pull --ff-only` for git installs and reports local installs as always current; unknown aliases return an error |
 | R11 | `uninstall_extension(alias)` removes the install record, deleting the cloned directory for git installs while leaving local source directories untouched |
-| R12 | `list_installed_extensions` reports each install's alias, source kind (git/local), source, path, and install time |
+| R12 | `list_installed_extensions` reports each install's alias, source kind (git/local), source, path, and install time. (The rendered output heads the list with "# Installed Plugins" and the tool's display label is "List Installed Plugins" — a "Plugins" wording that diverges from the "extensions" terminology used everywhere else) |
 | R13 | Install, update, and uninstall take effect on the next restart; tool responses say so explicitly |
 
 ## Behaviors

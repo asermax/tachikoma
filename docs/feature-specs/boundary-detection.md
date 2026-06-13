@@ -19,17 +19,20 @@ The feature ships as the `boundary` extension (`src/extensions/boundary/`): an i
 | ID | Requirement |
 |----|-------------|
 | R0 | After every completed exchange, a rolling session summary is regenerated via a side-channel completion (`processor` model tier) and stored on the session record, clipped to 600 characters |
-| R1 | The verbatim last exchange (`user: …\nassistant: …`, clipped to 2000 characters) is stored on the session record on every exchange |
-| R2 | When summarization fails, the last exchange is still persisted, the previous summary is left untouched, and the error is logged |
+| R1 | The verbatim last exchange (`user: …\nassistant: …`, clipped to 2000 characters) is stored on the session record on every exchange that produced assistant text; a tool-only or aborted turn (empty assistant text) is a no-op, leaving the prior summary and `lastExchange` intact |
+| R2 | When summarization fails on a non-empty exchange, the last exchange is still persisted, the previous summary is left untouched, and the error is logged |
 | R3 | Each inbound message is classified as `continue`, `new`, or `resume` via a single structured side-channel classification (`classifier` model tier) |
 | R4 | Classification is skipped when there is nothing to compare against: no active-session summary and no resume candidates |
-| R5 | Resume candidates are closed sessions within the configured window (`sessions.resumeWindowSeconds`, default 86400) that have a non-null summary, excluding the active session |
+| R5 | Resume candidates are closed sessions within the configured window (`sessions.resumeWindowSeconds`, default 86400) that have a non-null summary, excluding the active session, sessions with a null `piSessionFile` (unopenable on disk — `listResumable` filters these out), and sessions whose post-processing state contains `"failed"` (incomplete derived state) |
 | R6 | A `new` decision with an active session closes it — running its post-processing to completion — before the message is handled in a fresh session |
 | R7 | A `resume` decision naming a known candidate closes the active session and reopens the named one, restoring its pi session file |
 | R8 | A `resume` decision naming an unknown session id is downgraded to `continue` with a warning |
 | R9 | Classifier errors fail open: the decision defaults to `continue` and the message proceeds in the active session |
 | R10 | Progress lines are surfaced through the active channel during detection and transitions (`app.status`) |
-| R11 | Setting `[extensions.boundary] enabled = false` disables topic-shift detection — neither the summary processor nor the middleware is registered; the idle boundary is governed independently by `idleCloseSeconds` |
+| R11 | Setting `[extensions.boundary] enabled = false` disables topic-shift detection — the summary processor is not registered, and the inbound middleware (always registered) short-circuits topic classification; the idle boundary is governed independently by `idleCloseSeconds` |
+| R12 | A message with `metadata.boundary === "skip"` (system-originated injections such as session tasks and notices) bypasses all boundary logic, never shifting topics |
+| R13 | A message with `metadata.forceNew === true` (the `/new` command) closes the active session, if any, and proceeds in a fresh one — honored even when topic detection is disabled, so the user can always start over explicitly |
+| R14 | A message with a numeric `metadata.resumeSessionId` (an explicit reply-to target, e.g. a Telegram reply) force-routes to that session via `resumeSession`, bypassing topic classification; if the id is unknown or already the active session, the message proceeds unchanged |
 
 ## Behaviors
 
@@ -38,7 +41,8 @@ The feature ships as the `boundary` extension (`src/extensions/boundary/`): an i
 `createSummaryProcessor` (`src/extensions/boundary/summary.ts`), registered via `app.sessions.onExchange`, feeds the previous summary and the latest clipped exchange to a side completion and persists the result through `app.sessions.update`.
 
 **Acceptance Criteria**:
-- Given a session with an existing summary, when an exchange completes, then the session record is updated with a fresh trimmed summary (clipped to 600 characters) and the last exchange in `user:`/`assistant:` form (clipped to 2000 characters)
+- Given a session with an existing summary, when an exchange completes with non-empty assistant text, then the session record is updated with a fresh trimmed summary (clipped to 600 characters) and the last exchange in `user:`/`assistant:` form (clipped to 2000 characters)
+- Given a tool-only or aborted turn whose assistant text is empty, when the processor runs, then it returns early without touching the summary or `lastExchange` (no half-empty exchange is persisted)
 - Given the side completion throws, when the processor runs, then only `lastExchange` is updated — the previous summary survives for the next boundary check
 - Given a long conversation, when summaries are regenerated each exchange, then the stored summary stays bounded regardless of conversation length
 
@@ -65,5 +69,14 @@ On `new` or `resume`, the middleware drives the transition through the `InboundC
 ### Configuration (R11)
 
 **Acceptance Criteria**:
-- Given `[extensions.boundary] enabled = false`, when the extension loads, then setup logs the disabled state and skips detection — messages are never classified and summaries are never generated; the idle timer still registers unless `idleCloseSeconds = 0`
+- Given `[extensions.boundary] enabled = false`, when the extension loads, then setup logs the disabled state and skips registering the summary processor; the inbound middleware is still registered but short-circuits topic classification (after honoring the `boundary === "skip"` and `forceNew` fast-paths) — messages are never classified against summaries and summaries are never generated; the idle timer still registers unless `idleCloseSeconds = 0`
 - Given a completed exchange, when `idleCloseSeconds` elapses with no further exchange, then `closeIfIdle()` closes the session; a timer firing during a streaming exchange closes nothing and the next exchange re-arms it
+
+### Metadata Fast-Paths (R12, R13, R14)
+
+The inbound middleware checks message metadata before any topic logic. These checks run in order: `boundary === "skip"`, then `forceNew`, then (only when detection is enabled) `resumeSessionId`. The `skip` and `forceNew` paths run before the detection-enabled guard, so they are honored even when topic detection is disabled.
+
+**Acceptance Criteria**:
+- Given a message with `metadata.boundary === "skip"`, when the middleware runs, then it calls `next()` immediately without closing, resuming, or classifying
+- Given a message with `metadata.forceNew === true` and an active session, when the middleware runs, then it surfaces "Starting a new conversation" via `app.status`, closes the active session, and proceeds in a fresh one — even with detection disabled
+- Given a message with a numeric `metadata.resumeSessionId` naming a session other than the active one, when the middleware runs, then it surfaces "Switching to the conversation you replied to", resumes that session, and proceeds; if the id is unknown or equals the active session, no transition occurs
