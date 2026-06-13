@@ -181,6 +181,9 @@ export class Coordinator {
 
   private async handle(message: InboundMessage): Promise<void> {
     this.exchanging = true;
+    // The timer armed after the previous exchange must not fire mid-exchange
+    // and dispose the session that is currently streaming.
+    this.clearIdleTimer();
 
     try {
       await this.runInboundMiddleware(message);
