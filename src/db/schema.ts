@@ -3,5 +3,6 @@
 
 export * from "../extensions/detached-processes/schema.ts";
 export * from "../extensions/tasks/schema.ts";
+export * from "../extensions/telegram/schema.ts";
 export * from "../extensions/workflows/schema.ts";
 export * from "./core-schema.ts";

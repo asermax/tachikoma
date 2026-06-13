@@ -12,6 +12,7 @@ import type { EventBus } from "../events.ts";
 import type { Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
 import type { Workspace } from "../workspace.ts";
+import type { ChannelMessageDirection } from "./telegram/schema.ts";
 
 // ---- pipeline contracts -----------------------------------------------------
 
@@ -87,6 +88,15 @@ export interface SessionsApi {
     patch: Partial<Pick<SessionRecord, "summary" | "lastExchange">>,
   ): SessionRecord;
   listResumable(): SessionRecord[];
+  /** Record a channel message id ↔ session mapping for reply-to routing. */
+  recordChannelMessage(
+    channel: string,
+    messageId: string,
+    sessionId: number,
+    direction: ChannelMessageDirection,
+  ): void;
+  /** Resolve the session that owns a recorded channel message, if any. */
+  findSessionByMessageId(channel: string, messageId: string): SessionRecord | null;
   /** Close the active session immediately — callers must know no exchange is streaming. */
   close(): Promise<void>;
   /** Close the active session only when no exchange is in flight; returns whether it closed. */

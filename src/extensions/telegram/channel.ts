@@ -3,9 +3,10 @@ import type { Bot } from "grammy";
 import type { Message } from "grammy/types";
 
 import type { Channel, ChannelRuntime, Delivery, Exchange } from "../../channels/types.ts";
+import type { InboundMessage } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
 import { unpackCallbackData } from "./buttons.ts";
-import { mapButtonTap, mapMediaMessage, mapTextMessage } from "./inbound.ts";
+import { mapButtonTap, mapMediaMessage, mapReaction, mapTextMessage } from "./inbound.ts";
 import {
   buildAttachment,
   downloadMedia,
@@ -14,8 +15,15 @@ import {
   resolveMedia,
 } from "./media.ts";
 import { Mutex } from "./mutex.ts";
+import type { ChannelMessageDirection } from "./schema.ts";
 import { deliverText, startTyping } from "./sending.ts";
 import { StreamRenderer } from "./streaming.ts";
+
+/** Persists message id ↔ session mappings so a reply-to can be force-routed. */
+export interface ChannelMessageStore {
+  record(messageId: string, sessionId: number, direction: ChannelMessageDirection): void;
+  findSessionId(messageId: string): number | null;
+}
 
 export interface TelegramChannelOptions {
   chatId: number;
@@ -24,6 +32,10 @@ export interface TelegramChannelOptions {
   mediaDir: string;
   /** Abort the in-flight agent run — wired from sessions.abortExchange. */
   stop: () => Promise<void>;
+  /** Record/lookup message↔session mappings for reply-to routing. */
+  store: ChannelMessageStore;
+  /** Id of the session currently receiving messages, for outbound recording. */
+  currentSessionId: () => number | null;
 }
 
 export const STOP_COMMAND = "/stop";
@@ -95,6 +107,22 @@ export class TelegramChannel implements Channel {
       runtime.submit(mapButtonTap(unpacked.value, messageId));
     });
 
+    this.bot.on("message_reaction", (ctx) => {
+      if (ctx.chat.id !== this.options.chatId) return;
+      if (ctx.messageReaction.user?.id !== this.options.chatId) {
+        runtime.log.debug(
+          { userId: ctx.messageReaction.user?.id },
+          "dropping unauthorized reaction",
+        );
+        return;
+      }
+
+      const inbound = mapReaction(ctx.messageReaction);
+      if (inbound == null) return;
+
+      runtime.submit(this.routeReply(inbound));
+    });
+
     this.bot.catch(({ error }) => {
       runtime.log.error({ err: error }, "telegram update handling failed");
     });
@@ -105,13 +133,28 @@ export class TelegramChannel implements Channel {
 
     void this.bot
       .start({
-        allowed_updates: ["message", "callback_query"],
+        allowed_updates: ["message", "callback_query", "message_reaction"],
         onStart: (me) => runtime.log.info({ username: me.username }, "telegram bot polling"),
       })
       .catch((error) => runtime.log.error({ err: error }, "telegram polling crashed"));
   }
 
-  async respond({ events }: Exchange): Promise<void> {
+  /**
+   * When a message replies to a known past message, stamp the owning session as
+   * an explicit resume target. An unknown reply target leaves the message
+   * untouched so it follows the normal active-session/boundary path.
+   */
+  private routeReply(message: InboundMessage): InboundMessage {
+    const replyToMessageId = message.metadata.replyToMessageId;
+    if (typeof replyToMessageId !== "string") return message;
+
+    const sessionId = this.options.store.findSessionId(replyToMessageId);
+    if (sessionId == null) return message;
+
+    return { ...message, metadata: { ...message.metadata, resumeSessionId: sessionId } };
+  }
+
+  async respond({ message, events }: Exchange): Promise<void> {
     const log = this.log();
 
     await this.mutex.run(async () => {
@@ -160,8 +203,33 @@ export class TelegramChannel implements Channel {
         stopTyping();
       }
 
-      this.lastOutboundId = (await renderer.finalize()) ?? this.lastOutboundId;
+      const finalized = await renderer.finalize();
+      if (finalized != null) this.lastOutboundId = finalized;
+
+      // Routing has settled by now: map both the user's message and the bot's
+      // reply to the receiving session so a future reply-to can resolve them.
+      const sessionId = this.options.currentSessionId();
+      if (sessionId != null) {
+        const inboundId = message.metadata.messageId;
+        if (typeof inboundId === "number") {
+          this.recordMessage(String(inboundId), sessionId, "incoming");
+        }
+
+        if (finalized != null) this.recordMessage(String(finalized), sessionId, "outgoing");
+      }
     });
+  }
+
+  private recordMessage(
+    messageId: string,
+    sessionId: number,
+    direction: ChannelMessageDirection,
+  ): void {
+    try {
+      this.options.store.record(messageId, sessionId, direction);
+    } catch (error) {
+      this.log().debug({ err: error, messageId }, "recording channel message failed");
+    }
   }
 
   async deliver(delivery: Delivery): Promise<void> {
@@ -211,7 +279,7 @@ export class TelegramChannel implements Channel {
     if (inbound == null) return;
 
     this.lastInboundId = message.message_id;
-    this.runtimeOrThrow().submit(inbound);
+    this.runtimeOrThrow().submit(this.routeReply(inbound));
   }
 
   /** Abort the in-flight run instead of submitting — "/stop" never reaches the agent. */
@@ -249,7 +317,9 @@ export class TelegramChannel implements Channel {
       const destPath = join(this.options.mediaDir, generateMediaFilename(resolved));
       await downloadMedia(this.bot.api, this.bot.token, resolved, destPath);
 
-      this.runtimeOrThrow().submit(mapMediaMessage(message, buildAttachment(resolved, destPath)));
+      this.runtimeOrThrow().submit(
+        this.routeReply(mapMediaMessage(message, buildAttachment(resolved, destPath))),
+      );
     } catch (error) {
       log.warn({ err: error }, "media download failed");
 

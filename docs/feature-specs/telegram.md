@@ -4,7 +4,7 @@
 
 ## Overview
 
-A grammY-based Telegram bot, shipped as the `telegram` extension, that receives text and media messages from a single authorized chat, submits them to the conversation loop, and renders agent exchanges and background deliveries back as Telegram messages. It also registers agent-facing tools for sending files, reacting with emoji, pinning messages, and presenting inline-button prompts through the same bot instance.
+A grammY-based Telegram bot, shipped as the `telegram` extension, that receives text, media, and emoji-reaction updates from a single authorized chat, submits them to the conversation loop, and renders agent exchanges and background deliveries back as Telegram messages. It records the session that produced or received each message so that replying to a past message routes the new turn back to that conversation. It also registers agent-facing tools for sending files, reacting with emoji, pinning messages, and presenting inline-button prompts through the same bot instance.
 
 The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the idle/immediate delivery gating are owned by the conversation loop — see [conversation-loop](conversation-loop.md). Background-originated text reaches `deliver()` through the notifications extension and other producers — see [notifications](notifications.md).
 
@@ -14,14 +14,16 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 - As a user, I want to send photos, voice messages, and documents so that the agent can work with my non-text content
 - As a user, I want background notifications to arrive as a single push alert so that I am notified without being spammed per chunk
 - As a user, I want to answer the agent's structured prompts by tapping a button so that yes/no and multiple-choice answers do not require typing
+- As a user, I want to react to a message with an emoji and have the agent see it so that I can give quick feedback without typing
+- As a user, I want to reply to one of the agent's earlier messages and have my new message picked up by that conversation so that I can resume an older topic without re-explaining it
 
 ## Requirements
 
 | ID | Requirement |
 |----|-------------|
 | R0 | The extension registers a `telegram` channel when `[extensions.telegram]` provides `botToken` and `chatId`; with either unset it logs that the channel is disabled and registers nothing |
-| R1 | The bot token is validated (`bot.init()` / `getMe`) before long polling starts; polling subscribes only to `message` and `callback_query` updates |
-| R2 | Only updates from the configured `chatId` are processed; messages from other chats and callback taps from other user IDs are dropped (taps are still acknowledged first) |
+| R1 | The bot token is validated (`bot.init()` / `getMe`) before long polling starts; polling subscribes to `message`, `callback_query`, and `message_reaction` updates |
+| R2 | Only updates from the configured `chatId` are processed; messages from other chats, callback taps from other user IDs, and reactions from other user IDs are dropped (taps are still acknowledged first) |
 | R3 | Inbound text is trimmed and submitted to the runtime with the Telegram message ID in metadata; empty or whitespace-only messages are dropped |
 | R4 | `respond()` consumes the exchange event stream through a progressive `StreamRenderer`: it sends a message early and edits it as `text` events stream in (throttled, no-op edits skipped), surfaces `tool-start` (`⚙ <tool>`) and `status` events as a transient italic line that the next text replaces, refreshes a typing indicator throughout, and finalizes the message when the stream ends; `error` events are sent immediately as `⚠️ Error: …` notices |
 | R5 | Outbound text is split at Telegram's 4096-character (UTF-16) limit, preferring paragraph boundaries, then line boundaries, then a hard split that never cuts a surrogate pair |
@@ -37,6 +39,10 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | R15 | `send_message_with_buttons` validates the layout (≥1 row, ≥1 button per row, non-empty labels, values ≤58 UTF-8 bytes, ≤100 buttons) and sends an inline keyboard whose `callback_data` encodes the value and the single-use flag |
 | R16 | Button taps are acknowledged immediately (before authorization), unpacked from the wire format, routed as a framed inbound turn carrying the tapped value; single-use taps remove the keyboard via a detached call whose failure never blocks routing |
 | R17 | A `/stop` text message aborts the in-flight agent run instead of being submitted as a turn; it is acknowledged with `⏹ Stopped.` and the abort wires to the coordinator's exchange abort |
+| R18 | An authorized emoji reaction is surfaced to the agent as an inbound turn that names the emoji(s) added and/or removed; a reaction update whose emoji set is unchanged is dropped |
+| R19 | The channel records every message id it handles — inbound user messages and the bot's outbound replies — against the session that received or produced them in the `channel_messages` table, keyed by channel and message id (re-pointed on conflict) |
+| R20 | When an inbound message (text, media, or reaction) targets a previously recorded message — via Telegram reply-to or the reacted-to message id — and that message maps to a known session, the turn carries `metadata.resumeSessionId` so the boundary force-routes it to the owning session; a target with no recorded session falls back to normal active-session/boundary routing |
+| R21 | A reply to a message that carries text quotes a truncated form of that text as a `Replied to:` prefix on the turn so the agent sees what was replied to |
 
 ## Behaviors
 
@@ -46,7 +52,7 @@ The extension wires one `Bot` instance shared by the channel and the agent tools
 
 **Acceptance Criteria**:
 - Given `botToken` is `""` or `chatId` is `0`, when the extension sets up, then it logs that the channel is disabled and registers no channel, hook, or tools
-- Given valid config, when `start()` runs, then `bot.init()` validates the token before polling begins and polling runs detached with `allowed_updates: ["message", "callback_query"]`
+- Given valid config, when `start()` runs, then `bot.init()` validates the token before polling begins and polling runs detached with `allowed_updates: ["message", "callback_query", "message_reaction"]`
 - Given a message from a chat other than `chatId`, when received, then it is ignored without response
 - Given polling or update handling throws, when the error surfaces, then it is logged via `bot.catch` / the polling catch handler and the process continues
 
@@ -57,6 +63,26 @@ The extension wires one `Bot` instance shared by the channel and the agent tools
 - Given empty or whitespace-only text, when handled, then `mapTextMessage` returns `null` and nothing is submitted
 - Given any inbound message (text or media), when handled, then the channel records its message ID as the last inbound message (target for `react_to_message`)
 - Given a `/stop` message, when handled, then the in-flight run is aborted via the configured `stop` callback (it is never submitted as a turn), `⏹ Stopped.` is sent as acknowledgement, and an abort failure is logged without breaking the channel
+
+### Inbound Reactions (R18, R2)
+
+**Acceptance Criteria**:
+- Given an authorized `message_reaction` update, when handled, then `mapReaction` diffs the new and old emoji sets and produces an `InboundMessage` naming what was added and/or removed (e.g. `The user reacted 👍 to a previous message.`)
+- Given a reaction update from a user other than `chatId`, when handled, then it is dropped and nothing is submitted
+- Given a reaction update whose added and removed emoji sets are both empty, when handled, then `mapReaction` returns `null` and nothing is submitted
+- Given a reaction is surfaced, when submitted, then `metadata.reaction` is `true` and `metadata.replyToMessageId` is the reacted-to message id so reply routing can apply
+
+### Message Recording and Reply Routing (R19, R20, R21)
+
+The channel persists the message↔session mapping so a later reply or reaction can be force-routed to the conversation that owns the referenced message, bypassing topic classification.
+
+**Acceptance Criteria**:
+- Given an exchange finished rendering, when `respond()` finalizes, then the inbound message id (when present) and the finalized outbound message id are recorded against the current session as `incoming`/`outgoing`; with no active session, nothing is recorded
+- Given a recording call throws, when handled, then the failure is logged at debug and the exchange proceeds
+- Given an inbound message replies to (or a reaction targets) a message id that maps to a known session, when routed, then the turn carries `metadata.resumeSessionId` set to that session's id
+- Given the reply-to or reacted-to message id is not recorded, when routed, then no `resumeSessionId` is attached and the turn follows normal routing
+- Given a turn carries `metadata.resumeSessionId` for a session other than the active one, when the boundary middleware runs, then it resumes that session and skips topic classification entirely; a `resumeSessionId` equal to the active session, or for an unknown session, is a no-op that continues normally
+- Given a reply targets a message that carries text, when mapped, then a truncated `Replied to:` quote of that text is prepended to the turn
 
 ### Response Rendering (R4, R5, R6, R7)
 

@@ -42,6 +42,19 @@ export default defineExtension<BoundaryConfig>({
       // System-originated injections (session tasks, notices) never shift topics.
       if (message.metadata.boundary === "skip") return next();
 
+      // An explicit reply-to target (e.g. a Telegram reply) force-routes to its
+      // owning session, bypassing topic classification entirely.
+      if (typeof message.metadata.resumeSessionId === "number") {
+        const target = app.sessions.get(message.metadata.resumeSessionId);
+
+        if (target != null && target.id !== context.session?.id) {
+          app.status("Switching to the conversation you replied to");
+          await context.resumeSession(target);
+        }
+
+        return next();
+      }
+
       const active = context.session;
       const candidates = app.sessions
         .listResumable()

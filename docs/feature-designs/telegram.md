@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Explain how the Telegram extension is assembled: one shared grammY `Bot` feeding a `Channel` implementation and a set of agent tools, with rendering split into small pure modules (chunking, sending, media, buttons) that take narrow fakeable dependencies.
+Explain how the Telegram extension is assembled: one shared grammY `Bot` feeding a `Channel` implementation and a set of agent tools, with rendering split into small pure modules (chunking, sending, media, buttons) that take narrow fakeable dependencies. It also covers how emoji reactions enter the loop and how a message↔session mapping (the `channel_messages` table) lets a reply force-route to the conversation that owns the replied-to message.
 
 ## Problem Context
 
@@ -22,6 +22,7 @@ Tachikoma's production interface is a Telegram bot for a single user. The channe
 **Interactions:**
 - `app.channels.register()` / `Channel` contract — conversation loop drives `respond()`/`deliver()`/`stop()`
 - `runtime.submit()` — inbound messages enter the coordinator inbox as `InboundMessage` (`src/domain/message.ts`); media attachments are rendered into the prompt by the coordinator
+- `app.sessions.current()` / `recordChannelMessage()` / `findSessionByMessageId()` — the channel reads the receiving session id for recording and resolves a reply-to target back to its owning session; the boundary middleware honors `metadata.resumeSessionId` as an explicit resume target (see [conversation-loop](conversation-loop.md))
 - `app.bootstrap("media-dir", …)` — media directory creation and retention pruning at startup
 - `app.agent.use()` — per-session registration of the five Telegram tools, closing over the bot API and the channel's last-message-ID getters
 
@@ -38,16 +39,17 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/extensions/telegram/index.ts` | Extension entry: config schema (`botToken`, `chatId`, `allowMedia`, `pushNotifications`, `extraFileRoots`), disable-on-missing-config, bot/channel construction, allowed-roots computation, tool factory registration | Silent disable (info log) instead of startup failure; allowed roots deduplicated from workspace + `tmpdir()` + expanded extras |
-| `src/extensions/telegram/channel.ts` | `TelegramChannel implements Channel`: grammY handlers (message, `callback_query:data`), token validation, detached polling, `respond()` driving a per-exchange `StreamRenderer` under the mutex, `/stop` abort handling, `deliver()`/`status()`, media handler with user-facing failure notices, last inbound/outbound ID tracking | `answerCallbackQuery()` before the auth check so unauthorized tappers' spinners still clear; polling runs detached because grammY's `start()` only resolves when polling stops; `/stop` aborts the live run via the injected `stop` callback rather than reaching the agent |
+| `src/extensions/telegram/channel.ts` | `TelegramChannel implements Channel`: grammY handlers (message, `callback_query:data`, `message_reaction`), token validation, detached polling, `respond()` driving a per-exchange `StreamRenderer` under the mutex, `/stop` abort handling, `deliver()`/`status()`, media handler with user-facing failure notices, last inbound/outbound ID tracking, reply-to routing (`routeReply`), and message recording in `respond()` | `answerCallbackQuery()` before the auth check so unauthorized tappers' spinners still clear; polling runs detached because grammY's `start()` only resolves when polling stops; `/stop` aborts the live run via the injected `stop` callback rather than reaching the agent; recording happens in `respond()` after routing settles so the inbound and outbound ids attach to the *receiving* session; `routeReply` stamps `metadata.resumeSessionId` only when the target maps to a known session |
 | `src/extensions/telegram/streaming.ts` | `StreamRenderer`: progressive per-exchange renderer — `appendText`/`showTransient`/`finalize` over one or more Telegram messages, ~1500 ms `EDIT_THROTTLE_MS`, no-op-edit skipping, overflow finalization at the 4096 limit, broken-state fallback to a fresh `sendChunked` | One renderer per `respond()`; transient tool/status line composed below the buffer and dropped on the next text; a single send/edit failure stops live editing and defers the whole text to `finalize()` |
-| `src/extensions/telegram/inbound.ts` | Pure mappers from grammY `Message`/tap values to domain `InboundMessage` | Button taps framed as explicit prose so the agent distinguishes taps from typed input |
+| `src/extensions/telegram/inbound.ts` | Pure mappers from grammY `Message`/tap/reaction values to domain `InboundMessage`: `mapTextMessage`, `mapMediaMessage`, `mapButtonTap`, `mapReaction`, plus `replyQuote`/`replyTargetId` helpers | Button taps and reactions framed as explicit prose; replies carry `metadata.replyToMessageId` (string) and a truncated `Replied to:` quote; `mapReaction` diffs old/new emoji sets and returns `null` on no change |
+| `src/extensions/telegram/schema.ts` | `channel_messages` drizzle table (channel, message id, session id, direction, timestamp) plus the `ChannelMessageDirection` const map; re-exported from `src/db/schema.ts` | Unique index on `(channel, message_id)` so re-recording the same id re-points it via `onConflictDoUpdate`; index on `session_id`; message ids stored as text since they are opaque keys |
 | `src/extensions/telegram/chunking.ts` | `splitMessage`: paragraph > line > hard split within 4096 UTF-16 units | JS `string.length` is already UTF-16 code units — Telegram's actual constraint, no conversion layer needed; hard split backs off one unit at a low surrogate |
 | `src/extensions/telegram/sending.ts` | `sendWithMarkdownFallback`, `sendChunked`, `notifyViaCopyDelete`, `deliverText`, `startTyping`; narrow `SendApi` interface | Copy-first ordering keeps text safe (copy fails → original preserved; delete fails → duplicate accepted after 3 retries); typing refreshed every 5 s (Telegram expires chat actions at ~5 s) |
 | `src/extensions/telegram/mutex.ts` | Promise-chain FIFO `Mutex` serializing all channel sends | Tail swallows rejections so a failed delivery never wedges the queue |
 | `src/extensions/telegram/media.ts` | `resolveMedia` priority table, `downloadMedia` with 20 MB pre-check, `generateMediaFilename`, `buildAttachment`, `ensureMediaDir` (create + 30-day prune) | Animation checked before document (Telegram sets both fields); video notes map onto the `video` domain kind; size check happens before any network call |
 | `src/extensions/telegram/buttons.ts` | `callback_data` wire format (`btn1:`/`btnN:` + value), layout validation, `InlineKeyboardMarkup` construction | Single-use bit lives in the callback data itself so semantics survive process restarts with no per-message state |
 | `src/extensions/telegram/tools.ts` | Five `pi.registerTool` registrations plus extracted handlers (`handleSendFile`, `handleReactToMessage`, `handlePinMessage`, `handleUnpinMessage`, `handleSendMessageWithButtons`), path validation, extension-based media-type detection | Handlers take `Pick<ToolDeps, …>` so tests fake only what each needs; errors signal by throwing per DES-002 |
-| `tests/telegram/` | Vitest suites for chunking, sending, mutex serialization, inbound/media mapping, tools, buttons | Fake `SendApi`/`ToolApi` objects; no live network |
+| `tests/telegram/` | Vitest suites for chunking, sending, mutex serialization, inbound/media/reaction mapping, reply routing, message recording, tools, buttons | Fake `SendApi`/`ToolApi`/`ChannelMessageStore` objects; no live network. Registry mapping + migration application covered in `tests/db.test.ts` |
 
 ## Key Decisions
 
@@ -98,6 +100,19 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 - Pro: Unknown prefixes are detectably foreign and dropped with a warning
 - Con: 58-byte value ceiling surfaces as a validation error the agent must work around
 
+### Reply routing via inbound metadata the boundary honors
+
+**Choice**: The channel records every handled message id ↔ session in `channel_messages` (inbound and outbound, written in `respond()` once routing has settled). When an inbound message replies to — or a reaction targets — a recorded id, `routeReply` resolves the owning session and stamps `metadata.resumeSessionId` on the turn. The boundary middleware checks for `resumeSessionId` first and, when it points to a different known session, resumes it and returns *before* running topic classification.
+**Why**: A reply is an unambiguous, explicit signal of which conversation the user means — far stronger than the LLM topic classifier the boundary normally uses. Expressing the target as inbound metadata keeps the channel ignorant of session internals (it only knows ids) and reuses the boundary's existing `resumeSession` path, so no new coordinator surface is needed. An unknown target simply omits the metadata and falls through to normal routing, so a stale or foreign reply-to never strands the message.
+**Alternatives Considered**: A dedicated coordinator method to force-resume from the channel (couples the channel to session lifecycle); classifying the reply text as usual (loses the explicit signal); persisting the full reply graph (unnecessary — only the id↔session edge matters).
+
+**Consequences**:
+- Pro: Explicit, deterministic routing for replies and reactions; no extra LLM call on the boundary
+- Pro: The channel stays decoupled — it records and looks up by id through `SessionsApi`, never touching session files
+- Pro: Recording in `respond()` attaches both ids to the actually-receiving session, so the mapping is correct even after a topic shift moved the turn to another session
+- Con: Reactions and replies only route when the referenced message was recorded; messages predating this feature, or sent outside `respond()`, are not resolvable and fall back to normal routing
+- Con: Recording is best-effort (failures logged at debug), so a write error silently disables routing for that message
+
 ### Media stored under the data dir with retention pruning
 
 **Choice**: Downloads land in `{workspace}/.tachikoma/media` (via `app.workspace.dataDir`), named `<12-hex>-<original-name>`; the `media-dir` bootstrap hook prunes files older than 30 days.
@@ -140,6 +155,18 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 **Given**: The user sends a 5-second voice note
 **When**: `handleMedia` runs
 **Then**: `resolveMedia` yields kind `voice` with `.ogg` extension and duration summary, the 20 MB pre-check passes, the file downloads to `{dataDir}/media/<hex>.ogg`, and an `InboundMessage` with empty text and one attachment (`Voice message (5 seconds, audio/ogg)`) is submitted; on download failure a notice is sent and nothing is submitted.
+
+### Scenario: User replies to an older bot message
+
+**Given**: The agent answered about topic A in session 5, that session later closed, and the user is now talking about topic B in session 9
+**When**: The user replies to the old topic-A message and the channel handles it
+**Then**: `routeReply` looks up the replied-to message id, finds it maps to session 5, and stamps `metadata.resumeSessionId: 5`; the boundary middleware resumes session 5 (skipping classification) so the new turn lands in the topic-A conversation. Had the replied-to id not been recorded, no metadata is attached and the turn stays in session 9 via normal routing.
+
+### Scenario: User reacts 👍 to a message
+
+**Given**: The authorized user adds a 👍 reaction to a previous message
+**When**: The `message_reaction` handler runs
+**Then**: `mapReaction` diffs the emoji sets and submits a turn reading `The user reacted 👍 to a previous message.` with `metadata.reaction` and `metadata.replyToMessageId`; if that message id maps to another session, `routeReply` adds `resumeSessionId` so the reaction lands in the owning conversation. A reaction from any other user id is dropped, and a no-change reaction update submits nothing.
 
 ### Scenario: Push notification for a background delivery
 

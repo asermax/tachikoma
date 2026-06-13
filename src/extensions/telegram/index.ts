@@ -6,6 +6,7 @@ import { type Static, Type } from "typebox";
 import { expandHome } from "../../workspace.ts";
 import { defineExtension } from "../api.ts";
 import { TelegramChannel } from "./channel.ts";
+import { CHANNEL_NAME } from "./inbound.ts";
 import { ensureMediaDir } from "./media.ts";
 import { registerTelegramTools } from "./tools.ts";
 
@@ -53,6 +54,13 @@ export default defineExtension<TelegramConfig>({
       pushNotifications,
       mediaDir,
       stop: () => app.sessions.abortExchange(),
+      store: {
+        record: (messageId, sessionId, direction) =>
+          app.sessions.recordChannelMessage(CHANNEL_NAME, messageId, sessionId, direction),
+        findSessionId: (messageId) =>
+          app.sessions.findSessionByMessageId(CHANNEL_NAME, messageId)?.id ?? null,
+      },
+      currentSessionId: () => app.sessions.current()?.id ?? null,
     });
 
     app.bootstrap("media-dir", () => ensureMediaDir(mediaDir, app.log));

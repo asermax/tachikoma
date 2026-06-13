@@ -135,6 +135,10 @@ export class ExtensionHost {
         update: (id, patch) => services.registry.update(id, patch),
         listResumable: () =>
           services.registry.listResumable(services.config.sessions.resumeWindowSeconds),
+        recordChannelMessage: (channel, messageId, sessionId, direction) =>
+          services.registry.recordChannelMessage(channel, messageId, sessionId, direction),
+        findSessionByMessageId: (channel, messageId) =>
+          services.registry.findSessionByMessageId(channel, messageId),
         close: () => services.coordinator.closeActiveSession(),
         closeIfIdle: () => services.coordinator.closeActiveSessionIfIdle(),
         abortExchange: () => services.coordinator.abortExchange(),

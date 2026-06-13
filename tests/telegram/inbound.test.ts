@@ -1,8 +1,10 @@
+import type { MessageReactionUpdated } from "grammy/types";
 import { describe, expect, it } from "vitest";
 
 import {
   mapButtonTap,
   mapMediaMessage,
+  mapReaction,
   mapTextMessage,
 } from "../../src/extensions/telegram/inbound.ts";
 import {
@@ -27,6 +29,57 @@ describe("mapTextMessage", () => {
   it("returns null for empty or whitespace-only text", () => {
     expect(mapTextMessage({ message_id: 5, text: "   " })).toBeNull();
     expect(mapTextMessage({ message_id: 5 })).toBeNull();
+  });
+
+  it("prepends a quote and records the reply target when replying", () => {
+    const inbound = mapTextMessage({
+      message_id: 7,
+      text: "what about this?",
+      reply_to_message: { message_id: 3, text: "the plan is ready" } as never,
+    });
+
+    expect(inbound?.text).toBe("Replied to:\n> the plan is ready\n\nwhat about this?");
+    expect(inbound?.metadata).toEqual({ messageId: 7, replyToMessageId: "3" });
+  });
+
+  it("omits the reply target when the message is not a reply", () => {
+    const inbound = mapTextMessage({ message_id: 7, text: "hi" });
+
+    expect(inbound?.metadata).toEqual({ messageId: 7 });
+  });
+});
+
+describe("mapReaction", () => {
+  const reaction = (
+    messageId: number,
+    userId: number | undefined,
+    next: string[],
+    old: string[] = [],
+  ): MessageReactionUpdated =>
+    ({
+      message_id: messageId,
+      user: userId != null ? { id: userId } : undefined,
+      new_reaction: next.map((emoji) => ({ type: "emoji", emoji })),
+      old_reaction: old.map((emoji) => ({ type: "emoji", emoji })),
+    }) as MessageReactionUpdated;
+
+  it("surfaces an added reaction with the reacted-to message as the reply target", () => {
+    const inbound = mapReaction(reaction(12, 42, ["👍"]));
+
+    expect(inbound?.text).toBe("The user reacted 👍 to a previous message.");
+    expect(inbound?.metadata).toEqual({ reaction: true, replyToMessageId: "12" });
+  });
+
+  it("reports both additions and removals", () => {
+    const inbound = mapReaction(reaction(12, 42, ["🎉"], ["👍"]));
+
+    expect(inbound?.text).toBe(
+      "The user reacted 🎉 and removed reaction 👍 to a previous message.",
+    );
+  });
+
+  it("returns null when nothing changed", () => {
+    expect(mapReaction(reaction(12, 42, ["👍"], ["👍"]))).toBeNull();
   });
 });
 

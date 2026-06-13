@@ -1,35 +1,111 @@
-import type { Message } from "grammy/types";
+import type { Message, MessageReactionUpdated, ReactionType } from "grammy/types";
 
 import type { InboundMessage, MediaAttachment } from "../../domain/message.ts";
 
 export const CHANNEL_NAME = "telegram";
 
+const REPLY_QUOTE_MAX = 280;
+
+/** Keep a reply/reaction quote short: head and tail with an ellipsis between. */
+const truncateQuote = (text: string): string => {
+  const stripped = text.trim();
+
+  if (stripped.length <= REPLY_QUOTE_MAX) return stripped;
+
+  const half = Math.floor((REPLY_QUOTE_MAX - 1) / 2);
+
+  return `${stripped.slice(0, half)}…${stripped.slice(-half)}`;
+};
+
+/** Quote of a replied-to message, prepended to the agent prompt as context. */
+export const replyQuote = (message: Pick<Message, "reply_to_message">): string | null => {
+  const replied = message.reply_to_message;
+  if (replied == null) return null;
+
+  const text = replied.text ?? replied.caption;
+  if (text == null || text.trim().length === 0) return null;
+
+  return `Replied to:\n> ${truncateQuote(text)}`;
+};
+
+/** The id of the bot/user message a reply targets, as a string key. */
+export const replyTargetId = (message: Pick<Message, "reply_to_message">): string | null =>
+  message.reply_to_message != null ? String(message.reply_to_message.message_id) : null;
+
 export const mapTextMessage = (
-  message: Pick<Message, "text" | "message_id">,
+  message: Pick<Message, "text" | "message_id" | "reply_to_message">,
 ): InboundMessage | null => {
   const text = message.text?.trim() ?? "";
 
   if (text.length === 0) return null;
 
+  const quote = replyQuote(message);
+
   return {
-    text,
+    text: quote != null ? `${quote}\n\n${text}` : text,
     channel: CHANNEL_NAME,
     receivedAt: new Date(),
     media: [],
-    metadata: { messageId: message.message_id },
+    metadata: withReplyTarget({ messageId: message.message_id }, message),
   };
 };
 
 export const mapMediaMessage = (
-  message: Pick<Message, "caption" | "message_id">,
+  message: Pick<Message, "caption" | "message_id" | "reply_to_message">,
   attachment: MediaAttachment,
-): InboundMessage => ({
-  text: message.caption?.trim() ?? "",
-  channel: CHANNEL_NAME,
-  receivedAt: new Date(),
-  media: [attachment],
-  metadata: { messageId: message.message_id },
-});
+): InboundMessage => {
+  const quote = replyQuote(message);
+  const caption = message.caption?.trim() ?? "";
+
+  return {
+    text: quote != null ? `${quote}\n\n${caption}`.trim() : caption,
+    channel: CHANNEL_NAME,
+    receivedAt: new Date(),
+    media: [attachment],
+    metadata: withReplyTarget({ messageId: message.message_id }, message),
+  };
+};
+
+const withReplyTarget = (
+  metadata: Record<string, unknown>,
+  message: Pick<Message, "reply_to_message">,
+): Record<string, unknown> => {
+  const target = replyTargetId(message);
+
+  return target != null ? { ...metadata, replyToMessageId: target } : metadata;
+};
+
+const emojiSet = (reactions: ReactionType[] | undefined): Set<string> =>
+  new Set(
+    (reactions ?? []).flatMap((reaction) => (reaction.type === "emoji" ? [reaction.emoji] : [])),
+  );
+
+/**
+ * Frame a reaction update as an inbound message. Diffs old/new reactions so the
+ * agent sees what the user added or removed; returns null when nothing changed.
+ */
+export const mapReaction = (event: MessageReactionUpdated): InboundMessage | null => {
+  const next = emojiSet(event.new_reaction);
+  const previous = emojiSet(event.old_reaction);
+
+  const added = [...next].filter((emoji) => !previous.has(emoji));
+  const removed = [...previous].filter((emoji) => !next.has(emoji));
+
+  if (added.length === 0 && removed.length === 0) return null;
+
+  const parts = [
+    added.length > 0 ? `reacted ${added.join(" ")}` : null,
+    removed.length > 0 ? `removed reaction ${removed.join(" ")}` : null,
+  ].filter((part) => part != null);
+
+  return {
+    text: `The user ${parts.join(" and ")} to a previous message.`,
+    channel: CHANNEL_NAME,
+    receivedAt: new Date(),
+    media: [],
+    metadata: { reaction: true, replyToMessageId: String(event.message_id) },
+  };
+};
 
 /** Frame a button tap so the agent can distinguish it from typed input. */
 export const mapButtonTap = (value: string, messageId: number | null): InboundMessage => ({

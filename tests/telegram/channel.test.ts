@@ -28,10 +28,28 @@ interface ApiCall {
 
 type UpdateHandler = (ctx: unknown) => Promise<void> | void;
 
+interface RecordedMessage {
+  messageId: string;
+  sessionId: number;
+  direction: "incoming" | "outgoing";
+}
+
 const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
   const handlers = new Map<string, UpdateHandler>();
   const calls: ApiCall[] = [];
   let next = 0;
+
+  const recorded: RecordedMessage[] = [];
+  const mappings = new Map<string, number>();
+  const session = { id: 100 as number | null };
+
+  const store = {
+    record: vi.fn((messageId: string, sessionId: number, direction: "incoming" | "outgoing") => {
+      recorded.push({ messageId, sessionId, direction });
+      mappings.set(messageId, sessionId);
+    }),
+    findSessionId: vi.fn((messageId: string) => mappings.get(messageId) ?? null),
+  };
 
   const api = {
     sendMessage: vi.fn(async (_chat: number, text: string) => {
@@ -78,17 +96,54 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     pushNotifications: false,
     mediaDir: "/tmp/media",
     stop,
+    store,
+    currentSessionId: () => session.id,
     ...overrides,
   });
 
-  const dispatchText = async (text: string, messageId = 1) => {
+  const dispatchText = async (
+    text: string,
+    messageId = 1,
+    replyTo?: { message_id: number; text?: string },
+  ) => {
     const handler = handlers.get("message");
     if (handler == null) throw new Error("message handler not registered");
 
-    await handler({ chat: { id: 42 }, message: { message_id: messageId, text } });
+    await handler({
+      chat: { id: 42 },
+      message: { message_id: messageId, text, reply_to_message: replyTo },
+    });
   };
 
-  return { channel, api, calls, stop, submit, runtime, dispatchText };
+  const dispatchReaction = async (messageId: number, emoji: string, userId = 42) => {
+    const handler = handlers.get("message_reaction");
+    if (handler == null) throw new Error("message_reaction handler not registered");
+
+    await handler({
+      chat: { id: 42 },
+      messageReaction: {
+        message_id: messageId,
+        user: { id: userId },
+        new_reaction: [{ type: "emoji", emoji }],
+        old_reaction: [],
+      },
+    });
+  };
+
+  return {
+    channel,
+    api,
+    calls,
+    stop,
+    submit,
+    runtime,
+    dispatchText,
+    dispatchReaction,
+    store,
+    recorded,
+    mappings,
+    session,
+  };
 };
 
 async function* stream(events: AgentEvent[]): AsyncGenerator<AgentEvent> {
@@ -253,5 +308,113 @@ describe("status", () => {
     await responding;
 
     expect(calls.at(-1)).toEqual({ type: "edit", messageId: 1, text: "Answer" });
+  });
+});
+
+const inboundWith = (text: string, messageId: number) => ({
+  text,
+  channel: "telegram",
+  receivedAt: new Date(),
+  media: [] as never[],
+  metadata: { messageId },
+});
+
+describe("message recording", () => {
+  it("records the inbound and outbound message ids against the receiving session", async () => {
+    const { channel, runtime, recorded } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: inboundWith("hi", 7),
+      events: stream([
+        { kind: "text", text: "Hello" },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(recorded).toEqual([
+      { messageId: "7", sessionId: 100, direction: "incoming" },
+      { messageId: "1", sessionId: 100, direction: "outgoing" },
+    ]);
+  });
+
+  it("skips recording when no session is active", async () => {
+    const { channel, runtime, recorded, session } = makeChannel();
+    session.id = null;
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: inboundWith("hi", 7),
+      events: stream([
+        { kind: "text", text: "Hello" },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(recorded).toEqual([]);
+  });
+});
+
+describe("reply-to session routing", () => {
+  it("stamps the owning session as a resume target when replying to a known message", async () => {
+    const { channel, runtime, submit, mappings, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    mappings.set("3", 55);
+
+    await dispatchText("follow-up", 9, { message_id: 3 });
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ resumeSessionId: 55 }) }),
+    );
+  });
+
+  it("falls back to normal routing when the replied-to message is unknown", async () => {
+    const { channel, runtime, submit, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchText("follow-up", 9, { message_id: 999 });
+
+    const submitted = submit.mock.calls[0]?.[0];
+    expect(submitted.metadata.resumeSessionId).toBeUndefined();
+    expect(submitted.metadata.replyToMessageId).toBe("999");
+  });
+});
+
+describe("inbound reactions", () => {
+  it("surfaces an authorized reaction to the agent", async () => {
+    const { channel, runtime, submit, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchReaction(12, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "The user reacted 👍 to a previous message.",
+        metadata: expect.objectContaining({ reaction: true, replyToMessageId: "12" }),
+      }),
+    );
+  });
+
+  it("routes a reaction to the session that owns the reacted-to message", async () => {
+    const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    mappings.set("12", 77);
+
+    await dispatchReaction(12, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ resumeSessionId: 77 }) }),
+    );
+  });
+
+  it("drops reactions from an unauthorized user", async () => {
+    const { channel, runtime, submit, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchReaction(12, "👍", 999);
+
+    expect(submit).not.toHaveBeenCalled();
   });
 });
