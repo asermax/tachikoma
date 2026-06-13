@@ -62,6 +62,6 @@ export const adaptLegacyDatabase = async (workspace: Workspace, log: Logger): Pr
 
   log.warn(
     { file, backup },
-    "legacy database renamed — previous conversation history and tasks are preserved in the backup but are not migrated to the new database",
+    "legacy database renamed — task definitions are imported separately; conversation history and other tables remain only in the backup",
   );
 };

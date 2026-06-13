@@ -7,7 +7,7 @@ import { ExtensionHost } from "./extensions/host.ts";
 import { firstPartyExtensions } from "./extensions/index.ts";
 import { createRegistrations } from "./extensions/registrations.ts";
 import { componentLogger, createRootLogger } from "./log.ts";
-import { adaptConfig, adaptWorkspace } from "./migration/index.ts";
+import { adaptConfig, adaptWorkspace, adaptWorkspaceData } from "./migration/index.ts";
 import { Scheduler } from "./scheduler.ts";
 import { SessionRegistry } from "./sessions/registry.ts";
 import { Workspace } from "./workspace.ts";
@@ -37,6 +37,8 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
 
   const db = createDatabase(workspace.databaseFile);
   runMigrations(db);
+
+  await adaptWorkspaceData(db, workspace, migrationLog);
 
   const events = new EventBus(componentLogger(log, "events"));
   const scheduler = new Scheduler(componentLogger(log, "scheduler"), config.scheduler.timezone);

@@ -1,9 +1,11 @@
+import type { AppDatabase } from "../db/index.ts";
 import type { Logger } from "../log.ts";
 import type { Workspace } from "../workspace.ts";
 import { type Ask, createAsk } from "./ask.ts";
 import { adaptContextFiles } from "./context.ts";
 import { adaptLegacyDatabase } from "./database.ts";
 import { adaptSkillsFrontmatter } from "./skills.ts";
+import { adaptLegacyTasks } from "./tasks.ts";
 
 export { type Ask, createAsk } from "./ask.ts";
 export { adaptConfig } from "./config.ts";
@@ -31,5 +33,21 @@ export const adaptWorkspace = async (
     await adaptSkillsFrontmatter(workspace, log, ask);
   } catch (error) {
     log.warn({ error }, "skills frontmatter adaptation failed — continuing startup");
+  }
+};
+
+/**
+ * Database-dependent adaptation, run after drizzle opens the live database and
+ * applies migrations (it reads from the backup the database step left behind).
+ */
+export const adaptWorkspaceData = async (
+  db: AppDatabase,
+  workspace: Workspace,
+  log: Logger,
+): Promise<void> => {
+  try {
+    await adaptLegacyTasks(db, workspace, log);
+  } catch (error) {
+    log.warn({ error }, "legacy task import failed — continuing startup");
   }
 };
