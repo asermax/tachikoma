@@ -34,6 +34,7 @@ session close ──> main:        memory-episodic | memory-facts | memory-prefe
                   preFinalize: core-context
                   finalize:    transcript-archive | git-commit
 nightly cron ──> runMaintenanceTick(store) ──> headless run ──> sweepEmptyMarkdown
+nightly cron ──> pruneTranscripts ──> delete transcripts older than retentionDays (no agent)
 ```
 
 Each extraction renders the transcript to role-prefixed text, composes the store's system prompt from shared sections, runs the headless agent, then sweeps emptied files.
@@ -50,7 +51,7 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 | `src/extensions/memory/extraction.ts` | `createExtractionProcessor` per store; store base prompts; prompt assembly | `main` phase; skip on missing/empty transcript; sweep after every run |
 | `src/extensions/memory/prompts.ts` | Shared prompt sections: store purpose, classification examples, context dedup, workspace validation, index update, light index maintenance, scope | The scope section defines the empty-file deletion protocol |
 | `src/extensions/memory/transcript.ts` | `parseTranscript`, `renderConversation`, `loadConversation` | Text-only turns; tail-priority truncation with marker |
-| `src/extensions/memory/archive.ts` | `createTranscriptArchiveProcessor` (`finalize`) | Names archive after the JSONL header session id; never throws |
+| `src/extensions/memory/archive.ts` | `createTranscriptArchiveProcessor` (`finalize`) writes archives; `pruneTranscripts` (nightly cron) deletes old ones | Names archive after the JSONL header session id; age-based prune by file mtime; both never throw |
 | `src/extensions/memory/maintenance.ts` | `runMaintenanceTick`, per-store maintenance prompts, `buildCrossStoreManifest`, `maintenanceSystemPrompt` | Injectable `now` clock for the Sunday rebuild dispatch |
 | `src/extensions/memory/dates.ts` | `localIsoDate` | Local timezone — memory filenames follow the user's day, not UTC |
 
@@ -117,6 +118,18 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 **Consequences**:
 - Pro: each tick is independently triggerable, loggable, and disableable by reconfiguring its schedule
 - Con: the stagger is convention — a long episodic run can still overlap the facts run
+
+### Deterministic age-based transcript pruning instead of an agent tick
+
+**Choice**: Transcript retention is a plain `fs` routine (`pruneTranscripts` in `archive.ts`) on its own nightly cron — it lists `memories/transcripts/`, deletes `.jsonl` files whose mtime is strictly older than `transcriptRetentionDays`, and never runs a headless agent. Age is read from the file's mtime because archive filenames are pi session ids, not dates; `0` retention disables it (retain forever), and the cron is gated by the same `maintenance.enabled` switch as the store ticks.
+**Why**: Transcripts are raw JSONL archives, not prose that benefits from consolidation. They need only age-based deletion, so an LLM run would add cost and a failure surface for no benefit. Pruning lives in `archive.ts` (which already owns transcript writing) and reuses the tolerant `sweepEmptyMarkdown` shape and the `maintenance.ts` injectable-clock pattern; it warrants no new ADR/DES (reuses ADR-006 scheduler, ADR-007 config).
+**Alternatives Considered**:
+- A fourth `runMaintenanceTick` store: forces an agent run and a `processor`-tier LLM call onto a job that is pure file deletion
+- Folding the prune into the episodic tick: couples deterministic deletion to an LLM run's schedule and success
+
+**Consequences**:
+- Pro: cheap, predictable, no LLM call; tolerant of I/O errors (never throws)
+- Con: deletion is unconditional by age — a transcript whose extracted memories failed to capture something is gone after the window (mitigated by git history until the workspace is also pruned)
 
 ## System Behavior
 

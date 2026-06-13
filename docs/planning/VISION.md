@@ -140,7 +140,7 @@ A thin core shell plus first-party extensions covering the full assistant featur
 - Database-backed session registry with lifecycle, rolling summaries, idle timeout
 - Boundary detection with topic-shift analysis, session replacement, and resumption (including cold-start)
 - Pre/post-processing pipelines with parallel execution and error isolation
-- Memory extraction (episodic, facts, preferences) and memory context retrieval
+- Memory extraction (episodic, facts, preferences), memory context retrieval, and git-versioned transcript archiving with age-based retention
 - Core context files injected into the system prompt, with post-session updates
 
 **Skills, workflows, tasks:**
@@ -165,7 +165,6 @@ Machinery that subprocess-based agent SDKs force on a host and pi makes unnecess
 - Custom SDK transports (ARG_MAX tempfile workarounds) — pi is embedded in-process
 - Per-message client recreation, context persistence entries, and context reassembly — sessions are long-lived
 - LLM-based skill classification — pi's progressive disclosure covers detection
-- Transcript archiving — pi transcripts already live inside the workspace `agentDir`
 - Subprocess stderr capture — there is no subprocess
 
 Larger capabilities (parallel sessions, autonomous long-running agents, proactive nudges, evaluation framework, observability) are tracked as backlog deltas — see Future Considerations.

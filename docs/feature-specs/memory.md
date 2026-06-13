@@ -4,7 +4,7 @@
 
 ## Overview
 
-The `memory` extension (`src/extensions/memory/`) maintains long-term memory as git-versioned markdown under the workspace `memories/` directory, organized into three stores — episodic (date-stamped summaries), facts (topic-named reference information), preferences (topic-named subjective choices) — plus raw transcript archives. A static index of the store is injected into every message's context; extraction processors fold each closed conversation into the stores via headless agent runs; nightly maintenance crons consolidate and prune each store.
+The `memory` extension (`src/extensions/memory/`) maintains long-term memory as git-versioned markdown under the workspace `memories/` directory, organized into three stores — episodic (date-stamped summaries), facts (topic-named reference information), preferences (topic-named subjective choices) — plus raw transcript archives. A static index of the store is injected into every message's context; extraction processors fold each closed conversation into the stores via headless agent runs; nightly maintenance crons consolidate and prune each store, and a separate nightly job prunes transcript archives older than a configurable retention window.
 
 Memory agents have no delete tool: files to be removed are emptied by the agent and swept by the host afterwards. Facts and preferences each carry a `MEMORY.md` index mapping filenames to one-line descriptions, kept in sync at write time and rebuilt weekly. The extension's setup also hosts the registration of the `core-context` processor (see [foundational-context](./foundational-context.md)).
 
@@ -34,13 +34,14 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 | R13 | Extraction and maintenance agents are scoped by prompt to write only within their target store directory; deletion is expressed by emptying a file |
 | R14 | After each extraction and maintenance run, `sweepEmptyMarkdown` removes empty or whitespace-only `.md` files from the target store, ignoring missing directories and non-markdown files |
 | R15 | A `transcript-archive` post-processor (`finalize` phase) copies the pi session JSONL to `memories/transcripts/<pi-session-id>.jsonl` (id from the JSONL header, falling back to the source filename); it never throws — failures are logged warnings |
-| R16 | Three maintenance cron jobs (one per store) run on staggered schedules (defaults 03:00 / 03:20 / 03:40 daily) and can be disabled via `[extensions.memory] maintenance.enabled` |
+| R16 | Four maintenance cron jobs run on staggered schedules — one per store (defaults 03:00 / 03:20 / 03:40 daily) plus a transcript prune (`memory-transcripts-maintenance`, default 03:50) — all registered only when `[extensions.memory] maintenance.enabled` is true |
 | R17 | Episodic maintenance applies configurable time tiers: clean recent dailies (default 15 days), consolidate into weekly `YYYY-WNN.md` (to 3 months), then monthly `YYYY-MM.md` (to 12 months), delete beyond that |
 | R18 | Facts maintenance evaluates staleness, redundancy, overlap, cluster consolidation (3+ files sharing a prefix/topic merge into one broad file), size limits, and context-file overlap; preferences maintenance additionally detects misclassified factual content for removal |
 | R19 | Facts/preferences maintenance prompts include light index-consistency instructions on weekdays and a full `MEMORY.md` rebuild on Sundays; episodic maintenance includes no index section |
 | R20 | Maintenance prompts include the store-purpose section, a names-only cross-store manifest (other stores plus existing root context files; omitted when nothing else exists), contradiction-detection instructions, and the scope section |
-| R21 | Configuration lives under `[extensions.memory]`: `enabled`, `maxTranscriptChars`, and `maintenance` (`enabled`, three schedules, `recentDays`, `weeklyThresholdMonths`, `monthlyThresholdMonths`) |
+| R21 | Configuration lives under `[extensions.memory]`: `enabled`, `maxTranscriptChars`, and `maintenance` (`enabled`, three store schedules, `recentDays`, `weeklyThresholdMonths`, `monthlyThresholdMonths`, plus `transcriptsSchedule` and `transcriptRetentionDays` for transcript retention) |
 | R22 | `enabled = false` registers nothing — no bootstrap hook, provider, processors, or crons |
+| R23 | A transcript-prune cron deletes `.jsonl` files in `memories/transcripts/` whose modification time (set at archive write) is strictly older than `transcriptRetentionDays` (default 90); it is deterministic host-side deletion (no headless agent run), skips non-`.jsonl` files, never throws (missing dir is a silent no-op; per-file failures warn and continue), and is disabled — retaining transcripts forever — when `transcriptRetentionDays` is 0 |
 
 ## Behaviors
 
@@ -75,10 +76,12 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 - Given a transcript without a session header id, when archived, then the destination uses the source filename
 - Given a missing source file or copy failure, when the processor runs, then it logs a warning and completes without throwing; a null transcript path skips with a debug log
 
-### Scheduled Maintenance (R16–R20)
+### Scheduled Maintenance (R16–R20, R23)
 
 **Acceptance Criteria**:
-- Given maintenance is enabled, when the extension loads, then `memory-episodic-maintenance`, `memory-facts-maintenance`, and `memory-preferences-maintenance` cron jobs are registered on their configured schedules
+- Given maintenance is enabled, when the extension loads, then `memory-episodic-maintenance`, `memory-facts-maintenance`, `memory-preferences-maintenance`, and `memory-transcripts-maintenance` cron jobs are registered on their configured schedules; given maintenance is disabled, then none are registered
+- Given the transcript-prune tick runs with `transcriptRetentionDays = 90`, then `.jsonl` files in `memories/transcripts/` whose mtime is strictly older than 90 days are deleted, files at exactly the threshold and newer survive, non-`.jsonl` files are left untouched, and eligibility follows mtime rather than the filename
+- Given the transcript-prune tick runs with `transcriptRetentionDays = 0`, then no transcript is deleted; given the transcripts directory is missing, then the tick completes silently; given one entry cannot be removed, then a warning is logged and the remaining files are still pruned
 - Given the episodic tick runs, then its prompt embeds the configured tier thresholds and contains no index instructions
 - Given a facts or preferences tick on Monday through Saturday, then the prompt includes the light index-consistency section; on Sunday it includes the full rebuild section instead
 - Given a tick completes, then emptied files in the target store are swept
@@ -87,5 +90,5 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 ### Configuration (R21, R22)
 
 **Acceptance Criteria**:
-- Given no `[extensions.memory]` section, when the extension loads, then defaults apply: enabled, 24000 transcript chars, maintenance enabled with schedules `0 3 * * *` / `20 3 * * *` / `40 3 * * *` and thresholds 15 days / 3 months / 12 months
+- Given no `[extensions.memory]` section, when the extension loads, then defaults apply: enabled, 24000 transcript chars, maintenance enabled with schedules `0 3 * * *` / `20 3 * * *` / `40 3 * * *` / `50 3 * * *` (transcripts), thresholds 15 days / 3 months / 12 months, and `transcriptRetentionDays` 90
 - Given `enabled = false`, when the extension loads, then setup logs the disabled state and registers nothing
