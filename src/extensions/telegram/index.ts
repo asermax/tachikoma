@@ -1,5 +1,6 @@
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { autoRetry } from "@grammyjs/auto-retry";
 import { Bot } from "grammy";
 import { type Static, Type } from "typebox";
 
@@ -47,6 +48,11 @@ export default defineExtension<TelegramConfig>({
     }
 
     const bot = new Bot(botToken);
+
+    // Transparently honor Telegram 429 retry_after across every bot.api.* call
+    // (channel sends, streaming edits, tools, media uploads).
+    bot.api.config.use(autoRetry());
+
     const mediaDir = join(app.workspace.dataDir, "media");
 
     const store: ChannelMessageStore = {

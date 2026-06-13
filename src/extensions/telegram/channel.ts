@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { Bot } from "grammy";
+import { type Bot, GrammyError, HttpError } from "grammy";
 import type { Message } from "grammy/types";
 
 import type { Channel, ChannelRuntime, Delivery, Exchange } from "../../channels/types.ts";
@@ -125,7 +125,16 @@ export class TelegramChannel implements Channel {
     });
 
     this.bot.catch(({ error }) => {
-      runtime.log.error({ err: error }, "telegram update handling failed");
+      if (error instanceof GrammyError) {
+        runtime.log.error(
+          { err: error, errorCode: error.error_code, description: error.description },
+          "telegram api rejected request",
+        );
+      } else if (error instanceof HttpError) {
+        runtime.log.error({ err: error }, "could not reach telegram");
+      } else {
+        runtime.log.error({ err: error }, "telegram update handling failed");
+      }
     });
 
     // init() validates the token via getMe before going live; start() resolves
