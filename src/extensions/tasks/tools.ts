@@ -349,7 +349,11 @@ const textResult = (text: string) => ({
   details: undefined,
 });
 
-/** pi extension factory exposing the task management tools to the agent. */
+/**
+ * pi extension factory exposing the operational task management tools. These are
+ * safe to bind into background task runs; the interactive `respond_to_task` tool
+ * is split out into its own factory so it stays out of background-bound toolsets.
+ */
 export const createTaskToolsFactory =
   (deps: ToolDeps): ExtensionFactory =>
   (pi) => {
@@ -444,21 +448,6 @@ export const createTaskToolsFactory =
     });
 
     pi.registerTool({
-      name: "respond_to_task",
-      label: "Respond to Task",
-      description:
-        "Relay the user's reply to a background task that paused to ask a question (status 'waiting'). Pass the task_instance_id from the input-request notification and the user's response. The task resumes automatically with the reply injected. Errors if the instance is not waiting or already has a pending response.",
-      promptSnippet: "Answer a background task waiting for user input",
-      promptGuidelines: [
-        "Use respond_to_task when a notification says a background task is waiting for input and the user provides their answer.",
-      ],
-      parameters: RespondToTaskParams,
-      async execute(_toolCallId, params) {
-        return textResult(handleRespondToTask(deps, params));
-      },
-    });
-
-    pi.registerTool({
       name: "query_task_instances",
       label: "Query Task Instances",
       description:
@@ -470,6 +459,30 @@ export const createTaskToolsFactory =
       parameters: QueryTaskInstancesParams,
       async execute(_toolCallId, params) {
         return textResult(handleQueryTaskInstances(deps, params));
+      },
+    });
+  };
+
+/**
+ * pi extension factory exposing the interactive `respond_to_task` tool. Kept
+ * apart from the operational factory so it is never bound into background runs:
+ * a background task answering another instance's waiting question is a footgun.
+ */
+export const createTaskInteractiveToolsFactory =
+  (deps: ToolDeps): ExtensionFactory =>
+  (pi) => {
+    pi.registerTool({
+      name: "respond_to_task",
+      label: "Respond to Task",
+      description:
+        "Relay the user's reply to a background task that paused to ask a question (status 'waiting'). Pass the task_instance_id from the input-request notification and the user's response. The task resumes automatically with the reply injected. Errors if the instance is not waiting or already has a pending response.",
+      promptSnippet: "Answer a background task waiting for user input",
+      promptGuidelines: [
+        "Use respond_to_task when a notification says a background task is waiting for input and the user provides their answer.",
+      ],
+      parameters: RespondToTaskParams,
+      async execute(_toolCallId, params) {
+        return textResult(handleRespondToTask(deps, params));
       },
     });
   };

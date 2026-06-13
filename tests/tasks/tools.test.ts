@@ -1,8 +1,11 @@
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import type { AppDatabase } from "../../src/db/index.ts";
 import { TaskRepository } from "../../src/extensions/tasks/repository.ts";
 import {
+  createTaskInteractiveToolsFactory,
+  createTaskToolsFactory,
   handleCreateTask,
   handleDeleteTask,
   handleGetTask,
@@ -14,6 +17,15 @@ import {
   type ToolDeps,
 } from "../../src/extensions/tasks/tools.ts";
 import { createTasksTestDb } from "./setup.ts";
+
+const registeredToolNames = (factory: ExtensionFactory): string[] => {
+  const names: string[] = [];
+  const pi = { registerTool: (tool: { name: string }) => names.push(tool.name) };
+
+  factory(pi as unknown as Parameters<ExtensionFactory>[0]);
+
+  return names;
+};
 
 let db: AppDatabase;
 let current: Date;
@@ -426,5 +438,28 @@ describe("handleRespondToTask", () => {
     expect(() =>
       handleRespondToTask(deps, { task_instance_id: instance.id, response: "x" }),
     ).toThrow("already pending");
+  });
+});
+
+describe("tool factory split", () => {
+  it("keeps the interactive respond_to_task out of the background-bound toolset", () => {
+    const operational = registeredToolNames(createTaskToolsFactory(deps));
+
+    expect(operational).toEqual([
+      "create_task",
+      "update_task",
+      "list_tasks",
+      "get_task",
+      "delete_task",
+      "run_task_now",
+      "query_task_instances",
+    ]);
+    expect(operational).not.toContain("respond_to_task");
+  });
+
+  it("registers respond_to_task only in the interactive (foreground) factory", () => {
+    expect(registeredToolNames(createTaskInteractiveToolsFactory(deps))).toEqual([
+      "respond_to_task",
+    ]);
   });
 });

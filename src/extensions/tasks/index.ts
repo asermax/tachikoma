@@ -8,7 +8,7 @@ import { cleanupExpiredOneShots } from "./one-shot-cleanup.ts";
 import { TaskRepository } from "./repository.ts";
 import { deliverSessionTasks } from "./session-delivery.ts";
 import { failStuckRunningInstances } from "./stuck-running.ts";
-import { createTaskToolsFactory } from "./tools.ts";
+import { createTaskInteractiveToolsFactory, createTaskToolsFactory } from "./tools.ts";
 
 interface TasksConfig {
   timezone?: string;
@@ -78,6 +78,10 @@ export default defineExtension<TasksConfig>({
     });
 
     app.agent.use(createTaskToolsFactory({ repository, timezone, now }), { background: true });
+
+    // respond_to_task is conversational-only: a background run must never answer
+    // another instance's waiting question, so it stays out of background toolsets.
+    app.agent.use(createTaskInteractiveToolsFactory({ repository, timezone, now }));
 
     app.scheduler.every("tasks-tick", TICK_INTERVAL_SECONDS, () => {
       generateDueInstances({ repository, timezone, now, log: app.log });
