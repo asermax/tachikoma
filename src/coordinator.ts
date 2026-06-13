@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import { streamPrompt } from "./agent/adapter.ts";
@@ -174,7 +176,14 @@ export class Coordinator {
       signal.removeEventListener("abort", onAbort);
       // Held notices must not die with the process — push them out before closing.
       this.flushDeliveries(true);
+
+      const announceShutdown = this.channel != null && this.active != null;
+
+      if (announceShutdown) this.status("Wrapping up the conversation…");
+
       await this.closeActiveSession();
+
+      if (announceShutdown) this.status("Done");
     }
   }
 
@@ -223,6 +232,18 @@ export class Coordinator {
   }
 
   async resumeSession(record: SessionRecord): Promise<void> {
+    // Verify the target is openable BEFORE disposing the live session — a failed
+    // open after teardown would leave the conversation with no active session.
+    if (record.piSessionFile == null || !existsSync(record.piSessionFile)) {
+      this.log.warn(
+        { sessionId: record.id, sessionFile: record.piSessionFile },
+        "resume skipped — pi session file missing; keeping the active session",
+      );
+      return;
+    }
+
+    const priorClosedAt = record.closedAt;
+
     await this.closeActiveSession();
 
     const reopened = this.registry.reopen(record.id);
@@ -231,6 +252,27 @@ export class Coordinator {
     this.active = { record: reopened, session };
     this.log.info({ sessionId: reopened.id }, "session resumed");
     this.events.emit("session:opened", { session: reopened, resumed: true });
+
+    this.injectBridgingContext(priorClosedAt);
+  }
+
+  /**
+   * Surface what happened while a resumed session was closed: concatenate the
+   * summaries of sessions that closed between its prior close and now, oldest-first.
+   */
+  private injectBridgingContext(priorClosedAt: Date | null): void {
+    if (priorClosedAt == null) return;
+
+    const bridging = this.registry.listClosedBetween(priorClosedAt, new Date());
+    if (bridging.length === 0) return;
+
+    const content = bridging
+      .map((session) => session.summary)
+      .filter((summary): summary is string => summary != null)
+      .join("\n\n");
+    if (content.length === 0) return;
+
+    this.pendingContext.push({ tag: "bridging-context", content });
   }
 
   // ---- internals ------------------------------------------------------------------

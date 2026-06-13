@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -25,9 +25,10 @@ const createFakeLog = () => {
 };
 
 let db: AppDatabase;
+let dir: string;
 
 beforeEach(async () => {
-  const dir = await mkdtemp(join(tmpdir(), "tachi-coordinator-delivery-"));
+  dir = await mkdtemp(join(tmpdir(), "tachi-coordinator-delivery-"));
   db = createDatabase(join(dir, "test.db"));
   runMigrations(db);
 });
@@ -41,11 +42,13 @@ describe("Coordinator delivery priority ordering", () => {
     const log = createFakeLog();
     const registry = new SessionRegistry(db);
 
-    const record = registry.create("test", null);
+    const sessionFile = join(dir, "session.jsonl");
+    await writeFile(sessionFile, "");
+    const record = registry.create("test", sessionFile);
 
     const agent = {
       open: vi.fn().mockResolvedValue({
-        sessionFile: null,
+        sessionFile,
         dispose: vi.fn(),
       }),
     } as unknown as AgentManager;

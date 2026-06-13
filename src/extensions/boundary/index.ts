@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 
+import type { SessionRecord } from "../../db/core-schema.ts";
 import { defineExtension } from "../api.ts";
 import { detectBoundary } from "./detector.ts";
 import { registerIdleClose } from "./idle.ts";
@@ -9,6 +10,11 @@ interface BoundaryConfig {
   enabled: boolean;
   idleCloseSeconds: number;
 }
+
+// A session whose post-processing failed has incomplete derived state (summary,
+// memories), so resuming it would build on a broken foundation — exclude it.
+const hasFailedProcessing = (session: SessionRecord): boolean =>
+  Object.values(session.postProcessingState ?? {}).includes("failed");
 
 /**
  * Conversation boundaries, temporal and topical: closes sessions after a silence
@@ -72,7 +78,10 @@ export default defineExtension<BoundaryConfig>({
       const active = context.session;
       const candidates = app.sessions
         .listResumable()
-        .filter((session) => session.summary != null && session.id !== active?.id)
+        .filter(
+          (session) =>
+            session.summary != null && session.id !== active?.id && !hasFailedProcessing(session),
+        )
         .map((session) => ({ id: session.id, summary: session.summary as string }));
 
       // Nothing to compare against: first-ever message, or an active session that

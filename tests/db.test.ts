@@ -52,7 +52,7 @@ describe("SessionRegistry", () => {
   it("lists recently closed sessions as resumable", () => {
     const registry = new SessionRegistry(db);
 
-    const recent = registry.create("repl", null);
+    const recent = registry.create("repl", "/tmp/recent-session.jsonl");
     registry.close(recent.id);
 
     const resumable = registry.listResumable(3600);
