@@ -33,6 +33,8 @@ export const ConfigSchema = Type.Object({
     {
       level: Type.String({ default: "info" }),
       pretty: Type.Boolean({ default: true }),
+      toFile: Type.Boolean({ default: true }),
+      retentionDays: Type.Number({ default: 7 }),
     },
     { default: {} },
   ),

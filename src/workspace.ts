@@ -35,7 +35,13 @@ export class Workspace {
     return join(this.dataDir, "tachikoma.db");
   }
 
+  /** Persisted diagnostic logs for daemon runs (rotated on startup). */
+  get logsDir(): string {
+    return join(this.dataDir, "logs");
+  }
+
   async ensure(): Promise<void> {
     await mkdir(this.sessionsDir, { recursive: true });
+    await mkdir(this.logsDir, { recursive: true });
   }
 }

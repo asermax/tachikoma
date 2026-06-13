@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { AgentManager } from "./agent/manager.ts";
 import { loadConfig } from "./config/load.ts";
 import { Coordinator } from "./coordinator.ts";
@@ -6,7 +7,7 @@ import { EventBus } from "./events.ts";
 import { ExtensionHost } from "./extensions/host.ts";
 import { firstPartyExtensions } from "./extensions/index.ts";
 import { createRegistrations } from "./extensions/registrations.ts";
-import { componentLogger, createRootLogger } from "./log.ts";
+import { componentLogger, createRootLogger, rotateLogs } from "./log.ts";
 import { adaptConfig, adaptWorkspace, adaptWorkspaceData } from "./migration/index.ts";
 import { Scheduler } from "./scheduler.ts";
 import { SessionRegistry } from "./sessions/registry.ts";
@@ -20,11 +21,16 @@ export interface RunOptions {
 export const runApp = async (options: RunOptions = {}): Promise<void> => {
   const { config, path: configPath, created } = await loadConfig(options.configPath);
 
-  const log = createRootLogger(config.logging);
-  if (created) log.info({ configPath }, "generated default configuration");
-
   const workspace = new Workspace(config.workspace.path);
   await workspace.ensure();
+
+  if (config.logging.toFile) await rotateLogs(workspace.logsDir, config.logging.retentionDays);
+
+  const log = createRootLogger({
+    ...config.logging,
+    file: config.logging.toFile ? join(workspace.logsDir, "tachikoma.log") : undefined,
+  });
+  if (created) log.info({ configPath }, "generated default configuration");
 
   const migrationLog = componentLogger(log, "migration");
   const adapted = await adaptConfig(configPath, migrationLog);

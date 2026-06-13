@@ -23,6 +23,10 @@ path = "~/tachikoma"
 [logging]
 level = "info"
 pretty = true
+# Persist structured JSON logs under {workspace}/.tachikoma/logs, rotated on each
+# startup and pruned after retentionDays. stderr output is kept regardless.
+toFile = true
+retentionDays = 7
 
 [channels]
 # Channel started by default: "repl" or "telegram".

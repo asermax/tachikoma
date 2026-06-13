@@ -17,13 +17,19 @@ All components — core and extensions — log through a single pino root logger
 - Core components are bound in `src/app.ts` (`events`, `scheduler`, `agent`, `coordinator`, one per channel).
 - Each extension's `app.log` is bound to the extension's name by the host (`src/extensions/host.ts`) — extensions never create loggers.
 
-### 2. stderr only
+### 2. stderr always, file optionally
 
-Both output modes write to file descriptor 2 (`pino.destination(2)` / pino-pretty `destination: 2`). Rationale: the REPL channel renders agent output on stdout; interleaving logs would corrupt the conversation stream, and keeping stdout clean makes the process pipeable. There is no file logging — service deployments capture stderr (journald/docker).
+stderr is always written to file descriptor 2 (`pino.destination(2)`, or pino-pretty `destination: 2` when `pretty`). Rationale: the REPL channel renders agent output on stdout; interleaving logs would corrupt the conversation stream, and keeping stdout clean makes the process pipeable.
+
+When `logging.toFile` is set (default), the root logger fans out via `pino.multistream` to **both** stderr and a JSON file at `{workspace}/.tachikoma/logs/tachikoma.log` (`pino.destination({ dest, mkdir: true })`). The file always receives raw JSON regardless of `pretty`, so a daemon run leaves a durable, shippable record while an operator still gets pretty stderr. pino-pretty is wired as a *stream* (not a transport) here so it composes with multistream — transports run in a worker thread and can't be combined.
+
+File logs are pruned by a self-contained startup rotation (`rotateLogs` in `src/log.ts`, called from `src/app.ts` after `workspace.ensure()`): on each start the current `tachikoma.log` is renamed to `tachikoma.<YYYY-MM-DD_HH-MM-SS>.log`, then archives older than `logging.retentionDays` (default 7) are deleted. No external rotation dependency — logrotate/journald are not assumed present.
+
+Logs live under `.tachikoma/logs` (internal data, never committed) rather than the workspace root, which is a git repo for memories and context.
 
 ### 3. Output modes
 
-`[logging]` config (`src/config/schema.ts`): `level` (default `"info"`) and `pretty` (default `true`). `pretty = true` gives colorized pino-pretty output for development; `pretty = false` emits structured JSON lines for service mode.
+`[logging]` config (`src/config/schema.ts`): `level` (default `"info"`), `pretty` (default `true`), `toFile` (default `true`), `retentionDays` (default `7`). `pretty = true` gives colorized pino-pretty output for development; `pretty = false` emits structured JSON lines for service mode. `toFile` controls the persisted file sink described above.
 
 ### 4. Structured calls
 

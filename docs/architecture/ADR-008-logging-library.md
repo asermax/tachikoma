@@ -13,7 +13,8 @@ Use **pino** for structured logging.
 
 - A root logger created by the core from configuration (level, destination)
 - **Per-component child loggers**: every core component and every extension gets `logger.child({ component })` (extensions receive theirs through the `AppContext`), so each line is attributable
-- JSON lines to stdout/file in service mode; `pino-pretty` as a dev-only transport for human-readable output
+- stderr is always written; when `logging.toFile` is set the root logger fans out via **`pino.multistream`** to both stderr and a JSON file under `{workspace}/.tachikoma/logs`, so daemon runs persist a durable record without losing pretty interactive output. pino-pretty is used as a *stream* there (not a worker-thread transport) so it composes with multistream
+- **Custom startup rotation** (`rotateLogs`) rather than a rotation dependency: on each start the current file is archived under a timestamp and archives past `retentionDays` are pruned — keeps the dependency surface minimal and works without logrotate/journald
 - Contextual bindings (session ID, task ID) attached via child loggers at the call site rather than string interpolation
 
 ## Consequences
