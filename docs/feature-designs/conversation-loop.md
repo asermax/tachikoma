@@ -45,7 +45,7 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/coordinator.ts` | Inbox loop, middleware chain, session lifecycle (ensure/close/resume/recover), pipelines, idle close, delivery gating, status emission | Strictly serial exchanges; promise-based wake instead of polling; one `ActiveSession` pairing the db record with the live pi session |
+| `src/coordinator.ts` | Inbox loop, middleware chain, session lifecycle (ensure/close/close-if-idle/resume/recover), pipelines, delivery gating, status emission | Strictly serial exchanges; promise-based wake instead of polling; one `ActiveSession` pairing the db record with the live pi session |
 | `src/sessions/registry.ts` | Drizzle CRUD over the `sessions` table (`src/db/core-schema.ts`) | Synchronous better-sqlite3 access; lifecycle expressed as timestamp updates (`closedAt`, `lastResumedAt`) rather than a state enum |
 | `src/channels/types.ts` | `Channel`, `Exchange`, `Delivery` contracts | `respond()` consumes the stream to completion, so channel rendering paces the exchange; `DELIVERY_GATES` const map |
 | `src/domain/message.ts`, `src/domain/agent-events.ts` | SDK-free domain types crossing the channel boundary | Channels and extensions never import pi types |
@@ -136,11 +136,11 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 **When**: The exchange completes (or 300 s pass, whichever is first)
 **Then**: The held delivery is sent through `channel.deliver()`; a failure is logged without affecting the loop.
 
-### Scenario: Idle timeout
+### Scenario: Idle timeout (policy in the boundary extension)
 
 **Given**: A completed exchange and no further messages
-**When**: `sessions.idleCloseSeconds` (default 900) elapses
-**Then**: The session closes and post-processing runs; the next message starts with no active session, so boundary middleware matches it against resumable sessions (cold-start path).
+**When**: the boundary extension's idle timer (`[extensions.boundary].idleCloseSeconds`, default 900) fires and calls `sessions.closeIfIdle()`
+**Then**: The session closes and post-processing runs; the next message starts with no active session, so boundary middleware matches it against resumable sessions (cold-start path). The coordinator contributes only the safety primitive — `closeIfIdle()` refuses while an exchange is in flight, the one piece of loop-internal state extensions cannot see.
 
 ## Notes
 

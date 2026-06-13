@@ -2,25 +2,35 @@ import { Type } from "typebox";
 
 import { defineExtension } from "../api.ts";
 import { detectBoundary } from "./detector.ts";
+import { registerIdleClose } from "./idle.ts";
 import { createSummaryProcessor } from "./summary.ts";
 
 interface BoundaryConfig {
   enabled: boolean;
+  idleCloseSeconds: number;
 }
 
 /**
- * Conversation boundary detection: keeps a rolling per-session summary after every
- * exchange, and classifies each incoming message as continuing the active session,
- * starting a fresh one, or resuming a recently closed one.
+ * Conversation boundaries, temporal and topical: closes sessions after a silence
+ * window, keeps a rolling per-session summary after every exchange, and classifies
+ * each incoming message as continuing the active session, starting a fresh one,
+ * or resuming a recently closed one.
  */
 export default defineExtension<BoundaryConfig>({
   name: "boundary",
 
   configSchema: Type.Object({
+    // Gates topic-shift detection; the idle boundary is governed only by idleCloseSeconds.
     enabled: Type.Boolean({ default: true }),
+    // Seconds of conversation silence before the active session closes (0 disables).
+    idleCloseSeconds: Type.Number({ default: 900 }),
   }),
 
   setup(app) {
+    if (app.extensionConfig.idleCloseSeconds > 0) {
+      registerIdleClose(app.sessions, app.extensionConfig.idleCloseSeconds, app.log);
+    }
+
     if (!app.extensionConfig.enabled) {
       app.log.info("boundary detection disabled by configuration");
       return;

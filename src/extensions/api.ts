@@ -87,7 +87,10 @@ export interface SessionsApi {
     patch: Partial<Pick<SessionRecord, "summary" | "lastExchange">>,
   ): SessionRecord;
   listResumable(): SessionRecord[];
+  /** Close the active session immediately — callers must know no exchange is streaming. */
   close(): Promise<void>;
+  /** Close the active session only when no exchange is in flight; returns whether it closed. */
+  closeIfIdle(): Promise<boolean>;
   onOpen(hook: (session: SessionRecord) => void | Promise<void>): void;
   onExchange(processor: ExchangeProcessor): void;
   registerProcessor(processor: PostProcessor): void;

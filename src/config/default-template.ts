@@ -29,8 +29,6 @@ pretty = true
 default = "repl"
 
 [sessions]
-# Seconds of conversation silence before the active session closes and post-processing runs.
-idleCloseSeconds = 900
 # How far back closed sessions are considered for topic resumption.
 resumeWindowSeconds = 86400
 
@@ -39,6 +37,10 @@ resumeWindowSeconds = 86400
 # timezone = "America/Argentina/Buenos_Aires"
 
 # Per-extension settings live under [extensions.<name>], for example:
+#
+# [extensions.boundary]
+# # Seconds of conversation silence before the active session closes (0 disables).
+# idleCloseSeconds = 900
 #
 # [extensions.telegram]
 # botToken = "..."

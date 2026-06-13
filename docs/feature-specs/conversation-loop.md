@@ -4,7 +4,7 @@
 
 ## Overview
 
-The conversation loop is the message-handling cycle at the center of the app: channels submit inbound messages to the coordinator, which serializes them through an inbox, runs the inbound middleware chain (where [boundary decisions](boundary-detection.md) close or resume sessions), ensures a long-lived pi `AgentSession`, gathers extension context, streams the exchange back through the active channel, and runs exchange processors. Closing a session — via boundary, idle timeout, dangling recovery, or shutdown — triggers phased post-processing with per-processor completion tracking.
+The conversation loop is the message-handling cycle at the center of the app: channels submit inbound messages to the coordinator, which serializes them through an inbox, runs the inbound middleware chain (where [boundary decisions](boundary-detection.md) close or resume sessions), ensures a long-lived pi `AgentSession`, gathers extension context, streams the exchange back through the active channel, and runs exchange processors. Closing a session — via an extension (boundary's topical or idle decision), dangling recovery, or shutdown — triggers phased post-processing with per-processor completion tracking.
 
 The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/registry.ts` and the channel contract in `src/channels/types.ts`. How pi sessions are constructed and how pi events become domain events is specified in [agent-integration](agent-integration.md).
 
@@ -32,7 +32,7 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R10 | Post-processors run in phases `main → preFinalize → finalize`, parallel within a phase, error-isolated; per-processor `completed`/`failed` state is recorded on the session row and already-completed processors are skipped |
 | R11 | On startup, sessions left open by a previous run are closed and post-processed (dangling recovery) |
 | R12 | Resuming closes the current session, reopens the target record (`closedAt` cleared, `lastResumedAt` set), and opens a fresh pi session from the stored transcript file |
-| R13 | Sessions with no completed exchange for `sessions.idleCloseSeconds` auto-close, triggering post-processing |
+| R13 | `closeIfIdle()` closes the active session only when no exchange is in flight (returning whether it closed), so time-based policies in extensions can never dispose a streaming session |
 | R14 | Background deliveries gated `immediate` send at once; `idle`-gated deliveries (the default) are held while an exchange is in flight or a session is active, then flushed when the in-flight exchange completes or `maxHoldSeconds` expires |
 | R15 | `status(text)` surfaces pipeline progress as `status` events on the app event bus; the coordinator emits per-provider and per-processor status lines |
 
@@ -112,7 +112,7 @@ Phased, idempotent processing of the closed session's transcript.
 ### Idle Close (R13)
 
 **Acceptance Criteria**:
-- Given a completed exchange, when `sessions.idleCloseSeconds` elapses with no further exchange, then the session closes and post-processing runs
+- Given an exchange in flight, when `closeIfIdle()` is called, then nothing closes and `false` is returned; when called while idle with an active session, the session closes (post-processing runs) and `true` is returned
 - Given a new exchange completes before the timeout, when the timer resets, then the idle window restarts
 - Given the idle timer is pending, when only it remains, then it does not keep the process alive (`unref`)
 

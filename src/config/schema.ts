@@ -46,7 +46,6 @@ export const ConfigSchema = Type.Object({
 
   sessions: Type.Object(
     {
-      idleCloseSeconds: Type.Number({ default: 900 }),
       resumeWindowSeconds: Type.Number({ default: 86400 }),
     },
     { default: {} },

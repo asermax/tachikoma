@@ -15,7 +15,7 @@ describe("config loading", () => {
 
     expect(created).toBe(true);
     expect(config.agent.main).toBeUndefined();
-    expect(config.sessions.idleCloseSeconds).toBe(900);
+    expect(config.sessions.resumeWindowSeconds).toBe(86400);
     await expect(readFile(path, "utf8")).resolves.toContain("[workspace]");
   });
 
@@ -37,7 +37,7 @@ describe("config loading", () => {
     const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
     const path = join(dir, "config.toml");
     const { writeFile } = await import("node:fs/promises");
-    await writeFile(path, '[sessions]\nidleCloseSeconds = "soon"\n', "utf8");
+    await writeFile(path, '[sessions]\nresumeWindowSeconds = "soon"\n', "utf8");
 
     await expect(loadConfig(path)).rejects.toThrow(ConfigError);
   });

@@ -82,6 +82,7 @@ export class ExtensionHost {
         listResumable: () =>
           services.registry.listResumable(services.config.sessions.resumeWindowSeconds),
         close: () => services.coordinator.closeActiveSession(),
+        closeIfIdle: () => services.coordinator.closeActiveSessionIfIdle(),
         onOpen: (hook) => services.regs.sessionOpenHooks.push(hook),
         onExchange: (processor) => services.regs.exchangeProcessors.push(processor),
         registerProcessor: (processor) => services.regs.postProcessors.push(processor),

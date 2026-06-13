@@ -25,7 +25,6 @@ export class Coordinator {
   private active: ActiveSession | null = null;
   private pendingContext: ContextBlock[] = [];
   private readonly heldDeliveries: Delivery[] = [];
-  private idleTimer: NodeJS.Timeout | null = null;
   private exchanging = false;
   private channel: Channel | null = null;
 
@@ -131,7 +130,6 @@ export class Coordinator {
       }
     } finally {
       signal.removeEventListener("abort", onAbort);
-      this.clearIdleTimer();
       // Held notices must not die with the process — push them out before closing.
       this.flushDeliveries(true);
       await this.closeActiveSession();
@@ -142,12 +140,28 @@ export class Coordinator {
     return this.active?.record ?? null;
   }
 
+  /**
+   * Close the active session only when no exchange is in flight. This is the
+   * safe primitive for time-based policies (extensions cannot see the loop's
+   * busy state); an in-flight exchange means the session is not idle anyway.
+   */
+  async closeActiveSessionIfIdle(): Promise<boolean> {
+    if (this.exchanging) {
+      this.log.debug("idle close skipped — exchange in flight");
+      return false;
+    }
+
+    if (this.active == null) return false;
+
+    await this.closeActiveSession();
+    return true;
+  }
+
   async closeActiveSession(): Promise<void> {
     const active = this.active;
     if (active == null) return;
 
     this.active = null;
-    this.clearIdleTimer();
     active.session.dispose();
 
     const record = this.registry.close(active.record.id);
@@ -181,9 +195,6 @@ export class Coordinator {
 
   private async handle(message: InboundMessage): Promise<void> {
     this.exchanging = true;
-    // The timer armed after the previous exchange must not fire mid-exchange
-    // and dispose the session that is currently streaming.
-    this.clearIdleTimer();
 
     try {
       await this.runInboundMiddleware(message);
@@ -196,7 +207,6 @@ export class Coordinator {
       await this.channel?.respond({ message, events });
 
       await this.runExchangeProcessors(active, message);
-      this.resetIdleTimer();
     } finally {
       this.exchanging = false;
       this.flushDeliveries(false);
@@ -342,23 +352,6 @@ export class Coordinator {
 
     this.registry.update(record.id, { postProcessingState: state });
     this.events.emit("session:post-processed", { sessionId: record.id, state });
-  }
-
-  private resetIdleTimer(): void {
-    this.clearIdleTimer();
-
-    this.idleTimer = setTimeout(() => {
-      this.log.info("idle timeout reached — closing session");
-      void this.closeActiveSession().catch((error) =>
-        this.log.error({ err: error }, "idle close failed"),
-      );
-    }, this.config.sessions.idleCloseSeconds * 1000);
-    this.idleTimer.unref();
-  }
-
-  private clearIdleTimer(): void {
-    if (this.idleTimer != null) clearTimeout(this.idleTimer);
-    this.idleTimer = null;
   }
 
   private flushDeliveries(force: boolean): void {
