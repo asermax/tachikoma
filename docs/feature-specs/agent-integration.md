@@ -26,7 +26,7 @@ Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `pr
 | R4 | Auth resolution: a workspace-local `{piDir}/auth.json` is used when it has actual content; otherwise the machine-level pi login (`~/.pi/agent/auth.json` plus env vars) is shared; `apiKeyFor(provider)` exposes key lookup |
 | R5 | Four model roles — `main`, `searcher`, `processor`, `classifier` — configured as optional `provider/model-id[:thinkingLevel]` strings; unset roles fall back along classifier → processor → main (searcher → main), then to pi's resolution (settings default, else first credentialed model); malformed references and models missing from pi's registry fail with errors naming the reference and tier |
 | R6 | Session model fallback is logged as a warning; the thinking level comes from the role's `:level` suffix when present, otherwise pi's `defaultThinkingLevel` |
-| R7 | `streamPrompt(session, text)` exposes one prompt run as an `AsyncIterable<AgentEvent>` ending in a terminal `result` or `error` event after pi's `prompt()` settles |
+| R7 | `streamPrompt(session, text)` exposes one prompt run as an `AsyncIterable<AgentEvent>` ending in a terminal `result` or `error` event after pi's `prompt()` settles. The terminal `result` carries the `sessionId` and, when the run reports its totals, the summed token `usage` and USD `cost` for the exchange. The terminal `error` carries a `recoverable` flag and an `errorKind` (`auth`/`billing`/`encoding`/`provider`/`unknown`). Emitted text, thinking, and error content is sanitized of lone UTF-8 surrogate code points |
 | R8 | `SideRunner.complete()` performs a one-shot completion on a tier model (default `processor`), throwing on `error`/`aborted` stop reasons |
 | R9 | `SideRunner.classify()` returns schema-validated structured output (default tier `classifier`): JSON-instructed prompt, tolerant JSON extraction, TypeBox validation, one retry on failure |
 | R10 | `SideRunner.run()` executes a headless agent run in an ephemeral bare session with an explicit pi tool allowlist (default none), returning the final assistant text and disposing the session |
@@ -61,8 +61,9 @@ The adapter bridges pi's push-based `session.subscribe()` into a pull-based doma
 - Given `message_update` events with `text_delta`/`thinking_delta`, when streamed, then they map to `text`/`thinking` events with the delta text
 - Given `tool_execution_start`/`tool_execution_end`, when streamed, then they map to `tool-start` (with call id, name, args) and `tool-end` (with `isError`)
 - Given `compaction_start` or `auto_retry_start`, when streamed, then a `status` event describes the activity; all other pi event types are dropped
-- Given the prompt resolves successfully, when the stream drains, then the final event is `{ kind: "result", stopReason: "done" }`
-- Given the prompt rejects, when the stream drains, then the final event is `{ kind: "error", message }` and no `result` event is emitted
+- Given the prompt resolves successfully, when the stream drains, then the final event is a `result` with `stopReason: "done"` and the session id; if the run emitted a final `agent_end` (not a retry boundary), the `result.usage` and `result.costUsd` totals are summed across the run's assistant turns
+- Given the prompt rejects, when the stream drains, then the final event is `{ kind: "error", message, recoverable, errorKind }` and no `result` event is emitted; auth and billing failures are non-recoverable, while encoding, transient provider, and unrecognized failures are recoverable
+- Given any streamed text, thinking, or error content, when it is emitted, then lone UTF-8 surrogate code points are stripped (valid surrogate pairs are preserved) so downstream UTF-8 re-encoding never throws
 - Given iteration ends, when the generator finalizes, then the session subscription is removed
 
 ### Side-Channel LLM Work (R8, R9, R10)

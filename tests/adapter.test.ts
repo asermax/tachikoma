@@ -1,3 +1,4 @@
+import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 
@@ -6,10 +7,11 @@ import type { AgentEvent } from "../src/domain/agent-events.ts";
 
 type Listener = (event: unknown) => void;
 
-const fakeSession = (script: (emit: Listener) => Promise<void>) => {
+const fakeSession = (script: (emit: Listener) => Promise<void>, sessionId = "session-1") => {
   const listeners = new Set<Listener>();
 
   return {
+    sessionId,
     subscribe(listener: Listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -20,6 +22,27 @@ const fakeSession = (script: (emit: Listener) => Promise<void>) => {
       }),
   } as unknown as AgentSession;
 };
+
+const usage = (overrides: Partial<Usage> = {}): Usage => ({
+  input: 10,
+  output: 20,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 30,
+  cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
+  ...overrides,
+});
+
+const assistantMessage = (text: string, turnUsage: Usage): AssistantMessage => ({
+  role: "assistant",
+  content: [{ type: "text", text }],
+  api: "anthropic-messages" as AssistantMessage["api"],
+  provider: "anthropic" as AssistantMessage["provider"],
+  model: "claude",
+  usage: turnUsage,
+  stopReason: "stop",
+  timestamp: 0,
+});
 
 const collect = async (events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> => {
   const all: AgentEvent[] = [];
@@ -48,17 +71,111 @@ describe("streamPrompt", () => {
       { kind: "text", text: "lo" },
       { kind: "tool-start", toolCallId: "t1", toolName: "read", args: { path: "x" } },
       { kind: "tool-end", toolCallId: "t1", toolName: "read", isError: false },
-      { kind: "result", stopReason: "done" },
+      { kind: "result", stopReason: "done", sessionId: "session-1" },
     ]);
   });
 
-  it("surfaces prompt failures as an error event", async () => {
-    const session = fakeSession(async () => {
-      throw new Error("provider exploded");
+  it("captures session id and summed cost/usage from agent_end on the result", async () => {
+    const session = fakeSession(async (emit) => {
+      emit({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hi" } });
+      emit({
+        type: "agent_end",
+        willRetry: false,
+        messages: [
+          assistantMessage("a", usage()),
+          {
+            role: "toolResult",
+            toolCallId: "t1",
+            toolName: "read",
+            content: [],
+            isError: false,
+            timestamp: 0,
+          },
+          assistantMessage(
+            "b",
+            usage({
+              totalTokens: 5,
+              cost: { input: 0, output: 0.005, cacheRead: 0, cacheWrite: 0, total: 0.005 },
+            }),
+          ),
+        ],
+      });
+    }, "session-cost");
+
+    const events = await collect(streamPrompt(session, "hi"));
+    const result = events.at(-1);
+
+    expect(result).toMatchObject({
+      kind: "result",
+      stopReason: "done",
+      sessionId: "session-cost",
+      result: {
+        usage: expect.objectContaining({ totalTokens: 35, output: 40 }),
+      },
+    });
+
+    if (result?.kind !== "result" || result.result == null) throw new Error("expected usage");
+    expect(result.result.costUsd).toBeCloseTo(0.035, 6);
+  });
+
+  it("ignores agent_end emitted on a retry boundary", async () => {
+    const session = fakeSession(async (emit) => {
+      emit({
+        type: "agent_end",
+        willRetry: true,
+        messages: [assistantMessage("partial", usage())],
+      });
     });
 
     const events = await collect(streamPrompt(session, "hi"));
 
-    expect(events).toEqual([{ kind: "error", message: "provider exploded" }]);
+    expect(events.at(-1)).toEqual({ kind: "result", stopReason: "done", sessionId: "session-1" });
+  });
+
+  it("surfaces prompt failures as a classified, recoverable error event", async () => {
+    const session = fakeSession(async () => {
+      throw new Error("the provider is overloaded right now");
+    });
+
+    const events = await collect(streamPrompt(session, "hi"));
+
+    expect(events).toEqual([
+      {
+        kind: "error",
+        message: "the provider is overloaded right now",
+        recoverable: true,
+        errorKind: "provider",
+      },
+    ]);
+  });
+
+  it("classifies auth failures as non-recoverable", async () => {
+    const session = fakeSession(async () => {
+      throw new Error("authentication failed: invalid api key");
+    });
+
+    const events = await collect(streamPrompt(session, "hi"));
+
+    expect(events).toEqual([
+      {
+        kind: "error",
+        message: "authentication failed: invalid api key",
+        recoverable: false,
+        errorKind: "auth",
+      },
+    ]);
+  });
+
+  it("sanitizes lone surrogates out of streamed text", async () => {
+    const session = fakeSession(async (emit) => {
+      emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "text_delta", delta: "ok\uD800done" },
+      });
+    });
+
+    const events = await collect(streamPrompt(session, "hi"));
+
+    expect(events[0]).toEqual({ kind: "text", text: "okdone" });
   });
 });

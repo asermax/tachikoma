@@ -61,13 +61,20 @@ class ReplChannel implements Channel {
           inText = false;
           break;
 
-        case "error":
+        case "error": {
           if (inText) process.stdout.write("\n");
-          process.stdout.write(`${RED}error: ${event.message}${RESET}\n`);
+          const hint = event.recoverable ? "" : ` (${event.errorKind}, not recoverable)`;
+          process.stdout.write(`${RED}error: ${event.message}${hint}${RESET}\n`);
           inText = false;
           break;
+        }
 
         case "result":
+          if (event.result != null) {
+            const cost = event.result.costUsd.toFixed(4);
+            const tokens = event.result.usage.totalTokens;
+            process.stdout.write(`${DIM}· $${cost} · ${tokens} tokens${RESET}\n`);
+          }
           process.stdout.write("\n");
           this.readline?.prompt();
           break;

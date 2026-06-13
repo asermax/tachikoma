@@ -135,7 +135,20 @@ export class TelegramChannel implements Channel {
               break;
 
             case "error":
-              await this.sendErrorNotice(event.message, log);
+              await this.sendErrorNotice(event.message, event.recoverable, log);
+              break;
+
+            case "result":
+              if (event.result != null) {
+                log.info(
+                  {
+                    sessionId: event.sessionId,
+                    costUsd: event.result.costUsd,
+                    tokens: event.result.usage.totalTokens,
+                  },
+                  "exchange complete",
+                );
+              }
               break;
 
             default:
@@ -251,9 +264,13 @@ export class TelegramChannel implements Channel {
     }
   }
 
-  private async sendErrorNotice(message: string, log: Logger): Promise<void> {
+  private async sendErrorNotice(message: string, recoverable: boolean, log: Logger): Promise<void> {
+    const notice = recoverable
+      ? `⚠️ Error: ${message}`
+      : `⚠️ Error: ${message}\n\nThis needs your attention — the next message won't recover on its own.`;
+
     await this.bot.api
-      .sendMessage(this.options.chatId, `⚠️ Error: ${message}`)
+      .sendMessage(this.options.chatId, notice)
       .catch((error) => log.warn({ err: error }, "error notice failed"));
   }
 

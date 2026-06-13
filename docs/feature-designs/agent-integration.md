@@ -38,7 +38,9 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 |-----------|----------------|---------------|
 | `src/agent/manager.ts` | Auth/model-registry ownership; `open()` builds sessions (loader, session manager mode, settings, model) | Auth fallback to machine-level pi login; fresh loader per open; `bare` axis for headless work |
 | `src/agent/models.ts` | `MODEL_TIERS` const map, `parseModelRef`, `ModelTiers.ref/resolve` | `provider/model-id` strings resolved against pi's registry; fail fast at resolve time |
-| `src/agent/adapter.ts` | `streamPrompt`: pi `session.subscribe()` events → `AgentEvent` async iterable | Pull-based queue with promise wake; terminal `result`/`error` event; unsubscribe in `finally` |
+| `src/agent/adapter.ts` | `streamPrompt`: pi `session.subscribe()` events → `AgentEvent` async iterable | Pull-based queue with promise wake; terminal `result`/`error` event; per-exchange cost/usage from `agent_end`; surrogate sanitization on emitted content; unsubscribe in `finally` |
+| `src/agent/errors.ts` | `classifyError`: failure message → `{ errorKind, recoverable }` | Pattern-matched kinds (auth/billing/encoding/provider/unknown); only auth and billing are non-recoverable |
+| `src/agent/sanitize.ts` | `sanitizeText`: strip lone UTF-8 surrogate code points | Pure helper; valid surrogate pairs preserved, only unpaired halves removed |
 | `src/agent/side-run.ts` | `SideRunner.complete/classify/run` | `completeSimple` for one-shots; prompt-engineered JSON + validation + single retry for classify; disposable bare session for `run` |
 | `src/extensions/host.ts` | Exposes the layer as `app.agent` | One `SideRunner` per extension, bound to that extension's logger |
 
@@ -82,6 +84,21 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 - Pro: trivially testable with a fake session (`tests/adapter.test.ts`)
 - Con: unmapped pi events (queue updates, turn boundaries) are silently dropped until a mapping is added
 
+### Terminal events carry result accounting and error classification
+
+**Choice**: The terminal `result` event carries the session id plus the exchange's token `usage` and USD `cost`; the terminal `error` event carries a `recoverable` flag and an `errorKind`. Cost/usage are summed from the assistant turns in the run's final `agent_end` event (skipping retry-boundary `agent_end`s, which `willRetry` marks). Errors are classified by pattern-matching the failure message in `src/agent/errors.ts`. Emitted text, thinking, and error strings are run through `sanitizeText` first.
+**Why**: Channels need accounting (cost/usage logging, a session id to correlate) and a recoverability signal to decide whether a failure warrants user attention or will self-heal on the next message — that fidelity is what makes a terminal event more than a bare stop reason. pi exposes per-turn `usage` (with `cost`) on each `AssistantMessage` and the run's messages on `agent_end`, so summing them is the faithful per-exchange total. pi's own retry classifier already encodes which provider conditions are transient; mirroring those patterns keeps the recoverable/non-recoverable split aligned with pi's behavior. Surrogate sanitization prevents lone UTF-16 surrogates in streamed deltas from throwing when the Telegram API or transcript writers re-encode as UTF-8.
+**Alternatives Considered**:
+- `session.getSessionStats()` for cost: returns cumulative session totals, not the per-exchange delta the result should report
+- A single recoverable boolean with no kind: loses the auth-vs-billing-vs-transient distinction that drives both UX copy and diagnosis
+- Sanitizing only at the channel boundary: every consumer would need to remember to do it; doing it once at the adapter is the single choke point all content already flows through
+
+**Consequences**:
+- Pro: channels log real cost/token numbers and correlate by session id; the REPL and Telegram surface a non-recoverable failure as needing attention
+- Pro: error classification and sanitization are pure, independently tested modules (`tests/agent/errors.test.ts`, `tests/agent/sanitize.test.ts`)
+- Con: classification is heuristic on message text — an unrecognized non-recoverable failure defaults to recoverable, so the next message simply retries
+- Con: `result.usage`/`result.costUsd` are absent when a run produces no final `agent_end` (e.g. immediate abort); consumers must treat them as optional
+
 ### Prompt-engineered JSON classification with one retry
 
 **Choice**: `classify()` appends the JSON Schema to the system prompt, extracts JSON from the reply (fenced block, then outermost braces), validates with the same TypeBox machinery as config parsing (`parseWithSchema`), and retries once with a format reminder.
@@ -100,7 +117,13 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 
 **Given**: A streaming exchange in progress
 **When**: pi's `prompt()` rejects (provider error)
-**Then**: Already-queued events are drained, a single `error` event with the message is yielded, the subscription is removed, and the iterator completes — the coordinator's exchange ends normally and the loop continues.
+**Then**: Already-queued events are drained, a single sanitized `error` event is yielded — classified `recoverable` with `errorKind: "provider"` for a transient failure, or non-recoverable (`auth`/`billing`) when the message names an auth or billing problem — the subscription is removed, and the iterator completes. The coordinator's exchange ends normally; channels render a recoverable failure as a plain notice and a non-recoverable one with a "needs your attention" hint.
+
+### Scenario: Successful exchange accounting
+
+**Given**: A streaming exchange that completes normally
+**When**: pi emits its final `agent_end` and `prompt()` resolves
+**Then**: The terminal `result` carries the session id and the run's summed token `usage` and USD `cost` (totalled across the run's assistant turns). Channels log these (Telegram structured log, REPL dim line); a run that ends without a final `agent_end` yields a `result` with the session id but no usage.
 
 ### Scenario: Boundary classification with a sloppy model reply
 
