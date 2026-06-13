@@ -33,7 +33,8 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R11 | On startup, sessions left open by a previous run are closed and post-processed (dangling recovery) |
 | R12 | Resuming closes the current session, reopens the target record (`closedAt` cleared, `lastResumedAt` set), and opens a fresh pi session from the stored transcript file |
 | R13 | `closeIfIdle()` closes the active session only when no exchange is in flight (returning whether it closed), so time-based policies in extensions can never dispose a streaming session |
-| R14 | Background deliveries gated `immediate` send at once; `idle`-gated deliveries (the default) are held while an exchange is in flight or a session is active, then flushed when the in-flight exchange completes or `maxHoldSeconds` expires. A flush orders held items by descending `priority` (default 0) with a stable sort, so higher-priority items lead and same-priority items keep arrival order. A delivery's `target` (default `"user"`) selects the dispatch path: `"user"` renders through `channel.deliver()`, while `"agent"` instead re-submits the delivery text to the coordinator inbox as a system-origin message (`origin: "system"`, `boundary: "skip"`) so the agent acts on it as a prompt rather than the channel rendering it |
+| R14 | Background deliveries gated `immediate` send at once; `idle`-gated deliveries (the default) are held while an exchange is in flight or a session is active, then flushed when the in-flight exchange completes or `maxHoldSeconds` expires. A flush orders held items by descending `priority` (default 0) with a stable sort, so higher-priority items lead and same-priority items keep arrival order, and awaits every send. A delivery's `target` (default `"user"`) selects the dispatch path: `"user"` renders through `channel.deliver()`, while `"agent"` instead re-submits the delivery text to the coordinator inbox as a system-origin message (`origin: "system"`, `boundary: "skip"`) so the agent acts on it as a prompt rather than the channel rendering it |
+| R17 | At shutdown the loop sets a `shuttingDown` flag, runs registered `onShutdown` hooks (error-isolated), then awaits a final force-flush of held deliveries before closing the active session. While shutting down, `deliver()` always holds (the immediate-send path is suppressed) so the awaited flush handles everything in order, and an `"agent"`-target delivery falls through to `channel.deliver()` instead of being re-submitted into the no-longer-drained inbox — its text is still surfaced rather than lost |
 | R15 | `status(text)` surfaces pipeline progress as `status` events on the app event bus; the coordinator emits per-provider and per-processor status lines |
 | R16 | A message submitted while an exchange is in flight (with an active session and non-system origin) is routed into the live run via the pi session's `steer()` instead of being queued. Two leading-slash prefixes opt out of steering: `/queue ` strips the prefix, tags the message `queued`, and waits in the inbox for the next exchange; `/new ` strips the prefix, tags the message `forceNew` (honored downstream by the boundary extension, which closes the active session), and likewise skips steering. A `steer()` failure is logged and the message dropped. `abortExchange()` aborts the in-flight run on request |
 
@@ -50,7 +51,7 @@ The coordinator owns an in-memory inbox drained by a single promise-woken loop (
 - Given a `/new `-prefixed message arrives mid-exchange, when `submit()` runs, then the prefix is stripped, the message is tagged `forceNew`, and it skips steering to wait in the inbox (the boundary extension then opens a fresh session for it)
 - Given `abortExchange()` is called, when an exchange is in flight, then the active session's run is aborted
 - Given an exchange throws, when the loop catches it, then the error is logged and the next inbox message is processed normally
-- Given the abort signal fires, when the loop exits, then held deliveries are force-flushed and the active session is closed (post-processing runs)
+- Given the abort signal fires, when the loop exits, then it sets `shuttingDown`, runs the `onShutdown` hooks, awaits a force-flush of held deliveries, and then closes the active session (post-processing runs) — the loop does not resolve until the held deliveries' channel writes settle
 
 ### Channel Registry and Contract (R1, R2)
 
@@ -124,7 +125,7 @@ Phased, idempotent processing of the closed session's transcript.
 - Given an exchange in flight, when `closeIfIdle()` is called, then nothing closes and `false` is returned; when called while idle with an active session, the session closes (post-processing runs) and `true` is returned
 - Given no active session, when `closeIfIdle()` is called, then nothing closes and `false` is returned
 
-### Delivery Gating (R14)
+### Delivery Gating and Shutdown Drain (R14, R17)
 
 Background-originated output (`app.channels.deliver`) is gated so it lands at conversation pauses.
 
@@ -137,6 +138,8 @@ Background-originated output (`app.channels.deliver`) is gated so it lands at co
 - Given a delivery with `target: "agent"`, when it is sent (after gating), then instead of `channel.deliver()` the coordinator re-submits its text to the inbox as a system-origin message (`origin: "system"`, `boundary: "skip"`), so the agent processes it as a prompt
 - Given a delivery with no `target` or `target: "user"`, when it is sent, then `channel.deliver()` renders it through the active channel
 - Given `channel.deliver()` throws, when a delivery is sent, then the error is logged; other deliveries are unaffected
+- Given the loop is shutting down, when a delivery is submitted (including `gate: "immediate"`), then it is held rather than sent immediately, so the final awaited flush delivers it in order
+- Given a held `target: "agent"` delivery, when it is flushed during shutdown, then it is not re-submitted to the inbox (which is no longer drained) but falls through to `channel.deliver()` so its text still reaches the user
 
 ### Processing Status (R15)
 

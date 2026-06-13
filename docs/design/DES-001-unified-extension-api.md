@@ -67,6 +67,7 @@ Session factories receive pi's native `ExtensionAPI` — no wrapping, no renamin
 | `app.channels` | `register(channel)` for channel extensions; `deliver(item, { gate: "idle" \| "immediate", maxHoldSeconds })` for background-originated output |
 | `app.agent` | `use(factory)` (pi extension factories), `provideContext(provider)` (pre-prompt context blocks), `models` (tier lookup: agent/searcher/processor/classifier), `run(options)` (headless side sessions for extraction/background work) |
 | `app.bootstrap(name, hook)` | ordered, idempotent startup hooks |
+| `app.onShutdown(name, hook)` | hook run once during shutdown, before the coordinator's final delivery flush (so it can push held output into that flush); error-isolated |
 | `app.status(text)` | progress line surfaced through the active channel during processing |
 
 ### Pipelines

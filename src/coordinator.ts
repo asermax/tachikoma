@@ -27,6 +27,7 @@ export class Coordinator {
   private pendingContext: ContextBlock[] = [];
   private readonly heldDeliveries: Delivery[] = [];
   private exchanging = false;
+  private shuttingDown = false;
   private channel: Channel | null = null;
 
   private readonly registry: SessionRegistry;
@@ -113,7 +114,12 @@ export class Coordinator {
   }
 
   deliver(delivery: Delivery): void {
-    if (delivery.gate === "immediate" || (!this.exchanging && this.active == null)) {
+    // While shutting down, always hold so the final awaited flush handles
+    // everything in order — the immediate-send path would race the teardown.
+    if (
+      !this.shuttingDown &&
+      (delivery.gate === "immediate" || (!this.exchanging && this.active == null))
+    ) {
       void this.sendDelivery(delivery);
       return;
     }
@@ -121,7 +127,10 @@ export class Coordinator {
     this.heldDeliveries.push(delivery);
 
     if (delivery.maxHoldSeconds != null) {
-      const timer = setTimeout(() => this.flushDeliveries(true), delivery.maxHoldSeconds * 1000);
+      const timer = setTimeout(
+        () => void this.flushDeliveries(true),
+        delivery.maxHoldSeconds * 1000,
+      );
       timer.unref();
     }
   }
@@ -174,8 +183,14 @@ export class Coordinator {
       }
     } finally {
       signal.removeEventListener("abort", onAbort);
+
+      // Set the flag before draining: shutdown hooks (e.g. the notifications router)
+      // push their held output into heldDeliveries, which the flag keeps held so the
+      // single awaited flush below — not a racing immediate send — delivers them.
+      this.shuttingDown = true;
+      await this.runShutdownHooks();
       // Held notices must not die with the process — push them out before closing.
-      this.flushDeliveries(true);
+      await this.flushDeliveries(true);
 
       const announceShutdown = this.channel != null && this.active != null;
 
@@ -296,7 +311,7 @@ export class Coordinator {
       await this.runExchangeProcessors(active, message);
     } finally {
       this.exchanging = false;
-      this.flushDeliveries(false);
+      void this.flushDeliveries(false);
     }
   }
 
@@ -441,19 +456,30 @@ export class Coordinator {
     this.events.emit("session:post-processed", { sessionId: record.id, state });
   }
 
-  private flushDeliveries(force: boolean): void {
+  private async flushDeliveries(force: boolean): Promise<void> {
     if (!force && this.exchanging) return;
 
     // Stable sort: higher priority first, arrival order within a priority.
     const pending = this.heldDeliveries
       .splice(0)
       .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
-    for (const delivery of pending) void this.sendDelivery(delivery);
+
+    await Promise.all(pending.map((delivery) => this.sendDelivery(delivery)));
+  }
+
+  private async runShutdownHooks(): Promise<void> {
+    for (const { name, hook } of this.regs.shutdownHooks) {
+      try {
+        await hook();
+      } catch (err) {
+        this.log.error({ hook: name, err }, "shutdown hook failed");
+      }
+    }
   }
 
   private async sendDelivery(delivery: Delivery): Promise<void> {
     try {
-      if (delivery.target === "agent") {
+      if (delivery.target === "agent" && !this.shuttingDown) {
         // Inject as a prompt the agent acts on; boundary middleware skips it.
         this.submit({
           text: delivery.text,

@@ -180,6 +180,11 @@ export interface AppContext<C = unknown> {
   readonly inbound: InboundApi;
 
   bootstrap(name: string, hook: () => void | Promise<void>): void;
+  /**
+   * Register a hook that runs once during shutdown, before the coordinator's final
+   * delivery flush, so a hook can push any held output into that flush. Error-isolated.
+   */
+  onShutdown(name: string, hook: () => void | Promise<void>): void;
   /** Surface a progress line through the active channel while processing. */
   status(text: string): void;
   /**

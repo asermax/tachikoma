@@ -251,6 +251,9 @@ export class ExtensionHost {
       bootstrap: (name, hook) =>
         services.regs.bootstrapHooks.push({ name: `${extension.name}:${name}`, hook, external }),
 
+      onShutdown: (name, hook) =>
+        services.regs.shutdownHooks.push({ name: `${extension.name}:${name}`, hook }),
+
       status: (text) => services.coordinator.status(text),
 
       registerExtension: (nested, options) =>

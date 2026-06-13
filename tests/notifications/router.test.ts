@@ -136,6 +136,35 @@ describe("NotificationRouter", () => {
 
     expect(deliver).not.toHaveBeenCalled();
   });
+
+  it("flushNow() clears the pending timer and emits a single pending notice immediately", () => {
+    const { deliver, router } = createSetup();
+
+    router.handle({ text: "build finished", severity: "info", source: "ci" });
+
+    router.flushNow();
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver.mock.calls[0]?.[0]).toMatchObject({ gate: "idle" });
+    expect(deliver.mock.calls[0]?.[0].text).toContain("build finished");
+
+    // The window timer was cleared by flushNow — letting it elapse must not re-deliver.
+    vi.advanceTimersByTime(FLUSH_WINDOW_SECONDS * 1000);
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it("flushNow() emits a digest when several notices are pending", () => {
+    const { deliver, router } = createSetup();
+
+    router.handle({ text: "build finished", severity: "info", source: "ci" });
+    router.handle({ text: "disk almost full", severity: "warning", source: "monitor" });
+
+    router.flushNow();
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+    expect(deliver.mock.calls[0]?.[0].text).toContain("--- Notifications digest ---");
+  });
 });
 
 describe("NotificationRouter dedup TTL guard", () => {

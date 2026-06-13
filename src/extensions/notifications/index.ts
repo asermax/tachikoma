@@ -40,6 +40,8 @@ export default defineExtension<NotificationsConfig>({
 
     app.events.on(NOTIFY_EVENT, (payload) => router.handle(payload));
 
+    app.onShutdown("flush", () => router.flushNow());
+
     app.agent.use(
       createNotifyToolFactory((event, payload) => app.events.emit(event, payload)),
       {

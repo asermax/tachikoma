@@ -112,6 +112,8 @@ Headless/background runs that have no per-session close lifecycle reach the same
 
 **Choice**: `deliver()` applies the gate inline — `immediate` sends now; `idle` holds in an array flushed when the in-flight exchange ends, with optional per-item `maxHoldSeconds` force-flush timers. A flush sorts held items by descending `Delivery.priority` (default 0) with a stable comparator, so higher-priority items lead and same-priority items keep arrival order. Dispatch (`sendDelivery`) then branches on `Delivery.target` (default `"user"`): `"user"` calls `channel.deliver()` to render it; `"agent"` instead re-submits the delivery text to the coordinator inbox as a system-origin message (`origin: "system"`, `boundary: "skip"`), so the agent acts on it as a prompt rather than the channel surfacing it to the user.
 **Why**: A full priority buffer (a separate subsystem with digests and preemption) is the most complex way to do delivery; the observable requirement is just "don't interleave with an active exchange, order by importance within a flush, never hold forever". The coordinator already knows `exchanging`/`active`, so gating — and the cheap priority sort over the held array — lives where the knowledge is. Producers that care about ordering (e.g. the notifications router mapping severity → priority) set `priority` on the `Delivery`; everything else defaults to 0 and flushes in arrival order.
+
+At shutdown `flushDeliveries` is awaitable (`Promise<void>`, awaiting all sends) so the loop's `finally` does not resolve until the held notices' channel writes settle. The mid-exchange and `maxHoldSeconds` callers stay fire-and-forget (`void`); only the shutdown call awaits.
 **Alternatives Considered**:
 - A separate priority-buffer extension: rejected — ordering is a one-line stable sort over the held array, not worth a subsystem
 
@@ -120,6 +122,15 @@ Headless/background runs that have no per-session close lifecycle reach the same
 - Pro: within a flush, urgent items lead lower-severity ones via the stable priority sort
 - Con: a max-hold expiry flushes everything, possibly mid-exchange
 - Con: items held while a session is open but quiet wait for the next exchange end (or max-hold) — session close does not flush
+
+### Shutdown drain: flag, hooks, then awaited flush
+
+**Choice**: The loop's `finally` sets `shuttingDown = true`, runs every registered `onShutdown` hook (each awaited in a try/catch via `runShutdownHooks`, error-isolated), then `await flushDeliveries(true)`, then closes the active session. The flag changes two delivery paths: `deliver()` always holds while shutting down (the immediate-send branch is guarded by `!this.shuttingDown`), and `sendDelivery()` guards the `target: "agent"` inbox re-submit with `&& !this.shuttingDown` so an agent-target notice falls through to `channel.deliver()` instead.
+**Why**: The inbox loop has already exited by the `finally`, so re-submitting an agent-target delivery would drop it into a dead inbox. Shutdown hooks (e.g. the notifications router's `flushNow`) push their pending output into `heldDeliveries`; holding them behind the flag and letting the single awaited flush drain everything keeps one ordered exit path that the process actually waits on. `onShutdown` mirrors `bootstrap`/`bootstrapHooks` (registered on `Registrations`, exposed on `AppContext`, namespaced `<ext>:<name>`).
+**Alternatives Considered**: Delivering from hooks directly (races teardown, no shared ordering); leaving the flush fire-and-forget (the original bug — sends could be cut off by process exit).
+**Consequences**:
+- Pro: notices held or pending at shutdown reach the user; agent-target text is surfaced rather than lost to the dead inbox
+- Con: `immediate` deliveries arriving during shutdown lose their immediacy (held until the final flush)
 
 ## System Behavior
 

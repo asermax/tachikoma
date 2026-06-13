@@ -34,7 +34,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 |-----------|----------------|---------------|
 | `src/extensions/notifications/index.ts` | Wiring: router construction, event subscription, tool registration | Router takes `deliver` as a plain function so tests run without an app |
 | `src/extensions/notifications/payload.ts` | Event name constant, severity map, `parseNotifyPayload` | Duck-typed parsing: `text` required, severity/source defaulted — never throws |
-| `src/extensions/notifications/router.ts` | Dedup guard, severity routing, flush-window batching, severity → delivery priority | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty; dedup state is an in-memory `Map<key, firstSeenMs>` pruned opportunistically; `SEVERITY_PRIORITY` const map sets each delivery's `priority` (digest = max over items) |
+| `src/extensions/notifications/router.ts` | Dedup guard, severity routing, flush-window batching, severity → delivery priority, shutdown drain | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty; `flushNow()` is the shutdown entry point (delegates to `flush()`); dedup state is an in-memory `Map<key, firstSeenMs>` pruned opportunistically; `SEVERITY_PRIORITY` const map sets each delivery's `priority` (digest = max over items) |
 | `src/extensions/notifications/format.ts` | Single-notification and digest text rendering | Source/time header block prefixes every notice; timestamps rendered in UTC |
 | `src/extensions/notifications/tools.ts` | `notify_user` agent tool | Emits the same `notify` event instead of delivering directly |
 
@@ -78,6 +78,15 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 - Pro: One code path for all notifications; tests assert on the emitted payload only
 - Con: An agent notification during its own exchange waits in the flush window and then the idle gate — it is not appended to the current reply (urgent severity shortcuts this)
 
+### Draining pending notices at shutdown
+
+**Choice**: `index.ts` registers `app.onShutdown("flush", () => router.flushNow())`. `flushNow()` simply calls `flush()`, which clears the window timer and emits the accumulated notices as one delivery. The hook runs during the coordinator's shutdown — after it sets `shuttingDown`, before its final awaited delivery flush — so the emitted delivery is held (the shutdown flag forces every fresh delivery to hold) and then drained by that single `await flushDeliveries(true)`.
+**Why**: The flush timer is unref'd so it never fires during a clean shutdown, which previously stranded any notice still inside the window. Routing the drain through the coordinator's awaited flush (rather than delivering straight from the hook) keeps a single ordered exit path and lets the loop await the channel write before closing.
+**Alternatives Considered**: Delivering directly from the hook (would bypass the loop's ordering/awaiting and could race teardown); persisting pending notices to redeliver next run (overkill for ephemeral window contents).
+**Consequences**:
+- Pro: notices pending at shutdown reach the user instead of dying with the process
+- Con: an urgent notice that arrives *during* shutdown is held rather than sent immediately — it still goes out in the final flush, just not ahead of teardown
+
 ## System Behavior
 
 ### Scenario: burst of routine notices
@@ -114,4 +123,4 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 
 - Config lives under `[extensions.notifications]`: `flushWindowSeconds` (30), `maxHoldSeconds` (900), `dedupTtlSeconds` (60).
 - The `notify_user` tool is bound via `app.agent.use(..., { background: true })`, so it reaches both conversational sessions and autonomous background task runs — a background task agent can call `notify_user` directly (alongside the executor's own task-outcome notices, see [tasks.md](tasks.md)).
-- The flush timer is unref'd so a pending window never keeps the process alive; notices pending at shutdown are dropped (they are ephemeral by design).
+- The flush timer is unref'd so a pending window never keeps the process alive; notices pending at shutdown are drained by an `onShutdown` hook (`router.flushNow()`) into the coordinator's final awaited flush rather than dropped.

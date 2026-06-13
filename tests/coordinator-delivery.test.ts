@@ -93,4 +93,107 @@ describe("Coordinator delivery priority ordering", () => {
 
     expect(delivered).toEqual(["urgent", "warning", "warning-2", "info"]);
   });
+
+  it("awaits the channel delivery of held notices before the run loop resolves", async () => {
+    const log = createFakeLog();
+    const registry = new SessionRegistry(db);
+
+    const sessionFile = join(dir, "session.jsonl");
+    await writeFile(sessionFile, "");
+    const record = registry.create("test", sessionFile);
+
+    const agent = {
+      open: vi.fn().mockResolvedValue({ sessionFile, dispose: vi.fn() }),
+    } as unknown as AgentManager;
+
+    const coordinator = new Coordinator(
+      registry,
+      agent,
+      createRegistrations(),
+      new EventBus(log),
+      log,
+    );
+
+    let releaseDeliver: (() => void) | null = null;
+    const deliverGate = new Promise<void>((resolve) => {
+      releaseDeliver = resolve;
+    });
+
+    const order: string[] = [];
+    const channel: Channel = {
+      name: "test",
+      start: vi.fn(),
+      respond: vi.fn(),
+      deliver: vi.fn(async () => {
+        await deliverGate;
+        order.push("delivered");
+      }),
+      stop: vi.fn(),
+    };
+    coordinator.attachChannel(channel);
+
+    await coordinator.resumeSession(record);
+    coordinator.deliver({ text: "held", gate: "idle", priority: 1 });
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal).then(() => order.push("loop-done"));
+    controller.abort();
+
+    // The loop must not resolve while channel.deliver is still pending.
+    await Promise.resolve();
+    expect(order).toEqual([]);
+
+    (releaseDeliver as unknown as () => void)();
+    await loop;
+
+    expect(order).toEqual(["delivered", "loop-done"]);
+  });
+
+  it("delivers a held agent-target notice to the channel at shutdown instead of the dead inbox", async () => {
+    const log = createFakeLog();
+    const registry = new SessionRegistry(db);
+
+    const sessionFile = join(dir, "session.jsonl");
+    await writeFile(sessionFile, "");
+    const record = registry.create("test", sessionFile);
+
+    const agent = {
+      open: vi.fn().mockResolvedValue({ sessionFile, dispose: vi.fn() }),
+    } as unknown as AgentManager;
+
+    const coordinator = new Coordinator(
+      registry,
+      agent,
+      createRegistrations(),
+      new EventBus(log),
+      log,
+    );
+
+    const delivered: string[] = [];
+    const channel: Channel = {
+      name: "test",
+      start: vi.fn(),
+      respond: vi.fn(),
+      deliver: vi.fn(async (delivery: Delivery) => {
+        delivered.push(delivery.text);
+      }),
+      stop: vi.fn(),
+    };
+    coordinator.attachChannel(channel);
+
+    await coordinator.resumeSession(record);
+    coordinator.deliver({ text: "agent notice", gate: "idle", target: "agent" });
+
+    const submitSpy = vi.spyOn(coordinator, "submit");
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+    controller.abort();
+    await loop;
+
+    // The agent-target branch must be skipped during shutdown — no re-submit to the
+    // dead inbox; the text falls through to the channel so it is still surfaced.
+    expect(submitSpy).not.toHaveBeenCalled();
+    expect(delivered).toEqual(["agent notice"]);
+  });
 });

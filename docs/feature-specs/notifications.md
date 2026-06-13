@@ -27,6 +27,7 @@ A `notify_user` tool lets the agent itself emit notifications through the same p
 | R6 | The `notify_user` tool lets the agent emit a notification (text, optional title and severity, default `info`); the payload is emitted on the `notify` event with source `agent`, and empty text is rejected. It is registered with `{ background: true }`, so it is available to both conversational sessions and background task runs |
 | R7 | A TTL dedup guard suppresses a notification whose `(source + text)` key was already seen within `dedupTtlSeconds` (default 60); suppression applies before severity routing (urgent included), is logged at info, and expired keys are pruned opportunistically |
 | R8 | Every delivery carries a `priority` derived from severity (`urgent` highest, then `warning`, then `info`) so the conversation loop orders notices ahead of lower-severity ones — and ahead of unprioritized deliveries (default 0) — when several flush together; a digest takes the highest priority among its items |
+| R9 | At shutdown the extension drains any notices still pending in the flush window via an `onShutdown` hook (`router.flushNow()`), so they are pushed into the conversation loop's final awaited delivery flush instead of dying with the process |
 
 ## Behaviors
 
@@ -65,6 +66,14 @@ Severity determines the delivery `priority` so the conversation loop's flush sur
 - Given an `urgent` notice and an `info` notice held in the same flush, when the conversation loop flushes, then the urgent one is delivered ahead of the info one
 - Given a digest of mixed-severity items, when it is delivered, then its `priority` is the highest severity among its items
 - Given two notices of the same severity, when they flush together, then they keep their arrival order (the loop's sort is stable)
+
+### Shutdown Drain (R9)
+
+Notices accumulating in the flush window must not be lost when the process winds down.
+
+**Acceptance Criteria**:
+- Given non-urgent notices pending in the flush window, when shutdown runs, then the registered `onShutdown` hook calls `router.flushNow()`, which clears the window timer and emits the pending notices (one notification, or a digest when several are pending) into the conversation loop's final flush
+- Given the shutdown flush happens, then the emitted delivery is force-flushed by the loop (held, then awaited) rather than dropped — see [conversation-loop.md](conversation-loop.md)
 
 ### Payload Tolerance (R0, R1)
 

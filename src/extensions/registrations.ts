@@ -32,6 +32,7 @@ export interface Registrations {
   sessionOpenHooks: ((session: SessionRecord) => void | Promise<void>)[];
   channels: Map<string, Channel>;
   bootstrapHooks: BootstrapHook[];
+  shutdownHooks: { name: string; hook: () => void | Promise<void> }[];
 }
 
 export const createRegistrations = (): Registrations => ({
@@ -45,4 +46,5 @@ export const createRegistrations = (): Registrations => ({
   sessionOpenHooks: [],
   channels: new Map(),
   bootstrapHooks: [],
+  shutdownHooks: [],
 });
