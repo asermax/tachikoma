@@ -23,6 +23,11 @@ export const createSummaryProcessor = (
   name: "rolling-summary",
 
   async process({ session, userText, assistantText }) {
+    // A tool-only or aborted turn produces no assistant text; there is nothing
+    // new to summarize, so leave the prior summary and lastExchange intact rather
+    // than overwriting them with a half-empty exchange.
+    if (assistantText.trim() === "") return;
+
     const lastExchange = clip(`user: ${userText}\nassistant: ${assistantText}`, MAX_EXCHANGE_CHARS);
 
     try {

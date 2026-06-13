@@ -31,6 +31,20 @@ describe("rolling summary processor", () => {
     });
   });
 
+  it("skips the update entirely on an empty assistant turn", async () => {
+    const side: Completer = { complete: vi.fn() };
+    const { api, update } = fakeSessions();
+
+    await createSummaryProcessor(side, api, fakeLog).process({
+      session,
+      userText: "hello",
+      assistantText: "   ",
+    });
+
+    expect(side.complete).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+  });
+
   it("still records the exchange when summarization fails", async () => {
     const side: Completer = { complete: vi.fn().mockRejectedValue(new Error("nope")) };
     const { api, update } = fakeSessions();
