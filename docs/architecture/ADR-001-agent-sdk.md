@@ -9,12 +9,12 @@ Tachikoma needs an agent runtime that is native to TypeScript, embeds in-process
 
 ## Decision
 
-Build on the **pi agent SDK** (`@earendil-works/pi-coding-agent`), embedded via `createAgentSession`, with `@earendil-works/pi-ai` for side-channel completions (boundary detection, summaries, extraction). The version is **pinned exact** (currently 0.79.1) and re-verified against the shipped docs and `.d.ts` on every upgrade.
+Build on the **pi agent SDK** (`@earendil-works/pi-coding-agent`), embedded via `createAgentSession`, with `@earendil-works/pi-ai` for side-channel completions (boundary detection, summaries, extraction). The version is **pinned exact** (currently 0.79.3) and re-verified against the shipped docs and `.d.ts` on every upgrade.
 
 Key properties driving the choice:
-- **Long-lived in-process sessions**: one `AgentSession` per conversation, replaced on topic boundary via `AgentSessionRuntime` — no per-message client recreation or resume bookkeeping
+- **Long-lived in-process sessions**: one `AgentSession` per conversation, opened via `createAgentSession` + `SessionManager.open` and swapped directly by the coordinator on topic boundary — no per-message client recreation or resume bookkeeping. The SDK's higher-level `AgentSessionRuntime` is **intentionally not used**: it is the interactive-TUI/RPC lifecycle layer, whereas Tachikoma's source of truth is its own drizzle-backed session registry — operational metadata (summary, `closedAt`/`lastResumedAt`, phased `postProcessingState`, channel↔message routing) that the runtime's jsonl model has no place for. The coordinator drives the single-active invariant and the registry drives persistence/resume; see `src/agent/manager.ts` and `src/sessions/registry.ts`.
 - **Extension system**: pi extensions (tools via `registerTool`, event hooks, system prompt contributions) map directly onto Tachikoma's `app.agent.use()` surface
-- **Tree-structured JSONL transcripts with fork**: readable on disk for post-session extraction, forkable for advanced flows, isolated under a dedicated `agentDir`
+- **JSONL transcripts read on disk for post-processing**: each session's transcript is readable on disk and archived, so close-time processors (memory extraction, etc.) fold the conversation in by reading the transcript and replaying it as text into a fresh headless side-run — never by forking the live session. The SDK's tree/fork API is available but currently unused; transcripts are isolated under a dedicated `agentDir`.
 - **Agent Skills standard support**: progressive disclosure covers skill detection without a separate LLM classification pass
 
 We embed pi, but we do not inherit its persona: **every execution context fully overrides pi's
