@@ -27,6 +27,56 @@ let repository: TaskRepository;
 
 const now = () => current;
 
+interface FakeSession {
+  sessionFile: string;
+  messages: { role: string; content: { type: string; text: string }[] }[];
+  prompt: ReturnType<typeof vi.fn>;
+  dispose: ReturnType<typeof vi.fn>;
+}
+
+interface FakeSide extends BackgroundSide {
+  openBackgroundSession: ReturnType<typeof vi.fn>;
+  classify: ReturnType<typeof vi.fn>;
+  session: FakeSession;
+}
+
+/**
+ * A `BackgroundSide` whose single persistent session appends an assistant turn per `prompt`.
+ * `respond` returns the assistant text for each turn (or invokes a custom tool, e.g. ask_user);
+ * `customTools` from the open call are forwarded so a prompt can drive the ask_user pause.
+ */
+const makeSide = (
+  respond: (
+    turn: number,
+    tools: { name: string; execute: (id: string, params: unknown) => unknown }[],
+  ) => Promise<string> | string,
+  classify: ReturnType<typeof vi.fn>,
+  sessionFile = "/sessions/bg-task.jsonl",
+): FakeSide => {
+  const session: FakeSession = {
+    sessionFile,
+    messages: [],
+    prompt: vi.fn(),
+    dispose: vi.fn(),
+  };
+
+  let tools: { name: string; execute: (id: string, params: unknown) => unknown }[] = [];
+  let turn = 0;
+
+  session.prompt.mockImplementation(async () => {
+    turn += 1;
+    const text = await respond(turn, tools);
+    session.messages.push({ role: "assistant", content: [{ type: "text", text }] });
+  });
+
+  const openBackgroundSession = vi.fn(async (options: { customTools?: typeof tools }) => {
+    tools = options.customTools ?? [];
+    return session;
+  });
+
+  return { openBackgroundSession, classify, session } as FakeSide;
+};
+
 const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) => {
   const deliver = vi.fn<(delivery: Delivery) => void>();
   const notify = vi.fn<(notification: TaskNotification) => void>();
@@ -65,40 +115,46 @@ beforeEach(async () => {
 });
 
 describe("executeBackgroundInstance", () => {
-  it("loops until the evaluator reports completion", async () => {
-    const run = vi
-      .fn()
-      .mockResolvedValueOnce({ text: "working on it, next I will read the inbox" })
-      .mockResolvedValueOnce({ text: "done: 3 messages summarized" });
+  it("reuses ONE persistent session across continuation iterations", async () => {
     const classify = vi
       .fn()
       .mockResolvedValueOnce({ status: "continue", reason: "announced next steps" })
       .mockResolvedValueOnce({ status: "complete", reason: "summarized 3 messages" });
-    const deps = makeDeps({ run, classify });
+    const side = makeSide(
+      (turn) =>
+        turn === 1 ? "working on it, next I will read the inbox" : "done: 3 messages summarized",
+      classify,
+    );
+    const deps = makeDeps(side);
 
     const instance = pendingInstance();
     await executeBackgroundInstance(deps, instance);
 
-    expect(run).toHaveBeenCalledTimes(2);
+    // The session is opened exactly once and prompted twice on the SAME session.
+    expect(side.openBackgroundSession).toHaveBeenCalledTimes(1);
+    expect(side.session.prompt).toHaveBeenCalledTimes(2);
     expect(classify).toHaveBeenCalledTimes(2);
 
-    // The run uses the composed background system prompt (autonomous role + shared hygiene)
-    // and binds the curated background extension factories (skills, git, tasks, etc.).
-    const runArgs = run.mock.calls[0]?.[0];
-    expect(runArgs?.system as string).toContain("Current date and time:");
-    expect(runArgs?.system as string).toContain("notify_user");
-    expect(runArgs?.backgroundExtensions).toBe(true);
+    // The session is opened with the composed background system prompt and the custom tools.
+    const openArgs = side.openBackgroundSession.mock.calls[0]?.[0];
+    expect(openArgs?.system as string).toContain("Current date and time:");
+    expect(openArgs?.system as string).toContain("notify_user");
+    expect((openArgs?.customTools as { name: string }[]).map((t) => t.name)).toEqual([
+      "notify_user",
+      "ask_user",
+    ]);
 
-    // The continuation prompt carries the task, previous progress, and reason.
-    const continuation = run.mock.calls[1]?.[0]?.prompt as string;
-    expect(continuation).toContain("summarize the inbox");
-    expect(continuation).toContain("working on it");
+    // The continuation prompt is a short nudge carrying the evaluator note — NOT an excerpt replay.
+    const continuation = side.session.prompt.mock.calls[1]?.[0] as string;
     expect(continuation).toContain("announced next steps");
+    expect(continuation).not.toContain("working on it");
+    expect(continuation).not.toContain("summarize the inbox");
 
     const completed = repository.getInstance(instance.id);
     expect(completed?.status).toBe("completed");
     expect(completed?.result).toBe("summarized 3 messages");
     expect(completed?.startedAt).toEqual(current);
+    expect(side.session.dispose).toHaveBeenCalled();
 
     expect(deps.deliver).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -111,35 +167,36 @@ describe("executeBackgroundInstance", () => {
     );
   });
 
-  it("injects workspace context into the prompt and runs post-processors on completion", async () => {
-    const run = vi.fn().mockResolvedValue({ text: "report ready" });
+  it("injects workspace context into the opening prompt and runs post-processors with the transcript", async () => {
     const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
-    const deps = makeDeps({ run, classify });
+    const side = makeSide(() => "report ready", classify, "/sessions/with-transcript.jsonl");
+    const deps = makeDeps(side);
     deps.collectContext.mockResolvedValue([{ tag: "memories", content: "MEM-INDEX" }]);
 
     const instance = pendingInstance();
     await executeBackgroundInstance(deps, instance);
 
-    // The collected context is prepended to the run prompt in the live-session format.
-    const runArgs = run.mock.calls[0]?.[0];
+    // The collected context is prepended to the opening prompt in the live-session format.
+    const opening = side.session.prompt.mock.calls[0]?.[0] as string;
     expect(deps.collectContext).toHaveBeenCalled();
-    expect(runArgs?.prompt as string).toContain('<context owner="memories">');
-    expect(runArgs?.prompt as string).toContain("MEM-INDEX");
-    expect(runArgs?.prompt as string).toContain("summarize the inbox");
+    expect(opening).toContain('<context owner="memories">');
+    expect(opening).toContain("MEM-INDEX");
+    expect(opening).toContain("summarize the inbox");
 
-    // Post-processors run after completion (transcript-less workspace persistence).
+    // The session file is persisted and fed to post-processing so memory extraction reads it.
+    expect(repository.getInstance(instance.id)?.piSessionFile).toBe(
+      "/sessions/with-transcript.jsonl",
+    );
     expect(deps.runPostProcessors).toHaveBeenCalledWith(
-      expect.objectContaining({ transcriptPath: null, session: null }),
+      expect.objectContaining({ transcriptPath: "/sessions/with-transcript.jsonl", session: null }),
     );
   });
 
   it("fails the instance when the evaluator reports an error", async () => {
-    const side: BackgroundSide = {
-      run: vi.fn().mockResolvedValue({ text: "I cannot access the inbox at all" }),
-      classify: vi
-        .fn()
-        .mockResolvedValue({ status: "error", reason: "unrecoverable access error" }),
-    };
+    const classify = vi
+      .fn()
+      .mockResolvedValue({ status: "error", reason: "unrecoverable access error" });
+    const side = makeSide(() => "I cannot access the inbox at all", classify);
     const deps = makeDeps(side);
 
     const instance = pendingInstance();
@@ -148,6 +205,7 @@ describe("executeBackgroundInstance", () => {
     const failed = repository.getInstance(instance.id);
     expect(failed?.status).toBe("failed");
     expect(failed?.result).toBe("Agent stuck: unrecoverable access error");
+    expect(side.session.dispose).toHaveBeenCalled();
 
     expect(deps.deliver).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("Task failed") }),
@@ -156,61 +214,60 @@ describe("executeBackgroundInstance", () => {
   });
 
   it("fails after exhausting the iteration cap", async () => {
-    const side: BackgroundSide = {
-      run: vi.fn().mockResolvedValue({ text: "still going" }),
-      classify: vi.fn().mockResolvedValue({ status: "continue", reason: "still mid-workflow" }),
-    };
+    const classify = vi
+      .fn()
+      .mockResolvedValue({ status: "continue", reason: "still mid-workflow" });
+    const side = makeSide(() => "still going", classify);
     const deps = makeDeps(side, 2);
 
     const instance = pendingInstance();
     await executeBackgroundInstance(deps, instance);
 
-    expect(side.run).toHaveBeenCalledTimes(2);
+    expect(side.session.prompt).toHaveBeenCalledTimes(2);
     expect(repository.getInstance(instance.id)?.result).toBe(
       "Max iterations (2) reached without completion",
     );
+    expect(side.session.dispose).toHaveBeenCalled();
     expect(deps.notify).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
   });
 
   it("treats an evaluator crash as continue", async () => {
-    const run = vi
-      .fn()
-      .mockResolvedValueOnce({ text: "first pass" })
-      .mockResolvedValueOnce({ text: "all done" });
     const classify = vi
       .fn()
       .mockRejectedValueOnce(new Error("model down"))
       .mockResolvedValueOnce({ status: "complete", reason: "finished" });
-    const deps = makeDeps({ run, classify });
+    const side = makeSide((turn) => (turn === 1 ? "first pass" : "all done"), classify);
+    const deps = makeDeps(side);
 
     const instance = pendingInstance();
     await executeBackgroundInstance(deps, instance);
 
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(side.session.prompt).toHaveBeenCalledTimes(2);
     expect(repository.getInstance(instance.id)?.status).toBe("completed");
   });
 
-  it("pauses to waiting when the agent asks the user a question", async () => {
-    const run = vi.fn().mockImplementation(async ({ customTools }) => {
-      const askUser = customTools?.find((tool: { name: string }) => tool.name === "ask_user");
+  it("pauses to waiting when the agent asks the user a question, persisting the session file", async () => {
+    const classify = vi.fn();
+    const side = makeSide(async (_turn, tools) => {
+      const askUser = tools.find((tool) => tool.name === "ask_user");
       await askUser?.execute("call-1", { question: "Which inbox — work or personal?" });
 
-      return { text: "I need to know which inbox before I continue." };
-    });
-    const classify = vi.fn();
-    const deps = makeDeps({ run, classify });
+      return "I need to know which inbox before I continue.";
+    }, classify);
+    const deps = makeDeps(side);
 
     const instance = pendingInstance();
     await executeBackgroundInstance(deps, instance);
 
-    // The run paused before the evaluator ran.
+    // The run paused before the evaluator ran, and the session was disposed on the pause.
     expect(classify).not.toHaveBeenCalled();
+    expect(side.session.dispose).toHaveBeenCalled();
 
     const waiting = repository.getInstance(instance.id);
     expect(waiting?.status).toBe("waiting");
     expect(waiting?.question).toBe("Which inbox — work or personal?");
-    expect(waiting?.resumeContext).toBe("I need to know which inbox before I continue.");
     expect(waiting?.userResponse).toBeNull();
+    expect(waiting?.piSessionFile).toBe("/sessions/bg-task.jsonl");
 
     expect(deps.deliver).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -223,12 +280,12 @@ describe("executeBackgroundInstance", () => {
     );
   });
 
-  it("resumes a waiting instance once the user has responded", async () => {
-    const run = vi.fn().mockResolvedValue({ text: "done — used the work inbox" });
+  it("resumes a persistent session by reopening its file and prompting the user's reply", async () => {
     const classify = vi
       .fn()
       .mockResolvedValue({ status: "complete", reason: "summarized the work inbox" });
-    const deps = makeDeps({ run, classify });
+    const side = makeSide(() => "done — used the work inbox", classify, "/sessions/resumed.jsonl");
+    const deps = makeDeps(side);
 
     const instance = pendingInstance();
     repository.updateInstance(instance.id, {
@@ -237,6 +294,7 @@ describe("executeBackgroundInstance", () => {
       question: "Which inbox?",
       resumeContext: "I paused to ask which inbox.",
       userResponse: "the work one",
+      piSessionFile: "/sessions/resumed.jsonl",
     });
 
     await executeBackgroundInstance(
@@ -244,8 +302,48 @@ describe("executeBackgroundInstance", () => {
       repository.getInstance(instance.id) as TaskInstanceRecord,
     );
 
-    // The resume prompt replays the captured progress, the question, and the reply.
-    const resumePrompt = run.mock.calls[0]?.[0]?.prompt as string;
+    // The persistent session is reopened from its file — no fresh start, no excerpt replay.
+    expect(side.openBackgroundSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionFile: "/sessions/resumed.jsonl" }),
+    );
+    const resumePrompt = side.session.prompt.mock.calls[0]?.[0] as string;
+    expect(resumePrompt).toBe("the work one");
+    expect(resumePrompt).not.toContain("I paused to ask which inbox.");
+
+    const completed = repository.getInstance(instance.id);
+    expect(completed?.status).toBe("completed");
+    expect(completed?.result).toBe("summarized the work inbox");
+    expect(completed?.question).toBeNull();
+    expect(completed?.resumeContext).toBeNull();
+  });
+
+  it("resumes a legacy instance (no session file) by replaying the captured excerpt", async () => {
+    const classify = vi
+      .fn()
+      .mockResolvedValue({ status: "complete", reason: "summarized the work inbox" });
+    const side = makeSide(() => "done — used the work inbox", classify);
+    const deps = makeDeps(side);
+
+    const instance = pendingInstance();
+    repository.updateInstance(instance.id, {
+      status: "waiting",
+      startedAt: current,
+      question: "Which inbox?",
+      resumeContext: "I paused to ask which inbox.",
+      userResponse: "the work one",
+      // No piSessionFile — predates persistent background sessions.
+    });
+
+    await executeBackgroundInstance(
+      deps,
+      repository.getInstance(instance.id) as TaskInstanceRecord,
+    );
+
+    // A legacy resume opens a FRESH session (no sessionFile) and replays the excerpt prompt.
+    expect(side.openBackgroundSession).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionFile: null }),
+    );
+    const resumePrompt = side.session.prompt.mock.calls[0]?.[0] as string;
     expect(resumePrompt).toContain("Which inbox?");
     expect(resumePrompt).toContain("the work one");
     expect(resumePrompt).toContain("I paused to ask which inbox.");
@@ -253,16 +351,15 @@ describe("executeBackgroundInstance", () => {
     const completed = repository.getInstance(instance.id);
     expect(completed?.status).toBe("completed");
     expect(completed?.result).toBe("summarized the work inbox");
-    // Resume bookkeeping is cleared once the run finishes.
     expect(completed?.question).toBeNull();
     expect(completed?.resumeContext).toBeNull();
   });
 
-  it("fails the instance when the run itself throws", async () => {
-    const side: BackgroundSide = {
-      run: vi.fn().mockRejectedValue(new Error("session exploded")),
-      classify: vi.fn(),
-    };
+  it("fails the instance when the run itself throws and disposes the session", async () => {
+    const classify = vi.fn();
+    const side = makeSide(() => {
+      throw new Error("session exploded");
+    }, classify);
     const deps = makeDeps(side);
 
     const instance = pendingInstance();
@@ -271,16 +368,17 @@ describe("executeBackgroundInstance", () => {
     const failed = repository.getInstance(instance.id);
     expect(failed?.status).toBe("failed");
     expect(failed?.result).toContain("session exploded");
+    expect(side.session.dispose).toHaveBeenCalled();
     expect(deps.deliver).toHaveBeenCalled();
   });
 });
 
 describe("BackgroundRunner", () => {
   it("dispatches pending instances once and tracks them across ticks", async () => {
-    const side: BackgroundSide = {
-      run: vi.fn().mockResolvedValue({ text: "done" }),
-      classify: vi.fn().mockResolvedValue({ status: "complete", reason: "done" }),
-    };
+    const side = makeSide(
+      () => "done",
+      vi.fn().mockResolvedValue({ status: "complete", reason: "done" }),
+    );
     const runner = new BackgroundRunner(makeDeps(side));
 
     const instance = pendingInstance();
@@ -289,15 +387,15 @@ describe("BackgroundRunner", () => {
     runner.tick();
     await runner.drain();
 
-    expect(side.run).toHaveBeenCalledTimes(1);
+    expect(side.openBackgroundSession).toHaveBeenCalledTimes(1);
     expect(repository.getInstance(instance.id)?.status).toBe("completed");
   });
 
   it("dispatches a resumable waiting instance to continue it", async () => {
-    const side: BackgroundSide = {
-      run: vi.fn().mockResolvedValue({ text: "resumed and finished" }),
-      classify: vi.fn().mockResolvedValue({ status: "complete", reason: "finished after reply" }),
-    };
+    const side = makeSide(
+      () => "resumed and finished",
+      vi.fn().mockResolvedValue({ status: "complete", reason: "finished after reply" }),
+    );
     const runner = new BackgroundRunner(makeDeps(side));
 
     const instance = pendingInstance();
@@ -306,20 +404,18 @@ describe("BackgroundRunner", () => {
       question: "left or right?",
       resumeContext: "paused",
       userResponse: "left",
+      piSessionFile: "/sessions/bg-task.jsonl",
     });
 
     runner.tick();
     await runner.drain();
 
-    expect(side.run).toHaveBeenCalledTimes(1);
+    expect(side.openBackgroundSession).toHaveBeenCalledTimes(1);
     expect(repository.getInstance(instance.id)?.status).toBe("completed");
   });
 
   it("leaves a waiting instance without a response untouched", async () => {
-    const side: BackgroundSide = {
-      run: vi.fn(),
-      classify: vi.fn(),
-    };
+    const side = makeSide(() => "", vi.fn());
     const runner = new BackgroundRunner(makeDeps(side));
 
     const instance = pendingInstance();
@@ -332,7 +428,7 @@ describe("BackgroundRunner", () => {
     runner.tick();
     await runner.drain();
 
-    expect(side.run).not.toHaveBeenCalled();
+    expect(side.openBackgroundSession).not.toHaveBeenCalled();
     expect(repository.getInstance(instance.id)?.status).toBe("waiting");
   });
 
@@ -341,20 +437,33 @@ describe("BackgroundRunner", () => {
     let peak = 0;
     const releases: Array<() => void> = [];
 
-    const run = vi.fn().mockImplementation(() => {
+    // Each dispatched instance opens its own session whose single prompt blocks until released.
+    const openBackgroundSession = vi.fn(async () => {
       active += 1;
       peak = Math.max(peak, active);
 
-      return new Promise<{ text: string }>((resolve) => {
-        releases.push(() => {
-          active -= 1;
-          resolve({ text: "done" });
-        });
-      });
+      const prompt = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releases.push(() => {
+              active -= 1;
+              resolve();
+            });
+          }),
+      );
+
+      return {
+        sessionFile: "/sessions/concurrent.jsonl",
+        messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+        prompt,
+        dispose: vi.fn(),
+      };
     });
     const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
 
-    const runner = new BackgroundRunner(makeDeps({ run, classify }, 10, 2));
+    const runner = new BackgroundRunner(
+      makeDeps({ openBackgroundSession, classify } as unknown as BackgroundSide, 10, 2),
+    );
 
     for (let i = 0; i < 5; i += 1) pendingInstance();
 
@@ -363,7 +472,7 @@ describe("BackgroundRunner", () => {
 
     // Only the cap is dispatched; the other three pending instances wait.
     expect(active).toBe(2);
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(openBackgroundSession).toHaveBeenCalledTimes(2);
 
     // Free both slots; a later tick fills them with the next pending instances.
     releases.shift()?.();
@@ -384,6 +493,6 @@ describe("BackgroundRunner", () => {
     await runner.drain();
 
     expect(peak).toBeLessThanOrEqual(2);
-    expect(run).toHaveBeenCalledTimes(5);
+    expect(openBackgroundSession).toHaveBeenCalledTimes(5);
   });
 });

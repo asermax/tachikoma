@@ -1,5 +1,5 @@
 import { completeSimple, type Message } from "@earendil-works/pi-ai";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 
 import { parseWithSchema } from "../config/parse.ts";
@@ -40,11 +40,31 @@ export interface HeadlessRunResult {
   text: string;
 }
 
+export interface BackgroundSessionOptions {
+  system: string;
+  customTools: ToolDefinition[];
+  /** Resume from an existing pi session file instead of starting fresh. */
+  sessionFile?: string | null;
+  tier?: ModelTier;
+}
+
 const textOf = (message: { content: { type: string }[] }): string =>
   message.content
     .filter((block): block is { type: "text"; text: string } => block.type === "text")
     .map((block) => block.text)
     .join("");
+
+/** Last assistant turn's text from a session's message log (mirrors `run`'s reverse scan). */
+export const lastAssistantText = (messages: readonly { role: string }[]): string => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message == null || message.role !== "assistant") continue;
+
+    return textOf(message as unknown as { content: { type: string }[] });
+  }
+
+  return "";
+};
 
 const extractJson = (text: string): string => {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -142,6 +162,28 @@ export class SideRunner {
     } finally {
       session.dispose();
     }
+  }
+
+  /**
+   * Open a PERSISTENT pi session for an autonomous background task: a session file is written
+   * under the workspace sessions dir, the curated background factories are bound, and the given
+   * custom tools are active — with NO `tools` allowlist (a hard allowlist filters out
+   * extension/custom tools). The caller prompts the returned session repeatedly across the
+   * evaluator loop and disposes it; `session.sessionFile` is the path to persist for resumption.
+   */
+  async openBackgroundSession({
+    system,
+    customTools,
+    sessionFile,
+    tier = "processor",
+  }: BackgroundSessionOptions): Promise<AgentSession> {
+    return this.manager.open({
+      tier,
+      bindBackgroundFactories: true,
+      systemPrompt: system,
+      customTools,
+      ...(sessionFile != null ? { sessionFile } : {}),
+    });
   }
 
   /** Structured classification: instructs JSON output matching the schema, parses, retries once. */

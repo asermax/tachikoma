@@ -32,6 +32,7 @@ const TASKS_DDL = [
     question text,
     user_response text,
     resume_context text,
+    pi_session_file text,
     updated_at integer NOT NULL,
     created_at integer NOT NULL
   )`,

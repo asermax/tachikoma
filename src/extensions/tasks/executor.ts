@@ -3,7 +3,7 @@ import { defineTool } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
 import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
-import type { SideRunner } from "../../agent/side-run.ts";
+import { lastAssistantText, type SideRunner } from "../../agent/side-run.ts";
 import type { Delivery } from "../../channels/types.ts";
 import { textMessage } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
@@ -30,7 +30,7 @@ export interface TaskNotification {
   message: string;
 }
 
-export type BackgroundSide = Pick<SideRunner, "run" | "classify">;
+export type BackgroundSide = Pick<SideRunner, "classify" | "openBackgroundSession">;
 
 export interface ExecutorDeps {
   repository: TaskRepository;
@@ -89,26 +89,14 @@ const buildSystemPrompt = (now: Date, timezone: string | undefined): string => {
   return buildBackgroundSystemPrompt({ dateHeader: `${formatted}${zone}` });
 };
 
-// Side runs are ephemeral (no session continuity), so each continuation
-// carries the task, the previous progress, and the evaluator's observation.
-const buildContinuationPrompt = (taskPrompt: string, previousResponse: string, reason: string) =>
-  `You are resuming a background task that is not finished yet.
+// The persistent session retains its own history, so a continuation is a short nudge
+// carrying only the evaluator's observation — no excerpt replay of the previous turn.
+const buildContinuationPrompt = (reason: string) =>
+  `Continue working on the task. Evaluator note: ${reason}`;
 
-<task>
-${taskPrompt}
-</task>
-
-<previous-progress>
-${previousResponse.slice(0, RESPONSE_EXCERPT_CHARS)}
-</previous-progress>
-
-An evaluator observed: ${reason}
-
-Continue working on the task from where you left off.`;
-
-// Side runs carry no session continuity, so a paused-then-answered run is
-// resumed by replaying the captured progress, the question it asked, and the
-// user's reply into a fresh prompt.
+// Legacy fallback for instances created before persistent background sessions: a
+// paused-then-answered run with no session file is resumed by replaying the captured
+// progress, the question it asked, and the user's reply into a fresh prompt.
 const buildResumePrompt = (
   taskPrompt: string,
   resumeContext: string,
@@ -196,28 +184,25 @@ export const executeBackgroundInstance = async (
   });
   log.info({ instanceId: instance.id, resuming }, "executing background task instance");
 
+  // Legacy instances created before persistent background sessions carry no session file. A
+  // resuming legacy instance replays its captured excerpt into a fresh session; everything else
+  // resumes the persistent session and prompts only the new turn.
+  const legacyResume = resuming && instance.piSessionFile == null && instance.question != null;
+
+  let session: Awaited<ReturnType<BackgroundSide["openBackgroundSession"]>> | null = null;
+
   try {
     const system = buildSystemPrompt(now(), timezone);
 
     // Inject the same workspace context the live session gets (memory indexes, projects, …) so the
-    // task knows what's available. Static per workspace, so it is gathered once and reused across
-    // the evaluator-loop iterations (each iteration is an independent side run).
+    // task knows what's available. Gathered once and folded into the opening prompt — the
+    // persistent session retains it across iterations, so later turns need no re-injection.
     const contextBlocks = await collectContext({
       message: textMessage("background-task", instance.prompt),
       session: null,
     });
     const contextPreamble =
       contextBlocks.length > 0 ? `${formatContextBlocks(contextBlocks)}\n\n` : "";
-
-    let prompt =
-      resuming && instance.question != null
-        ? buildResumePrompt(
-            instance.prompt,
-            instance.resumeContext ?? "",
-            instance.question,
-            instance.userResponse as string,
-          )
-        : instance.prompt;
 
     const notifyTool = defineTool({
       name: "notify_user",
@@ -264,14 +249,32 @@ export const executeBackgroundInstance = async (
       },
     });
 
+    session = await side.openBackgroundSession({
+      system,
+      customTools: [notifyTool, askUserTool],
+      // A legacy resume replays its excerpt into a fresh session; everything else resumes
+      // the run's own persistent session file when one exists.
+      sessionFile: legacyResume ? null : instance.piSessionFile,
+    });
+
+    // Record the session file immediately so a mid-run crash still leaves the resumable path.
+    const transcriptPath = session.sessionFile ?? null;
+    if (transcriptPath !== instance.piSessionFile) {
+      repository.updateInstance(instance.id, { piSessionFile: transcriptPath });
+    }
+
+    // First turn: the resumed persistent session already holds its history, so it gets only the
+    // user's reply; a legacy resume replays the captured excerpt; a fresh run gets task + context.
+    let prompt =
+      resuming && !legacyResume
+        ? (instance.userResponse as string)
+        : legacyResume && instance.question != null
+          ? `${contextPreamble}${buildResumePrompt(instance.prompt, instance.resumeContext ?? "", instance.question, instance.userResponse as string)}`
+          : `${contextPreamble}${instance.prompt}`;
+
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
-      const { text } = await side.run({
-        system,
-        prompt: `${contextPreamble}${prompt}`,
-        customTools: [notifyTool, askUserTool],
-        tier: "processor",
-        backgroundExtensions: true,
-      });
+      await session.prompt(prompt);
+      const text = lastAssistantText(session.messages);
 
       if (pendingQuestion != null) {
         repository.updateInstance(instance.id, {
@@ -279,6 +282,7 @@ export const executeBackgroundInstance = async (
           question: pendingQuestion,
           resumeContext: text,
           userResponse: null,
+          piSessionFile: transcriptPath,
         });
 
         deliver({
@@ -312,9 +316,11 @@ export const executeBackgroundInstance = async (
           question: null,
           resumeContext: null,
         });
-        // Persist any workspace changes the task made (git commit/push, project state). Transcript-
-        // dependent processors (episodic memory) no-op — background runs persist no transcript.
-        await runPostProcessors({ session: null, transcriptPath: null, log });
+        // Dispose before post-processing so memory extraction reads a flushed transcript; the
+        // session's pi JSONL feeds episodic/facts extraction (transcriptPath is now non-null).
+        session.dispose();
+        session = null;
+        await runPostProcessors({ session: null, transcriptPath, log });
         deliver({ text: `✅ ${source} — completed.\n\n${text}`, gate: "idle" });
         notify({
           source,
@@ -331,7 +337,7 @@ export const executeBackgroundInstance = async (
         return;
       }
 
-      prompt = buildContinuationPrompt(instance.prompt, text, evaluation.reason);
+      prompt = buildContinuationPrompt(evaluation.reason);
     }
 
     fail(
@@ -341,6 +347,9 @@ export const executeBackgroundInstance = async (
   } catch (error) {
     log.error({ instanceId: instance.id, err: error }, "background task errored");
     fail(`Task failed: ${error}`, `Task failed with error: ${error}`);
+  } finally {
+    // Guarantees the live session handle never leaks — the complete path nulls it after disposing.
+    session?.dispose();
   }
 };
 

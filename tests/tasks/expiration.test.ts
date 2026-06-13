@@ -73,13 +73,26 @@ describe("expireWaitingInstances", () => {
   });
 
   it("expires a waiting instance produced by an unanswered ask_user pause", async () => {
-    const run = vi.fn().mockImplementation(async ({ customTools }) => {
-      const askUser = customTools?.find((tool: { name: string }) => tool.name === "ask_user");
+    let tools: { name: string; execute: (id: string, params: unknown) => unknown }[] = [];
+    const session = {
+      sessionFile: "/sessions/expire.jsonl",
+      messages: [] as { role: string; content: { type: string; text: string }[] }[],
+      prompt: vi.fn(),
+      dispose: vi.fn(),
+    };
+    session.prompt.mockImplementation(async () => {
+      const askUser = tools.find((tool) => tool.name === "ask_user");
       await askUser?.execute("c1", { question: "Confirm?" });
-
-      return { text: "waiting on confirmation" };
+      session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "waiting on confirmation" }],
+      });
     });
-    const side: BackgroundSide = { run, classify: vi.fn() };
+    const openBackgroundSession = vi.fn(async (options: { customTools?: typeof tools }) => {
+      tools = options.customTools ?? [];
+      return session;
+    });
+    const side = { openBackgroundSession, classify: vi.fn() } as unknown as BackgroundSide;
     const deps: ExecutorDeps = {
       repository,
       side,

@@ -63,8 +63,12 @@ export const taskInstances = sqliteTable(
     question: text("question"),
     userResponse: text("user_response"),
     // Accumulated agent progress captured at pause time so the resumed run can
-    // rebuild context — side runs carry no session continuity of their own.
+    // rebuild context — fallback path for legacy instances with no persistent session.
     resumeContext: text("resume_context"),
+    // Persistent pi session file backing the background run; resumed across iterations
+    // and ask_user pauses, and fed to memory extraction on completion. Null for legacy
+    // instances created before persistent background sessions (they fall back to excerpt replay).
+    piSessionFile: text("pi_session_file"),
     // Stamped on every update — anchors the waiting-instance expiration sweep.
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),

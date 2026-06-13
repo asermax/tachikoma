@@ -1,0 +1,1 @@
+ALTER TABLE `task_instances` ADD `pi_session_file` text;

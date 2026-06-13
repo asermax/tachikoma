@@ -36,6 +36,13 @@
       "when": 1781359614737,
       "tag": "0004_channel_messages",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1781381298471,
+      "tag": "0005_tasks_pi_session_file",
+      "breakpoints": true
     }
   ]
 }
