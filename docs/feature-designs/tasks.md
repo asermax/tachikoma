@@ -31,10 +31,13 @@ pi deliberately provides no scheduling, idle gating, or buffered delivery — th
 ```
 tasks-tick (60s)
   ├─ generation.ts    definitions ──→ pending instances
-  ├─ expiration.ts    waiting > timeout ──→ failed (+ notice)
+  ├─ expiration.ts    waiting > timeout (unanswered) ──→ failed (+ notice)
   ├─ session-delivery.ts  pending session ──→ channels.deliver(idle) ──→ completed
-  └─ executor.ts      pending background ──→ side.run ⇄ side.classify loop (detached)
+  └─ executor.ts      answered waiting + pending background ──→ side.run ⇄ side.classify loop (detached)
+                        ask_user tool ──→ waiting (+ question delivered)
 ```
+
+A background run can pause for input: the in-run `ask_user` tool flips the instance to `waiting`, persists the question and a progress excerpt, surfaces the question to the user, and the run returns (freeing its slot). The main-session `respond_to_task` tool stores the user's reply; the next background dispatch pass resumes the instance ahead of fresh pending work, replaying the persisted progress + question + reply into a resume prompt. An unanswered `waiting` instance is failed by the expiration sweep — the producer that makes that sweep live.
 
 ## Components
 
@@ -43,14 +46,14 @@ tasks-tick (60s)
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/extensions/tasks/index.ts` | Wiring: config, crash-recovery bootstrap, tick orchestration, tool registration | Single every-60s job instead of per-concern loops |
-| `src/extensions/tasks/schema.ts` | Drizzle tables and type maps | Schedule stored as a JSON discriminated union (`cron` expression / `once` ISO instant); `since` and `updatedAt` columns anchor stale-cron prevention and the waiting sweep |
-| `src/extensions/tasks/repository.ts` | All SQL access | Stamps `since` (definitions) and `updatedAt` (instances) on every update; period-aware duplicate query keyed on exact `scheduledFor`; `resolveDefinition` (ID then exact name), `deleteDefinition`, and `getLatestInstanceForDefinition` back the get/delete/run-now tools |
+| `src/extensions/tasks/schema.ts` | Drizzle tables and type maps | Schedule stored as a JSON discriminated union (`cron` expression / `once` ISO instant); `since` and `updatedAt` columns anchor stale-cron prevention and the waiting sweep; `question` + `resumeContext` columns persist a paused run's blocking question and progress excerpt, `userResponse` carries the reply that triggers resume |
+| `src/extensions/tasks/repository.ts` | All SQL access | Stamps `since` (definitions) and `updatedAt` (instances) on every update; period-aware duplicate query keyed on exact `scheduledFor`; `resolveDefinition` (ID then exact name), `deleteDefinition`, and `getLatestInstanceForDefinition` back the get/delete/run-now tools; `getResumableInstances` returns `waiting` instances whose `userResponse` has arrived |
 | `src/extensions/tasks/schedule.ts` | Parse and format schedules | A croner probe distinguishes cron from one-shot input (`getPattern()` is undefined for datetimes); timezone handling delegated entirely to croner |
 | `src/extensions/tasks/generation.ts` | One generation pass | Anchor = `lastFiredAt`, else current hour start minus 1 s; advances past `since` instead of skipping the definition |
 | `src/extensions/tasks/session-delivery.ts` | One session-delivery pass | Marks the instance `completed` at handoff; rolls back to `pending` if the handoff throws |
-| `src/extensions/tasks/executor.ts` | Background evaluator loop + `BackgroundRunner` dispatcher | One ephemeral `side.run` per iteration; continuation prompt carries task, progress excerpt, and evaluator observation; in-flight map prevents double dispatch and caps concurrency at `backgroundMaxConcurrent` |
-| `src/extensions/tasks/expiration.ts` | Waiting-instance timeout sweep | Threshold on `updatedAt`; `onExpired` callback lets `index.ts` own user notice + event emission |
-| `src/extensions/tasks/tools.ts` | Agent-facing tools | Pure handlers over `ToolDeps`; the pi factory only wraps them in `registerTool` calls; `run_task_now` creates a pending instance and returns — dispatch is the existing tick path, not a direct executor call |
+| `src/extensions/tasks/executor.ts` | Background evaluator loop + `BackgroundRunner` dispatcher | One ephemeral `side.run` per iteration; continuation prompt carries task, progress excerpt, and evaluator observation; the in-run `ask_user` custom tool signals a pause that the loop turns into a `waiting` transition (persisting question + progress) before the evaluator runs; a resumed instance starts from a resume prompt replaying question + reply; in-flight map prevents double dispatch and caps concurrency at `backgroundMaxConcurrent` |
+| `src/extensions/tasks/expiration.ts` | Waiting-instance timeout sweep | Threshold on `updatedAt`; `onExpired` callback lets `index.ts` own user notice + event emission; now has a live producer (`ask_user`) |
+| `src/extensions/tasks/tools.ts` | Agent-facing tools | Pure handlers over `ToolDeps`; the pi factory only wraps them in `registerTool` calls; `run_task_now` creates a pending instance and returns — dispatch is the existing tick path, not a direct executor call; `respond_to_task` stores a reply on a `waiting` instance and lets the dispatch pass resume it |
 
 ## Key Decisions
 
@@ -95,6 +98,18 @@ tasks-tick (60s)
 - Pro: Hard ceiling on concurrent side runs / API burst; surplus work stays durably pending in the DB
 - Pro: Reuses the existing in-flight map — no new dedup surface
 - Con: A freed slot is only refilled on the next tick, so worst-case dispatch latency for a queued instance is one tick interval
+
+### Interactive await/respond resumes by prompt replay, not session resume
+
+**Choice**: A background run pauses by calling the in-run `ask_user` custom tool. The tool records the question in a closure flag and returns a "stop and wait" message; after `side.run` returns, the executor — seeing the flag set — transitions the instance to `waiting`, persisting the question and the run's final text as `resumeContext`, delivers the question to the user (immediate gate, instance ID in the text) and emits a `waiting` status payload, then returns without consulting the evaluator. The main-session `respond_to_task` tool stores the trimmed reply as `userResponse` (leaving the instance `waiting`); `BackgroundRunner.tick` dispatches `getResumableInstances` (answered `waiting`) ahead of `getPendingInstances`, and `executeBackgroundInstance` detects `status === "waiting" && userResponse != null` to build a resume prompt (task + `resumeContext` + question + reply) for the first iteration. Resume bookkeeping is cleared on completion.
+**Why**: Side runs are bare, in-memory, and disposed per iteration (DES-002 + the ephemeral-session decision above), so there is no live pi session to suspend and re-enter — persisting a pi session file across an open-ended user wait would mean holding session state durably and rebinding it on resume. The evaluator loop already proves that prompt-carried continuity (task + progress excerpt + observation) is sufficient to resume work; await/respond reuses exactly that mechanism, adding only the question and the user's reply to the replayed context. Keeping the pause signal in a closure flag (rather than a thrown sentinel) lets the agent's final turn text serve as the progress excerpt for free, and keeps every DB write in the executor where the rest of the lifecycle transitions live.
+**Alternatives Considered**: Persisting the pi session id / JSONL transcript on the instance and reopening via `SessionManager.open` (`sessionFile`) to truly resume the paused agent. Rejected: it couples tasks to pi session-file lifecycle across arbitrarily long waits, and `BackgroundSide` (the executor's `side` dependency) is a narrow `run`/`classify` surface that tests mock — widening it to expose session handles would leak session internals into the loop for no behavioral gain over replay. Also considered routing the reply as a plain inbound message; rejected because nothing would re-associate it with the paused instance.
+**Consequences**:
+- Pro: One resume mechanism shared with the evaluator loop; no pi session lifecycle to manage across the wait
+- Pro: The expiration sweep finally has a producer, so an abandoned question is bounded by `waitTimeoutSeconds`
+- Pro: `respond_to_task` is a pure guarded handler; the resume itself rides the existing dispatch path (concurrency cap, double-dispatch protection for free)
+- Con: Tool-call history and intermediate file state from before the pause are lost — only the text excerpt and the Q&A survive into the resumed run
+- Con: Resume latency is one tick interval after the reply is stored
 
 ### Evaluator is a strict, best-effort classifier
 
@@ -148,6 +163,18 @@ tasks-tick (60s)
 **When**: The runner ticks
 **Then**: Only two are dispatched (marked `running` and added to the in-flight map); the loop breaks once the map reaches the cap and the other three stay `pending`. As each in-flight run settles and leaves the map, a later tick dispatches the next pending instances — never more than two run at once.
 
+### Scenario: background run asks the user a question and resumes on reply
+
+**Given**: A running background instance that calls `ask_user("Which inbox — work or personal?")`
+**When**: The run returns, then the user later answers via `respond_to_task`
+**Then**: On the pause, the instance becomes `waiting` with the question and the run's progress excerpt persisted, the question is delivered immediately (text carries the instance ID) and a `waiting` status payload is emitted; the evaluator is not consulted and the slot frees. `respond_to_task` stores the trimmed reply as `userResponse`, leaving the instance `waiting`. The next background dispatch pass picks the instance up ahead of pending work, reopens the run with a resume prompt replaying the progress + question + reply, and the evaluator loop continues to completion — clearing `question`/`resumeContext`.
+
+### Scenario: a background question is never answered
+
+**Given**: A `waiting` instance produced by `ask_user` whose `updatedAt` is older than `waitTimeoutSeconds`
+**When**: The expiration pass runs
+**Then**: It is marked `failed` with the timeout reason and a failure notice is delivered — the same sweep that was previously dormant, now driven by a real producer.
+
 ### Scenario: channel handoff fails for a session task
 
 **Given**: A pending session instance and a delivery function that throws (e.g. no channel up)
@@ -156,6 +183,6 @@ tasks-tick (60s)
 
 ## Notes
 
-- The `waiting` status, `userResponse` column, and expiration sweep exist, but nothing currently transitions an instance into `waiting` — an `await_response`/respond flow has not been built yet; the sweep is dormant until a producer lands.
+- The `waiting` lifecycle is live: a background run pauses via the `ask_user` tool (the producer), `respond_to_task` (main session) supplies the reply, the background dispatch pass resumes the instance, and the expiration sweep fails an instance whose question goes unanswered past `waitTimeoutSeconds`. State is persisted on `task_instances` via the `question` and `resumeContext` columns (migration `0003_tasks_waiting_resume`) alongside the existing `userResponse`.
 - Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `sessionTaskMaxHoldSeconds` (900), `backgroundMaxIterations` (10), `backgroundMaxConcurrent` (3), `waitTimeoutSeconds` (7200). The tick interval is a module constant.
-- Background runs use the `processor` model tier and pi built-in tools only (`read, bash, edit, write, grep, find, ls`); Tachikoma extension tools (tasks, notifications) are not bound into side runs.
+- Background runs use the `processor` model tier and pi built-in tools (`read, bash, edit, write, grep, find, ls`) plus two per-run custom tools, `notify_user` and `ask_user`; Tachikoma extension tools (tasks, notifications) are not bound into side runs.

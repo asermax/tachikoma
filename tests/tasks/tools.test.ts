@@ -8,6 +8,7 @@ import {
   handleGetTask,
   handleListTasks,
   handleQueryTaskInstances,
+  handleRespondToTask,
   handleRunTaskNow,
   handleUpdateTask,
   type ToolDeps,
@@ -361,5 +362,69 @@ describe("handleRunTaskNow", () => {
 
   it("throws for an unknown referenced task", () => {
     expect(() => handleRunTaskNow(deps, { task: "missing" })).toThrow("Task 'missing' not found.");
+  });
+});
+
+describe("handleRespondToTask", () => {
+  const waitingInstance = () => {
+    const instance = repository.createInstance({
+      definitionId: null,
+      taskType: "background",
+      prompt: "ask the user",
+      scheduledFor: current,
+    });
+    repository.updateInstance(instance.id, { status: "waiting", question: "left or right?" });
+    return instance;
+  };
+
+  it("stores the response and leaves the instance waiting for the runner to resume", () => {
+    const instance = waitingInstance();
+
+    const message = handleRespondToTask(deps, {
+      task_instance_id: instance.id,
+      response: "  left  ",
+    });
+
+    expect(message).toContain("Response sent.");
+
+    const updated = repository.getInstance(instance.id);
+    expect(updated?.status).toBe("waiting");
+    expect(updated?.userResponse).toBe("left");
+  });
+
+  it("rejects an empty response", () => {
+    const instance = waitingInstance();
+    expect(() =>
+      handleRespondToTask(deps, { task_instance_id: instance.id, response: "   " }),
+    ).toThrow("Response cannot be empty.");
+  });
+
+  it("rejects responding to an unknown instance", () => {
+    expect(() => handleRespondToTask(deps, { task_instance_id: "nope", response: "x" })).toThrow(
+      "not found",
+    );
+  });
+
+  it("rejects responding to an instance that is not waiting", () => {
+    const instance = repository.createInstance({
+      definitionId: null,
+      taskType: "background",
+      prompt: "running task",
+      scheduledFor: current,
+    });
+    repository.updateInstance(instance.id, { status: "running" });
+
+    expect(() =>
+      handleRespondToTask(deps, { task_instance_id: instance.id, response: "x" }),
+    ).toThrow("not waiting for input");
+  });
+
+  it("rejects a second response while one is already pending", () => {
+    const instance = waitingInstance();
+    repository.updateInstance(instance.id, { userResponse: "already here" });
+
+    expect(() =>
+      handleRespondToTask(deps, { task_instance_id: instance.id, response: "x" }),
+    ).toThrow("already pending");
   });
 });

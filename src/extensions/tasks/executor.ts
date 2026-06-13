@@ -18,7 +18,7 @@ export type TaskEvaluation = Static<typeof TaskEvaluationSchema>;
 export interface TaskNotification {
   source: string;
   instanceId: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "waiting";
   message: string;
 }
 
@@ -98,6 +98,31 @@ An evaluator observed: ${reason}
 
 Continue working on the task from where you left off.`;
 
+// Side runs carry no session continuity, so a paused-then-answered run is
+// resumed by replaying the captured progress, the question it asked, and the
+// user's reply into a fresh prompt.
+const buildResumePrompt = (
+  taskPrompt: string,
+  resumeContext: string,
+  question: string,
+  userResponse: string,
+) =>
+  `You are resuming a background task that paused to ask the user a question.
+
+<task>
+${taskPrompt}
+</task>
+
+<previous-progress>
+${resumeContext.slice(0, RESPONSE_EXCERPT_CHARS)}
+</previous-progress>
+
+You asked the user: ${question}
+
+The user replied: ${userResponse}
+
+Continue working on the task from where you left off, using the user's reply. Do not ask the same question again.`;
+
 export const evaluateCompletion = async (
   side: Pick<SideRunner, "classify">,
   taskPrompt: string,
@@ -142,12 +167,27 @@ export const executeBackgroundInstance = async (
     log.warn({ instanceId: instance.id, reason }, "background task failed");
   };
 
-  repository.updateInstance(instance.id, { status: "running", startedAt: now() });
-  log.info({ instanceId: instance.id }, "executing background task instance");
+  // A resumable instance is a waiting run whose user reply has arrived: pick up
+  // from the captured progress rather than restarting the task from scratch.
+  const resuming = instance.status === "waiting" && instance.userResponse != null;
+
+  repository.updateInstance(instance.id, {
+    status: "running",
+    startedAt: instance.startedAt ?? now(),
+  });
+  log.info({ instanceId: instance.id, resuming }, "executing background task instance");
 
   try {
     const system = buildSystemPrompt(now(), timezone);
-    let prompt = instance.prompt;
+    let prompt =
+      resuming && instance.question != null
+        ? buildResumePrompt(
+            instance.prompt,
+            instance.resumeContext ?? "",
+            instance.question,
+            instance.userResponse as string,
+          )
+        : instance.prompt;
 
     const notifyTool = defineTool({
       name: "notify_user",
@@ -169,14 +209,63 @@ export const executeBackgroundInstance = async (
       },
     });
 
+    let pendingQuestion: string | null = null;
+
+    const askUserTool = defineTool({
+      name: "ask_user",
+      label: "Ask User",
+      description:
+        "Ask the user a blocking question and pause the task until they reply. Use ONLY when you genuinely cannot proceed without their input — not for questions you can answer from available context. After calling this, stop working: the task suspends and resumes automatically once the user responds.",
+      parameters: Type.Object({
+        question: Type.String({ description: "The question to put to the user" }),
+      }),
+      execute: async (_id, params) => {
+        pendingQuestion = params.question;
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: "Question delivered to the user. The task is now paused — stop working and wait; it will resume automatically with their reply.",
+            },
+          ],
+          details: {},
+        };
+      },
+    });
+
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       const { text } = await side.run({
         system,
         prompt,
         tools: BACKGROUND_TOOLS,
-        customTools: [notifyTool],
+        customTools: [notifyTool, askUserTool],
         tier: "processor",
       });
+
+      if (pendingQuestion != null) {
+        repository.updateInstance(instance.id, {
+          status: "waiting",
+          question: pendingQuestion,
+          resumeContext: text,
+          userResponse: null,
+        });
+
+        deliver({
+          text: `❓ ${source} needs your input (instance ${instance.id}):\n\n${pendingQuestion}`,
+          gate: "immediate",
+          priority: 10,
+        });
+        notify({
+          source,
+          instanceId: instance.id,
+          status: "waiting",
+          message: pendingQuestion,
+        });
+
+        log.info({ instanceId: instance.id }, "background task paused awaiting user input");
+        return;
+      }
 
       const evaluation = await evaluateCompletion(side, instance.prompt, text, log);
 
@@ -190,6 +279,8 @@ export const executeBackgroundInstance = async (
           status: "completed",
           completedAt: now(),
           result: evaluation.reason,
+          question: null,
+          resumeContext: null,
         });
         deliver({ text: `✅ ${source} — completed.\n\n${text}`, gate: "idle" });
         notify({
@@ -235,7 +326,12 @@ export class BackgroundRunner {
   }
 
   tick(): void {
-    for (const instance of this.deps.repository.getPendingInstances("background")) {
+    const dispatchable = [
+      ...this.deps.repository.getResumableInstances("background"),
+      ...this.deps.repository.getPendingInstances("background"),
+    ];
+
+    for (const instance of dispatchable) {
       if (this.inFlight.size >= this.deps.maxConcurrent) break;
 
       if (this.inFlight.has(instance.id)) continue;

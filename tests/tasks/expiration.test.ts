@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { Delivery } from "../../src/channels/types.ts";
 import type { AppDatabase } from "../../src/db/index.ts";
+import {
+  type BackgroundSide,
+  type ExecutorDeps,
+  executeBackgroundInstance,
+} from "../../src/extensions/tasks/executor.ts";
 import { expireWaitingInstances } from "../../src/extensions/tasks/expiration.ts";
 import { TaskRepository } from "../../src/extensions/tasks/repository.ts";
 import type { Logger } from "../../src/log.ts";
@@ -64,6 +70,50 @@ describe("expireWaitingInstances", () => {
 
     expect(repository.getInstance(fresh.id)?.status).toBe("waiting");
     expect(onExpired).not.toHaveBeenCalled();
+  });
+
+  it("expires a waiting instance produced by an unanswered ask_user pause", async () => {
+    const run = vi.fn().mockImplementation(async ({ customTools }) => {
+      const askUser = customTools?.find((tool: { name: string }) => tool.name === "ask_user");
+      await askUser?.execute("c1", { question: "Confirm?" });
+
+      return { text: "waiting on confirmation" };
+    });
+    const side: BackgroundSide = { run, classify: vi.fn() };
+    const deps: ExecutorDeps = {
+      repository,
+      side,
+      deliver: vi.fn<(delivery: Delivery) => void>(),
+      notify: vi.fn(),
+      maxIterations: 10,
+      maxConcurrent: 3,
+      timezone: "UTC",
+      now,
+      log: fakeLog,
+    };
+
+    const instance = repository.createInstance({
+      definitionId: null,
+      taskType: "background",
+      prompt: "ask before acting",
+      scheduledFor: current,
+    });
+
+    await executeBackgroundInstance(deps, instance);
+    expect(repository.getInstance(instance.id)?.status).toBe("waiting");
+
+    // The user never replies; time advances past the timeout.
+    current = new Date("2026-06-12T13:00:00Z");
+    const onExpired = vi.fn();
+    expireWaitingInstances({ repository, waitTimeoutSeconds: 7200, now, log: fakeLog, onExpired });
+
+    const failed = repository.getInstance(instance.id);
+    expect(failed?.status).toBe("failed");
+    expect(failed?.result).toContain("timed out waiting for user input");
+    expect(onExpired).toHaveBeenCalledWith(
+      expect.objectContaining({ id: instance.id }),
+      expect.any(String),
+    );
   });
 
   it("ignores non-waiting instances regardless of age", () => {

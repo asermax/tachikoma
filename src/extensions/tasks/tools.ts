@@ -95,6 +95,13 @@ export const RunTaskNowParams = Type.Object({
   ),
 });
 
+export const RespondToTaskParams = Type.Object({
+  task_instance_id: Type.String({
+    description: "ID of the waiting task instance, as given in the input-request notification",
+  }),
+  response: Type.String({ description: "The user's reply to relay to the waiting task" }),
+});
+
 const describeDefinition = (
   definition: TaskDefinitionRecord,
   timezone: string | undefined,
@@ -312,6 +319,31 @@ export const handleRunTaskNow = (
   return `${taskType} task '${label}' queued. Instance ID: ${instance.id}`;
 };
 
+export const handleRespondToTask = (
+  { repository }: ToolDeps,
+  args: Static<typeof RespondToTaskParams>,
+): string => {
+  const response = args.response.trim();
+
+  if (response.length === 0) throw new Error("Response cannot be empty.");
+
+  const instance = repository.getInstance(args.task_instance_id);
+
+  if (instance == null) throw new Error(`Task instance '${args.task_instance_id}' not found.`);
+
+  if (instance.status !== "waiting") throw new Error("Task is not waiting for input.");
+
+  if (instance.userResponse != null) {
+    throw new Error("A response is already pending for this task.");
+  }
+
+  // Status stays `waiting`; the background runner resumes the instance on its
+  // next tick once it sees a userResponse, injecting the reply into the run.
+  repository.updateInstance(instance.id, { userResponse: response });
+
+  return "Response sent. The task will resume with your reply.";
+};
+
 const textResult = (text: string) => ({
   content: [{ type: "text" as const, text }],
   details: undefined,
@@ -408,6 +440,21 @@ export const createTaskToolsFactory =
       parameters: RunTaskNowParams,
       async execute(_toolCallId, params) {
         return textResult(handleRunTaskNow(deps, params));
+      },
+    });
+
+    pi.registerTool({
+      name: "respond_to_task",
+      label: "Respond to Task",
+      description:
+        "Relay the user's reply to a background task that paused to ask a question (status 'waiting'). Pass the task_instance_id from the input-request notification and the user's response. The task resumes automatically with the reply injected. Errors if the instance is not waiting or already has a pending response.",
+      promptSnippet: "Answer a background task waiting for user input",
+      promptGuidelines: [
+        "Use respond_to_task when a notification says a background task is waiting for input and the user provides their answer.",
+      ],
+      parameters: RespondToTaskParams,
+      async execute(_toolCallId, params) {
+        return textResult(handleRespondToTask(deps, params));
       },
     });
 

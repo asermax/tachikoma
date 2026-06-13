@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
 
 import type { AppDatabase } from "../../db/index.ts";
 import {
@@ -155,6 +155,21 @@ export class TaskRepository {
       .select()
       .from(taskInstances)
       .where(and(eq(taskInstances.status, "pending"), eq(taskInstances.taskType, taskType)))
+      .all();
+  }
+
+  /** Waiting instances whose user response has arrived and are ready to resume. */
+  getResumableInstances(taskType: TaskType): TaskInstanceRecord[] {
+    return this.db
+      .select()
+      .from(taskInstances)
+      .where(
+        and(
+          eq(taskInstances.status, "waiting"),
+          eq(taskInstances.taskType, taskType),
+          isNotNull(taskInstances.userResponse),
+        ),
+      )
       .all();
   }
 

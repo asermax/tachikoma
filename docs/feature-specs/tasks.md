@@ -20,19 +20,22 @@ The agent manages definitions conversationally through registered tools (`create
 |----|-------------|
 | R0 | Persistent task definitions with a cron or one-shot schedule and a `session`/`background` type; definitions and instances are stored in SQLite (`task_definitions`, `task_instances`) and survive restarts |
 | R1 | Schedule strings are parsed with croner: cron expressions stay recurring; bare ISO datetimes are interpreted in the configured timezone; explicit offsets (including `Z`) are preserved; one-shot datetimes in the past are rejected |
-| R2 | A single scheduler tick (every 60 s) runs four passes in order: instance generation, waiting-instance expiration, session-task delivery, background dispatch |
+| R2 | A single scheduler tick (every 60 s) runs four passes in order: instance generation, waiting-instance expiration, session-task delivery, background dispatch (the background dispatch pass resumes answered `waiting` instances ahead of fresh `pending` ones) |
 | R3 | Cron generation anchors on `lastFiredAt`, so at most one catch-up instance per definition fires after downtime; a never-fired definition anchors at the start of the current hour |
 | R4 | Stale-cron prevention: a `since` timestamp stamped on every definition insert and update prevents cron occurrences that predate the definition's latest edit from firing |
 | R5 | Duplicate prevention: a cron firing is suppressed when a pending/running/waiting/completed instance already covers the same occurrence (failed excluded so retry stays possible); a one-shot is suppressed by any active instance |
 | R6 | One-shot definitions auto-disable after firing |
-| R7 | Instance lifecycle: `pending → running → waiting \| completed \| failed`; a crash-recovery bootstrap hook marks instances left `running` by a previous process as `failed` |
+| R7 | Instance lifecycle: `pending → running → (waiting → running)* → completed \| failed`. A background run can suspend mid-execution into `waiting` via the `ask_user` tool and resume back to `running` once answered; a crash-recovery bootstrap hook marks instances left `running` by a previous process as `failed` |
 | R8 | Pending session instances are handed to channel delivery with `gate: "idle"` and a configurable max hold (`sessionTaskMaxHoldSeconds`, default 900); a failed handoff rolls the instance back to `pending` for retry on the next tick |
 | R9 | Pending background instances run through an iterative evaluator loop in ephemeral in-memory pi sessions with filesystem and bash tools, capped at `backgroundMaxIterations` (default 10) |
 | R10 | After each background iteration a classifier evaluates the response as `complete`, `continue`, or `error`; an evaluator failure is treated as `continue` and never aborts the run |
 | R11 | Background completion delivers the agent's final text to the user idle-gated; failures (evaluator `error`, max iterations, thrown errors) mark the instance `failed` and deliver a failure notice |
 | R12 | Background completion and failure additionally emit a structured status payload on the `notify` app event (source, instance ID, status, message) for cross-extension consumers |
-| R13 | Waiting instances whose last update is older than `waitTimeoutSeconds` (default 7200) are marked `failed` and a failure notice is delivered |
-| R14 | Agent-facing tools: `create_task`, `update_task` (partial updates; `enabled=false` archives instead of deleting; a schedule change resets `lastFiredAt`), `list_tasks` (active by default, `archived=true` for disabled), `query_task_instances` (filter by status, type, definition) |
+| R13 | A background run pauses for user input by calling the `ask_user` tool: the instance transitions to `waiting`, the question and the agent's progress excerpt are persisted, the question is delivered to the user immediately (with the instance ID), a `waiting` status payload is emitted on the `notify` event, and the run returns — releasing its concurrency slot |
+| R13a | `respond_to_task` (registered in the main conversation) relays the user's reply to a `waiting` instance: it stores the trimmed response, leaving the instance `waiting` for the background dispatch pass to resume; it errors on an empty response, an unknown instance, an instance that is not `waiting`, or one that already has a pending response |
+| R13b | The background dispatch pass resumes a `waiting` instance once it has a stored response: the run reopens with a resume prompt replaying the persisted progress, the question asked, and the user's reply, then continues the evaluator loop; resume bookkeeping (`question`, `resumeContext`) is cleared when the run finishes |
+| R13c | A `waiting` instance whose last update is older than `waitTimeoutSeconds` (default 7200) — i.e. one whose question is never answered — is marked `failed` and a failure notice is delivered |
+| R14 | Agent-facing tools: `create_task`, `update_task` (partial updates; `enabled=false` archives instead of deleting; a schedule change resets `lastFiredAt`), `list_tasks` (active by default, `archived=true` for disabled), `query_task_instances` (filter by status, type, definition), `respond_to_task` (relay a user reply to a waiting instance) |
 | R15 | A definition whose schedule cannot be evaluated is skipped with an error log; the generation pass continues with the remaining definitions |
 | R16 | In-flight background executions are tracked across ticks so a slow run is never dispatched twice |
 | R17 | Concurrent background executions are capped at `backgroundMaxConcurrent` (default 3); when the cap is reached the dispatcher stops for the tick and the remaining pending instances are picked up on a later tick as slots free |
@@ -76,17 +79,27 @@ Pending session instances are injected into the conversation as agent turns thro
 Background instances execute autonomously: each iteration runs an ephemeral headless pi session, then a classifier decides whether the workflow is finished.
 
 **Acceptance Criteria**:
-- Given a pending background instance, when the runner dispatches it, then it is marked `running` and the agent runs with a background system prompt that includes the current date and time in the configured timezone
+- Given a pending background instance, when the runner dispatches it, then it is marked `running` and the agent runs with a background system prompt that includes the current date and time in the configured timezone, with the `notify_user` and `ask_user` tools available alongside the filesystem/bash tools
 - Given the evaluator returns `continue`, then the next iteration's prompt carries the original task, an excerpt of the previous response, and the evaluator's observation
 - Given the evaluator returns `complete`, then the instance is marked `completed` with the evaluator's reason as result, the final agent text is delivered idle-gated, and a `completed` status payload is emitted on the `notify` event
 - Given the evaluator returns `error`, the iteration cap is reached, or the run throws, then the instance is marked `failed` and a failure notice is delivered alongside a `failed` status payload
 - Given a run spans multiple ticks, then the runner does not dispatch the same instance twice
 - Given more pending background instances than `backgroundMaxConcurrent`, when the tick dispatches, then at most `backgroundMaxConcurrent` run at once and the surplus stay pending until a slot frees on a later tick
 
-### Expiration and Crash Recovery (R7, R13)
+### Interactive Await / Respond (R7, R13, R13a, R13b)
+
+A background run that genuinely cannot proceed without user input calls the `ask_user` tool to pose a blocking question. The instance suspends into `waiting`, the question reaches the user, and a later `respond_to_task` reply resumes the run from where it paused. Because side runs carry no session continuity, the paused progress excerpt, the question, and the user's reply are persisted on the instance and replayed into a fresh resume prompt — the same context-replay strategy the evaluator loop already uses for `continue`.
 
 **Acceptance Criteria**:
-- Given a `waiting` instance whose `updatedAt` is older than the wait timeout, when the expiration pass runs, then it is marked `failed` with a timeout reason and a failure notice is delivered; fresher waiting instances and non-waiting instances are untouched
+- Given a background run calls `ask_user`, when the run returns, then the instance is marked `waiting` with the question and the run's progress excerpt persisted (`question`, `resumeContext`), `userResponse` cleared, the evaluator is not consulted, the question is delivered to the user immediately (text includes the instance ID), and a `waiting` status payload is emitted on the `notify` event — the run returns so its concurrency slot frees
+- Given a `waiting` instance, when the agent calls `respond_to_task` with the instance ID and a non-empty reply, then the trimmed reply is stored as `userResponse` and the instance stays `waiting` for the dispatch pass to resume; an empty reply, an unknown instance, a non-`waiting` instance, or one that already has a pending response each throws a clear error
+- Given a `waiting` instance with a stored `userResponse`, when the background dispatch pass runs, then it is resumed ahead of fresh pending instances: the run is reopened with a resume prompt replaying `resumeContext`, the question, and the reply, the evaluator loop continues, and on completion `question`/`resumeContext` are cleared
+- Given a `waiting` instance with no stored `userResponse`, when the dispatch pass runs, then it is left untouched
+
+### Expiration and Crash Recovery (R7, R13c)
+
+**Acceptance Criteria**:
+- Given a `waiting` instance whose `updatedAt` is older than the wait timeout (its question was never answered), when the expiration pass runs, then it is marked `failed` with a timeout reason and a failure notice is delivered; fresher waiting instances and non-waiting instances are untouched
 - Given instances were left `running` when the process died, when the crash-recovery bootstrap hook runs at startup, then they are marked `failed` with a restart reason
 
 ### Task Tools (R14, R18, R19, R20)
@@ -101,3 +114,4 @@ The task management tools are registered into every conversational agent session
 - Given the agent calls `delete_task` with an ID or exact name, then the matching definition is removed and a confirmation naming the task is returned; an unknown reference throws `Task '<ref>' not found.`
 - Given the agent calls `run_task_now` with `task` (ID or name), then a pending instance is created with the definition's prompt, type, and `scheduledFor = now`, leaving the definition's `enabled`, `schedule`, and `lastFiredAt` unchanged; the next tick dispatches it through the normal session-delivery or background path
 - Given the agent calls `run_task_now` with `prompt` (and optional `type`/`name`), then a pending instance with no parent definition is created (type defaults to `background`); providing both `task` and `prompt`, neither, or `name` alongside `task` throws a clear error
+- Given the agent calls `respond_to_task` with a waiting instance's ID and the user's reply, then the reply is stored on the instance for the background dispatch pass to resume; the tool guards against empty replies and against responding to an unknown, non-`waiting`, or already-answered instance

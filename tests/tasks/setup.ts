@@ -29,7 +29,9 @@ const TASKS_DDL = [
     started_at integer,
     completed_at integer,
     result text,
+    question text,
     user_response text,
+    resume_context text,
     updated_at integer NOT NULL,
     created_at integer NOT NULL
   )`,

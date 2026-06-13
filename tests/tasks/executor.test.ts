@@ -157,6 +157,74 @@ describe("executeBackgroundInstance", () => {
     expect(repository.getInstance(instance.id)?.status).toBe("completed");
   });
 
+  it("pauses to waiting when the agent asks the user a question", async () => {
+    const run = vi.fn().mockImplementation(async ({ customTools }) => {
+      const askUser = customTools?.find((tool: { name: string }) => tool.name === "ask_user");
+      await askUser?.execute("call-1", { question: "Which inbox — work or personal?" });
+
+      return { text: "I need to know which inbox before I continue." };
+    });
+    const classify = vi.fn();
+    const deps = makeDeps({ run, classify });
+
+    const instance = pendingInstance();
+    await executeBackgroundInstance(deps, instance);
+
+    // The run paused before the evaluator ran.
+    expect(classify).not.toHaveBeenCalled();
+
+    const waiting = repository.getInstance(instance.id);
+    expect(waiting?.status).toBe("waiting");
+    expect(waiting?.question).toBe("Which inbox — work or personal?");
+    expect(waiting?.resumeContext).toBe("I need to know which inbox before I continue.");
+    expect(waiting?.userResponse).toBeNull();
+
+    expect(deps.deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gate: "immediate",
+        text: expect.stringContaining("Which inbox — work or personal?"),
+      }),
+    );
+    expect(deps.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceId: instance.id, status: "waiting" }),
+    );
+  });
+
+  it("resumes a waiting instance once the user has responded", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "done — used the work inbox" });
+    const classify = vi
+      .fn()
+      .mockResolvedValue({ status: "complete", reason: "summarized the work inbox" });
+    const deps = makeDeps({ run, classify });
+
+    const instance = pendingInstance();
+    repository.updateInstance(instance.id, {
+      status: "waiting",
+      startedAt: current,
+      question: "Which inbox?",
+      resumeContext: "I paused to ask which inbox.",
+      userResponse: "the work one",
+    });
+
+    await executeBackgroundInstance(
+      deps,
+      repository.getInstance(instance.id) as TaskInstanceRecord,
+    );
+
+    // The resume prompt replays the captured progress, the question, and the reply.
+    const resumePrompt = run.mock.calls[0]?.[0]?.prompt as string;
+    expect(resumePrompt).toContain("Which inbox?");
+    expect(resumePrompt).toContain("the work one");
+    expect(resumePrompt).toContain("I paused to ask which inbox.");
+
+    const completed = repository.getInstance(instance.id);
+    expect(completed?.status).toBe("completed");
+    expect(completed?.result).toBe("summarized the work inbox");
+    // Resume bookkeeping is cleared once the run finishes.
+    expect(completed?.question).toBeNull();
+    expect(completed?.resumeContext).toBeNull();
+  });
+
   it("fails the instance when the run itself throws", async () => {
     const side: BackgroundSide = {
       run: vi.fn().mockRejectedValue(new Error("session exploded")),
@@ -190,6 +258,49 @@ describe("BackgroundRunner", () => {
 
     expect(side.run).toHaveBeenCalledTimes(1);
     expect(repository.getInstance(instance.id)?.status).toBe("completed");
+  });
+
+  it("dispatches a resumable waiting instance to continue it", async () => {
+    const side: BackgroundSide = {
+      run: vi.fn().mockResolvedValue({ text: "resumed and finished" }),
+      classify: vi.fn().mockResolvedValue({ status: "complete", reason: "finished after reply" }),
+    };
+    const runner = new BackgroundRunner(makeDeps(side));
+
+    const instance = pendingInstance();
+    repository.updateInstance(instance.id, {
+      status: "waiting",
+      question: "left or right?",
+      resumeContext: "paused",
+      userResponse: "left",
+    });
+
+    runner.tick();
+    await runner.drain();
+
+    expect(side.run).toHaveBeenCalledTimes(1);
+    expect(repository.getInstance(instance.id)?.status).toBe("completed");
+  });
+
+  it("leaves a waiting instance without a response untouched", async () => {
+    const side: BackgroundSide = {
+      run: vi.fn(),
+      classify: vi.fn(),
+    };
+    const runner = new BackgroundRunner(makeDeps(side));
+
+    const instance = pendingInstance();
+    repository.updateInstance(instance.id, {
+      status: "waiting",
+      question: "?",
+      resumeContext: "x",
+    });
+
+    runner.tick();
+    await runner.drain();
+
+    expect(side.run).not.toHaveBeenCalled();
+    expect(repository.getInstance(instance.id)?.status).toBe("waiting");
   });
 
   it("never runs more than maxConcurrent instances at once", async () => {

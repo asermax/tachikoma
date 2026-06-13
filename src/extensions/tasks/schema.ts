@@ -59,7 +59,12 @@ export const taskInstances = sqliteTable(
     startedAt: integer("started_at", { mode: "timestamp" }),
     completedAt: integer("completed_at", { mode: "timestamp" }),
     result: text("result"),
+    // Set when a background run pauses on ask_user; the question surfaced to the user.
+    question: text("question"),
     userResponse: text("user_response"),
+    // Accumulated agent progress captured at pause time so the resumed run can
+    // rebuild context — side runs carry no session continuity of their own.
+    resumeContext: text("resume_context"),
     // Stamped on every update — anchors the waiting-instance expiration sweep.
     updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
