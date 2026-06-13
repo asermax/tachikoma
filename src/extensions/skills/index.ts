@@ -5,6 +5,7 @@ import { Type } from "typebox";
 
 import { defineExtension } from "../api.ts";
 import { discoverSkillAgents } from "./agents.ts";
+import { BUILTIN_AGENTS } from "./builtins.ts";
 import { createDelegateTool } from "./delegate.ts";
 import { registerReload } from "./reload.ts";
 
@@ -46,13 +47,12 @@ export default defineExtension<SkillsConfig>({
 
       registerReload(pi);
 
-      // Discovery runs per agent session, so new skill agents appear on the next
-      // session without a restart. No tool is advertised when no agents exist.
-      const discover = () => discoverSkillAgents(skillsDir, app.log);
+      // Discovery runs per agent session, so new skill agents appear on the next session without
+      // a restart. The built-in general-purpose agent is always present, so delegation is always
+      // available — skill agents simply extend the roster.
+      const discover = () => [...BUILTIN_AGENTS, ...discoverSkillAgents(skillsDir, app.log)];
 
-      if (discover().length > 0) {
-        pi.registerTool(createDelegateTool({ discover, runner: app.agent.side, log: app.log }));
-      }
+      pi.registerTool(createDelegateTool({ discover, runner: app.agent.side, log: app.log }));
     });
   },
 });

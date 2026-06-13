@@ -78,6 +78,11 @@ describe("executeBackgroundInstance", () => {
     expect(run).toHaveBeenCalledTimes(2);
     expect(classify).toHaveBeenCalledTimes(2);
 
+    // The run uses the composed background system prompt (autonomous role + shared hygiene).
+    const system = run.mock.calls[0]?.[0]?.system as string;
+    expect(system).toContain("Current date and time:");
+    expect(system).toContain("notify_user");
+
     // The continuation prompt carries the task, previous progress, and reason.
     const continuation = run.mock.calls[1]?.[0]?.prompt as string;
     expect(continuation).toContain("summarize the inbox");

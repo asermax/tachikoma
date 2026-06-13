@@ -27,7 +27,7 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 
 ## Design Overview
 
-Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook creates SOUL.md and USER.md from templates on first run and caches their contents as a fallback, and a registered system-prompt builder re-reads both files from disk synchronously on every build (`readFileSync`, falling back to the cached snapshot only on a read error) and joins `BASE_PROMPT`, the file contents, and the workspace root. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it renders the closed conversation from the pi transcript, expires and snapshots the pending-signals file, and hands everything to a headless agent that edits the three context files and the signals file directly.
+Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook creates SOUL.md and USER.md from templates on first run and caches their contents as a fallback, and a registered system-prompt builder re-reads both files from disk synchronously on every build (`readFileSync`, falling back to the cached snapshot only on a read error) and calls the core `buildMainSystemPrompt` ([DES-005](../design/DES-005-base-prompt-ownership.md)), which combines the identity, the shared `OPERATIONAL_GUIDANCE` plus interactive guidance, the file contents, and the workspace root. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it renders the closed conversation from the pi transcript, expires and snapshots the pending-signals file, and hands everything to a headless agent that edits the three context files and the signals file directly.
 
 ## Components
 
@@ -35,7 +35,7 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/context/index.ts` | Extension wiring: `load-context-files` bootstrap hook, `readOrCreate` with templates, system prompt builder that re-reads SOUL.md/USER.md from disk per build (`fresh()` with cached fallback) | Only ENOENT triggers template creation — other read errors abort startup; per-build `readFileSync` so processor edits apply next session; AGENTS.md deliberately untouched (pi native discovery) |
+| `src/extensions/context/index.ts` | Extension wiring: `load-context-files` bootstrap hook, `readOrCreate` with templates, system prompt builder that re-reads SOUL.md/USER.md from disk per build (`fresh()` with cached fallback) and delegates composition to core `buildMainSystemPrompt` | Only ENOENT triggers template creation — other read errors abort startup; per-build `readFileSync` so processor edits apply next session; AGENTS.md deliberately untouched (pi native discovery); base-prompt text lives in core, not inline ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
 | `src/extensions/context/processor.ts` | `createCoreContextProcessor` (`core-context`, `preFinalize`); pending-signals parse/serialize/clean; the full update policy as `SYSTEM_TEMPLATE` | Reuses `loadConversation` and `localIsoDate` from the memory extension; signals live in `dataDir`, outside user-visible workspace content |
 
 ## Key Decisions

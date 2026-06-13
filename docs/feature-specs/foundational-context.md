@@ -4,7 +4,7 @@
 
 ## Overview
 
-The `context` extension (`src/extensions/context/`) composes the agent's identity from workspace-root files: SOUL.md (personality) and USER.md (durable user knowledge) are joined with a base prompt into the pi session's system prompt. AGENTS.md is discovered natively by pi from the workspace root and needs no handling in the extension.
+The `context` extension (`src/extensions/context/`) composes the agent's identity from workspace-root files: SOUL.md (personality) and USER.md (durable user knowledge) are combined with the core-owned main-session base prompt (`buildMainSystemPrompt`, see [DES-005](../design/DES-005-base-prompt-ownership.md)) into the pi session's system prompt. AGENTS.md is discovered natively by pi from the workspace root and needs no handling in the extension.
 
 A companion `core-context` post-processor (`src/extensions/context/processor.ts`, currently registered by the [memory](./memory.md) extension) analyzes each closed conversation and conservatively updates the three files, staging ambiguous signals in a pending-signals file so recurring patterns can be promoted later. Separately, a periodic foundational-context maintenance tick owned by the [memory](./memory.md) extension (`memory-context-maintenance`) does a cleanup-only whole-file pass over the three files, pruning staleness and bloat without adding new content.
 
@@ -18,7 +18,7 @@ A companion `core-context` post-processor (`src/extensions/context/processor.ts`
 | ID | Requirement |
 |----|-------------|
 | R0 | SOUL.md and USER.md at the workspace root are read during bootstrap; missing files are created from built-in templates |
-| R1 | The system prompt is composed as base prompt + SOUL.md + USER.md + a workspace-root line, registered via `app.agent.systemPrompt` and replacing pi's default coding prompt |
+| R1 | The system prompt is composed as identity + SOUL.md + shared operational/interactive guidance + USER.md + a workspace-root line via the core `buildMainSystemPrompt` builder ([DES-005](../design/DES-005-base-prompt-ownership.md)), registered through `app.agent.systemPrompt` and replacing pi's default coding prompt; the interactive guidance covers working hygiene, caution with irreversible/outward-facing actions, and awareness that focused sub-tasks can be delegated via `delegate_to_agent` |
 | R2 | The composed prompt is re-evaluated on every session open, re-reading SOUL.md/USER.md from disk each time (the bootstrap-time contents are only a fallback when a read fails), so edits — including the processor's own — take effect on the next session without a restart |
 | R3 | AGENTS.md is not composed by the extension — pi discovers it natively from the workspace root when a session opens |
 | R4 | A `core-context` post-processor (`preFinalize` phase) runs a headless agent over the closed conversation to update SOUL.md, USER.md, and AGENTS.md |
@@ -34,13 +34,13 @@ A companion `core-context` post-processor (`src/extensions/context/processor.ts`
 
 ### System Prompt Composition (R0, R1, R2, R3)
 
-The extension's bootstrap hook (`load-context-files`) reads or creates the two files; the registered builder re-reads them from disk on each build and joins `BASE_PROMPT`, the SOUL and USER contents, and the workspace-root line. The agent manager composes all registered builders on each session open (see [agent-integration](./agent-integration.md)).
+The extension's bootstrap hook (`load-context-files`) reads or creates the two files; the registered builder re-reads them from disk on each build and calls the core `buildMainSystemPrompt` (which combines the identity, the shared operational/interactive guidance, the SOUL/USER contents, and the workspace-root line). The agent manager composes all registered builders on each session open (see [agent-integration](./agent-integration.md)).
 
 **Acceptance Criteria**:
 - Given a workspace without SOUL.md or USER.md, when bootstrap runs, then each missing file is created from its template and that template content is used in the prompt
 - Given existing SOUL.md/USER.md files, when bootstrap runs, then their contents are used verbatim and the files are not modified
 - Given a non-ENOENT read error, when bootstrap runs, then the error propagates and startup aborts
-- Given the agent manager opens a conversational session, then the system prompt contains the base prompt, SOUL.md content, USER.md content, and the workspace root path, replacing pi's coding prompt
+- Given the agent manager opens a conversational session, then the system prompt contains the identity, the shared operational/interactive guidance (including delegate-awareness), SOUL.md content, USER.md content, and the workspace root path, replacing pi's coding prompt
 - Given SOUL.md or USER.md is edited while the process runs, when the next session opens, then the prompt reflects the edited file contents (each is re-read from disk per build; the startup snapshot is only the fallback when a read fails); AGENTS.md is likewise re-read natively by pi on each session open
 
 ### Core Context Update Run (R4, R5, R9, R10)

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 
+import { buildMainSystemPrompt } from "../../agent/prompts.ts";
 import { defineExtension } from "../api.ts";
 
 const SOUL_TEMPLATE = `# Soul
@@ -18,10 +19,6 @@ const USER_TEMPLATE = `# User
 Nothing is known about the user yet. This file accumulates durable knowledge about
 who they are, extracted from conversations.
 `;
-
-const BASE_PROMPT = `You are a personal assistant operating inside your own workspace.
-The workspace is a git-versioned directory that holds your memories, context files, and notes.
-Prefer reading and writing workspace files over guessing; keep your knowledge files current.`;
 
 const readOrCreate = async (path: string, template: string): Promise<string> => {
   try {
@@ -63,12 +60,11 @@ export default defineExtension({
     };
 
     app.agent.systemPrompt(() =>
-      [
-        BASE_PROMPT,
-        fresh(app.workspace.resolve("SOUL.md"), soul),
-        fresh(app.workspace.resolve("USER.md"), user),
-        `Workspace root: ${app.workspace.root}`,
-      ].join("\n\n"),
+      buildMainSystemPrompt({
+        soul: fresh(app.workspace.resolve("SOUL.md"), soul),
+        user: fresh(app.workspace.resolve("USER.md"), user),
+        workspaceRoot: app.workspace.root,
+      }),
     );
   },
 });

@@ -22,14 +22,14 @@ Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `pr
 | R0 | `AgentManager.open()` builds pi sessions against the workspace: `cwd` is the workspace root, `agentDir` is `{workspace}/.tachikoma/pi`, with shared `AuthStorage`, `ModelRegistry`, and `SettingsManager` |
 | R1 | Main sessions bind all registered pi extension factories and override the system prompt with the registered builders' output, joined in registration order |
 | R2 | Session persistence modes: new persisted session under the workspace sessions dir, resume from an existing pi session file, or ephemeral in-memory |
-| R3 | `bare` sessions skip registered factories and system prompt builders (headless side work); explicit `systemPrompt`, `tools`, and `tier` options override defaults |
+| R3 | `bare` sessions skip registered factories and system prompt builders (headless side work); explicit `systemPrompt`, `tools`, and `tier` options override defaults; an opt-in `isolatePrompt` additionally suppresses pi's `APPEND_SYSTEM.md` append, project context files (AGENTS.md/CLAUDE.md), and the skills catalog so the session sees exactly its own `systemPrompt` (plus pi's date/cwd footer) |
 | R4 | Auth resolution: a workspace-local `{piDir}/auth.json` is used when it has actual content; otherwise the machine-level pi login (`~/.pi/agent/auth.json` plus env vars) is shared; `apiKeyFor(provider)` exposes key lookup |
 | R5 | Four model roles — `main`, `searcher`, `processor`, `classifier` — configured as optional `provider/model-id[:thinkingLevel]` strings; unset roles fall back along classifier → processor → main (searcher → main), then to pi's resolution (settings default, else first credentialed model); malformed references and models missing from pi's registry fail with errors naming the reference and tier |
 | R6 | Session model fallback is logged as a warning; the thinking level comes from the role's `:level` suffix when present, otherwise pi's `defaultThinkingLevel` |
 | R7 | `streamPrompt(session, text)` exposes one prompt run as an `AsyncIterable<AgentEvent>` ending in a terminal `result` or `error` event after pi's `prompt()` settles. The terminal `result` carries the `sessionId` and, when the run reports its totals, the summed token `usage` and USD `cost` for the exchange. The terminal `error` carries a `recoverable` flag and an `errorKind` (`auth`/`billing`/`encoding`/`provider`/`unknown`). Emitted text, thinking, and error content is sanitized of lone UTF-8 surrogate code points |
 | R8 | `SideRunner.complete()` performs a one-shot completion on a tier model (default `processor`), throwing on `error`/`aborted` stop reasons |
 | R9 | `SideRunner.classify()` returns schema-validated structured output (default tier `classifier`): JSON-instructed prompt, tolerant JSON extraction, TypeBox validation, one retry on failure |
-| R10 | `SideRunner.run()` executes a headless agent run in an ephemeral bare session with an explicit pi tool allowlist (default none), returning the final assistant text and disposing the session |
+| R10 | `SideRunner.run()` executes a headless agent run in an ephemeral bare session with an explicit pi tool allowlist (default none), returning the final assistant text and disposing the session; an `isolatePrompt` flag forwards to `open()` to fully isolate the system prompt (used by delegated subagents with self-contained prompts) |
 
 ## Behaviors
 
@@ -42,6 +42,7 @@ One `open()` path serves the main conversational session, boundary resumption, a
 - Given `open({ sessionFile })`, when the session is created, then pi resumes from that JSONL transcript (`SessionManager.open`)
 - Given `open({ inMemory: true })`, when the session is created, then nothing is persisted to disk (`SessionManager.inMemory`)
 - Given `open({ bare: true })`, when the session is created, then no factories or prompt builders are bound; an explicit `systemPrompt` option takes precedence over composed builders
+- Given `open({ isolatePrompt: true })`, when the session is created, then pi's `APPEND_SYSTEM.md` append, project context files, and skills catalog are suppressed (`appendSystemPromptOverride: () => []`, `noContextFiles`, `noSkills`) alongside the explicit `systemPrompt`; without the flag none of these suppressions apply
 - Given `open({ tools, tier })`, when the session is created, then pi's tool set is restricted to the named built-ins and the model resolves from that tier's chain; with the whole chain unset, no model is passed so pi's own resolution (session restore → settings → first available) applies
 
 ### Authentication and Models (R4, R5, R6)

@@ -4,13 +4,14 @@
 
 ## Overview
 
-Skills give the agent packaged expertise: Agent Skills-format directories from both the user's workspace (`{workspace}/skills/`) and the repo-root `skills/` directory (built-in authoring skills) are contributed to pi as native skill sources, so pi's progressive disclosure surfaces each skill's description in the system prompt and the agent reads the full `SKILL.md` only when relevant. The extension itself stays thin — it wires the sources, adds a `/reload` path so the live session can pick up skill changes, and adds the one capability pi does not cover: agent definitions bundled inside skills become delegable subagents through a `delegate_to_agent` tool.
+Skills give the agent packaged expertise: Agent Skills-format directories from both the user's workspace (`{workspace}/skills/`) and the repo-root `skills/` directory (built-in authoring skills) are contributed to pi as native skill sources, so pi's progressive disclosure surfaces each skill's description in the system prompt and the agent reads the full `SKILL.md` only when relevant. The extension itself stays thin — it wires the sources, adds a `/reload` path so the live session can pick up skill changes, and adds the one capability pi does not cover: agent definitions bundled inside skills become delegable subagents through a `delegate_to_agent` tool. A built-in `general-purpose` agent ships alongside the skill-bundled ones, so the main agent can always delegate focused, context-heavy work (e.g. exploring files) even with no skills installed.
 
 ## User Stories
 
 - As a user, I want to drop skill packages into my workspace skills directory so that the agent gains specialized knowledge without code changes or registry configuration
 - As the assistant, I want skill descriptions available via progressive disclosure so that I load full skill content only when it is relevant to the task
 - As a skill author, I want to bundle agent definitions inside a skill so that focused work can be delegated to an isolated subagent with its own prompt and tools
+- As the assistant, I want an always-available general-purpose subagent so that I can offload context-heavy exploration and searching without a skill having to ship one
 
 ## Requirements
 
@@ -21,7 +22,8 @@ Skills give the agent packaged expertise: Agent Skills-format directories from b
 | R2 | Skills follow the Agent Skills standard (`SKILL.md` with YAML frontmatter) — no Tachikoma-specific skill format exists |
 | R3 | Markdown files under `<skill>/agents/` are discovered as agent definitions, namespaced as `<skill>/<agent>` to prevent cross-skill collisions |
 | R4 | Agent frontmatter: `description` is required (missing means the file is skipped with a warning); `name` defaults to the file stem; `tools` accepts a YAML list or a comma-separated string; `model` is an optional `provider/model-id[:thinkingLevel]` reference (a non-string value is warned and ignored, leaving the agent on the default tier); the markdown body is the agent's system prompt |
-| R5 | A `delegate_to_agent` tool is registered when at least one agent exists at session creation; it runs the named agent headlessly with its own system prompt and tool set and returns the agent's final answer as the tool result (tail-truncated, with a truncation marker) |
+| R5 | A `delegate_to_agent` tool is registered in every agent session while the skills extension is enabled (a built-in agent always exists); it runs the named agent headlessly with its own system prompt and tool set — with the prompt fully isolated via `isolatePrompt` (pi's append, project context files, and skills catalog suppressed) — and returns the agent's final answer as the tool result (tail-truncated, with a truncation marker) |
+| R5a | A built-in `general-purpose` agent (bare name, no `<skill>/` namespace) is always available for delegation and is composed ahead of the discovered skill agents; it is a read-only worker (default tool set) for exploring/searching files and gathering information, with a self-contained worker system prompt owned in core ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
 | R6 | Agents that declare no tools run with the default read-only set: `read`, `grep`, `find`, `ls` |
 | R6a | An agent that declares a `model` runs its headless delegation on that model; an agent without one runs on the side-runner's default tier |
 | R7 | Invalid agent files are logged and skipped; a missing skills root or agents directory yields empty discovery, never an error |
@@ -54,17 +56,17 @@ The session factory answers pi's `resources_discover` event with the workspace s
 - Given an agent file without a `description`, when discovery runs, then the file is skipped with a warning and other agents still load
 - Given a skill without an `agents/` directory, or a missing skills root, when discovery runs, then an empty list is returned
 
-### Delegation (R5, R6, R6a)
+### Delegation (R5, R5a, R6, R6a)
 
-The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists discovered agents in its description and runs the chosen agent in an isolated headless session via `app.agent.side.run`, passing the agent's declared `model` when set.
+The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists the available agents (the built-in `general-purpose` agent first, then discovered skill agents) in its description and runs the chosen agent in a fully isolated headless session via `app.agent.side.run` (`isolatePrompt: true`), passing the agent's declared `model` when set.
 
 **Acceptance Criteria**:
-- Given discovered agents, when the tool description is built, then each agent appears as `<skill>/<name>: <description>`
-- Given a delegation call with a known agent, when the tool executes, then the headless run uses the agent's system prompt, its declared tools, and the task as the prompt; the agent's final text is the tool result
+- Given the built-in agent plus discovered skill agents, when the tool description is built, then `general-purpose` is listed first, followed by each skill agent as `<skill>/<name>: <description>`
+- Given a delegation call with a known agent, when the tool executes, then the headless run uses the agent's system prompt, its declared tools, the task as the prompt, and `isolatePrompt: true` (the run sees only the agent's own prompt); the agent's final text is the tool result
 - Given an agent with no declared tools, when delegated to, then the run uses the default read-only tool set
 - Given an agent that declares a `model`, when delegated to, then the headless run is pinned to that model; an agent without a `model` runs on the side-runner's default tier
-- Given an unknown agent name, when the tool executes, then it throws an error listing the available agents (no run is attempted)
-- Given no agents exist at session creation, then the tool is not registered for that session
+- Given an unknown agent name, when the tool executes, then it throws an error listing the available agents (including `general-purpose`); no run is attempted
+- Given no skill agents exist, when a session is created and the skills extension is enabled, then `delegate_to_agent` is still registered and lists the built-in `general-purpose` agent; when the extension is disabled, no `delegate_to_agent` tool is registered
 
 ## Notes
 

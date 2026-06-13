@@ -25,7 +25,7 @@ Owning the entire skill lifecycle would mean a multi-source registry, a per-mess
 
 ## Design Overview
 
-Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace skills directory, and a session factory answers `resources_discover` with both that path and the repo-root `skills/` directory (built-in authoring skills) — pi does the rest. `reload.ts` registers the `/reload` command and the `reload_resources` tool for mid-session resource refresh. `agents.ts` scans `<skill>/agents/*.md` into `SkillAgent` records. `delegate.ts` builds the `delegate_to_agent` tool from a `discover` callback and an `AgentRunner`, so both inputs are injectable in tests.
+Five small modules. `index.ts` wires: a bootstrap hook ensures the workspace skills directory, and a session factory answers `resources_discover` with both that path and the repo-root `skills/` directory (built-in authoring skills) — pi does the rest. `reload.ts` registers the `/reload` command and the `reload_resources` tool for mid-session resource refresh. `agents.ts` scans `<skill>/agents/*.md` into `SkillAgent` records. `builtins.ts` ships the `general-purpose` agent (a `SkillAgent` whose prompt is the core-owned `SUBAGENT_SYSTEM_PROMPT`, see [DES-005](../design/DES-005-base-prompt-ownership.md)). `delegate.ts` builds the `delegate_to_agent` tool from a `discover` callback (which prepends the built-ins to the discovered skill agents) and an `AgentRunner`, so both inputs are injectable in tests; because a built-in always exists, the tool is registered unconditionally and every delegated run is isolated (`isolatePrompt: true`).
 
 ## Components
 
@@ -33,10 +33,11 @@ Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/skills/index.ts` | Extension wiring: `ensure-skills-dir` bootstrap hook, `resources_discover` contributing the workspace and repo-root `skills/` paths, reload registration, conditional `delegate_to_agent` registration | Built-in skills resolved relative to the module (`../../../skills` → repo root) so they ship with the install; tool registered only when `discover()` finds at least one agent at session creation, so an agent-less workspace advertises no dead tool |
+| `src/extensions/skills/index.ts` | Extension wiring: `ensure-skills-dir` bootstrap hook, `resources_discover` contributing the workspace and repo-root `skills/` paths, reload registration, unconditional `delegate_to_agent` registration | Built-in skills resolved relative to the module (`../../../skills` → repo root) so they ship with the install; `discover()` prepends `BUILTIN_AGENTS` to the scanned skill agents, so a built-in always exists and the tool is registered in every session (within the enabled extension) — no dead-tool guard needed |
+| `src/extensions/skills/builtins.ts` | `BUILTIN_AGENTS`: agents shipped with Tachikoma rather than bundled in a skill | The `general-purpose` agent uses a bare name (no `<skill>/` namespace, so it cannot collide with discovered agents), `tools: null` (delegate's default read-only set), `model: null` (default tier), and the core-owned `SUBAGENT_SYSTEM_PROMPT` ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
 | `src/extensions/skills/reload.ts` | `registerReload`: the `/reload` command (calls `ctx.reload()`) and the `reload_resources` tool that queues `/reload` as a follow-up | Reload must run in command context, so the tool re-injects `/reload` via `pi.sendUserMessage(..., { deliverAs: "followUp" })` rather than reloading inline |
 | `src/extensions/skills/agents.ts` | `discoverSkillAgents`: scan skills root for `agents/*.md`, parse frontmatter via pi's `parseFrontmatter` | Synchronous fs reads (small trees, called at session creation and tool execution); per-file error isolation — one bad definition never blocks the rest; names namespaced `<skill>/<agent>`; optional `model` parsed as a non-empty string (validated against the registry only at delegation time) — a non-string value warns and falls back to `null` rather than dropping the agent |
-| `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; `tools` accepts YAML list or comma-separated string (matches pi's subagent example); a declared `model` is threaded into `side.run` to pin the delegated run's model |
+| `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; `tools` accepts YAML list or comma-separated string (matches pi's subagent example); a declared `model` is threaded into `side.run` to pin the delegated run's model; every run passes `isolatePrompt: true` so no delegated agent inherits pi's append / project context files / skills catalog |
 
 ## Key Decisions
 
@@ -65,7 +66,7 @@ Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 - Pro: agents created mid-session are delegable on the very next tool call
 - Pro: no watcher lifecycle, no debounce tuning, nothing to leak
 - Con: the tool's *description* (the agent list) is fixed at registration, so agents added mid-session are usable but not advertised until the next session
-- Con: if zero agents existed at session creation, the tool is absent for that whole session
+- The built-in `general-purpose` agent means `discover()` is never empty, so `delegate_to_agent` is always registered (within the enabled extension) — the old "no agents → no tool" gap is gone
 
 ### Explicit `/reload` for mid-session refresh instead of a watcher
 
@@ -91,7 +92,13 @@ Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 
 **Given**: `skills/research/agents/scout.md` declares `description` and `tools: [read, grep]`
 **When**: The main agent calls `delegate_to_agent(agent="research/scout", task="find sources on X")`
-**Then**: A headless side session runs with the file body as system prompt and only `read`/`grep` available; its final assistant text returns as the tool result, tail-truncated with an `[output truncated]` marker if oversized.
+**Then**: A headless side session runs with the file body as system prompt and only `read`/`grep` available; the run is isolated (`isolatePrompt: true`), so it does not inherit pi's append, project context files, or skills catalog; its final assistant text returns as the tool result, tail-truncated with an `[output truncated]` marker if oversized.
+
+### Scenario: Always-available general-purpose delegation
+
+**Given**: A workspace with no skill agents installed
+**When**: The main agent calls `delegate_to_agent(agent="general-purpose", task="find where X is configured")`
+**Then**: `delegate_to_agent` is registered regardless (the built-in is always discovered and listed first), and a fully isolated headless run executes with the core-owned `SUBAGENT_SYSTEM_PROMPT` and the default read-only tool set; its final text returns as the tool result.
 
 ### Scenario: Delegation to an agent with a declared model
 
@@ -109,9 +116,10 @@ Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 
 **Given**: The agent scaffolds a new skill with an `agents/` directory during a conversation
 **When**: It immediately delegates to the new agent
-**Then**: Execution-time rediscovery finds it (if the tool was registered for this session); the skill's own `SKILL.md` becomes visible to pi after a `/reload` (or `reload_resources`) in the live session, and at the next session creation regardless.
+**Then**: Execution-time rediscovery finds it (the tool is always registered, since the built-in agent is always present); the skill's own `SKILL.md` becomes visible to pi after a `/reload` (or `reload_resources`) in the live session, and at the next session creation regardless.
 
 ## Notes
 
-- The headless runner (`SideRunner.run`) opens a bare in-memory pi session: nothing persisted, no Tachikoma extensions, processor-tier model by default; an optional `model` reference on the run options pins the model instead, resolved through `ModelTiers.resolveRef` (same `provider/model-id[:thinkingLevel]` form as `[agent]` tier config)
-- Tests: `tests/skills/agents.test.ts` (discovery against tmp-dir fixtures), `tests/skills/delegate.test.ts` (tool behavior against a faked runner)
+- The headless runner (`SideRunner.run`) opens a bare in-memory pi session: nothing persisted, no Tachikoma extensions, processor-tier model by default; an optional `model` reference on the run options pins the model instead, resolved through `ModelTiers.resolveRef` (same `provider/model-id[:thinkingLevel]` form as `[agent]` tier config). Delegated runs additionally set `isolatePrompt: true`, so the worker sees only its own prompt (see [agent-integration](agent-integration.md))
+- The built-in `general-purpose` agent cannot itself delegate: subagent sessions are `bare`, so the skills extension factory never runs in them and `delegate_to_agent` is not registered there — recursion is structurally impossible, no runtime guard needed
+- Tests: `tests/skills/agents.test.ts` (discovery against tmp-dir fixtures), `tests/skills/builtins.test.ts` (built-in agent shape), `tests/skills/delegate.test.ts` (tool behavior against a faked runner, including the built-in and isolation), `tests/skills/index.test.ts` (unconditional registration), `tests/agent/prompts.test.ts` (role prompt composition)

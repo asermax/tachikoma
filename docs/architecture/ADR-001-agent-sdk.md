@@ -17,6 +17,15 @@ Key properties driving the choice:
 - **Tree-structured JSONL transcripts with fork**: readable on disk for post-session extraction, forkable for advanced flows, isolated under a dedicated `agentDir`
 - **Agent Skills standard support**: progressive disclosure covers skill detection without a separate LLM classification pass
 
+We embed pi, but we do not inherit its persona: **every execution context fully overrides pi's
+native coding-agent base prompt** (via `systemPromptOverride`), because Tachikoma is a personal
+assistant, not a coding agent. The operational hygiene Tachikoma wants is **reproduced in its own
+source** (`src/agent/prompts.ts`, see [DES-005](../design/DES-005-base-prompt-ownership.md)) rather
+than inherited from the operator's global pi append (`~/.pi/agent/APPEND_SYSTEM.md`), so a deployment
+never depends on the operator's personal pi config. Delegated subagents additionally suppress pi's
+append, project context files, and skills catalog (the `isolatePrompt` flag) so their prompt is
+exactly Tachikoma's own.
+
 ## Consequences
 
 ### Positive

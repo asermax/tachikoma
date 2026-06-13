@@ -30,6 +30,8 @@ export interface HeadlessRunOptions {
   tier?: ModelTier;
   /** Explicit "provider/model-id[:thinkingLevel]" reference; overrides `tier` when set. */
   model?: string;
+  /** Isolate the system prompt — suppress pi's append/context-files/skills so it is exactly `system`. */
+  isolatePrompt?: boolean;
 }
 
 export interface HeadlessRunResult {
@@ -103,12 +105,14 @@ export class SideRunner {
     customTools,
     tier = "processor",
     model,
+    isolatePrompt,
   }: HeadlessRunOptions): Promise<HeadlessRunResult> {
     const session = await this.manager.open({
       inMemory: true,
       bare: true,
       tier,
       ...(model != null ? { model } : {}),
+      ...(isolatePrompt === true ? { isolatePrompt: true } : {}),
       tools: [...tools, ...(customTools ?? []).map((tool) => tool.name)],
       ...(customTools != null ? { customTools } : {}),
       ...(system != null ? { systemPrompt: system } : {}),

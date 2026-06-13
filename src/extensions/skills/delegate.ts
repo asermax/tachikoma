@@ -32,8 +32,8 @@ const renderAgentList = (agents: SkillAgent[]): string =>
     : "(none discovered)";
 
 /**
- * `delegate_to_agent`: run a skill-bundled agent definition headlessly with its own
- * system prompt and tool set, returning the agent's final answer.
+ * `delegate_to_agent`: run an agent definition headlessly — the built-in general-purpose agent or
+ * one bundled in a skill — with its own system prompt and tool set, returning its final answer.
  */
 export const createDelegateTool = ({
   discover,
@@ -44,7 +44,8 @@ export const createDelegateTool = ({
   label: "Delegate to agent",
 
   description: [
-    "Delegate a focused task to a specialized agent bundled with a skill.",
+    "Delegate a focused task to a specialized agent — the built-in general-purpose agent (for",
+    "exploring or searching files and gathering information) or one bundled in a skill.",
     "The agent runs in an isolated context with its own system prompt and tools,",
     "and returns its final answer as the tool result.",
     "",
@@ -52,9 +53,10 @@ export const createDelegateTool = ({
     renderAgentList(discover()),
   ].join("\n"),
 
-  promptSnippet: "delegate_to_agent: hand a focused task to a specialized skill-bundled agent",
+  promptSnippet:
+    "delegate_to_agent: hand a focused task to a general-purpose or skill-bundled agent",
   promptGuidelines: [
-    "Use delegate_to_agent when a skill ships an agent suited to the task; pass a complete, self-contained task description.",
+    "Use delegate_to_agent to offload focused, context-heavy work (e.g. exploring files) to the general-purpose agent, or when a skill ships an agent suited to the task; pass a complete, self-contained task description.",
   ],
 
   parameters: DelegateParams,
@@ -75,6 +77,7 @@ export const createDelegateTool = ({
       system: agent.systemPrompt,
       tools: agent.tools ?? DEFAULT_AGENT_TOOLS,
       prompt: params.task,
+      isolatePrompt: true,
       ...(agent.model != null ? { model: agent.model } : {}),
     });
 

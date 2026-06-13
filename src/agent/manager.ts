@@ -35,7 +35,23 @@ export interface OpenSessionOptions {
   tier?: ModelTier;
   /** Explicit "provider/model-id[:thinkingLevel]" reference; pins the model over `tier`. */
   model?: string;
+  /**
+   * Fully isolate the system prompt: suppress pi's APPEND_SYSTEM.md auto-append, project context
+   * files (AGENTS.md/CLAUDE.md), and the skills catalog, so the session sees exactly its own
+   * `systemPrompt` (plus pi's date/cwd footer). For delegated subagents with self-contained prompts.
+   */
+  isolatePrompt?: boolean;
 }
+
+/**
+ * Loader options that strip everything pi would otherwise graft onto a custom system prompt.
+ * Extracted so the suppression set is unit-testable without constructing a real loader.
+ */
+export const isolatedLoaderOptions = () => ({
+  appendSystemPromptOverride: () => [],
+  noContextFiles: true,
+  noSkills: true,
+});
 
 export class AgentManager {
   readonly authStorage: AuthStorage;
@@ -85,6 +101,7 @@ export class AgentManager {
       agentDir: workspace.piDir,
       extensionFactories: bare ? [] : [...this.sources.piFactories],
       ...(systemPromptOverride != null ? { systemPromptOverride: () => systemPromptOverride } : {}),
+      ...(options.isolatePrompt === true ? isolatedLoaderOptions() : {}),
     });
     await loader.reload();
 

@@ -2,6 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
 import type { Delivery } from "../../channels/types.ts";
 import type { Logger } from "../../log.ts";
@@ -40,10 +41,6 @@ const BACKGROUND_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"]
 
 const RESPONSE_EXCERPT_CHARS = 4000;
 
-const BACKGROUND_SYSTEM_PROMPT = `You are a background task agent. You are executing a scheduled task autonomously. Complete the task described below. Your work will be saved automatically.
-
-You are operating without direct user interaction. Work through the task methodically, and when you believe the task is complete, provide a clear summary of what was accomplished. Your final summary is delivered to the user when the task completes — failure notices are sent automatically.`;
-
 const EVALUATOR_SYSTEM = `You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
 
 You are a CLASSIFIER, not a reviewer. You MUST NOT:
@@ -64,6 +61,8 @@ Classification rules (evaluate in order, use the first match):
 3. Mid-workflow: Is the agent still working — it announced next steps but hasn't executed them yet, or it's partway through a multi-step process?
    -> {"status": "continue", "reason": "What the agent said it would do next but has not yet executed"}`;
 
+// Formats the timezone-aware header here (this extension owns the configured timezone) and hands
+// the prompt text composition to the shared prompt module.
 const buildSystemPrompt = (now: Date, timezone: string | undefined): string => {
   const formatted = now.toLocaleString("en-US", {
     timeZone: timezone,
@@ -78,7 +77,7 @@ const buildSystemPrompt = (now: Date, timezone: string | undefined): string => {
   });
   const zone = timezone != null ? ` ${timezone}` : "";
 
-  return `Current date and time: ${formatted}${zone}\n\n${BACKGROUND_SYSTEM_PROMPT}`;
+  return buildBackgroundSystemPrompt({ dateHeader: `${formatted}${zone}` });
 };
 
 // Side runs are ephemeral (no session continuity), so each continuation

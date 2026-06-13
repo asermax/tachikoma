@@ -11,7 +11,11 @@ import skills from "../../src/extensions/skills/index.ts";
 
 const repoSkillsDir = resolve(import.meta.dirname, "../../skills");
 
-const setup = async (): Promise<{ workspaceSkillsDir: string; on: ReturnType<typeof vi.fn> }> => {
+const setup = async (): Promise<{
+  workspaceSkillsDir: string;
+  on: ReturnType<typeof vi.fn>;
+  registerTool: ReturnType<typeof vi.fn>;
+}> => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-skills-ext-"));
   let factory: ExtensionFactory | null = null;
 
@@ -31,14 +35,15 @@ const setup = async (): Promise<{ workspaceSkillsDir: string; on: ReturnType<typ
   skills.setup(app);
 
   const on = vi.fn();
+  const registerTool = vi.fn();
   await (factory as ExtensionFactory | null)?.({
     on,
-    registerTool: vi.fn(),
+    registerTool,
     registerCommand: vi.fn(),
     sendUserMessage: vi.fn(),
   } as unknown as ExtensionAPI);
 
-  return { workspaceSkillsDir: join(workspaceDir, "skills"), on };
+  return { workspaceSkillsDir: join(workspaceDir, "skills"), on, registerTool };
 };
 
 describe("skills extension", () => {
@@ -54,5 +59,16 @@ describe("skills extension", () => {
   it("resolves the built-in directory to the repo's shipped authoring skills", () => {
     expect(existsSync(join(repoSkillsDir, "skill-authoring", "SKILL.md"))).toBe(true);
     expect(existsSync(join(repoSkillsDir, "workflow-authoring", "SKILL.md"))).toBe(true);
+  });
+
+  it("registers delegate_to_agent with the built-in general-purpose agent even with no skill agents", async () => {
+    const { registerTool } = await setup();
+
+    const delegate = registerTool.mock.calls
+      .map(([definition]) => definition as { name: string; description: string })
+      .find((definition) => definition.name === "delegate_to_agent");
+
+    expect(delegate).toBeDefined();
+    expect(delegate?.description).toContain("general-purpose:");
   });
 });

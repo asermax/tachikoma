@@ -8,3 +8,4 @@ Design Pattern documents (DES): repeatable, prescriptive patterns applied across
 | [DES-002](DES-002-extension-authoring.md) | Extension Authoring Conventions | The mechanical conventions every extension follows so they look alike and pass the quality gates |
 | [DES-003](DES-003-testing-conventions.md) | Testing Conventions | vitest over TS sources, mirrored test structure with AC traceability, structural fakes, real SQLite/git/process in temp dirs |
 | [DES-004](DES-004-logging-conventions.md) | Logging Conventions | All components log through one pino root logger; channels own stdout; user-facing progress goes through `app.status()` |
+| [DES-005](DES-005-base-prompt-ownership.md) | Base Prompt Ownership | Prompts that replace pi's coding-agent base live in core `src/agent/prompts.ts` with a shared `OPERATIONAL_GUIDANCE`; feature-local side-run task prompts stay inline |
