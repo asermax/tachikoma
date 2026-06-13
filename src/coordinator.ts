@@ -3,7 +3,6 @@ import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-a
 import { streamPrompt } from "./agent/adapter.ts";
 import type { AgentManager } from "./agent/manager.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
-import type { Config } from "./config/schema.ts";
 import type { SessionRecord } from "./db/core-schema.ts";
 import type { InboundMessage } from "./domain/message.ts";
 import type { EventBus } from "./events.ts";
@@ -28,7 +27,6 @@ export class Coordinator {
   private exchanging = false;
   private channel: Channel | null = null;
 
-  private readonly config: Config;
   private readonly registry: SessionRegistry;
   private readonly agent: AgentManager;
   private readonly regs: Registrations;
@@ -36,14 +34,12 @@ export class Coordinator {
   private readonly log: Logger;
 
   constructor(
-    config: Config,
     registry: SessionRegistry,
     agent: AgentManager,
     regs: Registrations,
     events: EventBus,
     log: Logger,
   ) {
-    this.config = config;
     this.registry = registry;
     this.agent = agent;
     this.regs = regs;

@@ -47,7 +47,6 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
   const agent = new AgentManager(workspace, config, regs, componentLogger(log, "agent"));
   const registry = new SessionRegistry(db);
   const coordinator = new Coordinator(
-    config,
     registry,
     agent,
     regs,

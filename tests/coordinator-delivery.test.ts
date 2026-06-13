@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentManager } from "../src/agent/manager.ts";
 import type { Channel, Delivery } from "../src/channels/types.ts";
-import type { Config } from "../src/config/schema.ts";
 import { Coordinator } from "../src/coordinator.ts";
 import { type AppDatabase, createDatabase, runMigrations } from "../src/db/index.ts";
 import { EventBus } from "../src/events.ts";
@@ -52,7 +51,6 @@ describe("Coordinator delivery priority ordering", () => {
     } as unknown as AgentManager;
 
     const coordinator = new Coordinator(
-      {} as Config,
       registry,
       agent,
       createRegistrations(),
