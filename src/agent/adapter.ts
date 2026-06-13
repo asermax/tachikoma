@@ -1,11 +1,13 @@
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { AgentEvent, ResultUsage } from "../domain/agent-events.ts";
 import { classifyError } from "./errors.ts";
 import { sanitizeText } from "./sanitize.ts";
 
-type SessionEvent = Parameters<Parameters<AgentSession["subscribe"]>[0]>[0];
+// The `willRetry`/`messages` shape this adapter needs lives only on the session-level
+// AgentSessionEvent union's `agent_end` member, not the core AgentEndEvent type.
+type SessionEvent = AgentSessionEvent;
 
 type AgentEndEvent = Extract<SessionEvent, { type: "agent_end" }>;
 

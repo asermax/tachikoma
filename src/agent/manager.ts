@@ -107,7 +107,13 @@ export class AgentManager {
     return (await this.authStorage.getApiKey(provider)) ?? undefined;
   }
 
-  /** Open the main conversational session, with all registered extensions bound. */
+  /**
+   * Open the main conversational session, with all registered extensions bound.
+   *
+   * We open a fresh AgentSession per topic via createAgentSession and deliberately bypass pi's
+   * AgentSessionRuntime replacement API (newSession/switchSession/fork): Tachikoma owns session
+   * lifecycle and resumption through its drizzle-backed session registry, not pi's session tree.
+   */
   async open(options: OpenSessionOptions = {}): Promise<AgentSession> {
     const workspace = this.workspace;
 

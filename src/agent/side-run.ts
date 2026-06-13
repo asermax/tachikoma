@@ -1,4 +1,4 @@
-import { completeSimple, type Message } from "@earendil-works/pi-ai";
+import { type AssistantMessage, completeSimple, type Message } from "@earendil-works/pi-ai";
 import type { AgentSession, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 
@@ -48,19 +48,19 @@ export interface BackgroundSessionOptions {
   tier?: ModelTier;
 }
 
-const textOf = (message: { content: { type: string }[] }): string =>
+const textOf = (message: AssistantMessage): string =>
   message.content
     .filter((block): block is { type: "text"; text: string } => block.type === "text")
     .map((block) => block.text)
     .join("");
 
-/** Last assistant turn's text from a session's message log (mirrors `run`'s reverse scan). */
+/** Last assistant turn's text from a session's message log. */
 export const lastAssistantText = (messages: readonly { role: string }[]): string => {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message == null || message.role !== "assistant") continue;
 
-    return textOf(message as unknown as { content: { type: string }[] });
+    return textOf(message as AssistantMessage);
   }
 
   return "";
@@ -151,14 +151,7 @@ export class SideRunner {
     try {
       await session.prompt(prompt);
 
-      for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-        const message = session.messages[index];
-        if (message == null || message.role !== "assistant") continue;
-
-        return { text: textOf(message as { content: { type: string }[] }) };
-      }
-
-      return { text: "" };
+      return { text: lastAssistantText(session.messages) };
     } finally {
       session.dispose();
     }
