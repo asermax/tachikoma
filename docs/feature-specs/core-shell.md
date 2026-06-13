@@ -98,7 +98,7 @@ The core shell is everything that runs before and around conversations: configur
 ### Extension Loading and Bootstrap (R12, R13, R14)
 
 **Acceptance Criteria**:
-- Given the first-party list (`context`, `memory`, `projects`, `git`, `boundary`, `skills`, `workflows`, `tasks`, `detached-processes`, `notifications`, `repl`, `telegram`, `external`), when the host loads, then setups run in that order and each receives an `AppContext` with a component-bound logger, validated `extensionConfig`, and a namespaced `KeyValueState`
+- Given the first-party list (`commands`, `context`, `memory`, `projects`, `git`, `boundary`, `skills`, `workflows`, `tasks`, `detached-processes`, `notifications`, `repl`, `telegram`, `external`), when the host loads, then setups run in that order and each receives an `AppContext` with a component-bound logger, validated `extensionConfig`, and a namespaced `KeyValueState`
 - Given an extension calls `app.registerExtension(nested)` during setup, when loading continues, then the nested extension's setup runs after the remaining queued extensions in the same pass
 - Given extensions registered bootstrap hooks, when `host.bootstrap()` runs after all setups, then hooks execute sequentially in registration order — an extension may rely on services registered by earlier extensions but not later ones
 - Given a bootstrap hook throws, when startup runs, then the error propagates and the process exits non-zero

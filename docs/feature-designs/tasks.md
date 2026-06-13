@@ -65,16 +65,16 @@ tasks-tick (60s)
 - Con: Worst-case latency for any transition is one tick interval (60 s)
 - Con: A pathologically slow pass delays the ones after it within the tick
 
-### Session tasks are delivered as channel messages, completed at handoff
+### Session tasks are injected as agent turns, completed at handoff
 
-**Choice**: `deliverSessionTasks` renders the task prompt into a labelled text block and hands it to `app.channels.deliver` with `gate: "idle"` and `maxHoldSeconds`; the instance is marked `completed` as soon as the handoff succeeds. The text reaches the user directly — it is not injected into the agent session as a new turn.
-**Why**: Channel delivery is the only proactive-output surface DES-001 gives extensions; the conversation loop owns gating and hold timers, so the pass stays a pure detector/enqueuer with the buffer role absorbed by the coordinator.
-**Alternatives Considered**: Injecting the prompt as an agent turn via `pi.sendUserMessage` (runs the agent on the prompt, but session factories are rebound on replacement and the extension would need to gate idleness itself); a dedicated buffer extension.
+**Choice**: `deliverSessionTasks` renders the task prompt into a labelled text block and hands it to `app.channels.deliver` with `gate: "idle"`, `maxHoldSeconds`, and `target: "agent"`; the instance is marked `completed` as soon as the handoff succeeds. The coordinator injects an `agent`-targeted delivery as a fresh turn into the active session (a system-origin `submit` with `boundary: "skip"`), so the agent acts on the prompt and the user sees its response.
+**Why**: Channel delivery is the only proactive-output surface DES-001 gives extensions, and its `target` flag lets the coordinator route the rendered prompt into the live session without the extension touching session internals. The conversation loop still owns gating and hold timers, so the pass stays a pure detector/enqueuer.
+**Alternatives Considered**: Delivering as plain user-facing text (`target: "user"`) so the prompt is shown verbatim rather than acted on; a dedicated buffer extension that owns idleness itself.
 **Consequences**:
 - Pro: No duplicated idle logic; delivery ordering and hold behavior are uniform with notifications
 - Pro: Rollback-on-throw keeps the instance retryable without a stuck `running` row
-- Con: The agent does not act on the prompt — session task prompts must be written as user-facing text
-- Con: "Completed" means "handed to the delivery gate", not "seen by the user"; a held delivery lost at shutdown is not retried
+- Pro: The agent acts on the task prompt, so session tasks can drive real work rather than only relaying canned text
+- Con: "Completed" means "handed to the delivery gate", not "the agent's response reached the user"; a held delivery lost at shutdown is not retried
 
 ### Ephemeral side session per background iteration
 

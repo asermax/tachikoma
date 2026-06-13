@@ -25,7 +25,7 @@ Owning the entire skill lifecycle would mean a multi-source registry, a per-mess
 
 ## Design Overview
 
-Three small modules. `index.ts` wires: a bootstrap hook ensures the skills directory, and a session factory answers `resources_discover` with that path — pi does the rest. `agents.ts` scans `<skill>/agents/*.md` into `SkillAgent` records. `delegate.ts` builds the `delegate_to_agent` tool from a `discover` callback and an `AgentRunner`, so both inputs are injectable in tests.
+Four small modules. `index.ts` wires: a bootstrap hook ensures the workspace skills directory, and a session factory answers `resources_discover` with both that path and the repo-root `skills/` directory (built-in authoring skills) — pi does the rest. `reload.ts` registers the `/reload` command and the `reload_resources` tool for mid-session resource refresh. `agents.ts` scans `<skill>/agents/*.md` into `SkillAgent` records. `delegate.ts` builds the `delegate_to_agent` tool from a `discover` callback and an `AgentRunner`, so both inputs are injectable in tests.
 
 ## Components
 
@@ -33,7 +33,8 @@ Three small modules. `index.ts` wires: a bootstrap hook ensures the skills direc
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/skills/index.ts` | Extension wiring: `ensure-skills-dir` bootstrap hook, `resources_discover` contribution, conditional `delegate_to_agent` registration | Tool registered only when `discover()` finds at least one agent at session creation, so an agent-less workspace advertises no dead tool |
+| `src/extensions/skills/index.ts` | Extension wiring: `ensure-skills-dir` bootstrap hook, `resources_discover` contributing the workspace and repo-root `skills/` paths, reload registration, conditional `delegate_to_agent` registration | Built-in skills resolved relative to the module (`../../../skills` → repo root) so they ship with the install; tool registered only when `discover()` finds at least one agent at session creation, so an agent-less workspace advertises no dead tool |
+| `src/extensions/skills/reload.ts` | `registerReload`: the `/reload` command (calls `ctx.reload()`) and the `reload_resources` tool that queues `/reload` as a follow-up | Reload must run in command context, so the tool re-injects `/reload` via `pi.sendUserMessage(..., { deliverAs: "followUp" })` rather than reloading inline |
 | `src/extensions/skills/agents.ts` | `discoverSkillAgents`: scan skills root for `agents/*.md`, parse frontmatter via pi's `parseFrontmatter` | Synchronous fs reads (small trees, called at session creation and tool execution); per-file error isolation — one bad definition never blocks the rest; names namespaced `<skill>/<agent>` |
 | `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; `tools` accepts YAML list or comma-separated string (matches pi's subagent example) |
 
@@ -49,8 +50,8 @@ Three small modules. `index.ts` wires: a bootstrap hook ensures the skills direc
 
 **Consequences**:
 - Pro: zero per-message cost; skill behavior matches pi documentation exactly
-- Pro: the extension is ~50 lines of wiring
-- Con: no mid-session pickup of new skills — discovery happens at session creation (acceptable: sessions are replaced at every topic boundary)
+- Pro: the extension is thin wiring plus the small reload module
+- Con: automatic mid-session pickup of new skills does not happen — discovery is at session creation (sessions are replaced at every topic boundary), and a live session refreshes only on explicit `/reload` / `reload_resources`
 - Con: relevance quality is bounded by how well skill descriptions are written (progressive disclosure has no conversation-context classifier)
 
 ### Re-discover agents on every delegation instead of watching the filesystem
@@ -65,6 +66,16 @@ Three small modules. `index.ts` wires: a bootstrap hook ensures the skills direc
 - Pro: no watcher lifecycle, no debounce tuning, nothing to leak
 - Con: the tool's *description* (the agent list) is fixed at registration, so agents added mid-session are usable but not advertised until the next session
 - Con: if zero agents existed at session creation, the tool is absent for that whole session
+
+### Explicit `/reload` for mid-session refresh instead of a watcher
+
+**Choice**: `reload.ts` registers a `/reload` command that calls pi's `ctx.reload()` and a `reload_resources` tool. Because reload must run in command context, the tool does not reload inline — it queues `/reload` as a follow-up message via `pi.sendUserMessage("/reload", { deliverAs: "followUp" })`, so resources refresh once the current run finishes.
+**Why**: New sessions always rediscover skills, but a long-running conversation would otherwise miss a skill the user just added or edited. An explicit command (and a tool the agent can invoke when the user mentions a skill change) covers the live session without a filesystem watcher, and keeps the reload on pi's sanctioned command path.
+**Alternatives Considered**: A filesystem watcher auto-reloading on change (watcher lifecycle, debounce, OS limits for a rare event); having the tool reload inline (not possible — reload requires command context).
+**Consequences**:
+- Pro: the live session can pick up skill/prompt/extension changes without a restart
+- Pro: no watcher to manage; reload is a deliberate, observable action
+- Con: refresh is manual — the agent or user must trigger it; nothing reloads automatically
 
 ### One `delegate_to_agent` tool instead of a tool per agent
 
@@ -92,7 +103,7 @@ Three small modules. `index.ts` wires: a bootstrap hook ensures the skills direc
 
 **Given**: The agent scaffolds a new skill with an `agents/` directory during a conversation
 **When**: It immediately delegates to the new agent
-**Then**: Execution-time rediscovery finds it (if the tool was registered for this session); the skill's own `SKILL.md` becomes visible to pi at the next session creation.
+**Then**: Execution-time rediscovery finds it (if the tool was registered for this session); the skill's own `SKILL.md` becomes visible to pi after a `/reload` (or `reload_resources`) in the live session, and at the next session creation regardless.
 
 ## Notes
 

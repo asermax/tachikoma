@@ -4,7 +4,7 @@
 
 ## Overview
 
-Workspace skills give the agent packaged expertise: Agent Skills-format directories under `{workspace}/skills/` are contributed to pi as a native skill source, so pi's progressive disclosure surfaces each skill's description in the system prompt and the agent reads the full `SKILL.md` only when relevant. The extension itself stays thin — it wires the source and adds the one capability pi does not cover: agent definitions bundled inside skills become delegable subagents through a `delegate_to_agent` tool.
+Skills give the agent packaged expertise: Agent Skills-format directories from both the user's workspace (`{workspace}/skills/`) and the repo-root `skills/` directory (built-in authoring skills) are contributed to pi as native skill sources, so pi's progressive disclosure surfaces each skill's description in the system prompt and the agent reads the full `SKILL.md` only when relevant. The extension itself stays thin — it wires the sources, adds a `/reload` path so the live session can pick up skill changes, and adds the one capability pi does not cover: agent definitions bundled inside skills become delegable subagents through a `delegate_to_agent` tool.
 
 ## User Stories
 
@@ -17,7 +17,7 @@ Workspace skills give the agent packaged expertise: Agent Skills-format director
 | ID | Requirement |
 |----|-------------|
 | R0 | A bootstrap hook creates `{workspace}/skills/` if missing (idempotent) |
-| R1 | The skills directory is contributed as a pi skill source via the `resources_discover` event in every agent session; discovery, progressive disclosure, and `/skill:` commands are pi-native |
+| R1 | Two skill sources are contributed via the `resources_discover` event in every agent session: the workspace skills directory (`{workspace}/skills/`) and the built-in authoring skills shipped in the repo-root `skills/` directory; discovery, progressive disclosure, and `/skill:` commands are pi-native |
 | R2 | Skills follow the Agent Skills standard (`SKILL.md` with YAML frontmatter) — no Tachikoma-specific skill format exists |
 | R3 | Markdown files under `<skill>/agents/` are discovered as agent definitions, namespaced as `<skill>/<agent>` to prevent cross-skill collisions |
 | R4 | Agent frontmatter: `description` is required (missing means the file is skipped with a warning); `name` defaults to the file stem; `tools` accepts a YAML list or a comma-separated string; the markdown body is the agent's system prompt |
@@ -26,17 +26,19 @@ Workspace skills give the agent packaged expertise: Agent Skills-format director
 | R7 | Invalid agent files are logged and skipped; a missing skills root or agents directory yields empty discovery, never an error |
 | R8 | Agent discovery re-runs at every session creation and on every `delegate_to_agent` execution, so new and edited agents apply without a restart |
 | R9 | The extension can be disabled via `[extensions.skills] enabled = false` (default enabled) |
+| R10 | A `/reload` command and a `reload_resources` tool reload skills, prompts, and extensions from disk into the running session; the tool queues `/reload` as a follow-up (reload must run in command context) so additions and edits apply mid-session without a restart |
 
 ## Behaviors
 
-### Skill Source Contribution (R0, R1, R2)
+### Skill Source Contribution and Reload (R0, R1, R2, R10)
 
-The session factory answers pi's `resources_discover` event with the workspace skills path; everything downstream (frontmatter parsing, description injection into the system prompt, on-demand `SKILL.md` reads) is pi's native pipeline.
+The session factory answers pi's `resources_discover` event with the workspace skills path and the built-in skills path; everything downstream (frontmatter parsing, description injection into the system prompt, on-demand `SKILL.md` reads) is pi's native pipeline. A `/reload` command and a `reload_resources` tool let a running session pick up skill changes without a restart.
 
 **Acceptance Criteria**:
 - Given the workspace has no `skills/` directory, when bootstrap runs, then the directory is created; a second run makes no changes
-- Given a valid Agent Skills package in `skills/`, when an agent session is created, then pi surfaces the skill through progressive disclosure (description in the system prompt, content loaded on demand)
-- Given a skill is added while the app is running, when the next agent session is created, then the new skill is discovered — there is no mid-session reload
+- Given a valid Agent Skills package in the workspace or built-in `skills/` directory, when an agent session is created, then pi surfaces the skill through progressive disclosure (description in the system prompt, content loaded on demand)
+- Given a skill is added while the app is running, when the next agent session is created, then the new skill is discovered; the running session can also pick it up via `/reload` or `reload_resources`
+- Given the agent calls `reload_resources`, when it executes, then `/reload` is queued as a follow-up message (so it runs in command context) and resources refresh once the current run finishes
 
 ### Agent Discovery (R3, R4, R7, R8)
 
@@ -65,7 +67,7 @@ The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists discove
 Machinery deliberately left out of this implementation:
 
 - **LLM skill classifier** — pi's progressive disclosure covers it: skill descriptions sit in the system prompt and the agent reads `SKILL.md` on demand, so no per-message classification pass (and its latency/cost) is needed
-- **Skills hot-reload/watcher** — discovery runs per agent session, so new skills appear on the next session (topic boundary or restart) and agent definitions are re-read on every delegation. No filesystem watcher, no mid-session resource reload
+- **Skills hot-reload/watcher** — discovery runs per agent session, so new skills appear on the next session (topic boundary or restart) and agent definitions are re-read on every delegation; for the live session, `/reload` (and the `reload_resources` tool) re-reads resources on demand. No filesystem watcher — reload is explicit, not automatic
 - **Skill `dependencies`** — not part of the Agent Skills standard. Skills that build on other material reference it directly in their content for the agent to read
 
 See [../reference/pi-sdk-notes.md](../reference/pi-sdk-notes.md) (Skills section) for the pi-native behavior this extension relies on.

@@ -87,7 +87,7 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 
 ### Notification dispatch decoupled through the app event bus
 
-**Choice**: `reconcileExit` calls an injected `notify` callback; `index.ts` binds it to `app.events.emit("notify", payload)` with severity `info`/`error`. Suppression is record-driven (`stop_reason`) plus explicit `dispatchNotification: false` for terminate and crash-recovery paths.
+**Choice**: `reconcileExit` calls an injected `notify` callback; `index.ts` binds it to `app.events.emit("notify", payload)`, shaping the payload to the notifications router's contract: `{ title, text, severity, source }` where the reconciler's `error` severity is remapped to `warning` (and `info` stays `info`). Suppression is record-driven (`stop_reason`) plus explicit `dispatchNotification: false` for terminate and crash-recovery paths.
 **Why**: The watcher-side reconciler is the sole notification producer, keeping this extension ignorant of channels and idle gating (DES-001 separation).
 **Consequences**:
 - Pro: Tests assert notifications on a plain array sink; no channel machinery involved
@@ -121,7 +121,7 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 
 ## Notes
 
-- Payload contract caveat: the watcher emits `{ source, processId, severity: "info" | "error", message }`, while the notifications router (`parseNotifyPayload`) only delivers payloads carrying a `text` field with severity `info|warning|urgent` — exit notices therefore currently reach raw `"notify"` subscribers but are skipped by the user-facing router. Aligning the payload shape is pending
+- Payload shape: the reconciler hands `notify` a `{ source, processId, severity: "info" | "error", message }` record, and `index.ts` reshapes it into the notifications router's contract — `{ title: "Process <id>", text: message, severity, source }` with the reconciler's `error` remapped to `warning` (and `info` left as-is). Because the payload now carries a non-empty `text` and a valid severity, `parseNotifyPayload` accepts it and the exit notice is delivered to the user (idle-gated; only `urgent` would bypass gating)
 - Tools are registered through `app.agent.use`, so they exist in interactive agent sessions; headless side runs (`bare: true` in `src/agent/manager.ts`) do not receive them
 - There is no rename tool and no system-prompt preamble section; tool discoverability relies on `promptSnippet`/`promptGuidelines`
 - `tests/detached-processes/setup.ts` still carries a DDL mirror of `schema.ts`; the central migrations (`drizzle/0001_extensions.sql`) already include the table, so the mirror is removable

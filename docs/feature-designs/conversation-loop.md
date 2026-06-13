@@ -27,14 +27,15 @@ pi's model is one in-process `AgentSession` per conversation, replaced wholesale
 
 ## Design Overview
 
-`Coordinator` (`src/coordinator.ts`) is a single serial loop: `submit()` pushes into an in-memory inbox and wakes the loop; `handle()` runs the full exchange — inbound middleware chain, `ensureSession`, parallel context gathering into `pendingContext`, `streamPrompt` consumed by `channel.respond()`, parallel exchange processors, idle-timer reset — with held deliveries flushed in `finally`. Session close (boundary, idle, recovery, shutdown) funnels through `closeActiveSession()`, which disposes the pi session, stamps the registry row, and runs the phased post-processing pipeline.
+`Coordinator` (`src/coordinator.ts`) is a single serial loop for *new* exchanges: `submit()` pushes into an in-memory inbox and wakes the loop; `handle()` runs the full exchange — inbound middleware chain, `ensureSession`, parallel context gathering into `pendingContext`, `streamPrompt` consumed by `channel.respond()`, parallel exchange processors — with held deliveries flushed in `finally`. A message arriving *while an exchange is in flight* does not wait in line: `submit()` routes it into the live run via pi's `session.steer()` (unless it opts out with `/queue` or is system-origin). Session close (boundary, idle, recovery, shutdown) funnels through `closeActiveSession()`, which disposes the pi session, stamps the registry row, and runs the phased post-processing pipeline. The coordinator owns no idle timer — idle close is a boundary-extension policy (`src/extensions/boundary/idle.ts`) that calls `closeActiveSessionIfIdle()`.
 
 ```
-submit() → [inbox] → handle():
+submit() ─ mid-exchange & not /queue & not system? ─→ session.steer(prompt)  (steers the live run)
+         └ else → [inbox] → handle():
   middleware (may close/resume) → ensureSession → collectContext ─┐
                                                                   ▼
   channel.respond(streamPrompt(session, prompt)) ← before_agent_start injects <context> blocks
-  → exchange processors → resetIdleTimer → flush held deliveries
+  → exchange processors → flush held deliveries
 ```
 
 Context reaches the agent through a host-owned pi extension factory (`hostFactory()`, registered in `src/app.ts` alongside extension factories): on `before_agent_start` it drains `pendingContext` into one hidden `tachikoma-context` message.
@@ -45,7 +46,7 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/coordinator.ts` | Inbox loop, middleware chain, session lifecycle (ensure/close/close-if-idle/resume/recover), pipelines, delivery gating, status emission | Strictly serial exchanges; promise-based wake instead of polling; one `ActiveSession` pairing the db record with the live pi session |
+| `src/coordinator.ts` | Inbox loop, mid-exchange steering (`submit`→`session.steer`), `/queue` opt-out, `abortExchange`, middleware chain, session lifecycle (ensure/close/close-if-idle/resume/recover), pipelines, delivery gating, status emission | Serial *new* exchanges, but mid-exchange input steers the live run; promise-based wake instead of polling; one `ActiveSession` pairing the db record with the live pi session; no coordinator-owned idle timer (a boundary policy drives `closeActiveSessionIfIdle`) |
 | `src/sessions/registry.ts` | Drizzle CRUD over the `sessions` table (`src/db/core-schema.ts`) | Synchronous better-sqlite3 access; lifecycle expressed as timestamp updates (`closedAt`, `lastResumedAt`) rather than a state enum |
 | `src/channels/types.ts` | `Channel`, `Exchange`, `Delivery` contracts | `respond()` consumes the stream to completion, so channel rendering paces the exchange; `DELIVERY_GATES` const map |
 | `src/domain/message.ts`, `src/domain/agent-events.ts` | SDK-free domain types crossing the channel boundary | Channels and extensions never import pi types |
@@ -54,18 +55,19 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 
 ## Key Decisions
 
-### Strictly serial inbox, no mid-generation routing
+### Serial new exchanges with mid-exchange steering
 
-**Choice**: One message at a time — input arriving during a generation waits in the inbox until the current `handle()` finishes.
-**Why**: pi's `prompt()` owns the session until it settles, and the middleware/context/processor pipeline assumes a stable session per exchange. Serializing makes lifecycle transitions (close, resume, replace) impossible to interleave with streaming.
+**Choice**: New exchanges are handled one at a time from the inbox, but a message arriving *while an exchange is in flight* is routed straight into the live run via pi's `session.steer()` rather than queued. `submit()` makes the call: if `exchanging` and an active session exists and the message is not system-origin, it steers; a `/queue ` prefix opts out (stripped, tagged `queued: true`, and pushed to the inbox to wait for the next exchange). A separate `abortExchange()` aborts the in-flight run for an explicit user stop.
+**Why**: A single-user assistant benefits from being able to redirect a long run ("actually, focus on X") without waiting for it to finish. pi's `steer()` injects the input into the running session, so the user is not blocked on a slow generation. The escape hatches keep the model coherent: `/queue` forces a "wait your turn" fresh exchange when a follow-up should not steer, and system-origin injections (e.g. agent-targeted task deliveries) are never treated as steering.
 **Alternatives Considered**:
-- Routing mid-generation input via pi's `steer()`/`followUp()` (the DLT-008 ambition): richer UX, but steered input would bypass boundary detection and context gathering entirely
+- Strictly serial, no steering: every message waits for the current run — simpler, but a quick redirect is invisible until the run settles
 - Concurrent exchanges per channel: no use case for a single-user assistant
 
 **Consequences**:
-- Pro: no locks; session replacement can never race a live stream
-- Pro: every message gets the full middleware + context treatment
-- Con: a quick follow-up ("actually, stop") is not seen until the current run completes
+- Pro: mid-run redirects reach the agent immediately; no blocking on a slow generation
+- Pro: new exchanges still get the full middleware + context treatment; lifecycle transitions only happen between exchanges, never racing a steered stream
+- Con: steered input bypasses inbound middleware (boundary detection) and context gathering — it joins the current session's run as-is
+- Con: a steer failure drops the message (logged); `/queue` is the workaround when the input must run as its own exchange
 
 ### Context injection via a host-owned pi extension
 
@@ -118,6 +120,12 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 
 ## System Behavior
 
+### Scenario: User redirects a long run mid-exchange
+
+**Given**: The agent is generating a response in the active session
+**When**: The user submits "actually, focus on the second file" (no `/queue` prefix)
+**Then**: `submit()` sees `exchanging` with an active non-system session and calls `session.steer(prompt)` — the input joins the running generation without starting a new exchange; a `/queue `-prefixed message instead waits in the inbox to run as the next exchange, and `abortExchange()` would abort the run outright.
+
 ### Scenario: Topic shift mid-message
 
 **Given**: An active session with a summary, and a message on a new topic
@@ -144,6 +152,6 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 
 ## Notes
 
-- `status` events are emitted on the app event bus and debug-logged; no channel currently subscribes, so granular status is observable in logs but not yet rendered to the user.
+- `status(text)` both emits a `status` event on the app event bus (debug-logged, no bus subscriber today) and calls the active channel's optional `status()` method; the Telegram channel renders it as a transient line (or a typing action), so status is surfaced to the user through the channel rather than the bus.
 - `lastAssistantText` (exchange processor input) concatenates the text blocks of the latest assistant message in the pi session — it does not filter to text after the last tool call.
 - The exchange's `try/finally` guarantees `exchanging` resets and held deliveries flush even when the channel's `respond()` throws.

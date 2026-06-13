@@ -62,7 +62,7 @@ Shutdown is the reverse tail: the abort signal wakes the coordinator loop, whose
 | `src/extensions/api.ts` | `AppContext`, pipeline contracts (`ContextProvider`, `ExchangeProcessor`, `PostProcessor`, `InboundMiddleware`), `defineExtension` | `defineExtension` is identity — purely a typing aid for the `C` config parameter |
 | `src/extensions/registrations.ts` | `Registrations`: mutable arrays/maps filled during setup, read by core at runtime | Plain data object — the seam between host and coordinator/agent |
 | `src/extensions/host.ts` | `ExtensionHost`: queue-based `load()`, per-extension `buildContext()`, `bootstrap()` | Context built fresh per extension: child logger, validated config section, namespaced KV state |
-| `src/extensions/index.ts` | `firstPartyExtensions` load order | `context, memory, projects, git, boundary, skills, workflows, tasks, detached-processes, notifications, repl, telegram, external` |
+| `src/extensions/index.ts` | `firstPartyExtensions` load order | `commands, context, memory, projects, git, boundary, skills, workflows, tasks, detached-processes, notifications, repl, telegram, external` |
 
 ## Key Decisions
 
@@ -149,7 +149,7 @@ Shutdown is the reverse tail: the abort signal wakes the coordinator loop, whose
 
 **Given**: The app is running with an open session and scheduled jobs
 **When**: The user presses Ctrl+C
-**Then**: The signal handler aborts the coordinator loop; its `finally` clears the idle timer, disposes the pi session, marks the session closed, and runs post-processing phases. `runApp`'s `finally` then stops the channel and calls `scheduler.stopAll()`.
+**Then**: The signal handler aborts the coordinator loop; its `finally` force-flushes held deliveries, disposes the active pi session, marks the session closed, and runs post-processing phases. `runApp`'s `finally` then stops the channel and calls `scheduler.stopAll()` (the boundary extension's idle timer is `unref`'d, so it never blocks shutdown).
 
 ## Notes
 

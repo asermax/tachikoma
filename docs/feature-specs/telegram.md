@@ -23,7 +23,7 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | R1 | The bot token is validated (`bot.init()` / `getMe`) before long polling starts; polling subscribes only to `message` and `callback_query` updates |
 | R2 | Only updates from the configured `chatId` are processed; messages from other chats and callback taps from other user IDs are dropped (taps are still acknowledged first) |
 | R3 | Inbound text is trimmed and submitted to the runtime with the Telegram message ID in metadata; empty or whitespace-only messages are dropped |
-| R4 | `respond()` consumes the exchange event stream to completion, shows a refreshing typing indicator while consuming, and sends the accumulated text once the stream ends; `error` events are sent immediately as `⚠️ Error: …` notices |
+| R4 | `respond()` consumes the exchange event stream through a progressive `StreamRenderer`: it sends a message early and edits it as `text` events stream in (throttled, no-op edits skipped), surfaces `tool-start` (`⚙ <tool>`) and `status` events as a transient italic line that the next text replaces, refreshes a typing indicator throughout, and finalizes the message when the stream ends; `error` events are sent immediately as `⚠️ Error: …` notices |
 | R5 | Outbound text is split at Telegram's 4096-character (UTF-16) limit, preferring paragraph boundaries, then line boundaries, then a hard split that never cuts a surrogate pair |
 | R6 | Messages are sent with `parse_mode: "Markdown"`; on a Telegram entity-parse rejection the same text is resent as plain text; other send errors propagate |
 | R7 | All channel sends (`respond()` and `deliver()`) are serialized through a FIFO mutex so two send sequences never interleave their API calls, and a rejected task does not stall the queue |
@@ -36,6 +36,7 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | R14 | `pin_message` pins the channel's last outbound message audibly (the pin delivers the push notification); `react_to_message` defaults to the user's last inbound message; both fail when no target message exists |
 | R15 | `send_message_with_buttons` validates the layout (≥1 row, ≥1 button per row, non-empty labels, values ≤58 UTF-8 bytes, ≤100 buttons) and sends an inline keyboard whose `callback_data` encodes the value and the single-use flag |
 | R16 | Button taps are acknowledged immediately (before authorization), unpacked from the wire format, routed as a framed inbound turn carrying the tapped value; single-use taps remove the keyboard via a detached call whose failure never blocks routing |
+| R17 | A `/stop` text message aborts the in-flight agent run instead of being submitted as a turn; it is acknowledged with `⏹ Stopped.` and the abort wires to the coordinator's exchange abort |
 
 ## Behaviors
 
@@ -49,20 +50,25 @@ The extension wires one `Bot` instance shared by the channel and the agent tools
 - Given a message from a chat other than `chatId`, when received, then it is ignored without response
 - Given polling or update handling throws, when the error surfaces, then it is logged via `bot.catch` / the polling catch handler and the process continues
 
-### Inbound Text (R3)
+### Inbound Text (R3, R17)
 
 **Acceptance Criteria**:
 - Given an authorized text message, when handled, then `mapTextMessage` produces an `InboundMessage` with trimmed text, `channel: "telegram"`, and `metadata.messageId`, submitted via `runtime.submit()`
 - Given empty or whitespace-only text, when handled, then `mapTextMessage` returns `null` and nothing is submitted
 - Given any inbound message (text or media), when handled, then the channel records its message ID as the last inbound message (target for `react_to_message`)
+- Given a `/stop` message, when handled, then the in-flight run is aborted via the configured `stop` callback (it is never submitted as a turn), `⏹ Stopped.` is sent as acknowledgement, and an abort failure is logged without breaking the channel
 
 ### Response Rendering (R4, R5, R6, R7)
 
-The channel renders one whole response per exchange: it drains the event stream under the mutex, then sends the accumulated text as one or more chunked messages.
+The channel renders each exchange progressively under the mutex: a `StreamRenderer` sends a message early and edits it live as text streams in, then finalizes it when the stream ends.
 
 **Acceptance Criteria**:
 - Given an exchange starts, when events are being consumed, then a typing chat action is sent and refreshed every 5 seconds until the stream ends
-- Given the stream ends with non-blank accumulated text, when sent, then `sendChunked` splits at the 4096-character limit (paragraph > line > hard split, surrogate-safe) and the last sent message ID becomes the pin target
+- Given `text` events stream in, when the renderer flushes, then it sends or edits the streaming message at most once per ~1500 ms, skips edits that would not change the rendered text, and never edits more than the elapsed throttle window allows
+- Given a `tool-start` or `status` event arrives, when handled, then a transient italic line (`_⚙ <tool>_` for tool starts, the status text otherwise) is shown below the streamed text and is dropped as soon as more text arrives
+- Given the streamed text grows past the 4096-character edit limit, when the renderer flushes, then full chunks are finalized in place (paragraph > line > hard split, surrogate-safe) and only the tail keeps streaming
+- Given the stream ends with non-blank text, when `finalize()` runs, then the streaming message is upgraded to its final chunked form bypassing the throttle and the last sent message ID becomes the pin target; an exchange that produced no text deletes the streaming message
+- Given a streaming send or edit fails, when the renderer marks itself broken, then it stops editing and `finalize()` deletes the partial message and resends the full text fresh via `sendChunked`
 - Given an `error` event arrives mid-stream, when handled, then `⚠️ Error: <message>` is sent immediately and consumption continues
 - Given Telegram rejects a send with a "can't parse entities" error, when the fallback runs, then the identical text is resent without `parse_mode` and the message is delivered unformatted
 - Given a `respond()` and a `deliver()` overlap, when both run, then the mutex serializes them FIFO and their API calls never interleave

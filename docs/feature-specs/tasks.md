@@ -60,10 +60,10 @@ Each tick evaluates every enabled definition against the current time and create
 
 ### Session Task Delivery (R8)
 
-Pending session instances are routed to the user through the channel delivery gate (gating semantics in [conversation-loop.md](conversation-loop.md)).
+Pending session instances are injected into the conversation as agent turns through the channel delivery gate (gating semantics in [conversation-loop.md](conversation-loop.md)).
 
 **Acceptance Criteria**:
-- Given a pending session instance, when the delivery pass runs, then `app.channels.deliver` is called with the rendered task text (a "Scheduled task" label plus the prompt), `gate: "idle"`, the configured max hold, and `metadata { kind: "session_task", instanceId }`, and the instance is marked `completed`
+- Given a pending session instance, when the delivery pass runs, then `app.channels.deliver` is called with the rendered task text (a "Scheduled task" label plus the prompt), `gate: "idle"`, `target: "agent"`, the configured max hold, and `metadata { kind: "session_task", instanceId }`, and the instance is marked `completed`; the coordinator injects the `agent`-targeted delivery as a fresh turn the agent acts on
 - Given the delivery handoff throws, then the instance is rolled back to `pending` with `startedAt` cleared and is retried on the next tick
 - Given pending background instances, when the session delivery pass runs, then they are not delivered
 

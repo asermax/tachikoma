@@ -4,7 +4,7 @@
 
 ## Overview
 
-The conversation loop is the message-handling cycle at the center of the app: channels submit inbound messages to the coordinator, which serializes them through an inbox, runs the inbound middleware chain (where [boundary decisions](boundary-detection.md) close or resume sessions), ensures a long-lived pi `AgentSession`, gathers extension context, streams the exchange back through the active channel, and runs exchange processors. Closing a session — via an extension (boundary's topical or idle decision), dangling recovery, or shutdown — triggers phased post-processing with per-processor completion tracking.
+The conversation loop is the message-handling cycle at the center of the app: channels submit inbound messages to the coordinator, which serializes them through an inbox into one exchange at a time (a message arriving mid-exchange instead steers the live run), runs the inbound middleware chain (where [boundary decisions](boundary-detection.md) close or resume sessions), ensures a long-lived pi `AgentSession`, gathers extension context, streams the exchange back through the active channel, and runs exchange processors. Closing a session — via an extension (boundary's topical or idle decision), dangling recovery, or shutdown — triggers phased post-processing with per-processor completion tracking.
 
 The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/registry.ts` and the channel contract in `src/channels/types.ts`. How pi sessions are constructed and how pi events become domain events is specified in [agent-integration](agent-integration.md).
 
@@ -19,7 +19,7 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 
 | ID | Requirement |
 |----|-------------|
-| R0 | Inbound messages enqueue via `Coordinator.submit()` and are handled strictly one at a time in arrival order; a failed exchange is logged and never stops the loop |
+| R0 | Inbound messages enqueue via `Coordinator.submit()` and are handled as serial exchanges in arrival order; a message arriving while an exchange is in flight steers the live run instead of starting a new exchange (see R16); a failed exchange is logged and never stops the loop |
 | R1 | Channels implement the `Channel` contract (`name`, `start`, `respond`, `deliver`, `stop`) and register by name; the app selects exactly one channel at startup via `--channel` or `channels.default`, failing fast on unknown names |
 | R2 | Inbound messages carry text, source channel, receipt timestamp, media attachments (kind, path, optional mime/description), and free-form metadata |
 | R3 | Registered inbound middleware runs as a chain before session resolution, receiving the message, the active session record (or null), and `closeSession`/`resumeSession` controls |
@@ -35,17 +35,21 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R13 | `closeIfIdle()` closes the active session only when no exchange is in flight (returning whether it closed), so time-based policies in extensions can never dispose a streaming session |
 | R14 | Background deliveries gated `immediate` send at once; `idle`-gated deliveries (the default) are held while an exchange is in flight or a session is active, then flushed when the in-flight exchange completes or `maxHoldSeconds` expires |
 | R15 | `status(text)` surfaces pipeline progress as `status` events on the app event bus; the coordinator emits per-provider and per-processor status lines |
+| R16 | A message submitted while an exchange is in flight (with an active session and non-system origin) is routed into the live run via the pi session's `steer()` instead of being queued; a `/queue ` prefix opts out — the prefix is stripped, the message is tagged `queued` and waits in the inbox for the next exchange. A `steer()` failure is logged and the message dropped. `abortExchange()` aborts the in-flight run on request |
 
 ## Behaviors
 
-### Message Intake and Serialization (R0)
+### Message Intake, Serialization, and Steering (R0, R16)
 
-The coordinator owns an in-memory inbox drained by a single promise-woken loop (`Coordinator.run()`); exchanges never overlap.
+The coordinator owns an in-memory inbox drained by a single promise-woken loop (`Coordinator.run()`); new exchanges never overlap, but a message arriving mid-exchange is steered into the live run rather than queued.
 
 **Acceptance Criteria**:
-- Given two messages submitted in quick succession (including mid-generation), when the loop runs, then the second exchange starts only after the first completes
+- Given two messages submitted while idle, when the loop runs, then the second exchange starts only after the first completes
+- Given a message arrives while an exchange is in flight (active session, non-system origin, no `/queue` prefix), when `submit()` runs, then it calls the active session's `steer()` with the rendered prompt and does not enqueue a new exchange; a `steer()` rejection is logged and the message dropped
+- Given a `/queue `-prefixed message arrives mid-exchange, when `submit()` runs, then the prefix is stripped, the message is tagged `queued`, and it waits in the inbox to run as the next exchange (no steering)
+- Given `abortExchange()` is called, when an exchange is in flight, then the active session's run is aborted
 - Given an exchange throws, when the loop catches it, then the error is logged and the next inbox message is processed normally
-- Given the abort signal fires, when the loop exits, then the idle timer is cleared and the active session is closed (post-processing runs)
+- Given the abort signal fires, when the loop exits, then held deliveries are force-flushed and the active session is closed (post-processing runs)
 
 ### Channel Registry and Contract (R1, R2)
 
@@ -111,10 +115,11 @@ Phased, idempotent processing of the closed session's transcript.
 
 ### Idle Close (R13)
 
+`closeIfIdle()` (alias for `closeActiveSessionIfIdle()`) is the coordinator's safety primitive; the idle *timer* that decides when to call it is owned by the boundary extension (see [boundary-detection](boundary-detection.md)), since extensions cannot see the loop's in-flight state.
+
 **Acceptance Criteria**:
 - Given an exchange in flight, when `closeIfIdle()` is called, then nothing closes and `false` is returned; when called while idle with an active session, the session closes (post-processing runs) and `true` is returned
-- Given a new exchange completes before the timeout, when the timer resets, then the idle window restarts
-- Given the idle timer is pending, when only it remains, then it does not keep the process alive (`unref`)
+- Given no active session, when `closeIfIdle()` is called, then nothing closes and `false` is returned
 
 ### Delivery Gating (R14)
 
@@ -131,5 +136,5 @@ Background-originated output (`app.channels.deliver`) is gated so it lands at co
 ### Processing Status (R15)
 
 **Acceptance Criteria**:
-- Given any component calls `app.status(text)`, when it runs, then a `status` event with the text is emitted on the app event bus and debug-logged
+- Given any component calls `app.status(text)`, when it runs, then a `status` event with the text is emitted on the app event bus, debug-logged, and forwarded to the active channel's optional `status()` (a channel rendering failure is caught and debug-logged)
 - Given context providers or post-processors run, when each starts, then the coordinator emits a named status line for it

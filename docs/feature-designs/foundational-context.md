@@ -14,7 +14,7 @@ Explains how the assistant's identity files (SOUL.md, USER.md, AGENTS.md) reach 
 pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant identity sourced from user-editable workspace files. Separately, those files must evolve from conversations without becoming noisy — one-off remarks must not rewrite the assistant's personality, but recurring patterns should.
 
 **Constraints:**
-- `app.agent.systemPrompt` builders are synchronous (`() => string`), so no file I/O can happen at composition time
+- `app.agent.systemPrompt` builders are synchronous (`() => string`), so only synchronous file I/O (`readFileSync`) can run at composition time — no `await`ed reads
 - pi already discovers AGENTS.md from the workspace root; duplicating it in the override would inject it twice
 - Headless side runs have plain file tools and no MCP — any agent-managed state must be a file (see `docs/reference/pi-sdk-notes.md`)
 
@@ -26,7 +26,7 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 
 ## Design Overview
 
-Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook loads SOUL.md and USER.md (creating them from templates on first run) into closure variables, and a registered system-prompt builder joins `BASE_PROMPT`, both file contents, and the workspace root. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it renders the closed conversation from the pi transcript, expires and snapshots the pending-signals file, and hands everything to a headless agent that edits the three context files and the signals file directly.
+Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook creates SOUL.md and USER.md from templates on first run and caches their contents as a fallback, and a registered system-prompt builder re-reads both files from disk synchronously on every build (`readFileSync`, falling back to the cached snapshot only on a read error) and joins `BASE_PROMPT`, the file contents, and the workspace root. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it renders the closed conversation from the pi transcript, expires and snapshots the pending-signals file, and hands everything to a headless agent that edits the three context files and the signals file directly.
 
 ## Components
 
@@ -34,7 +34,7 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/context/index.ts` | Extension wiring: `load-context-files` bootstrap hook, `readOrCreate` with templates, system prompt builder | Only ENOENT triggers template creation — other read errors abort startup; AGENTS.md deliberately untouched (pi native discovery) |
+| `src/extensions/context/index.ts` | Extension wiring: `load-context-files` bootstrap hook, `readOrCreate` with templates, system prompt builder that re-reads SOUL.md/USER.md from disk per build (`fresh()` with cached fallback) | Only ENOENT triggers template creation — other read errors abort startup; per-build `readFileSync` so processor edits apply next session; AGENTS.md deliberately untouched (pi native discovery) |
 | `src/extensions/context/processor.ts` | `createCoreContextProcessor` (`core-context`, `preFinalize`); pending-signals parse/serialize/clean; the full update policy as `SYSTEM_TEMPLATE` | Reuses `loadConversation` and `localIsoDate` from the memory extension; signals live in `dataDir`, outside user-visible workspace content |
 
 ## Key Decisions
@@ -50,7 +50,7 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 **Consequences**:
 - Pro: identity is uniform across sessions and invisible to per-message pipelines
 - Pro: AGENTS.md keeps its native pi semantics (re-read on every session open) with zero code
-- Con: because builders are synchronous, file contents are cached at bootstrap — SOUL.md/USER.md edits (including the processor's own) only apply after a process restart
+- Pro: the synchronous builder re-reads SOUL.md/USER.md from disk per build, so edits (including the processor's own) apply on the next session without a restart; the bootstrap snapshot is only the read-failure fallback
 
 ### File-based pending signals edited by the agent
 

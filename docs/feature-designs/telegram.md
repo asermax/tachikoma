@@ -29,7 +29,7 @@ Tachikoma's production interface is a Telegram bot for a single user. The channe
 
 `index.ts` is pure wiring: validate config, construct one `Bot`, instantiate `TelegramChannel`, register the bootstrap hook and the tool factory. The channel (`channel.ts`) owns the grammY lifecycle — update handlers, `bot.init()` token validation, detached long polling — and delegates every behavior to a sibling module: inbound mapping (`inbound.ts`), length-aware splitting (`chunking.ts`), the send/notify primitives (`sending.ts`), media resolution and download (`media.ts`), button wire format (`buttons.ts`), and FIFO serialization (`mutex.ts`). Tools (`tools.ts`) reuse the same bot API through a narrow `ToolApi` interface and read the channel's last inbound/outbound message IDs through getter closures, so tools and channel stay decoupled but consistent.
 
-Rendering is whole-message: `respond()` drains the event stream while a typing indicator refreshes, then sends the accumulated text once via `sendChunked`. There are no progressive message edits; `tool-start`/`tool-end`/`status`/`thinking` events are currently not rendered.
+Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`streaming.ts`) that sends a message early and edits it live as `text` events arrive, throttled to ~1500 ms and skipping no-op edits, with a typing indicator refreshing throughout. `tool-start` and `status` events become a transient italic line below the streamed text that the next text replaces; on stream end `finalize()` upgrades the message to its final chunked form. Any streaming send/edit failure trips the renderer into a broken state and `finalize()` falls back to a plain `sendChunked` of the full text, so text is never lost.
 
 ## Components
 
@@ -38,7 +38,8 @@ Rendering is whole-message: `respond()` drains the event stream while a typing i
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/extensions/telegram/index.ts` | Extension entry: config schema (`botToken`, `chatId`, `allowMedia`, `pushNotifications`, `extraFileRoots`), disable-on-missing-config, bot/channel construction, allowed-roots computation, tool factory registration | Silent disable (info log) instead of startup failure; allowed roots deduplicated from workspace + `tmpdir()` + expanded extras |
-| `src/extensions/telegram/channel.ts` | `TelegramChannel implements Channel`: grammY handlers (message, `callback_query:data`), token validation, detached polling, `respond()`/`deliver()` under the mutex, media handler with user-facing failure notices, last inbound/outbound ID tracking | `answerCallbackQuery()` before the auth check so unauthorized tappers' spinners still clear; polling runs detached because grammY's `start()` only resolves when polling stops |
+| `src/extensions/telegram/channel.ts` | `TelegramChannel implements Channel`: grammY handlers (message, `callback_query:data`), token validation, detached polling, `respond()` driving a per-exchange `StreamRenderer` under the mutex, `/stop` abort handling, `deliver()`/`status()`, media handler with user-facing failure notices, last inbound/outbound ID tracking | `answerCallbackQuery()` before the auth check so unauthorized tappers' spinners still clear; polling runs detached because grammY's `start()` only resolves when polling stops; `/stop` aborts the live run via the injected `stop` callback rather than reaching the agent |
+| `src/extensions/telegram/streaming.ts` | `StreamRenderer`: progressive per-exchange renderer — `appendText`/`showTransient`/`finalize` over one or more Telegram messages, ~1500 ms `EDIT_THROTTLE_MS`, no-op-edit skipping, overflow finalization at the 4096 limit, broken-state fallback to a fresh `sendChunked` | One renderer per `respond()`; transient tool/status line composed below the buffer and dropped on the next text; a single send/edit failure stops live editing and defers the whole text to `finalize()` |
 | `src/extensions/telegram/inbound.ts` | Pure mappers from grammY `Message`/tap values to domain `InboundMessage` | Button taps framed as explicit prose so the agent distinguishes taps from typed input |
 | `src/extensions/telegram/chunking.ts` | `splitMessage`: paragraph > line > hard split within 4096 UTF-16 units | JS `string.length` is already UTF-16 code units — Telegram's actual constraint, no conversion layer needed; hard split backs off one unit at a low surrogate |
 | `src/extensions/telegram/sending.ts` | `sendWithMarkdownFallback`, `sendChunked`, `notifyViaCopyDelete`, `deliverText`, `startTyping`; narrow `SendApi` interface | Copy-first ordering keeps text safe (copy fails → original preserved; delete fails → duplicate accepted after 3 retries); typing refreshed every 5 s (Telegram expires chat actions at ~5 s) |
@@ -50,22 +51,23 @@ Rendering is whole-message: `respond()` drains the event stream while a typing i
 
 ## Key Decisions
 
-### Whole-message rendering instead of progressive edits
+### Progressive live-edit rendering with a throttle and broken-state fallback
 
-**Choice**: `respond()` accumulates `text` events and sends once after the stream completes, with a typing indicator covering the wait.
-**Why**: Progressive editing requires edit throttling, split-message reconciliation, and partial-markdown-safe formatting — a large surface for the first cut. Draining the stream then chunk-sending needs none of it, and the conversation loop already hands the channel a complete event stream per exchange.
-**Alternatives Considered**: Progressive `editMessageText` with throttle; buffered edits per N seconds.
+**Choice**: `respond()` drives a `StreamRenderer` that sends a message early and edits it as `text` events arrive, throttled to `EDIT_THROTTLE_MS` (~1500 ms) with no-op edits skipped; `tool-start`/`status` events render as a transient italic line below the buffer; `finalize()` flushes the remainder bypassing the throttle. The first send/edit failure flips the renderer `broken`, after which `finalize()` deletes the partial message and resends the full text via `sendChunked`.
+**Why**: Live editing gives the user incremental feedback and a place to surface tool activity. The cost — edit throttling, overflow reconciliation, partial-markdown risk — is contained in one renderer module, and the broken-state path means any Telegram edit failure degrades cleanly to a plain whole-message send rather than losing or duplicating text.
+**Alternatives Considered**: Whole-message rendering (accumulate then send once after the stream) — simplest, but no streaming feedback and no hook for tool/status markers; buffered edits per N seconds (the throttle is exactly this, tuned to ~1500 ms).
 
 **Consequences**:
-- Pro: No edit rate-limit handling, no split-message bookkeeping, no partial-markdown parse failures
-- Pro: Chunking runs once on final text, so splits land at stable boundaries
-- Con: No streaming feedback beyond the typing indicator; long responses appear all at once
-- Con: Tool-activity and status events have no rendering hook yet (silently dropped in the event switch)
+- Pro: Incremental feedback and a rendering hook for tool-activity/status markers
+- Pro: Markdown parse failures and edit errors degrade to a fresh plain `sendChunked` instead of breaking the exchange
+- Pro: Overflow is handled by finalizing full chunks in place and streaming only the tail, so the 4096 limit never aborts streaming
+- Con: More moving parts than a single send — throttle, transient composition, overflow commit, and broken-state bookkeeping all live in `streaming.ts`
+- Con: Throttled edits mean the user sees text in ~1500 ms steps, not token-by-token
 
 ### Markdown with plain-text fallback instead of an entity converter
 
 **Choice**: Send with legacy `parse_mode: "Markdown"`; if Telegram rejects with a "can't parse entities" error, resend the identical text with no parse mode (`isMarkdownParseError` matches on the error description).
-**Why**: An entity-conversion pipeline (telegramify-markdown style) only pays off when progressive edits re-parse partial markdown constantly. With whole-message sends, parse failures are rare, and the fallback guarantees delivery — formatting is best-effort, text is never lost.
+**Why**: An entity-conversion pipeline (telegramify-markdown style) is a large surface for a single-user channel. The Markdown-then-plain fallback applies to every send and edit (streaming flush, overflow commit, and `finalize()`), so a chunk that fails to parse mid-stream resends unformatted and the renderer keeps going — formatting is best-effort, text is never lost.
 **Alternatives Considered**: MarkdownV2 with escaping (strict, breaks easily on LLM output); a TS entity-conversion library; plain text always.
 
 **Consequences**:
@@ -109,6 +111,18 @@ Rendering is whole-message: `respond()` drains the event stream while a typing i
 
 ## System Behavior
 
+### Scenario: Progressive rendering of a long response with a tool call
+
+**Given**: An exchange that emits a `tool-start`, then a long stream of `text` events exceeding 4096 characters
+**When**: `respond()` consumes the stream
+**Then**: The renderer first shows `_⚙ <tool>_` as a transient line, replaces it with text on the first `text` event, edits the message at most once per ~1500 ms, finalizes each full chunk in place once the buffer overflows the limit while the tail keeps streaming, and on stream end `finalize()` flushes the remainder; the last message ID becomes the pin target.
+
+### Scenario: User sends `/stop` mid-run
+
+**Given**: The agent is generating a response
+**When**: The user sends `/stop`
+**Then**: `handleStop` records the message as the last inbound, calls the injected `stop` callback (wired to the coordinator's exchange abort) instead of submitting a turn, and replies `⏹ Stopped.`; an abort failure is logged but the acknowledgement still sends.
+
 ### Scenario: Markdown parse failure on a response chunk
 
 **Given**: The agent's response contains unbalanced markdown
@@ -135,7 +149,8 @@ Rendering is whole-message: `respond()` drains the event stream while a typing i
 
 ## Notes
 
-- `tool-start`/`tool-end`, `status`, and `thinking` events reach `respond()` but are intentionally unhandled today — tool-activity markers are a known gap against DLT-032.
-- The `pushNotifications` flag only affects `deliver()`; `respond()` sends with default notification behavior (one notification per chunk).
+- `respond()` renders `text`, `tool-start`, `status`, and `error` events; `tool-end` and `thinking` events reach the event switch but have no rendering and fall through the `default` branch.
+- `status()` routes through the active `StreamRenderer` when one exists (showing the transient line); with no in-flight exchange it falls back to a typing chat action to signal liveness.
+- The `pushNotifications` flag only affects `deliver()`; `respond()`'s streaming sends use default notification behavior.
 - `react_to_message` passes the emoji through rather than validating against Telegram's evolving allowed set — the API rejection is surfaced to the agent.
 - The send-file allowed-roots check is a prefix test on resolved paths (`validateFilePath`); symlinks are not canonicalized before the check.
