@@ -58,19 +58,29 @@ export class Coordinator {
   }
 
   submit(message: InboundMessage): void {
-    // "/queue …" opts out of steering: the message waits for the next exchange.
+    // Leading slash commands are channel-agnostic. "/queue …" opts out of steering
+    // (the message waits for the next exchange); "/new …" forces a fresh session,
+    // honored downstream by the boundary extension. Both skip steering: neither
+    // wants to fold into the live run.
     const queued = message.text.startsWith("/queue ");
-    const normalized = queued
-      ? {
-          ...message,
-          text: message.text.slice("/queue ".length).trim(),
-          metadata: { ...message.metadata, queued: true },
-        }
-      : message;
+    const forceNew = message.text.startsWith("/new ");
+
+    const normalized =
+      queued || forceNew
+        ? {
+            ...message,
+            text: message.text.slice(message.text.indexOf(" ") + 1).trim(),
+            metadata: {
+              ...message.metadata,
+              ...(queued ? { queued: true } : { forceNew: true }),
+            },
+          }
+        : message;
 
     // Messages arriving mid-exchange steer the live run instead of waiting in line.
     if (
       !queued &&
+      !forceNew &&
       this.exchanging &&
       this.active != null &&
       normalized.metadata.origin !== "system"

@@ -73,6 +73,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
       next += 1;
       return { message_id: next };
     }),
+    setMyCommands: vi.fn(async () => true),
   };
 
   const bot = {

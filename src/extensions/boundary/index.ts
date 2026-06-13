@@ -31,16 +31,30 @@ export default defineExtension<BoundaryConfig>({
       registerIdleClose(app.sessions, app.extensionConfig.idleCloseSeconds, app.log);
     }
 
-    if (!app.extensionConfig.enabled) {
-      app.log.info("boundary detection disabled by configuration");
-      return;
-    }
+    const detectionEnabled = app.extensionConfig.enabled;
 
-    app.sessions.onExchange(createSummaryProcessor(app.agent.side, app.sessions, app.log));
+    if (detectionEnabled) {
+      app.sessions.onExchange(createSummaryProcessor(app.agent.side, app.sessions, app.log));
+    } else {
+      app.log.info("boundary detection disabled by configuration");
+    }
 
     app.inbound.use(async (message, context, next) => {
       // System-originated injections (session tasks, notices) never shift topics.
       if (message.metadata.boundary === "skip") return next();
+
+      // "/new": force a fresh session by closing the active one. Honored even when
+      // topic detection is off, so the user can always start over explicitly.
+      if (message.metadata.forceNew === true) {
+        if (context.session != null) {
+          app.status("Starting a new conversation");
+          await context.closeSession();
+        }
+
+        return next();
+      }
+
+      if (!detectionEnabled) return next();
 
       // An explicit reply-to target (e.g. a Telegram reply) force-routes to its
       // owning session, bypassing topic classification entirely.

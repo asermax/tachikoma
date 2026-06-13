@@ -131,6 +131,18 @@ export class TelegramChannel implements Channel {
     // only when polling stops, so it runs detached.
     await this.bot.init();
 
+    // Surface the channel-agnostic prefix commands in Telegram's command menu so
+    // they're discoverable; the coordinator parses the prefixes (see submit()).
+    await this.bot.api
+      .setMyCommands([
+        { command: "new", description: "Start a new conversation, ignoring the current topic" },
+        {
+          command: "queue",
+          description: "Queue a message for the next turn instead of interrupting",
+        },
+      ])
+      .catch((error) => runtime.log.warn({ err: error }, "setting bot commands failed"));
+
     void this.bot
       .start({
         allowed_updates: ["message", "callback_query", "message_reaction"],
