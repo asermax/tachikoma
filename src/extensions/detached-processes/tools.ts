@@ -7,7 +7,7 @@ import { type Static, Type } from "typebox";
 import type { Logger } from "../../log.ts";
 import { type ScopeInspector, scopeUnitName } from "./cgroup.ts";
 import type { ProcessLimiter } from "./limits.ts";
-import { readOutputTail } from "./output.ts";
+import { readOutputTail, readOutputWindow } from "./output.ts";
 import { type ProcessNotification, type ReconcileDeps, reconcileExit } from "./reconcile.ts";
 import type { ProcessRepository } from "./repository.ts";
 import { type DetachedProcessRecord, STOP_REASON_OOM_KILLED } from "./schema.ts";
@@ -63,6 +63,20 @@ export const ReadProcessOutputParams = Type.Object({
       description: "Which output stream to read (default stdout)",
     }),
   ),
+  offset: Type.Optional(
+    Type.Number({
+      description:
+        "0-based line offset to start a windowed read; pair with count to page through older output",
+    }),
+  ),
+  count: Type.Optional(
+    Type.Number({ description: "Number of lines to read from offset (windowed read)" }),
+  ),
+});
+
+export const RenameProcessParams = Type.Object({
+  process_id: Type.String({ description: "ID of the process to rename" }),
+  name: Type.String({ description: "New display name (must not be empty)" }),
 });
 
 export const TerminateProcessParams = Type.Object({
@@ -205,6 +219,27 @@ export const handleReadProcessOutput = async (
   if (record == null) throw notFound(args.process_id);
 
   const path = args.stream === "stderr" ? record.stderrPath : record.stdoutPath;
+
+  if (args.offset != null || args.count != null) {
+    const offset = args.offset ?? 0;
+    const count = args.count ?? 100;
+
+    if (offset < 0) throw new Error(`Invalid offset: ${offset}. Must be 0 or greater.`);
+    if (count < 1) throw new Error(`Invalid count: ${count}. Minimum value is 1.`);
+
+    const window = await readOutputWindow(path, offset, count);
+
+    if (window == null || window.totalLines === 0) return "No output yet.";
+
+    if (window.pastEnd) {
+      return `No output at lines ${offset}-${offset + count} (log has ${window.totalLines} lines).`;
+    }
+
+    const { content, truncated } = truncateTail(window.content);
+
+    return truncated ? `[earlier output truncated]\n${content}` : content;
+  }
+
   const raw = await readOutputTail(path);
 
   if (raw == null || raw === "") return "No output yet.";
@@ -212,6 +247,21 @@ export const handleReadProcessOutput = async (
   const { content, truncated } = truncateTail(raw);
 
   return truncated ? `[earlier output truncated]\n${content}` : content;
+};
+
+export const handleRenameProcess = async (
+  deps: ProcessToolDeps,
+  args: Static<typeof RenameProcessParams>,
+): Promise<string> => {
+  if (args.name.trim() === "") throw new Error("Name must not be empty or whitespace.");
+
+  const record = deps.repository.get(args.process_id);
+
+  if (record == null) throw notFound(args.process_id);
+
+  deps.repository.rename(record.id, args.name);
+
+  return `Process renamed to '${args.name}'.`;
 };
 
 export const handleTerminateProcess = async (
@@ -318,14 +368,30 @@ export const createProcessToolsFactory =
       name: "read_process_output",
       label: "Read Process Output",
       description:
-        "Read the tail of a detached process's captured output. Defaults to stdout; pass stream='stderr' for the error stream. Large logs are truncated to the most recent output.",
+        "Read a detached process's captured output. Defaults to the tail of stdout; pass stream='stderr' for the error stream. Pass offset (0-based line) and/or count to read a specific window instead, paging through older output. Large reads are truncated to the most recent output.",
       promptSnippet: "Read captured output of a detached process",
       promptGuidelines: [
         "Use read_process_output to check on a detached process's progress or failures.",
+        "Use offset/count to page back through earlier output when the tail isn't enough.",
       ],
       parameters: ReadProcessOutputParams,
       async execute(_toolCallId, params) {
         return textResult(await handleReadProcessOutput(deps, params));
+      },
+    });
+
+    pi.registerTool({
+      name: "rename_process",
+      label: "Rename Process",
+      description:
+        "Rename a detached process record's display name. Only updates the stored label — the running process is unaffected.",
+      promptSnippet: "Rename a detached process record",
+      promptGuidelines: [
+        "Use rename_process when the user wants a clearer label for a tracked process.",
+      ],
+      parameters: RenameProcessParams,
+      async execute(_toolCallId, params) {
+        return textResult(await handleRenameProcess(deps, params));
       },
     });
 

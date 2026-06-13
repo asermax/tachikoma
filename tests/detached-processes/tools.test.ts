@@ -5,6 +5,7 @@ import {
   handleDispatchProcess,
   handleQueryProcess,
   handleReadProcessOutput,
+  handleRenameProcess,
 } from "../../src/extensions/detached-processes/tools.ts";
 import { createTestContext, type TestContext, waitFor } from "./setup.ts";
 
@@ -107,9 +108,97 @@ describe("handleReadProcessOutput", () => {
     );
   });
 
+  it("reads a windowed slice with offset and count", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, {
+      name: "counter",
+      command: "for i in 1 2 3 4 5; do echo line$i; done",
+    });
+
+    await waitFor(() => !isAlive(record.pid));
+
+    expect(
+      await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id, offset: 1, count: 2 }),
+    ).toBe("line2\nline3");
+  });
+
+  it("windows the stderr stream when selected", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, {
+      name: "errs",
+      command: "for i in a b c; do echo err$i >&2; done",
+    });
+
+    await waitFor(() => !isAlive(record.pid));
+
+    expect(
+      await handleReadProcessOutput(ctx.toolDeps, {
+        process_id: record.id,
+        stream: "stderr",
+        offset: 0,
+        count: 2,
+      }),
+    ).toBe("erra\nerrb");
+  });
+
+  it("reports when the window starts past the end of the log", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, {
+      name: "short",
+      command: "echo only-line",
+    });
+
+    await waitFor(() => !isAlive(record.pid));
+
+    expect(
+      await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id, offset: 50, count: 10 }),
+    ).toMatch(/No output at lines 50-60 \(log has 1 lines\)\./);
+  });
+
+  it("rejects a negative offset", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, { name: "x", command: "echo hi" });
+
+    await waitFor(() => !isAlive(record.pid));
+
+    await expect(
+      handleReadProcessOutput(ctx.toolDeps, { process_id: record.id, offset: -1 }),
+    ).rejects.toThrow(/Invalid offset/);
+  });
+
   it("throws for an unknown process id", async () => {
     await expect(handleReadProcessOutput(ctx.toolDeps, { process_id: "nope" })).rejects.toThrow(
       /not found/,
     );
+  });
+});
+
+describe("handleRenameProcess", () => {
+  it("renames a process record's display name", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, { name: "old-name", command: "sleep 0.1" });
+
+    const message = await handleRenameProcess(ctx.toolDeps, {
+      process_id: record.id,
+      name: "new-name",
+    });
+
+    expect(message).toBe("Process renamed to 'new-name'.");
+    expect(ctx.repository.get(record.id)?.name).toBe("new-name");
+
+    await waitFor(() => !isAlive(record.pid));
+  });
+
+  it("rejects a blank name", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, { name: "keep", command: "sleep 0.1" });
+
+    await expect(
+      handleRenameProcess(ctx.toolDeps, { process_id: record.id, name: "   " }),
+    ).rejects.toThrow(/must not be empty/);
+
+    expect(ctx.repository.get(record.id)?.name).toBe("keep");
+
+    await waitFor(() => !isAlive(record.pid));
+  });
+
+  it("throws for an unknown process id", async () => {
+    await expect(
+      handleRenameProcess(ctx.toolDeps, { process_id: "nope", name: "whatever" }),
+    ).rejects.toThrow(/not found/);
   });
 });

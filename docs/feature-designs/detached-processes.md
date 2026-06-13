@@ -39,14 +39,14 @@ Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`),
 |-----------|----------------|---------------|
 | `src/extensions/detached-processes/index.ts` | `defineExtension` wiring: repository, limiter, scope inspector, bootstrap hook, tool factory, watcher job | Config: `defaultMemoryLimitMb` (1024, `0` disables), `watchIntervalSeconds` (15); the single `SystemctlScopeInspector` is shared by the reconciler and the tools |
 | `src/extensions/detached-processes/schema.ts` | `detached_processes` drizzle table, `ProcessStatus` const map, `STOP_REASON_AGENT_STOPPED`, `STOP_REASON_OOM_KILLED` | Status index for the watcher's hot query; `memoryLimitMb` recorded only when actually enforced; OOM attribution reuses the `stop_reason` column (no new column) |
-| `src/extensions/detached-processes/repository.ts` | `ProcessRepository` CRUD: `create`, `get`, `listRunning`/`listExited`, `markStopInitiated`, `clearStopReason`, `reconcileToExited` | `reconcileToExited` is a conditional UPDATE (`WHERE status='running'`) returning whether the caller won; an optional `stopReason` arg stamps OOM attribution atomically with the transition |
+| `src/extensions/detached-processes/repository.ts` | `ProcessRepository` CRUD: `create`, `get`, `listRunning`/`listExited`, `markStopInitiated`, `clearStopReason`, `rename`, `reconcileToExited` | `reconcileToExited` is a conditional UPDATE (`WHERE status='running'`) returning whether the caller won; an optional `stopReason` arg stamps OOM attribution atomically with the transition; `rename` updates only the `name` column (no migration — the column already exists) |
 | `src/extensions/detached-processes/spawn.ts` | `spawnProcess` (validation, detach, sidecar listener, persistence, DB-failure cleanup), `terminate` (group signalling + escalation), `isAlive` | `detached: true` makes the child a group leader so `kill(-pid)` reaches the whole tree; parent closes its fd copies after spawn; passes the record id to `limiter.wrap` so the scope can be named |
 | `src/extensions/detached-processes/limits.ts` | `ProcessLimiter` seam + `SystemdRunLimiter` | `systemd-run --user --scope --unit=tachikoma-<id>.scope` puts the command in a *named* transient cgroup and exits with its status, so liveness and exit codes behave like an unwrapped spawn while leaving the scope addressable |
 | `src/extensions/detached-processes/cgroup.ts` | `scopeUnitName`, `ScopeInspector` seam + `SystemctlScopeInspector` (`readMemoryCurrentMb`, `wasOomKilled`) | Reads via `systemctl --user show <unit> -p MemoryCurrent\|Result --value` — agnostic of cgroup nesting and readable post-exit; degrades to null/false off systemd; injectable `show` runner for tests |
-| `src/extensions/detached-processes/output.ts` | `readOutputTail` — last 256KB of a log file | Generous raw window; `truncateTail` trims to pi's limits in the tool layer |
+| `src/extensions/detached-processes/output.ts` | `readOutputTail` — last 256KB of a log file; `readOutputWindow` — a 0-based `[offset, count)` line slice with total-line count and a past-EOF flag | Generous raw tail window; `truncateTail` trims both reads to pi's limits in the tool layer; the window splits on newlines (trailing newline treated as a terminator, not an empty line) |
 | `src/extensions/detached-processes/watcher.ts` | `createWatcherTick` — sweep running records, reconcile dead ones | Per-record try/catch so one bad record never stops the sweep |
 | `src/extensions/detached-processes/reconcile.ts` | `reconcileExit` (shared reconciler), `reconcileOnStartup` (crash recovery) | Single winner notifies; agent-stopped and startup paths suppress notification; a 137 on a limited process consults the scope `Result` for OOM attribution |
-| `src/extensions/detached-processes/tools.ts` | Param schemas, four tool handlers, `createProcessToolsFactory` | Handlers are plain functions over a `ProcessToolDeps` bag so tests drive them without pi; `query_process` reads live scope memory for a running limited process and shows OOM stop reasons |
+| `src/extensions/detached-processes/tools.ts` | Param schemas, five tool handlers, `createProcessToolsFactory` | Handlers are plain functions over a `ProcessToolDeps` bag so tests drive them without pi; `query_process` reads live scope memory for a running limited process and shows OOM stop reasons; `read_process_output` branches to a windowed read when `offset`/`count` is supplied, else tails; `rename_process` updates the stored name only |
 | `tests/detached-processes/` | Real-spawn integration tests (`sh` children) over an in-memory-style temp DB; `cgroup.test.ts` and `oom.test.ts` cover scope inspection, OOM attribution, and live-usage reporting | `setup.ts` fakes the limiter, logger, notify sink, and scope inspector (an overridable `ScopeInspector` arg to `createTestContext`) |
 
 ## Key Decisions
@@ -140,6 +140,12 @@ Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`),
 **When**: The agent calls `query_process` with its `process_id`.
 **Then**: The handler reads the scope's `MemoryCurrent` via `systemctl --user show`, converts it to MB, and renders both "Memory limit: 128MB" and "Memory usage: NMB". Off systemd (or once the scope is gone) the usage line is simply omitted.
 
+### Scenario: Paging back through earlier output
+
+**Given**: A long-running process whose stdout log has grown well past the tail window.
+**When**: The agent calls `read_process_output` with `offset` and `count` (e.g. `offset=200, count=50`).
+**Then**: `readOutputWindow` returns the `[200, 250)` line slice (still honoring `stream`), `truncateTail` trims it to pi's limits, and the agent can step the offset to walk the log. A window whose `offset` lands at or past the last line returns a message naming the requested range and the log's total line count instead of empty content.
+
 ### Scenario: Stubborn process ignoring SIGTERM
 
 **Given**: A process traps SIGTERM (`trap '' TERM`).
@@ -150,5 +156,5 @@ Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`),
 
 - Payload shape: the reconciler hands `notify` a `{ source, processId, severity: "info" | "error", message }` record, and `index.ts` reshapes it into the notifications router's contract — `{ title: "Process <id>", text: message, severity, source }` with the reconciler's `error` remapped to `warning` (and `info` left as-is). Because the payload now carries a non-empty `text` and a valid severity, `parseNotifyPayload` accepts it and the exit notice is delivered to the user (idle-gated; only `urgent` would bypass gating)
 - Tools are registered through `app.agent.use`, so they exist in interactive agent sessions; headless side runs (`bare: true` in `src/agent/manager.ts`) do not receive them
-- There is no rename tool and no system-prompt preamble section; tool discoverability relies on `promptSnippet`/`promptGuidelines`
+- There is no system-prompt preamble section; tool discoverability relies on `promptSnippet`/`promptGuidelines`
 - `tests/detached-processes/setup.ts` still carries a DDL mirror of `schema.ts`; the central migrations (`drizzle/0001_extensions.sql`) already include the table, so the mirror is removable

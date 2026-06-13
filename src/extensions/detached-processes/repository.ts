@@ -77,6 +77,10 @@ export class ProcessRepository {
       .run();
   }
 
+  rename(id: string, name: string): void {
+    this.db.update(detachedProcesses).set({ name }).where(eq(detachedProcesses.id, id)).run();
+  }
+
   /**
    * Conditionally transition a record from running to exited. Returns true if
    * this caller won the race; false when another reconciler already did.

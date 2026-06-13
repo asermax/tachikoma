@@ -16,7 +16,7 @@ Agent tools dispatch, inspect, read output from, and terminate OS-level shell co
 
 | ID | Requirement |
 |----|-------------|
-| R0 | Provide agent tools `dispatch_detached_process`, `query_process`, `read_process_output`, and `terminate_process`, registered in every agent session via a pi extension factory (`app.agent.use`) |
+| R0 | Provide agent tools `dispatch_detached_process`, `query_process`, `read_process_output`, `terminate_process`, and `rename_process`, registered in every agent session via a pi extension factory (`app.agent.use`) |
 | R1 | Hard detach: spawn via `sh -c` as its own process group leader (`detached: true`, unref'd) with stdin ignored and stdout/stderr redirected to files, so processes survive Tachikoma's exit, restart, or crash |
 | R2 | Persist records in the `detached_processes` table (id, name, command, cwd, pid, status, exit code, stop reason, stdout/stderr paths, memory limit, started/exited timestamps), indexed by status and covered by the central drizzle migrations |
 | R3 | `dispatch_detached_process` accepts `name` (required, non-blank), `command` (required, non-blank shell string), optional `cwd`, `env` overrides, and `memory_limit_mb`; returns the record ID, PID, and both log paths |
@@ -27,6 +27,8 @@ Agent tools dispatch, inspect, read output from, and terminate OS-level shell co
 | R8 | `query_process` with `process_id` returns full record details; without it, lists running records (`archived=true` lists exited ones); dead-but-`running` records encountered on either path are lazily reconciled to `exited` before responding; unknown ids return a "not found" error |
 | R8a | For a `running` process that carries a memory limit, `query_process` with `process_id` reads the scope's live `memory.current` (via `systemctl --user show <scope> -p MemoryCurrent`) and reports it in MB alongside the limit; the usage line is omitted when no reading is available (no systemd session, scope gone) |
 | R9 | `read_process_output` returns the tail of the captured stdout (default) or stderr (`stream="stderr"`) log, trimmed with pi's `truncateTail` and prefixed with a truncation marker when shortened; missing or empty logs yield "No output yet." |
+| R9a | `read_process_output` also supports a windowed read: when `offset` (0-based line, default 0) and/or `count` (lines, default 100) are given, it returns the `[offset, offset + count)` line slice of the selected stream instead of the tail; a window starting at or past EOF returns a message naming the requested range and the log's line count; a negative `offset` or `count` below 1 is rejected with a validation error |
+| R9b | `rename_process` updates a record's stored display `name` (rejecting a blank/whitespace name) without touching the running process; unknown ids return a "not found" error |
 | R10 | `terminate_process` signals the whole process group (default SIGTERM, signal name validated against the OS signal table), escalates to SIGKILL after `grace_seconds` (default 10); `grace_seconds=0` sends the signal and returns immediately, leaving the exit to the watcher; already-exited records return "already stopped" without signalling |
 | R11 | Agent-initiated stop tracking: `stop_reason` is set to `agent_stopped` before signalling and cleared if signal delivery fails with EPERM; exit notifications are suppressed for agent-stopped records |
 | R12 | Exit-code capture: while the host is alive, an in-process exit listener writes the code (128 + signal number for signal deaths) to an `exit-code` sidecar file that reconciliation reads (with one 100ms retry); exits that happen while the host is down record an unknown (`null`) code |
@@ -71,12 +73,22 @@ Spawning detaches the command into its own process group, wires its output to pe
 - Given `query_process` with a `process_id` for an exited OOM-killed process, then the details include a "Stopped: OOM-killed" line
 - Given an unknown `process_id`, then a "not found" error is returned
 
-### Reading Output (R9)
+### Reading Output (R9, R9a)
 
 **Acceptance Criteria**:
 - Given `read_process_output` with only a `process_id`, then the tail of the stdout log is returned; with `stream="stderr"`, the stderr log
 - Given the log is empty or missing, then "No output yet." is returned
 - Given a log larger than pi's tail limits, then the response is truncated to the most recent output and prefixed with `[earlier output truncated]`
+- Given `offset` and/or `count`, then the `[offset, offset + count)` line slice of the selected stream is returned (offsets 0-based; the stream selection still applies)
+- Given a window that begins at or past the last line, then a message names the requested line range and the log's line count rather than returning empty content
+- Given a negative `offset` or a `count` below 1, then a validation error is returned before reading
+- Given an unknown `process_id`, then a "not found" error is returned
+
+### Renaming (R9b)
+
+**Acceptance Criteria**:
+- Given `rename_process` with a non-blank `name`, then the record's stored `name` is updated and the running process is unaffected
+- Given a blank or whitespace-only `name`, then a validation error is returned and the record is unchanged
 - Given an unknown `process_id`, then a "not found" error is returned
 
 ### Termination (R10, R11)

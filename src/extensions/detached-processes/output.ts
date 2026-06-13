@@ -1,4 +1,4 @@
-import { open, stat } from "node:fs/promises";
+import { open, readFile, stat } from "node:fs/promises";
 
 // Generous raw window — truncateTail trims it to pi's byte/line limits afterwards.
 const TAIL_READ_BYTES = 256 * 1024;
@@ -26,4 +26,42 @@ export const readOutputTail = async (path: string): Promise<string | null> => {
   } finally {
     await handle.close();
   }
+};
+
+export interface OutputWindow {
+  content: string;
+  /** Total number of lines in the log. */
+  totalLines: number;
+  /** True when the requested offset begins at or after EOF. */
+  pastEnd: boolean;
+}
+
+/**
+ * Read a `[offset, offset + count)` window of lines from a log file; null when
+ * the file does not exist. Offsets are 0-based. A window starting past the last
+ * line yields empty content with `pastEnd` set.
+ */
+export const readOutputWindow = async (
+  path: string,
+  offset: number,
+  count: number,
+): Promise<OutputWindow | null> => {
+  let raw: string;
+
+  try {
+    raw = await readFile(path, "utf-8");
+  } catch {
+    return null;
+  }
+
+  if (raw === "") return { content: "", totalLines: 0, pastEnd: offset > 0 };
+
+  // A trailing newline is a line terminator, not an extra empty line.
+  const lines = (raw.endsWith("\n") ? raw.slice(0, -1) : raw).split("\n");
+
+  return {
+    content: lines.slice(offset, offset + count).join("\n"),
+    totalLines: lines.length,
+    pastEnd: offset >= lines.length,
+  };
 };
