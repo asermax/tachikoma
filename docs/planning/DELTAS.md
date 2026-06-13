@@ -178,12 +178,12 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Complexity**: Medium
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
 
-### DLT-123: Agent reflections memory type
+### DLT-123: Learnings memory layer
 **Status**: ✗ Defined
-**Depends on**: None
+**Depends on**: DLT-172
 **Priority**: 3 (Medium)
 **Complexity**: Medium
-**Description**: Add a memory category for the agent's own subjective assessments — what worked, what didn't, patterns it notices about its own behavior and capabilities. Distinct from existing memory types (episodic, facts, preferences) which capture objective user-centric information. Reflections are the agent's self-observations, forming the input layer for automated self-improvement. A new post-processing processor extracts reflections from completed sessions and stores them alongside other memory types. This enables the self-healing skill system and future self-learning capabilities to draw on the agent's accumulated experience rather than starting from scratch each session.
+**Description**: Add a dedicated learnings layer to the memory model — a `learnings/` store of `<slug>.md` files capturing recurring friction, strict constraints, and repeated failures observed across sessions (e.g. an uncooperative test suite, a deployment step that keeps biting, a hard rule the user enforces), alongside the agent's own subjective self-observations about what worked and what didn't. This generalizes the earlier agent-reflections idea: reflections become one kind of learning. A post-processing extractor folds learnings from each completed session into the store, distinct from topic files (stable what/why knowledge about subjects) and episodic summaries (the narrative of what happened). Learnings are the experience substrate that later self-improvement work draws on, built on the topic-oriented memory store's layout, indexing, and extraction conventions.
 
 ### DLT-126: Media preprocessor for content understanding
 **Status**: ✗ Defined
@@ -241,13 +241,6 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's agent session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved agent session.
 
-### DLT-148: Sharpen scope boundaries across post-processor prompts
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: The post-processing extractors for episodic memory, facts, preferences, and core context updates each have their own prompt, but their outputs currently overlap in ways that don't serve distinct purposes. Episodic entries recap CLI commands instead of summarizing high-level arcs, facts paste full diffs or code snippets instead of capturing what-and-why, and preferences restate technical details already covered in facts. Refine each processor's prompt with sharper guidance on what belongs in its memory type versus others, including concrete positive and negative examples drawn from observed output. Intentional duplication across types stays valid when the framing differs (a topic appearing in both a fact and a preference with different angles), but incidental overlap should be eliminated. Scope boundaries to enforce: episodic stays high-level narrative, facts stay declarative what/why, preferences stay behavioral. Verification is a spot-review of extracted memories after the change to confirm overlap reduction without losing coverage.
-
 ### DLT-150: Output phase markers for agent work styling
 **Status**: ✗ Defined
 **Depends on**: None
@@ -296,4 +289,18 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Priority**: 3 (Medium)
 **Complexity**: Hard
 **Description**: Several transient tables grow without bound today: Telegram message↔session mappings accumulate one row per inbound and outbound message, closed conversation sessions are never deleted, recurring task instances pile up (only spent one-shot definitions are pruned), and exited detached-process records and soft-deleted workflow-state rows are never reclaimed. Meanwhile the retention that does exist is scattered across inconsistent triggers — one-shot task pruning on its own interval, stale-workflow cleanup at session close, transcript-file pruning in the memory maintenance schedule. Introduce a single retention sweep that runs on a fixed cadence plus a contributor extension point so each extension registers its own retention logic into the shared sweep instead of scheduling separate jobs; the host owns the tick and invokes every registered contributor with per-contributor error isolation. The existing scattered sweeps migrate onto this mechanism with no behavior change, and new contributors close the gaps: the tasks extension prunes both spent one-shot definitions and older terminal recurring instances, the workflows extension hard-deletes rows soft-deleted beyond a grace period, the core prunes old closed sessions together with their channel-message mappings, and the detached-processes extension reaps old exited records. Each contributor declares its own configurable age threshold. Two safety constraints are mandatory: any session or channel-message threshold must exceed the session resume window plus the bridging-context lookback so a still-resumable session is never deleted, and every deletion must be foreign-key-safe so a removed session takes its channel messages with it and no child rows are orphaned. The contributor-registration contract (where it attaches on the extension API, ordering relative to the tick, per-contributor error isolation), the per-contributor configuration surface and grace/threshold defaults, and whether the sweep runs as a host-owned cron or a registered scheduler job should be evaluated during speccing; the cross-extension ownership of the session→channel-message cascade (core deleting a Telegram-owned table versus Telegram contributing a cascade-aware contributor) is a key design question, and the retention-contributor pattern may warrant promotion to a design pattern if it proves reusable.
+
+### DLT-172: Unified topic-oriented memory store
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Hard
+**Description**: Replace the separate facts and preferences memory stores with a single topic-oriented store where each `<topic>.md` file holds everything known about a subject — objective reference facts and subjective preferences together — eliminating the error-prone classification boundary that fragmented that knowledge across two stores. Extraction folds both factual and preferential signals from a closed conversation into the relevant topic, creating or merging topic files rather than routing to a store, and each topic carries a single index entry. The static index injection and on-demand read pattern carry over, now scoped to topics. Episodic summaries and transcript archives are unaffected.
+
+### DLT-173: Phased consolidation and pruning maintenance
+**Status**: ✗ Defined
+**Depends on**: DLT-172, DLT-123
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Restructure memory maintenance into explicit, phase-based background passes over the unified topic store and the learnings layer, replacing the current single daily/weekly per-store sweep with named phases that each have specific tasks. A consolidation pass runs in phases — orientation (read existing topics to establish baseline and avoid duplication), signal-gathering (scan recent sessions and episodic summaries for new material), and topic-merging (create or update topic files, normalizing relative temporal references like "yesterday" into absolute ISO dates). A separate pruning pass eliminates entries contradicted by newer information and collapses clusters of near-duplicate topics into a single clean replacement, preserving the oldest record's creation timestamp. Each phase commits its workspace edits. This expands the existing time-tiered episodic and topic maintenance into a coherent, layer-aware pipeline.
 
