@@ -4,7 +4,7 @@
 
 ## Overview
 
-The notifications extension routes user-facing notifications from any producer to the active channel. Producers emit a payload on the `notify` app event; the extension routes it by severity — urgent notices are delivered immediately, everything else accumulates over a short flush window and goes out idle-gated, batched into a single digest when several pile up. Delivery gating itself (idle hold, max-hold force flush) is owned by the conversation loop (see [conversation-loop.md](conversation-loop.md)).
+The notifications extension routes user-facing notifications from any producer to the active channel. Producers emit a payload on the `notify` app event; the extension routes it by severity — urgent notices are delivered immediately, everything else accumulates over a short flush window and goes out idle-gated, batched into a single digest when several pile up. A short-lived dedup guard drops a repeated `(source + text)` notice so re-emit/retry loops do not flood the user. Delivery gating itself (idle hold, max-hold force flush) is owned by the conversation loop (see [conversation-loop.md](conversation-loop.md)).
 
 A `notify_user` tool lets the agent itself emit notifications through the same path.
 
@@ -25,6 +25,7 @@ A `notify_user` tool lets the agent itself emit notifications through the same p
 | R4 | Non-urgent notifications accumulate over a flush window (`flushWindowSeconds`, default 30); the flush delivers one message with `gate: "idle"` and `maxHoldSeconds` (default 900) |
 | R5 | A flush with a single item is formatted as one notification with a source/time header; multiple items become one digest enumerating each item with its severity and source |
 | R6 | The `notify_user` tool lets the agent emit a notification (text, optional title and severity, default `info`); the payload is emitted on the `notify` event with source `agent`, and empty text is rejected |
+| R7 | A TTL dedup guard suppresses a notification whose `(source + text)` key was already seen within `dedupTtlSeconds` (default 60); suppression applies before severity routing (urgent included), is logged at info, and expired keys are pruned opportunistically |
 
 ## Behaviors
 
@@ -44,6 +45,16 @@ Non-urgent notices are held briefly so bursts collapse into one message.
 - Given one `info` notification arrives, when the flush window elapses, then exactly one idle-gated delivery goes out containing that notification with its source/time header
 - Given several non-urgent notifications arrive within the window, when it elapses, then one idle-gated digest delivery enumerates each item with its severity and source
 - Given nothing is pending, when `flush()` runs, then nothing is delivered
+
+### Duplicate Suppression (R7)
+
+A producer (or the agent) re-emitting the same notice within the TTL window must not deliver it twice.
+
+**Acceptance Criteria**:
+- Given a notification, when an identical `(source + text)` notice arrives within `dedupTtlSeconds`, then the repeat is suppressed (not delivered) and logged at info
+- Given an identical notice arrives after the window has elapsed, then it is delivered normally
+- Given a notice with the same source but different text (or vice versa), then it is delivered normally
+- Given suppression applies to all severities — an `urgent` repeat within the window is also dropped
 
 ### Payload Tolerance (R0, R1)
 

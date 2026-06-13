@@ -24,7 +24,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 
 ## Design Overview
 
-`index.ts` wires a `NotificationRouter` to the `notify` app event and registers the `notify_user` tool factory. The router parses each payload best-effort (`payload.ts`); urgent notices are formatted and delivered with `gate: "immediate"`, everything else is pushed onto a pending list with an unref'd flush timer. When the flush window elapses, the accumulated notices go out as one delivery — a single formatted notification or a digest (`format.ts`) — with `gate: "idle"` and the configured `maxHoldSeconds`.
+`index.ts` wires a `NotificationRouter` to the `notify` app event and registers the `notify_user` tool factory. The router parses each payload best-effort (`payload.ts`), then runs it through an in-memory dedup guard: an identical `(source + text)` notice seen within `dedupTtlSeconds` is dropped before any routing. Surviving urgent notices are formatted and delivered with `gate: "immediate"`, everything else is pushed onto a pending list with an unref'd flush timer. When the flush window elapses, the accumulated notices go out as one delivery — a single formatted notification or a digest (`format.ts`) — with `gate: "idle"` and the configured `maxHoldSeconds`.
 
 ## Components
 
@@ -34,7 +34,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 |-----------|----------------|---------------|
 | `src/extensions/notifications/index.ts` | Wiring: router construction, event subscription, tool registration | Router takes `deliver` as a plain function so tests run without an app |
 | `src/extensions/notifications/payload.ts` | Event name constant, severity map, `parseNotifyPayload` | Duck-typed parsing: `text` required, severity/source defaulted — never throws |
-| `src/extensions/notifications/router.ts` | Severity routing and flush-window batching | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty |
+| `src/extensions/notifications/router.ts` | Dedup guard, severity routing, flush-window batching | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty; dedup state is an in-memory `Map<key, firstSeenMs>` pruned opportunistically |
 | `src/extensions/notifications/format.ts` | Single-notification and digest text rendering | Source/time header block prefixes every notice; timestamps rendered in UTC |
 | `src/extensions/notifications/tools.ts` | `notify_user` agent tool | Emits the same `notify` event instead of delivering directly |
 
@@ -60,6 +60,15 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 - Con: No cross-type priority ordering or preemption — notifications and session tasks are held independently and flushed in arrival order by the coordinator
 - Con: Worst-case latency for a non-urgent notice is flush window + idle hold (bounded by `maxHoldSeconds`)
 
+### TTL dedup guard on `(source + text)`
+
+**Choice**: Before routing, the router keys each parsed notice by `source + text` and drops it if an identical key was recorded within `dedupTtlSeconds` (default 60). State is an in-memory `Map` of key → first-seen epoch ms; expired keys are pruned on each new key, and suppression is logged at info. The guard runs ahead of the severity split, so urgent repeats are dropped too.
+**Why**: A producer or the agent can re-emit the same notice — e.g. a retry loop after a transient tool/API error — and without a guard each repeat reaches the user. Keying on the user-visible content (`source + text`) catches exactly the storms that matter; `source` alone is always present (defaulted to `unknown`), so the key never collapses to text-only. The window is short so a genuinely recurring condition still re-notifies once it passes.
+**Alternatives Considered**: Persisted dedup state (survives restart but needs a store and migration — overkill for an ephemeral guard); hashing the full payload including severity/title (would let a severity-only change slip an otherwise-identical storm through).
+**Consequences**:
+- Pro: Re-emit/retry loops collapse to a single delivery; zero producer coordination needed
+- Con: A legitimately repeated identical notice inside the window is silently dropped (logged, not delivered); state is per-process and reset on restart
+
 ### `notify_user` emits the event instead of delivering directly
 
 **Choice**: The agent tool emits a `NotifyPayload` with `source: "agent"` on the `notify` event rather than calling `app.channels.deliver` itself.
@@ -82,6 +91,12 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **When**: An `urgent` payload arrives
 **Then**: The urgent notice is delivered immediately (`gate: "immediate"`), even mid-exchange; the pending `info` notice flushes later on its own timer as an idle-gated delivery.
 
+### Scenario: producer re-emits the same notice
+
+**Given**: A producer emits `{ source: "monitor", text: "server down" }` and, 30 s later (inside the 60 s window), emits the identical payload again
+**When**: The router handles the second emit
+**Then**: The repeat is suppressed before routing and logged at info — only the first notice is delivered. After the window elapses, an identical notice is delivered again.
+
 ### Scenario: tasks status payload on the shared event
 
 **Given**: The tasks extension emits `{ source, instanceId, status, message }` on `notify`
@@ -90,6 +105,6 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 
 ## Notes
 
-- Config lives under `[extensions.notifications]`: `flushWindowSeconds` (30), `maxHoldSeconds` (900).
+- Config lives under `[extensions.notifications]`: `flushWindowSeconds` (30), `maxHoldSeconds` (900), `dedupTtlSeconds` (60).
 - The `notify_user` tool is bound to conversational sessions via `app.agent.use`; background side runs are bare (no Tachikoma tools), so background task agents currently cannot call it — task outcome notices come from the executor instead ([tasks.md](tasks.md)).
 - The flush timer is unref'd so a pending window never keeps the process alive; notices pending at shutdown are dropped (they are ephemeral by design).

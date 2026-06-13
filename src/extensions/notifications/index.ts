@@ -10,6 +10,7 @@ export type { NotifyPayload, Severity } from "./payload.ts";
 interface NotificationsConfig {
   flushWindowSeconds: number;
   maxHoldSeconds: number;
+  dedupTtlSeconds: number;
 }
 
 /**
@@ -24,6 +25,8 @@ export default defineExtension<NotificationsConfig>({
   configSchema: Type.Object({
     flushWindowSeconds: Type.Number({ default: 30 }),
     maxHoldSeconds: Type.Number({ default: 900 }),
+    /** Window in which an identical (source + text) notice is dropped, guarding against re-emit/retry storms. */
+    dedupTtlSeconds: Type.Number({ default: 60 }),
   }),
 
   setup(app) {
@@ -31,6 +34,7 @@ export default defineExtension<NotificationsConfig>({
       deliver: (delivery) => app.channels.deliver(delivery),
       flushWindowSeconds: app.extensionConfig.flushWindowSeconds,
       maxHoldSeconds: app.extensionConfig.maxHoldSeconds,
+      dedupTtlSeconds: app.extensionConfig.dedupTtlSeconds,
       log: app.log,
     });
 

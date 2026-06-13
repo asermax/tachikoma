@@ -16,16 +16,18 @@ const fixedNow = new Date("2026-06-12T10:00:00Z");
 
 const FLUSH_WINDOW_SECONDS = 30;
 const MAX_HOLD_SECONDS = 900;
+const DEDUP_TTL_SECONDS = 60;
 
-const createSetup = () => {
+const createSetup = (now: () => Date = () => fixedNow) => {
   const deliver = vi.fn();
   const bus = new EventBus(fakeLog);
   const router = new NotificationRouter({
     deliver,
     flushWindowSeconds: FLUSH_WINDOW_SECONDS,
     maxHoldSeconds: MAX_HOLD_SECONDS,
+    dedupTtlSeconds: DEDUP_TTL_SECONDS,
     log: fakeLog,
-    now: () => fixedNow,
+    now,
   });
 
   bus.on(NOTIFY_EVENT, (payload) => router.handle(payload));
@@ -126,6 +128,55 @@ describe("NotificationRouter", () => {
     router.flush();
 
     expect(deliver).not.toHaveBeenCalled();
+  });
+});
+
+describe("NotificationRouter dedup TTL guard", () => {
+  // Drives router.handle() directly with a mutable clock — the EventBus dispatches
+  // handlers as microtasks, which would collapse all emits to one observed instant.
+  const setupWithClock = () => {
+    let clock = new Date("2026-06-12T10:00:00Z").getTime();
+    const { deliver, router } = createSetup(() => new Date(clock));
+
+    return {
+      deliver,
+      router,
+      advanceSeconds: (seconds: number) => {
+        clock += seconds * 1000;
+      },
+    };
+  };
+
+  const urgent = { text: "server down", severity: "urgent", source: "monitor" } as const;
+
+  it("suppresses an identical (source + text) notice within the dedup window", () => {
+    const { deliver, router, advanceSeconds } = setupWithClock();
+
+    router.handle(urgent);
+    advanceSeconds(30);
+    router.handle(urgent);
+
+    expect(deliver).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets an identical notice through once the dedup window has elapsed", () => {
+    const { deliver, router, advanceSeconds } = setupWithClock();
+
+    router.handle(urgent);
+    advanceSeconds(DEDUP_TTL_SECONDS + 1);
+    router.handle(urgent);
+
+    expect(deliver).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not suppress notices with different content from the same source", () => {
+    const { deliver, router, advanceSeconds } = setupWithClock();
+
+    router.handle(urgent);
+    advanceSeconds(5);
+    router.handle({ text: "server back up", severity: "urgent", source: "monitor" });
+
+    expect(deliver).toHaveBeenCalledTimes(2);
   });
 });
 
