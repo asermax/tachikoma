@@ -33,7 +33,8 @@ export class Scheduler {
   }
 
   every(name: string, seconds: number, fn: () => void | Promise<void>): ScheduledJob {
-    const run = this.guarded(name, fn);
+    const guarded = this.guarded(name, fn);
+    const run = this.singleFlight(name, guarded);
 
     const interval = setInterval(run, seconds * 1000);
     interval.unref();
@@ -41,7 +42,8 @@ export class Scheduler {
     const handle: ScheduledJob = {
       name,
       stop: () => clearInterval(interval),
-      trigger: run,
+      // Manual triggers bypass single-flight: an explicit trigger must never be silently skipped.
+      trigger: guarded,
     };
 
     this.register(handle);
@@ -64,6 +66,25 @@ export class Scheduler {
         await fn();
       } catch (error) {
         this.log.error({ job: name, err: error }, "scheduled job failed");
+      }
+    };
+  }
+
+  private singleFlight(name: string, fn: () => void | Promise<void>): () => Promise<void> {
+    let running = false;
+
+    return async () => {
+      if (running) {
+        this.log.debug({ job: name }, "scheduled job skipped — previous run still active");
+        return;
+      }
+
+      running = true;
+
+      try {
+        await fn();
+      } finally {
+        running = false;
       }
     };
   }

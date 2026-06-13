@@ -17,6 +17,8 @@ Use **croner** for all in-process scheduling.
 
 Persistence is explicitly not the scheduler's job — task definitions and execution history live in the database (ADR-004); croner only owns the in-memory timing.
 
+Overrun protection is symmetric across both schedule kinds. Cron jobs rely on croner's `protect: true`. Interval (`every`) jobs are not croner-backed (they use a plain `setInterval`), so they wrap their callback in a single-flight guard: if the previous run is still active when the interval fires, the tick is skipped rather than overlapping itself. Manual `trigger()` always runs — it deliberately bypasses single-flight, since an explicit invocation should never be silently dropped.
+
 ## Consequences
 
 ### Positive
