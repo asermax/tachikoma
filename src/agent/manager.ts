@@ -36,16 +36,15 @@ export interface OpenSessionOptions {
 export class AgentManager {
   readonly authStorage: AuthStorage;
   readonly modelRegistry: ModelRegistry;
+  readonly settingsManager: SettingsManager;
   readonly tiers: ModelTiers;
 
   private readonly workspace: Workspace;
-  private readonly config: Config;
   private readonly sources: AgentSessionSources;
   private readonly log: Logger;
 
   constructor(workspace: Workspace, config: Config, sources: AgentSessionSources, log: Logger) {
     this.workspace = workspace;
-    this.config = config;
     this.sources = sources;
     this.log = log;
 
@@ -58,7 +57,8 @@ export class AgentManager {
       this.authStorage,
       join(workspace.piDir, "models.json"),
     );
-    this.tiers = new ModelTiers(config.agent, this.modelRegistry);
+    this.settingsManager = SettingsManager.create(workspace.root, workspace.piDir);
+    this.tiers = new ModelTiers(config.agent, this.modelRegistry, this.settingsManager);
   }
 
   async apiKeyFor(provider: string): Promise<string | undefined> {
@@ -91,15 +91,21 @@ export class AgentManager {
           ? SessionManager.open(options.sessionFile, workspace.sessionsDir)
           : SessionManager.create(workspace.root, workspace.sessionsDir);
 
+    // A configured role pins the model (and optional thinking suffix); an unset
+    // chain omits both so pi's full resolution applies — session restore first,
+    // then settings defaults, then the first credentialed model.
+    const tier = options.tier ?? "main";
+    const configured = this.tiers.configuredRef(tier) != null ? this.tiers.resolve(tier) : null;
+
     const { session, modelFallbackMessage } = await createAgentSession({
       cwd: workspace.root,
       agentDir: workspace.piDir,
-      model: this.tiers.resolve(options.tier ?? "agent"),
-      thinkingLevel: this.config.agent.thinkingLevel,
+      ...(configured != null ? { model: configured.model } : {}),
+      ...(configured?.thinkingLevel != null ? { thinkingLevel: configured.thinkingLevel } : {}),
       ...(options.tools != null ? { tools: options.tools } : {}),
       resourceLoader: loader,
       sessionManager,
-      settingsManager: SettingsManager.create(workspace.root, workspace.piDir),
+      settingsManager: this.settingsManager,
       authStorage: this.authStorage,
       modelRegistry: this.modelRegistry,
     });

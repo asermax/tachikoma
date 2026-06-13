@@ -59,7 +59,15 @@ export class SideRunner {
   }
 
   async complete({ system, user, tier = "processor" }: CompleteOptions): Promise<string> {
-    const model = this.manager.tiers.resolve(tier);
+    const { model, fromPiDefaults } = this.manager.tiers.resolve(tier);
+
+    if (fromPiDefaults) {
+      this.log.debug(
+        { tier, model: `${model.provider}/${model.id}` },
+        "tier unset — using pi default model",
+      );
+    }
+
     const apiKey = await this.manager.apiKeyFor(model.provider);
 
     const messages: Message[] = [

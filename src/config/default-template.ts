@@ -6,14 +6,19 @@ export const DEFAULT_CONFIG_TEMPLATE = `# Tachikoma configuration
 path = "~/tachikoma"
 
 [agent]
-# Model references are "provider/model-id" as known to pi's model registry.
-model = "anthropic/claude-opus-4-5"
-# off | minimal | low | medium | high | xhigh
-thinkingLevel = "medium"
-# Cheaper tiers for delegated work:
-searcherModel = "anthropic/claude-opus-4-5"     # retrieval / routing
-processorModel = "anthropic/claude-haiku-4-5"   # extraction / mechanical work
-classifierModel = "anthropic/claude-haiku-4-5"  # discrete classification
+# Per-role model selection, "provider/model-id[:thinkingLevel]" as known to pi's
+# model registry. Roles left unset fall back along classifier -> processor -> main
+# (searcher -> main); a fully unset chain uses pi's own resolution (settings
+# defaultModel, else the first model with credentials).
+#
+# Everything else about the agent — default model, thinking budgets, compaction,
+# retry, custom providers — is configured in pi's own files under
+# {workspace}/.tachikoma/pi/ (settings.json, models.json, auth.json).
+#
+# main = "anthropic/claude-opus-4-5:medium"
+# searcher = "anthropic/claude-opus-4-5"
+# processor = "anthropic/claude-haiku-4-5"   # extraction / mechanical work
+# classifier = "anthropic/claude-haiku-4-5"  # discrete classification
 
 [logging]
 level = "info"

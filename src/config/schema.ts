@@ -14,14 +14,17 @@ export const ConfigSchema = Type.Object({
     { default: {} },
   ),
 
+  // Per-role model selection only — everything else about the agent (default model,
+  // thinking budgets, compaction, retry, custom providers) belongs to pi's own
+  // settings.json/models.json under {workspace}/.tachikoma/pi/.
   agent: Type.Object(
     {
-      // Model references use "provider/model-id" as known to pi's model registry.
-      model: Type.String({ default: "anthropic/claude-opus-4-5" }),
-      thinkingLevel: ThinkingLevelSchema,
-      searcherModel: Type.String({ default: "anthropic/claude-opus-4-5" }),
-      processorModel: Type.String({ default: "anthropic/claude-haiku-4-5" }),
-      classifierModel: Type.String({ default: "anthropic/claude-haiku-4-5" }),
+      // "provider/model-id[:thinkingLevel]". Unset roles fall back along
+      // classifier → processor → main (searcher → main), then to pi's resolution.
+      main: Type.Optional(Type.String()),
+      searcher: Type.Optional(Type.String()),
+      processor: Type.Optional(Type.String()),
+      classifier: Type.Optional(Type.String()),
     },
     { default: {} },
   ),

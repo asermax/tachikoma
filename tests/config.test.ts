@@ -14,7 +14,7 @@ describe("config loading", () => {
     const { config, created } = await loadConfig(path);
 
     expect(created).toBe(true);
-    expect(config.agent.model).toBe("anthropic/claude-opus-4-5");
+    expect(config.agent.main).toBeUndefined();
     expect(config.sessions.idleCloseSeconds).toBe(900);
     await expect(readFile(path, "utf8")).resolves.toContain("[workspace]");
   });
@@ -23,13 +23,13 @@ describe("config loading", () => {
     const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
     const path = join(dir, "config.toml");
     const { writeFile } = await import("node:fs/promises");
-    await writeFile(path, '[agent]\nmodel = "anthropic/claude-fable-5"\n', "utf8");
+    await writeFile(path, '[agent]\nmain = "anthropic/claude-fable-5"\n', "utf8");
 
     const { config, created } = await loadConfig(path);
 
     expect(created).toBe(false);
-    expect(config.agent.model).toBe("anthropic/claude-fable-5");
-    expect(config.agent.processorModel).toBe("anthropic/claude-haiku-4-5");
+    expect(config.agent.main).toBe("anthropic/claude-fable-5");
+    expect(config.agent.processor).toBeUndefined();
     expect(config.channels.default).toBe("repl");
   });
 

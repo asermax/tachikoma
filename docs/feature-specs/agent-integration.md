@@ -24,8 +24,8 @@ Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `pr
 | R2 | Session persistence modes: new persisted session under the workspace sessions dir, resume from an existing pi session file, or ephemeral in-memory |
 | R3 | `bare` sessions skip registered factories and system prompt builders (headless side work); explicit `systemPrompt`, `tools`, and `tier` options override defaults |
 | R4 | Auth resolution: a workspace-local `{piDir}/auth.json` is used when it has actual content; otherwise the machine-level pi login (`~/.pi/agent/auth.json` plus env vars) is shared; `apiKeyFor(provider)` exposes key lookup |
-| R5 | Four model tiers — `agent`, `searcher`, `processor`, `classifier` — configured as `provider/model-id` strings; malformed references and models missing from pi's registry fail with errors naming the reference and tier |
-| R6 | Session model fallback is logged as a warning; the thinking level comes from `agent.thinkingLevel` |
+| R5 | Four model roles — `main`, `searcher`, `processor`, `classifier` — configured as optional `provider/model-id[:thinkingLevel]` strings; unset roles fall back along classifier → processor → main (searcher → main), then to pi's resolution (settings default, else first credentialed model); malformed references and models missing from pi's registry fail with errors naming the reference and tier |
+| R6 | Session model fallback is logged as a warning; the thinking level comes from the role's `:level` suffix when present, otherwise pi's `defaultThinkingLevel` |
 | R7 | `streamPrompt(session, text)` exposes one prompt run as an `AsyncIterable<AgentEvent>` ending in a terminal `result` or `error` event after pi's `prompt()` settles |
 | R8 | `SideRunner.complete()` performs a one-shot completion on a tier model (default `processor`), throwing on `error`/`aborted` stop reasons |
 | R9 | `SideRunner.classify()` returns schema-validated structured output (default tier `classifier`): JSON-instructed prompt, tolerant JSON extraction, TypeBox validation, one retry on failure |
@@ -42,7 +42,7 @@ One `open()` path serves the main conversational session, boundary resumption, a
 - Given `open({ sessionFile })`, when the session is created, then pi resumes from that JSONL transcript (`SessionManager.open`)
 - Given `open({ inMemory: true })`, when the session is created, then nothing is persisted to disk (`SessionManager.inMemory`)
 - Given `open({ bare: true })`, when the session is created, then no factories or prompt builders are bound; an explicit `systemPrompt` option takes precedence over composed builders
-- Given `open({ tools, tier })`, when the session is created, then pi's tool set is restricted to the named built-ins and the model resolves from that tier
+- Given `open({ tools, tier })`, when the session is created, then pi's tool set is restricted to the named built-ins and the model resolves from that tier's chain; with the whole chain unset, no model is passed so pi's own resolution (session restore → settings → first available) applies
 
 ### Authentication and Models (R4, R5, R6)
 

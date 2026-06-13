@@ -22,7 +22,7 @@ On first run a commented config file is generated at `~/.config/tachikoma/config
 
 ## Configuration
 
-TOML at `~/.config/tachikoma/config.toml`. Core sections: `[workspace]`, `[agent]` (model tiers as `provider/model-id`), `[logging]`, `[channels]`, `[sessions]`, `[scheduler]`. Each extension reads its own `[extensions.<name>]` section — see the generated file and the feature specs in `docs/feature-specs/`.
+TOML at `~/.config/tachikoma/config.toml`. Core sections: `[workspace]`, `[agent]` (optional per-role models as `provider/model-id[:thinkingLevel]` — anything unset defers to pi), `[logging]`, `[channels]`, `[sessions]`, `[scheduler]`. pi-level knobs (default model, thinking budgets, compaction, retry, custom providers) live in pi's own `settings.json`/`models.json` under `{workspace}/.tachikoma/pi/`. Each extension reads its own `[extensions.<name>]` section — see the generated file and the feature specs in `docs/feature-specs/`.
 
 ## Development
 
