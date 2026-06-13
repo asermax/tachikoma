@@ -47,7 +47,8 @@ export const generateCommitMessage = async (
 
 export interface CommitAllOptions {
   cwd: string;
-  side: Completer;
+  /** Generates the message from the diffstat; omit when passing an explicit message. */
+  side?: Completer;
   /** Deterministic message used when generation fails or produces nothing usable. */
   fallbackMessage: string;
   /** Explicit message — skips generation entirely. */
@@ -73,7 +74,11 @@ export const commitAll = async ({
 
   if (diffStat === "") return null;
 
-  const resolved = message ?? (await generateCommitMessage(side, diffStat, fallbackMessage, log));
+  const resolved =
+    message ??
+    (side != null
+      ? await generateCommitMessage(side, diffStat, fallbackMessage, log)
+      : fallbackMessage);
   await runGit(cwd, ["commit", "-m", resolved]);
 
   return resolved;

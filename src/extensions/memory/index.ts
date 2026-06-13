@@ -2,6 +2,7 @@ import { type Static, Type } from "typebox";
 
 import { defineExtension } from "../api.ts";
 import { createCoreContextProcessor } from "../context/processor.ts";
+import { commitAll } from "../git/commit.ts";
 import { createTranscriptArchiveProcessor, pruneTranscripts } from "./archive.ts";
 import { createExtractionProcessor } from "./extraction.ts";
 import { createMemoryIndexProvider } from "./indexes.ts";
@@ -83,7 +84,28 @@ export default defineExtension<MemoryConfig>({
     const { maintenance } = app.extensionConfig;
 
     if (maintenance.enabled) {
-      const deps = { side: app.agent.side, workspaceRoot, settings: maintenance, log: app.log };
+      const commitChanges = async (message: string): Promise<void> => {
+        try {
+          const committed = await commitAll({
+            cwd: workspaceRoot,
+            message,
+            fallbackMessage: message,
+            log: app.log,
+          });
+
+          if (committed != null) app.log.info({ message }, "committed memory maintenance changes");
+        } catch (error) {
+          app.log.warn({ err: error }, "memory maintenance commit failed");
+        }
+      };
+
+      const deps = {
+        side: app.agent.side,
+        workspaceRoot,
+        settings: maintenance,
+        log: app.log,
+        commitChanges,
+      };
 
       app.scheduler.cron("memory-episodic-maintenance", maintenance.episodicSchedule, () =>
         runMaintenanceTick("episodic", deps),

@@ -25,6 +25,12 @@ export interface MaintenanceDeps {
   log: Logger;
   /** Injectable clock for tests — Sunday triggers the full index rebuild. */
   now?: () => Date;
+  /**
+   * Commit the files the maintenance pass touched. Maintenance runs detached from
+   * any session, so without this its edits would sit uncommitted until the next
+   * session close. Omitted in tests so the pass doesn't reach for a git repo.
+   */
+  commitChanges?: (message: string) => Promise<void>;
 }
 
 const episodicMaintenancePrompt = ({
@@ -516,7 +522,7 @@ export const contextMaintenanceSystemPrompt = async (workspaceRoot: string): Pro
  * bloat, applying edits in place. New content is the per-session update's job, not this.
  */
 export const runContextMaintenanceTick = async (
-  deps: Pick<MaintenanceDeps, "side" | "workspaceRoot" | "log">,
+  deps: Pick<MaintenanceDeps, "side" | "workspaceRoot" | "log" | "commitChanges">,
 ): Promise<void> => {
   deps.log.info("context maintenance tick started");
 
@@ -526,6 +532,8 @@ export const runContextMaintenanceTick = async (
     prompt: "Perform the context file cleanup pass now, following your instructions.",
     tier: "processor",
   });
+
+  await deps.commitChanges?.("chore(memory): scheduled context file maintenance");
 
   deps.log.info("context maintenance tick completed");
 };
@@ -545,6 +553,8 @@ export const runMaintenanceTick = async (
   });
 
   await sweepEmptyMarkdown(storeDir(deps.workspaceRoot, store), deps.log);
+
+  await deps.commitChanges?.(`chore(memory): scheduled ${store} maintenance`);
 
   deps.log.info({ store }, "memory maintenance tick completed");
 };

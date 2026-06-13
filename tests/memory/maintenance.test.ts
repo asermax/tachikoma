@@ -70,6 +70,15 @@ describe("runMaintenanceTick", () => {
     expect(system).not.toContain("## Memory Index Rebuild (full)");
   });
 
+  it("commits the pass with a store-specific message after sweeping", async () => {
+    const { side } = fakeRunner();
+    const commitChanges = vi.fn().mockResolvedValue(undefined);
+
+    await runMaintenanceTick("facts", { ...deps(side, monday), commitChanges });
+
+    expect(commitChanges).toHaveBeenCalledWith("chore(memory): scheduled facts maintenance");
+  });
+
   it("uses the full index rebuild section on Sundays", async () => {
     const { side, run } = fakeRunner();
 
