@@ -41,4 +41,33 @@ describe("config loading", () => {
 
     await expect(loadConfig(path)).rejects.toThrow(ConfigError);
   });
+
+  it("accepts a valid IANA scheduler timezone", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+    const path = join(dir, "config.toml");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path, '[scheduler]\ntimezone = "America/Argentina/Buenos_Aires"\n', "utf8");
+
+    const { config } = await loadConfig(path);
+
+    expect(config.scheduler.timezone).toBe("America/Argentina/Buenos_Aires");
+  });
+
+  it("rejects an invalid scheduler timezone with a clear error", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+    const path = join(dir, "config.toml");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path, '[scheduler]\ntimezone = "Mars/Olympus_Mons"\n', "utf8");
+
+    await expect(loadConfig(path)).rejects.toThrow(/not a valid IANA timezone/);
+  });
+
+  it("defaults an unset scheduler timezone to the detected system timezone", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+    const path = join(dir, "config.toml");
+
+    const { config } = await loadConfig(path);
+
+    expect(config.scheduler.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  });
 });

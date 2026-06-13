@@ -7,6 +7,7 @@ import { expandHome } from "../workspace.ts";
 import { DEFAULT_CONFIG_TEMPLATE } from "./default-template.ts";
 import { parseWithSchema } from "./parse.ts";
 import { type Config, ConfigSchema } from "./schema.ts";
+import { resolveTimezone } from "./timezone.ts";
 
 export const defaultConfigPath = (): string =>
   join(process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config"), "tachikoma", "config.toml");
@@ -34,7 +35,10 @@ export const loadConfig = async (path?: string): Promise<LoadedConfig> => {
     created = true;
   }
 
-  const config = parseWithSchema(ConfigSchema, parseToml(raw), `config at ${configPath}`);
+  const label = `config at ${configPath}`;
+  const config = parseWithSchema(ConfigSchema, parseToml(raw), label);
+
+  config.scheduler.timezone = resolveTimezone(config.scheduler.timezone, label);
 
   return { config, path: configPath, created };
 };

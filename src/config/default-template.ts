@@ -33,7 +33,8 @@ default = "repl"
 resumeWindowSeconds = 86400
 
 [scheduler]
-# IANA timezone for cron schedules; defaults to the system timezone when unset.
+# IANA timezone for cron schedules; defaults to the detected system timezone
+# when unset. An unrecognized zone fails config validation.
 # timezone = "America/Argentina/Buenos_Aires"
 
 # Per-extension settings live under [extensions.<name>], for example:
