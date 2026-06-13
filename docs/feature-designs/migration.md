@@ -52,10 +52,10 @@ app.ts startup
 |-----------|----------------|---------------|
 | `src/migration/index.ts` | The two orchestrators (`adaptWorkspace`, `adaptWorkspaceData`) | Database step awaited (failures propagate); every other step try/caught and logged so startup continues |
 | `src/migration/database.ts` | `adaptLegacyDatabase`: detect legacy markers, rename db + sidecars to the backup | Markers are `alembic_version`/`schema_migrations`; rename (never delete) including `-wal`/`-shm`; refuse to overwrite an existing backup; runs before drizzle opens the file |
-| `src/migration/config.ts` | `adaptConfig`/`translateOldConfig`: detect old-shape config, back it up, translate, reload | Old-shape detection by `[telegram]`/string `channel`/old `[agent]` keys; role models confirmed interactively and provider-qualified; unmapped sections dropped with a log; original preserved at `<path>.legacy-backup` |
+| `src/migration/config.ts` | `adaptConfig`/`translateOldConfig`: detect old-shape config, back it up, translate, reload | Old-shape detection by `[telegram]`/string `channel`/old `[agent]` keys; role models confirmed interactively and provider-qualified; direct field carry-overs (`channel → channels.default`, `[logging].level`/`console → logging.level`/`pretty`, `[agent].session_resume_window → sessions.resumeWindowSeconds`, `tasks.timezone → scheduler.timezone`); unmapped sections dropped with a log; original preserved at `<path>.legacy-backup` |
 | `src/migration/context.ts` | `adaptContextFiles`: move `SOUL.md`/`USER.md`/`AGENTS.md` from `context/` to the root | Skip-on-conflict (root file wins); `rmdir` tidies `context/` only when empty |
 | `src/migration/skills.ts` | `adaptSkillsFrontmatter`/`stripLegacyFrontmatter`: offer to strip `depends_on`/`version` | Pure string transform that drops a key and its continuation lines; declining is harmless (loader ignores the keys) |
-| `src/migration/tasks.ts` | `adaptLegacyTasks`: import legacy `task_definitions` into the live db | Reads the readonly backup db directly; one-time flag + `onConflictDoNothing`; preserves id/`since`/`created_at` for cron anchoring; drops instances and skill pins |
+| `src/migration/tasks.ts` | `adaptLegacyTasks`: import legacy `task_definitions` into the live db | Reads the readonly backup db directly; one-time flag + `onConflictDoNothing`; preserves id/`lastFiredAt`/`since`/`created_at` for cron anchoring; drops instances and skill pins |
 | `src/migration/ask.ts` | `createAsk`: the shared yes/no prompt | TTY-only; non-interactive answers "no"; prompts on stderr so REPL stdout stays clean |
 | `src/migration/fs.ts` | `pathExists` | A stat-based existence check shared by every step |
 
@@ -116,7 +116,7 @@ app.ts startup
 
 **Given**: A workspace carried over from a legacy install — an `alembic_version`-bearing database, an old-shape config with `[telegram]` and a bare `model = "opus"`, `context/SOUL.md`, and a skill with `depends_on` in its frontmatter, on an interactive terminal
 **When**: Startup runs
-**Then**: the config is backed up and translated (the user confirms `anthropic/opus` for the main role; unmapped sections are logged as dropped); the database and its sidecars are renamed to `tachikoma.legacy-backup.db`; drizzle creates a fresh database and applies migrations; `SOUL.md` moves to the workspace root and the empty `context/` is removed; the user confirms stripping `depends_on`; and the legacy `task_definitions` are imported (ids, schedules, and `since`/`created_at` preserved) with the one-time flag then set. Conversation history, instances, and the other legacy tables remain only in the backup.
+**Then**: the config is backed up and translated (the user confirms `anthropic/opus` for the main role; unmapped sections are logged as dropped); the database and its sidecars are renamed to `tachikoma.legacy-backup.db`; drizzle creates a fresh database and applies migrations; `SOUL.md` moves to the workspace root and the empty `context/` is removed; the user confirms stripping `depends_on`; and the legacy `task_definitions` are imported (ids, schedules, and `lastFiredAt`/`since`/`created_at` preserved) with the one-time flag then set. Conversation history, instances, and the other legacy tables remain only in the backup.
 
 ### Scenario: already-adapted workspace re-run
 

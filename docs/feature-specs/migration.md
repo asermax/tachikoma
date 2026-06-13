@@ -30,9 +30,12 @@ Steps that touch user-editable content (config role models, skill frontmatter) a
 | R7 | Legacy config is detected by old-shape markers (`[telegram]` table, a string `channel`, or old `[agent]` role keys) and translated into the new layout; the original is preserved in the backup and the reloaded `Config` is returned for the rest of startup |
 | R8 | Config role models are translated interactively: each legacy bare alias (e.g. `opus`) is offered as a provider-qualified id (`anthropic/opus`) and only set if confirmed; declined roles are left unset with a warning |
 | R9 | Config sections without a new-layout equivalent are dropped with an info log naming them; the only implicit carry-over is `tasks.timezone → scheduler.timezone` |
+| R9a | A legacy string `channel` is translated into `channels.default` |
+| R9b | The legacy `[logging]` section is translated into the new `logging` layout: `level` is carried over lowercased, and `console` (a boolean) is renamed to `pretty` |
+| R9c | A numeric legacy `[agent].session_resume_window` is translated into `sessions.resumeWindowSeconds` |
 | R10 | Legacy context files (`SOUL.md`, `USER.md`, `AGENTS.md`) under `context/` are moved to the workspace root; a file that already exists at the root is left in `context/` with a warning, and the `context/` directory is removed only once empty |
 | R11 | Skill frontmatter carrying legacy-only keys (`depends_on`, `version`) is offered for stripping interactively; declining keeps the files unchanged (the loader ignores the keys regardless) |
-| R12 | Task definitions are imported preserving their legacy id, `schedule` (cron or one-shot), `since`, and `created_at` so cron anchoring and stale-cron prevention carry over; the import is guarded by a one-time `legacy-task-definitions` flag and inserts skip ids that already exist |
+| R12 | Task definitions are imported preserving their legacy id, `schedule` (cron or one-shot), `last_fired_at → lastFiredAt`, `since`, and `created_at` so cron anchoring and stale-cron prevention carry over; an unparseable `last_fired_at` is dropped to null; the import is guarded by a one-time `legacy-task-definitions` flag and inserts skip ids that already exist |
 | R13 | A definition with an unrecognized schedule or task type is skipped with a warning; the import continues with the rest |
 | R14 | Interactive prompts run only on a TTY; a non-interactive startup answers every prompt "no" with a warning, so adaptation never blocks an unattended boot |
 
@@ -68,7 +71,7 @@ The legacy database is detected by schema markers and renamed out of the way so 
 - Given a backup already exists at the target path, when a legacy database is detected, then both files are left untouched with a warning (no overwrite)
 - Given the file cannot be probed, when the step runs, then it is left untouched with a warning
 
-### Config translation (R7, R8, R9)
+### Config translation (R7, R8, R9, R9a, R9b, R9c)
 
 A legacy config is translated into the new shape, the original preserved, and the reloaded config handed back to startup.
 
@@ -76,6 +79,9 @@ A legacy config is translated into the new shape, the original preserved, and th
 - Given a config with a `[telegram]` table, a string `channel`, or old `[agent]` role keys, when the step runs, then it is recognized as legacy and translated; a new-shape config returns null (no change)
 - Given translation runs, then the raw original is written to `<path>.legacy-backup` before the translated file (with a header pointing at the backup) overwrites the original, and the reloaded `Config` is returned
 - Given a legacy `[agent]` role with a bare alias `opus`, when the user is asked, then a "yes" sets the role to `anthropic/opus` and a "no" leaves it unset with a warning; an alias already containing `/` is offered verbatim
+- Given a legacy string `channel`, when translation runs, then it becomes `channels.default`
+- Given a legacy `[logging]` section, when translation runs, then `level` is carried over lowercased and a boolean `console` is renamed to `pretty` (an empty `logging` table contributes nothing)
+- Given a numeric legacy `[agent].session_resume_window`, when translation runs, then it becomes `sessions.resumeWindowSeconds`
 - Given config sections with no new-layout equivalent, when translation runs, then they are dropped with an info log naming them (except `tasks.timezone`, mapped to `scheduler.timezone`)
 
 ### Context file relocation (R10)
@@ -101,7 +107,7 @@ Skill `SKILL.md` files carrying frontmatter keys only the legacy registry consum
 Definitions are ported from the backed-up legacy database into the live one, once.
 
 **Acceptance Criteria**:
-- Given the one-time `legacy-task-definitions` flag is not set and a legacy backup database exists, when the step runs, then each `task_definitions` row is inserted preserving its id, schedule, `since`, and `created_at`, and the flag is then set
+- Given the one-time `legacy-task-definitions` flag is not set and a legacy backup database exists, when the step runs, then each `task_definitions` row is inserted preserving its id, schedule, `last_fired_at` (as `lastFiredAt`), `since`, and `created_at`, and the flag is then set
 - Given the flag is already set, when the step runs, then nothing is imported (so definitions the user later deletes do not reappear)
 - Given a definition whose id already exists in the live database, when imported, then the insert is skipped (`onConflictDoNothing`)
 - Given a definition with an unrecognized schedule or task type, when imported, then it is skipped with a warning and the rest still import
