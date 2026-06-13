@@ -4,8 +4,10 @@ import { defineExtension } from "../api.ts";
 import { BackgroundRunner } from "./executor.ts";
 import { expireWaitingInstances } from "./expiration.ts";
 import { generateDueInstances } from "./generation.ts";
+import { cleanupExpiredOneShots } from "./one-shot-cleanup.ts";
 import { TaskRepository } from "./repository.ts";
 import { deliverSessionTasks } from "./session-delivery.ts";
+import { failStuckRunningInstances } from "./stuck-running.ts";
 import { createTaskToolsFactory } from "./tools.ts";
 
 interface TasksConfig {
@@ -14,9 +16,13 @@ interface TasksConfig {
   backgroundMaxIterations: number;
   backgroundMaxConcurrent: number;
   waitTimeoutSeconds: number;
+  runningTimeoutSeconds: number;
+  oneShotRetentionSeconds: number;
 }
 
 const TICK_INTERVAL_SECONDS = 60;
+
+const CLEANUP_INTERVAL_SECONDS = 3600;
 
 /**
  * Scheduled tasks: cron or one-shot definitions fire as instances that are
@@ -35,6 +41,12 @@ export default defineExtension<TasksConfig>({
     // free slot on a later tick, bounding the side-run / API burst they cause.
     backgroundMaxConcurrent: Type.Number({ default: 3 }),
     waitTimeoutSeconds: Type.Number({ default: 7200 }),
+    // A background run held in `running` longer than this is presumed dead or
+    // wedged; the stuck-running sweep fails it to free its concurrency slot.
+    runningTimeoutSeconds: Type.Number({ default: 1800 }),
+    // Retention window after which auto-disabled one-shot definitions (and their
+    // terminal instances) are pruned so spent one-shots don't accumulate.
+    oneShotRetentionSeconds: Type.Number({ default: 172800 }),
   }),
 
   setup(app) {
@@ -84,6 +96,22 @@ export default defineExtension<TasksConfig>({
         },
       });
 
+      failStuckRunningInstances({
+        repository,
+        runningTimeoutSeconds: app.extensionConfig.runningTimeoutSeconds,
+        now,
+        log: app.log,
+        onStuck: (instance, reason) => {
+          app.channels.deliver({ text: `❌ Background task failed: ${reason}`, gate: "idle" });
+          app.events.emit("tasks:instance-finished", {
+            source: "Background task",
+            instanceId: instance.id,
+            status: "failed",
+            message: reason,
+          });
+        },
+      });
+
       deliverSessionTasks({
         repository,
         deliver: (delivery) => app.channels.deliver(delivery),
@@ -94,6 +122,16 @@ export default defineExtension<TasksConfig>({
 
       // Background executions run detached — the runner tracks them across ticks.
       runner.tick();
+    });
+
+    // Retention pruning is low-churn — it runs on a slower cadence than the
+    // per-minute tick so it never competes with generation/delivery work.
+    app.scheduler.every("tasks-one-shot-cleanup", CLEANUP_INTERVAL_SECONDS, () => {
+      cleanupExpiredOneShots({
+        repository,
+        retentionSeconds: app.extensionConfig.oneShotRetentionSeconds,
+        log: app.log,
+      });
     });
   },
 });

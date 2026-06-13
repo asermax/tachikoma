@@ -26,15 +26,19 @@ pi deliberately provides no scheduling, idle gating, or buffered delivery — th
 
 ## Design Overview
 
-`src/extensions/tasks/index.ts` wires one `tasks-tick` job (`app.scheduler.every`, 60 s) that runs four pure passes in order: `generateDueInstances` (definitions → pending instances), `expireWaitingInstances` (timeout sweep), `deliverSessionTasks` (pending session instances → idle-gated channel delivery), and `BackgroundRunner.tick()` (pending background instances → detached evaluator-loop executions). Each pass is a standalone module taking its dependencies (`repository`, `deliver`, `side`, `now`, `log`) as parameters; `index.ts` contains no logic beyond wiring and the crash-recovery bootstrap hook.
+`src/extensions/tasks/index.ts` wires one `tasks-tick` job (`app.scheduler.every`, 60 s) that runs five pure passes in order: `generateDueInstances` (definitions → pending instances), `expireWaitingInstances` (waiting timeout sweep), `failStuckRunningInstances` (running timeout sweep), `deliverSessionTasks` (pending session instances → idle-gated channel delivery), and `BackgroundRunner.tick()` (pending background instances → detached evaluator-loop executions). A second, slower `tasks-one-shot-cleanup` job (`app.scheduler.every`, 3600 s) runs `cleanupExpiredOneShots` (retention pruning). Each pass is a standalone module taking its dependencies (`repository`, `deliver`, `side`, `now`, `log`) as parameters; `index.ts` contains no logic beyond wiring and the crash-recovery bootstrap hook.
 
 ```
 tasks-tick (60s)
   ├─ generation.ts    definitions ──→ pending instances
   ├─ expiration.ts    waiting > timeout (unanswered) ──→ failed (+ notice)
+  ├─ stuck-running.ts running > runningTimeout ──→ failed (+ notice, frees slot)
   ├─ session-delivery.ts  pending session ──→ channels.deliver(idle) ──→ completed
   └─ executor.ts      answered waiting + pending background ──→ side.run ⇄ side.classify loop (detached)
                         ask_user tool ──→ waiting (+ question delivered)
+
+tasks-one-shot-cleanup (3600s)
+  └─ one-shot-cleanup.ts  aged auto-disabled one-shots (all instances terminal) ──→ deleted
 ```
 
 A background run can pause for input: the in-run `ask_user` tool flips the instance to `waiting`, persists the question and a progress excerpt, surfaces the question to the user, and the run returns (freeing its slot). The main-session `respond_to_task` tool stores the user's reply; the next background dispatch pass resumes the instance ahead of fresh pending work, replaying the persisted progress + question + reply into a resume prompt. An unanswered `waiting` instance is failed by the expiration sweep — the producer that makes that sweep live.
@@ -45,27 +49,30 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/tasks/index.ts` | Wiring: config, crash-recovery bootstrap, tick orchestration, tool registration | Single every-60s job instead of per-concern loops |
+| `src/extensions/tasks/index.ts` | Wiring: config, crash-recovery bootstrap, tick orchestration, tool registration | Per-minute `tasks-tick` job plus a slower hourly `tasks-one-shot-cleanup` job, instead of per-concern loops |
 | `src/extensions/tasks/schema.ts` | Drizzle tables and type maps | Schedule stored as a JSON discriminated union (`cron` expression / `once` ISO instant); `since` and `updatedAt` columns anchor stale-cron prevention and the waiting sweep; `question` + `resumeContext` columns persist a paused run's blocking question and progress excerpt, `userResponse` carries the reply that triggers resume |
-| `src/extensions/tasks/repository.ts` | All SQL access | Stamps `since` (definitions) and `updatedAt` (instances) on every update; period-aware duplicate query keyed on exact `scheduledFor`; `resolveDefinition` (ID then exact name), `deleteDefinition`, and `getLatestInstanceForDefinition` back the get/delete/run-now tools; `getResumableInstances` returns `waiting` instances whose `userResponse` has arrived |
+| `src/extensions/tasks/repository.ts` | All SQL access | Stamps `since` (definitions) and `updatedAt` (instances) on every update; period-aware duplicate query keyed on exact `scheduledFor`; `resolveDefinition` (ID then exact name), `deleteDefinition`, and `getLatestInstanceForDefinition` back the get/delete/run-now tools; `getResumableInstances` returns `waiting` instances whose `userResponse` has arrived; `listStuckRunningInstances` filters `running` rows on `startedAt ?? updatedAt`; `pruneExpiredOneShotDefinitions` deletes aged auto-disabled one-shots whose instances are all terminal (anchored on latest `completedAt`, else `lastFiredAt`) |
 | `src/extensions/tasks/schedule.ts` | Parse and format schedules | A croner probe distinguishes cron from one-shot input (`getPattern()` is undefined for datetimes); timezone handling delegated entirely to croner |
 | `src/extensions/tasks/generation.ts` | One generation pass | Anchor = `lastFiredAt`, else current hour start minus 1 s; advances past `since` instead of skipping the definition |
 | `src/extensions/tasks/session-delivery.ts` | One session-delivery pass | Marks the instance `completed` at handoff; rolls back to `pending` if the handoff throws |
 | `src/extensions/tasks/executor.ts` | Background evaluator loop + `BackgroundRunner` dispatcher | One ephemeral `side.run` per iteration; continuation prompt carries task, progress excerpt, and evaluator observation; the in-run `ask_user` custom tool signals a pause that the loop turns into a `waiting` transition (persisting question + progress) before the evaluator runs; a resumed instance starts from a resume prompt replaying question + reply; in-flight map prevents double dispatch and caps concurrency at `backgroundMaxConcurrent` |
 | `src/extensions/tasks/expiration.ts` | Waiting-instance timeout sweep | Threshold on `updatedAt`; `onExpired` callback lets `index.ts` own user notice + event emission; now has a live producer (`ask_user`) |
+| `src/extensions/tasks/stuck-running.ts` | Stuck-running timeout sweep | Mirrors `expiration.ts`: fails `running` instances past `runningTimeoutSeconds`, freeing their concurrency slot; `onStuck` callback lets `index.ts` own user notice + event emission |
+| `src/extensions/tasks/one-shot-cleanup.ts` | One-shot retention pruning | Thin wrapper over `pruneExpiredOneShotDefinitions`; runs on the slower cleanup job since retention is low-churn |
 | `src/extensions/tasks/tools.ts` | Agent-facing tools | Pure handlers over `ToolDeps`; the pi factory only wraps them in `registerTool` calls; `run_task_now` creates a pending instance and returns — dispatch is the existing tick path, not a direct executor call; `respond_to_task` stores a reply on a `waiting` instance and lets the dispatch pass resume it |
 
 ## Key Decisions
 
-### One tick, four pure passes
+### One per-minute tick, pure passes; a separate slow cleanup job
 
-**Choice**: A single `app.scheduler.every("tasks-tick", 60, ...)` job runs generation, expiration, session delivery, and background dispatch sequentially, each as a pure function over injected dependencies.
-**Why**: The core scheduler already provides naming, overlap protection, and error guarding (core-shell R9); reimplementing per-concern async loops would duplicate that. Pure passes with injected `now` are trivially testable against a temp database.
-**Alternatives Considered**: Long-lived async loops per concern, coordinated through a shared priority buffer; croner jobs per definition.
+**Choice**: A single `app.scheduler.every("tasks-tick", 60, ...)` job runs generation, waiting-expiration, stuck-running sweep, session delivery, and background dispatch sequentially, each as a pure function over injected dependencies. Retention pruning (`cleanupExpiredOneShots`) lives on its own `app.scheduler.every("tasks-one-shot-cleanup", 3600, ...)` job rather than inside the per-minute tick.
+**Why**: The core scheduler already provides naming, overlap protection, and error guarding (core-shell R9); reimplementing per-concern async loops would duplicate that. Pure passes with injected `now` are trivially testable against a temp database. The stuck-running sweep belongs in the tick because freeing a wedged concurrency slot is lifecycle-critical and cheap; retention pruning is low-churn and time-coarse, so running it hourly keeps it from scanning definitions every minute and competing with generation/delivery work.
+**Alternatives Considered**: Long-lived async loops per concern, coordinated through a shared priority buffer; croner jobs per definition; folding retention pruning into the per-minute tick.
 **Consequences**:
-- Pro: One place to observe all task activity; passes share a transactionless, re-entrant style
+- Pro: One place to observe all per-minute task activity; passes share a transactionless, re-entrant style
 - Pro: Tests drive passes directly with a fake clock — no timers
-- Con: Worst-case latency for any transition is one tick interval (60 s)
+- Pro: Retention's coarse cadence keeps the hot tick free of a low-value full-definition scan
+- Con: Worst-case latency for any transition is one tick interval (60 s); retention lag is up to one hour
 - Con: A pathologically slow pass delays the ones after it within the tick
 
 ### Session tasks are injected as agent turns, completed at handoff
@@ -175,6 +182,18 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 **When**: The expiration pass runs
 **Then**: It is marked `failed` with the timeout reason and a failure notice is delivered — the same sweep that was previously dormant, now driven by a real producer.
 
+### Scenario: a background run wedges in `running`
+
+**Given**: A `running` instance whose `startedAt` is older than `runningTimeoutSeconds` (its detached executor died or stalled and never reached a terminal state)
+**When**: The stuck-running sweep runs in the tick
+**Then**: It is marked `failed` with an "exceeded running timeout" reason, a failure notice and a `tasks:instance-finished` payload are delivered, and the slot it held is freed for other background work. (Distinct from crash recovery, which fails *all* `running` rows at startup; this sweep catches stalls within a live process.)
+
+### Scenario: a spent one-shot ages past retention
+
+**Given**: An auto-disabled one-shot definition (fired, `enabled = false`) whose only instance completed more than `oneShotRetentionSeconds` ago
+**When**: The hourly `tasks-one-shot-cleanup` job runs
+**Then**: The instance rows are deleted first (FK), then the definition, and the deletion count is logged. A one-shot still within the window, one with a non-terminal instance, or a recurring cron definition is left untouched.
+
 ### Scenario: channel handoff fails for a session task
 
 **Given**: A pending session instance and a delivery function that throws (e.g. no channel up)
@@ -184,5 +203,6 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 ## Notes
 
 - The `waiting` lifecycle is live: a background run pauses via the `ask_user` tool (the producer), `respond_to_task` (main session) supplies the reply, the background dispatch pass resumes the instance, and the expiration sweep fails an instance whose question goes unanswered past `waitTimeoutSeconds`. State is persisted on `task_instances` via the `question` and `resumeContext` columns (migration `0003_tasks_waiting_resume`) alongside the existing `userResponse`.
-- Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `sessionTaskMaxHoldSeconds` (900), `backgroundMaxIterations` (10), `backgroundMaxConcurrent` (3), `waitTimeoutSeconds` (7200). The tick interval is a module constant.
+- Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `sessionTaskMaxHoldSeconds` (900), `backgroundMaxIterations` (10), `backgroundMaxConcurrent` (3), `waitTimeoutSeconds` (7200), `runningTimeoutSeconds` (1800, the stuck-running threshold), `oneShotRetentionSeconds` (172800 = 48 h, the one-shot retention window). The tick (60 s) and cleanup (3600 s) intervals are module constants.
+- The maintenance sweeps reuse the existing timestamp columns (`startedAt`/`updatedAt` on instances, `lastFiredAt`/`completedAt` for retention) — no schema change or migration was needed.
 - Background runs use the `processor` model tier and pi built-in tools (`read, bash, edit, write, grep, find, ls`) plus two per-run custom tools, `notify_user` and `ask_user`; Tachikoma extension tools (tasks, notifications) are not bound into side runs.

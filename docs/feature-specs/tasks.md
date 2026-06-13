@@ -20,7 +20,7 @@ The agent manages definitions conversationally through registered tools (`create
 |----|-------------|
 | R0 | Persistent task definitions with a cron or one-shot schedule and a `session`/`background` type; definitions and instances are stored in SQLite (`task_definitions`, `task_instances`) and survive restarts |
 | R1 | Schedule strings are parsed with croner: cron expressions stay recurring; bare ISO datetimes are interpreted in the configured timezone; explicit offsets (including `Z`) are preserved; one-shot datetimes in the past are rejected |
-| R2 | A single scheduler tick (every 60 s) runs four passes in order: instance generation, waiting-instance expiration, session-task delivery, background dispatch (the background dispatch pass resumes answered `waiting` instances ahead of fresh `pending` ones) |
+| R2 | A single scheduler tick (every 60 s) runs five passes in order: instance generation, waiting-instance expiration, stuck-running sweep, session-task delivery, background dispatch (the background dispatch pass resumes answered `waiting` instances ahead of fresh `pending` ones) |
 | R3 | Cron generation anchors on `lastFiredAt`, so at most one catch-up instance per definition fires after downtime; a never-fired definition anchors at the start of the current hour |
 | R4 | Stale-cron prevention: a `since` timestamp stamped on every definition insert and update prevents cron occurrences that predate the definition's latest edit from firing |
 | R5 | Duplicate prevention: a cron firing is suppressed when a pending/running/waiting/completed instance already covers the same occurrence (failed excluded so retry stays possible); a one-shot is suppressed by any active instance |
@@ -42,6 +42,8 @@ The agent manages definitions conversationally through registered tools (`create
 | R18 | `get_task` fetches a single definition by ID or exact name (ID tried first), returning its full prompt, schedule, status, and a summary of its most recent instance; an unknown reference fails with a clear error |
 | R19 | `delete_task` permanently removes a definition by ID or exact name (ID tried first); an unknown reference fails with a clear error |
 | R20 | `run_task_now` queues a pending instance scheduled for now (dispatched on the next tick) in one of two mutually-exclusive modes: by-reference (`task` = ID or name) snapshots the definition's prompt and type without mutating the definition, so even an auto-disabled one-shot runs; ad-hoc (`prompt`, optional `type` defaulting to `background`, optional `name`) fires a one-off instance with no parent definition. Providing both or neither, or `name` in by-reference mode, fails with a clear error |
+| R21 | Stuck-running sweep: a `running` instance whose start (`startedAt`, falling back to `updatedAt` when never stamped) is older than `runningTimeoutSeconds` (default 1800) — its executor presumed dead or wedged — is marked `failed` with a timeout reason, freeing its concurrency slot, and a failure notice plus a structured status payload are delivered; fresher running instances and non-running instances are untouched |
+| R22 | One-shot retention cleanup: a separate scheduled pass (hourly) prunes auto-disabled one-shot definitions and their instances once aged past `oneShotRetentionSeconds` (default 172800, i.e. 48 h). A definition is eligible only when it has fired (`lastFiredAt` set, `enabled = false`) and every instance is terminal (`completed`/`failed`); the retention anchor is the latest instance `completedAt`, falling back to `lastFiredAt` when it produced no instances. A still-pending/running/waiting one-shot, or one within the window, is kept |
 
 ## Behaviors
 
@@ -96,10 +98,12 @@ A background run that genuinely cannot proceed without user input calls the `ask
 - Given a `waiting` instance with a stored `userResponse`, when the background dispatch pass runs, then it is resumed ahead of fresh pending instances: the run is reopened with a resume prompt replaying `resumeContext`, the question, and the reply, the evaluator loop continues, and on completion `question`/`resumeContext` are cleared
 - Given a `waiting` instance with no stored `userResponse`, when the dispatch pass runs, then it is left untouched
 
-### Expiration and Crash Recovery (R7, R13c)
+### Expiration, Maintenance Sweeps, and Crash Recovery (R7, R13c, R21, R22)
 
 **Acceptance Criteria**:
 - Given a `waiting` instance whose `updatedAt` is older than the wait timeout (its question was never answered), when the expiration pass runs, then it is marked `failed` with a timeout reason and a failure notice is delivered; fresher waiting instances and non-waiting instances are untouched
+- Given a `running` instance whose `startedAt` (or `updatedAt` when never stamped) is older than `runningTimeoutSeconds`, when the stuck-running sweep runs, then it is marked `failed` with a "exceeded running timeout" reason, a failure notice and a structured status payload are delivered, and its concurrency slot is freed; a fresh running instance within the timeout and non-running instances are untouched
+- Given an auto-disabled one-shot definition past `oneShotRetentionSeconds` whose every instance is terminal, when the cleanup pass runs, then the definition and its instances are deleted; a recently fired one-shot, one whose latest completion is within the window, or one with a non-terminal instance is kept
 - Given instances were left `running` when the process died, when the crash-recovery bootstrap hook runs at startup, then they are marked `failed` with a restart reason
 
 ### Task Tools (R14, R18, R19, R20)

@@ -43,6 +43,8 @@ const ACTIVE_STATUSES: TaskStatus[] = ["pending", "running", "waiting"];
 // Failed is excluded so a retry within the same period stays possible.
 const PERIOD_COVERING_STATUSES: TaskStatus[] = ["pending", "running", "waiting", "completed"];
 
+const TERMINAL_STATUSES: TaskStatus[] = ["completed", "failed"];
+
 export class TaskRepository {
   private readonly db: AppDatabase;
   private readonly now: () => Date;
@@ -213,6 +215,23 @@ export class TaskRepository {
       .all();
   }
 
+  /**
+   * Running instances whose start (or last update, for rows that never stamped
+   * `startedAt`) is older than `timeoutSeconds` — used by the stuck-running
+   * sweep to free concurrency slots held by executors that never finished.
+   */
+  listStuckRunningInstances(timeoutSeconds: number): TaskInstanceRecord[] {
+    const threshold = new Date(this.now().getTime() - timeoutSeconds * 1000);
+
+    const running = this.db
+      .select()
+      .from(taskInstances)
+      .where(eq(taskInstances.status, "running"))
+      .all();
+
+    return running.filter((instance) => (instance.startedAt ?? instance.updatedAt) < threshold);
+  }
+
   /** Stamps `updatedAt` on every update unless the patch overrides it. */
   updateInstance(id: string, patch: InstancePatch): TaskInstanceRecord | null {
     return (
@@ -262,5 +281,54 @@ export class TaskRepository {
       .where(eq(taskInstances.status, "running"))
       .returning()
       .all().length;
+  }
+
+  /**
+   * Retention pruning for one-shot definitions that have fired and whose every
+   * instance is terminal (completed/failed). The retention anchor is the latest
+   * instance `completedAt`, falling back to the definition's `lastFiredAt` when
+   * it produced no instances. Eligible definitions older than the window — and
+   * their instances — are deleted; returns the number of definitions removed.
+   */
+  pruneExpiredOneShotDefinitions(retentionSeconds: number): number {
+    const threshold = new Date(this.now().getTime() - retentionSeconds * 1000);
+
+    const candidates = this.db
+      .select()
+      .from(taskDefinitions)
+      .where(and(eq(taskDefinitions.enabled, false), isNotNull(taskDefinitions.lastFiredAt)))
+      .all()
+      .filter((definition) => definition.schedule.type === "once");
+
+    let deleted = 0;
+
+    for (const definition of candidates) {
+      const instances = this.db
+        .select()
+        .from(taskInstances)
+        .where(eq(taskInstances.definitionId, definition.id))
+        .all();
+
+      const allTerminal = instances.every((instance) =>
+        TERMINAL_STATUSES.includes(instance.status),
+      );
+
+      if (!allTerminal) continue;
+
+      const latestCompletion = instances.reduce<Date | null>((latest, instance) => {
+        if (instance.completedAt == null) return latest;
+        return latest == null || instance.completedAt > latest ? instance.completedAt : latest;
+      }, null);
+
+      const anchor = latestCompletion ?? definition.lastFiredAt;
+
+      if (anchor == null || anchor >= threshold) continue;
+
+      this.db.delete(taskInstances).where(eq(taskInstances.definitionId, definition.id)).run();
+      this.db.delete(taskDefinitions).where(eq(taskDefinitions.id, definition.id)).run();
+      deleted += 1;
+    }
+
+    return deleted;
   }
 }
