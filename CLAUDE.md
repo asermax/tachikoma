@@ -58,10 +58,11 @@ User message → Channel (Telegram/REPL) → Coordinator.submit()
 Every feature is an extension: `defineExtension({ name, configSchema, setup(app) })` (see `extensions/api.ts`). In `setup`, an extension wires into the host through the `app` API, using only what it needs:
 
 - `app.bootstrap(name, hook)` — ordered, idempotent startup hooks
+- `app.onShutdown(name, hook)` — runs once on shutdown, before the coordinator's final delivery flush (error-isolated)
 - `app.agent.provideContext(provider)` — per-message context injection (pre-processing)
 - `app.sessions.onExchange(processor)` — runs after each exchange (e.g. rolling summary)
 - `app.sessions.registerProcessor(processor)` — session-close post-processing (phased: `main` → `preFinalize` → `finalize`)
-- `app.agent.use(factory, { background? })` — register agent tools via `pi.registerTool` (there is no MCP layer)
+- `app.agent.use(factory, { sessionScopes? })` — register agent tools via `pi.registerTool` (there is no MCP layer); `sessionScopes` selects which session contexts bind the factory (`["main"]` default, add `"background"` for autonomous task runs)
 - `app.inbound.use(middleware)` — inbound message middleware (e.g. boundary detection)
 - `app.scheduler.cron(...)` / `app.scheduler.every(...)` — scheduled work
 
