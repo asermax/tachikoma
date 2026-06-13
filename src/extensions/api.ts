@@ -113,9 +113,19 @@ export interface ChannelsApi {
   deliver(delivery: Delivery): void;
 }
 
+export interface UseFactoryOptions {
+  /**
+   * Also bind this factory into autonomous background task runs (default false).
+   * Use for tool/resource factories a background task legitimately needs (skills,
+   * git, projects, detached processes, notifications, task management); omit for
+   * interactive- or channel-only surfaces.
+   */
+  background?: boolean;
+}
+
 export interface AgentApi {
   /** Contribute a pi extension factory to every agent session the host creates. */
-  use(factory: ExtensionFactory): void;
+  use(factory: ExtensionFactory, options?: UseFactoryOptions): void;
   /** Contribute a section to the agent's system prompt (replaces pi's coding prompt). */
   systemPrompt(builder: () => string): void;
   provideContext(provider: ContextProvider): void;

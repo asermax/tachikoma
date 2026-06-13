@@ -32,6 +32,8 @@ export interface HeadlessRunOptions {
   model?: string;
   /** Isolate the system prompt — suppress pi's append/context-files/skills so it is exactly `system`. */
   isolatePrompt?: boolean;
+  /** Bind the registered background factories (tools + skill sources) into this run. */
+  backgroundExtensions?: boolean;
 }
 
 export interface HeadlessRunResult {
@@ -106,6 +108,7 @@ export class SideRunner {
     tier = "processor",
     model,
     isolatePrompt,
+    backgroundExtensions,
   }: HeadlessRunOptions): Promise<HeadlessRunResult> {
     const session = await this.manager.open({
       inMemory: true,
@@ -113,7 +116,14 @@ export class SideRunner {
       tier,
       ...(model != null ? { model } : {}),
       ...(isolatePrompt === true ? { isolatePrompt: true } : {}),
-      tools: [...tools, ...(customTools ?? []).map((tool) => tool.name)],
+      ...(backgroundExtensions === true ? { bindBackgroundFactories: true } : {}),
+      // A hard tool allowlist (`options.tools`) also filters out extension/custom tools, so a
+      // background run that binds factories must NOT set one — it runs with the main session's
+      // tool model (default built-ins + all bound factory and custom tools active). Other runs
+      // keep an explicit built-in allowlist (plus their custom tools' names).
+      ...(backgroundExtensions === true
+        ? {}
+        : { tools: [...tools, ...(customTools ?? []).map((tool) => tool.name)] }),
       ...(customTools != null ? { customTools } : {}),
       ...(system != null ? { systemPrompt: system } : {}),
     });

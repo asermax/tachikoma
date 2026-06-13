@@ -15,9 +15,11 @@ const setup = async (): Promise<{
   workspaceSkillsDir: string;
   on: ReturnType<typeof vi.fn>;
   registerTool: ReturnType<typeof vi.fn>;
+  useOptions: { background?: boolean } | undefined;
 }> => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-skills-ext-"));
   let factory: ExtensionFactory | null = null;
+  let useOptions: { background?: boolean } | undefined;
 
   const app = {
     extensionConfig: { enabled: true },
@@ -25,8 +27,9 @@ const setup = async (): Promise<{
     workspace: { resolve: (...segments: string[]) => join(workspaceDir, ...segments) },
     bootstrap: vi.fn(),
     agent: {
-      use: (registered: ExtensionFactory) => {
+      use: (registered: ExtensionFactory, options?: { background?: boolean }) => {
         factory = registered;
+        useOptions = options;
       },
       side: {},
     },
@@ -43,7 +46,7 @@ const setup = async (): Promise<{
     sendUserMessage: vi.fn(),
   } as unknown as ExtensionAPI);
 
-  return { workspaceSkillsDir: join(workspaceDir, "skills"), on, registerTool };
+  return { workspaceSkillsDir: join(workspaceDir, "skills"), on, registerTool, useOptions };
 };
 
 describe("skills extension", () => {
@@ -70,5 +73,11 @@ describe("skills extension", () => {
 
     expect(delegate).toBeDefined();
     expect(delegate?.description).toContain("general-purpose:");
+  });
+
+  it("opts its factory into background task runs so background tasks get skills and delegation", async () => {
+    const { useOptions } = await setup();
+
+    expect(useOptions?.background).toBe(true);
   });
 });

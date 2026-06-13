@@ -34,7 +34,9 @@ export default defineExtension<ProjectsConfig>({
     app.bootstrap("sync-projects", () => syncProjects(workspaceRoot, app.log));
 
     app.agent.provideContext(createProjectsContextProvider(workspaceRoot, app.log));
-    app.agent.use(createProjectsToolsFactory({ workspaceRoot, log: app.log }));
+    app.agent.use(createProjectsToolsFactory({ workspaceRoot, log: app.log }), {
+      background: true,
+    });
 
     app.sessions.registerProcessor(
       createProjectsProcessor({ workspaceRoot, side: app.agent.side }),

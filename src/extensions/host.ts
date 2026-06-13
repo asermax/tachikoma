@@ -153,7 +153,10 @@ export class ExtensionHost {
       },
 
       agent: {
-        use: (factory) => services.regs.piFactories.push(factory),
+        use: (factory, options) => {
+          services.regs.piFactories.push(factory);
+          if (options?.background === true) services.regs.backgroundFactories.push(factory);
+        },
         systemPrompt: (builder) => services.regs.systemPromptBuilders.push(builder),
         provideContext: (provider) => services.regs.contextProviders.push(provider),
         models: services.agent.tiers,

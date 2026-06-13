@@ -42,17 +42,20 @@ export default defineExtension<SkillsConfig>({
       await mkdir(skillsDir, { recursive: true });
     });
 
-    app.agent.use((pi) => {
-      pi.on("resources_discover", () => ({ skillPaths: [skillsDir, builtinSkillsDir] }));
+    app.agent.use(
+      (pi) => {
+        pi.on("resources_discover", () => ({ skillPaths: [skillsDir, builtinSkillsDir] }));
 
-      registerReload(pi);
+        registerReload(pi);
 
-      // Discovery runs per agent session, so new skill agents appear on the next session without
-      // a restart. The built-in general-purpose agent is always present, so delegation is always
-      // available — skill agents simply extend the roster.
-      const discover = () => [...BUILTIN_AGENTS, ...discoverSkillAgents(skillsDir, app.log)];
+        // Discovery runs per agent session, so new skill agents appear on the next session without
+        // a restart. The built-in general-purpose agent is always present, so delegation is always
+        // available — skill agents simply extend the roster.
+        const discover = () => [...BUILTIN_AGENTS, ...discoverSkillAgents(skillsDir, app.log)];
 
-      pi.registerTool(createDelegateTool({ discover, runner: app.agent.side, log: app.log }));
-    });
+        pi.registerTool(createDelegateTool({ discover, runner: app.agent.side, log: app.log }));
+      },
+      { background: true },
+    );
   },
 });

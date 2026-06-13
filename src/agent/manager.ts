@@ -19,6 +19,8 @@ import { type ModelTier, ModelTiers } from "./models.ts";
 
 export interface AgentSessionSources {
   piFactories: ExtensionFactory[];
+  /** Factories bound into background task runs (opted in via `app.agent.use(f, { background: true })`). */
+  backgroundFactories: ExtensionFactory[];
   systemPromptBuilders: (() => string)[];
 }
 
@@ -41,7 +43,27 @@ export interface OpenSessionOptions {
    * `systemPrompt` (plus pi's date/cwd footer). For delegated subagents with self-contained prompts.
    */
   isolatePrompt?: boolean;
+  /**
+   * Bind the registered background factories (their tools + resource sources) instead of no
+   * factories. For autonomous background task runs that need a curated slice of the agent's
+   * capabilities (skills, git, projects, etc.) — see `app.agent.use(f, { background: true })`.
+   */
+  bindBackgroundFactories?: boolean;
 }
+
+/**
+ * Which extension factories a session binds: the background subset for autonomous task runs, none
+ * for other bare side work, all of them otherwise. Pure so the selection is unit-testable.
+ */
+export const selectExtensionFactories = (
+  options: Pick<OpenSessionOptions, "bindBackgroundFactories" | "bare">,
+  sources: Pick<AgentSessionSources, "piFactories" | "backgroundFactories">,
+): ExtensionFactory[] =>
+  options.bindBackgroundFactories === true
+    ? [...sources.backgroundFactories]
+    : options.bare === true
+      ? []
+      : [...sources.piFactories];
 
 /**
  * Loader options that strip everything pi would otherwise graft onto a custom system prompt.
@@ -96,10 +118,12 @@ export class AgentManager {
         ? this.composeSystemPrompt()
         : undefined);
 
+    const extensionFactories = selectExtensionFactories({ ...options, bare }, this.sources);
+
     const loader = new DefaultResourceLoader({
       cwd: workspace.root,
       agentDir: workspace.piDir,
-      extensionFactories: bare ? [] : [...this.sources.piFactories],
+      extensionFactories,
       ...(systemPromptOverride != null ? { systemPromptOverride: () => systemPromptOverride } : {}),
       ...(options.isolatePrompt === true ? isolatedLoaderOptions() : {}),
     });

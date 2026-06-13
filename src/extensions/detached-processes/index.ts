@@ -72,6 +72,7 @@ export default defineExtension<DetachedProcessesConfig>({
             ? app.extensionConfig.defaultMemoryLimitMb
             : null,
       }),
+      { background: true },
     );
 
     app.scheduler.every(

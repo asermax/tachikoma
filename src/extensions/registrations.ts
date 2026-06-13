@@ -19,6 +19,8 @@ export interface BootstrapHook {
 /** Mutable registries filled by extensions during setup and read by core at runtime. */
 export interface Registrations {
   piFactories: ExtensionFactory[];
+  /** Subset of piFactories whose tools/resources are also bound into background task runs. */
+  backgroundFactories: ExtensionFactory[];
   systemPromptBuilders: (() => string)[];
   contextProviders: ContextProvider[];
   exchangeProcessors: ExchangeProcessor[];
@@ -31,6 +33,7 @@ export interface Registrations {
 
 export const createRegistrations = (): Registrations => ({
   piFactories: [],
+  backgroundFactories: [],
   systemPromptBuilders: [],
   contextProviders: [],
   exchangeProcessors: [],

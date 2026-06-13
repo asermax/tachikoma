@@ -37,8 +37,6 @@ export interface ExecutorDeps {
   log: Logger;
 }
 
-const BACKGROUND_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
-
 const RESPONSE_EXCERPT_CHARS = 4000;
 
 const EVALUATOR_SYSTEM = `You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
@@ -237,9 +235,9 @@ export const executeBackgroundInstance = async (
       const { text } = await side.run({
         system,
         prompt,
-        tools: BACKGROUND_TOOLS,
         customTools: [notifyTool, askUserTool],
         tier: "processor",
+        backgroundExtensions: true,
       });
 
       if (pendingQuestion != null) {

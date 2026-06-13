@@ -75,7 +75,7 @@ export default defineExtension<TasksConfig>({
       log: app.log,
     });
 
-    app.agent.use(createTaskToolsFactory({ repository, timezone, now }));
+    app.agent.use(createTaskToolsFactory({ repository, timezone, now }), { background: true });
 
     app.scheduler.every("tasks-tick", TICK_INTERVAL_SECONDS, () => {
       generateDueInstances({ repository, timezone, now, log: app.log });

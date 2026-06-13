@@ -40,6 +40,11 @@ export default defineExtension<NotificationsConfig>({
 
     app.events.on(NOTIFY_EVENT, (payload) => router.handle(payload));
 
-    app.agent.use(createNotifyToolFactory((event, payload) => app.events.emit(event, payload)));
+    app.agent.use(
+      createNotifyToolFactory((event, payload) => app.events.emit(event, payload)),
+      {
+        background: true,
+      },
+    );
   },
 });

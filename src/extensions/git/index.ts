@@ -37,8 +37,10 @@ export default defineExtension<GitConfig>({
       initializeWorkspaceRepo(workspaceRoot, app.log, resolver),
     );
 
-    app.agent.use(createGitToolsFactory({ workspaceRoot, side: app.agent.side, log: app.log }));
-    app.agent.use(createGitGuardrailFactory(app.log));
+    app.agent.use(createGitToolsFactory({ workspaceRoot, side: app.agent.side, log: app.log }), {
+      background: true,
+    });
+    app.agent.use(createGitGuardrailFactory(app.log), { background: true });
 
     app.sessions.registerProcessor(
       createGitProcessor({ workspaceRoot, side: app.agent.side, resolver }),
