@@ -22,3 +22,6 @@ typecheck:
     pnpm tsc --noEmit
 
 check: lint typecheck test
+
+release *args:
+    pnpm commit-and-tag-version {{ args }}

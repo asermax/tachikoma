@@ -98,8 +98,8 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 **Description**: First run creates the workspace layout (memories, skills, core context files) compatible with the Python-era workspace, plus an isolated pi `agentDir` at `{workspace}/.tachikoma/pi`.
 
 ### DLT-008: Coordinator with long-lived pi session
-**Status**: ✗ Pending
-**Note**: Core loop (inbox, long-lived session, event mapping) is implemented; mid-generation steering/follow-up routing is not — messages arriving during an exchange wait for the next one.
+**Status**: ✓ Done
+**Note**: Steering now routes mid-exchange messages into the live session.
 **Depends on**: DLT-006, DLT-007
 **Priority**: 1 (Critical)
 **Complexity**: Hard
@@ -184,8 +184,8 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: Sessions idle beyond a configurable period auto-close so post-processing runs without requiring a topic shift.
 
 ### DLT-018: Context extension
-**Status**: ✗ Pending
-**Note**: SOUL.md/USER.md compose the system prompt but are read once at bootstrap, not re-read on session start — DLT-021 updates only apply after restart.
+**Status**: ✓ Done
+**Note**: SOUL.md/USER.md are re-read on every session build, so DLT-021 updates apply without a restart.
 **Depends on**: DLT-006, DLT-007
 **Priority**: 2 (High)
 **Complexity**: Easy
@@ -231,8 +231,8 @@ Packaged expertise and autonomous work.
 **Description**: The workspace skills directory is contributed as a pi skill source (`resources_discover`), making Agent Skills-format packages available through pi's native progressive disclosure — no LLM classification pass.
 
 ### DLT-023: Skill hot-reload
-**Status**: ✗ Pending
-**Note**: Not implemented (deliberately dropped): pi rediscovers skills on each session build, so changes land on the next session rather than mid-session.
+**Status**: ✓ Done
+**Note**: pi-native reload instead of a filesystem watcher: every new session rediscovers skills, and mid-session a /reload extension command plus a reload_resources tool (queues /reload as a follow-up) refresh the live session on demand.
 **Depends on**: DLT-022
 **Priority**: 3 (Medium)
 **Complexity**: Easy
@@ -248,8 +248,8 @@ Packaged expertise and autonomous work.
 **Description**: Agent definitions bundled inside skill packages are discovered and exposed as delegable subagents the main agent can hand focused work to.
 
 ### DLT-025: Skill authoring guide
-**Status**: ✗ Pending
-**Note**: No built-in skills ship in the repo yet.
+**Status**: ✓ Done
+**Note**: Built-in skill-authoring skill ships in the repo's `skills/` directory, contributed as a second pi skill source.
 **Depends on**: DLT-022
 **Priority**: 3 (Medium)
 **Complexity**: Easy
@@ -273,8 +273,8 @@ Packaged expertise and autonomous work.
 **Description**: A post-processor expires workflow instances abandoned across sessions.
 
 ### DLT-028: Workflow authoring guide
-**Status**: ✗ Pending
-**Note**: No built-in workflow-authoring skill (no built-in skill mechanism, see DLT-025).
+**Status**: ✓ Done
+**Note**: Built-in workflow-authoring skill ships alongside skill-authoring, documenting the engine's actual step format and lifecycle tools.
 **Depends on**: DLT-026, DLT-022
 **Priority**: 3 (Medium)
 **Complexity**: Easy
@@ -290,8 +290,8 @@ Packaged expertise and autonomous work.
 **Description**: Tasks are defined with timezone-aware cron or one-shot schedules, survive restarts with catch-up for missed runs, and are managed conversationally via `registerTool` tools.
 
 ### DLT-030: Session task execution
-**Status**: ✗ Pending
-**Note**: Due session tasks are delivered as idle-gated channel text to the user; the prompt is never injected into the active session for the agent to act on.
+**Status**: ✓ Done
+**Note**: Session tasks now inject agent-targeted prompts into the live session via `Delivery.target`.
 **Depends on**: DLT-029, DLT-008
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -376,8 +376,8 @@ The primary interface and workspace versioning.
 Supervision, delivery coordination, third-party extensibility, and release readiness.
 
 ### DLT-039: Notifications extension
-**Status**: ✗ Pending
-**Note**: Notify event, severity routing, the conversational notify tool, and schema-correct process-watcher payloads exist; background runs still lack the tool (bare sessions).
+**Status**: ✓ Done
+**Note**: Background runs now get the `notify_user` custom tool.
 **Depends on**: DLT-005
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -385,8 +385,8 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 **Description**: Event-bus-driven notifications with severity levels flow from producers (background tasks, process watchers) to the active channel, including an agent-facing notify tool for background runs.
 
 ### DLT-040: Buffered delivery
-**Status**: ✗ Pending
-**Note**: Idle/max-hold gating, digest batching, and shutdown flushing exist; no priority ordering yet.
+**Status**: ✓ Done
+**Note**: Priority ordering added on top of idle/max-hold gating, digest batching, and shutdown flushing.
 **Depends on**: DLT-039, DLT-030
 **Priority**: 3 (Medium)
 **Complexity**: Hard
@@ -410,8 +410,8 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 **Description**: Third-party Tachikoma extensions declared in configuration are loaded through the same `defineExtension` contract as first-party ones — the single out-of-tree extensibility path.
 
 ### DLT-043: Granular processing status
-**Status**: ✗ Pending
-**Note**: Coordinator status events are emitted on the app bus but no channel subscribes — they surface only as debug logs (adapter compaction/retry statuses do render in the REPL).
+**Status**: ✓ Done
+**Note**: Channels expose an optional status method; the REPL renders status lines, telegram rendering lands with DLT-032.
 **Depends on**: DLT-012, DLT-009
 **Priority**: 4 (Low)
 **Complexity**: Easy
@@ -419,8 +419,8 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 **Description**: Component-driven status updates during pre-processing and shutdown post-processing replace a generic "Thinking..." indicator in channels.
 
 ### DLT-044: Release pipeline
-**Status**: ✗ Pending
-**Note**: No release tooling in the repo (no semantic-release/changelog configuration).
+**Status**: ✓ Done
+**Note**: Local commit-and-tag-version releases via `just release` (`.versionrc.json`, CHANGELOG generation; ADR-013).
 **Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Easy
