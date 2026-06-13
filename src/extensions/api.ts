@@ -24,7 +24,8 @@ export interface ContextBlock {
 
 export interface ContextProviderInput {
   message: InboundMessage;
-  session: SessionRecord;
+  /** Null for headless/background runs that have no conversational session. */
+  session: SessionRecord | null;
 }
 
 export interface ContextProvider {
@@ -52,7 +53,8 @@ export const POST_PROCESSING_PHASES = {
 export type PostProcessingPhase = keyof typeof POST_PROCESSING_PHASES;
 
 export interface PostProcessorContext {
-  session: SessionRecord;
+  /** Null for background runs that have no conversational session record. */
+  session: SessionRecord | null;
   /** Path to the pi session JSONL transcript, when the session persisted one. */
   transcriptPath: string | null;
   log: Logger;
@@ -71,6 +73,12 @@ export interface InboundContext {
   /** Resume a previously closed session and make it active. */
   resumeSession(session: SessionRecord): Promise<void>;
 }
+
+/** Render context blocks for prepending to a headless prompt, matching the live-session format. */
+export const formatContextBlocks = (blocks: ContextBlock[]): string =>
+  blocks
+    .map((block) => `<context owner="${block.tag}">\n${block.content}\n</context>`)
+    .join("\n\n");
 
 export type InboundMiddleware = (
   message: InboundMessage,
@@ -106,6 +114,11 @@ export interface SessionsApi {
   onOpen(hook: (session: SessionRecord) => void | Promise<void>): void;
   onExchange(processor: ExchangeProcessor): void;
   registerProcessor(processor: PostProcessor): void;
+  /**
+   * Run the registered post-processors once for a headless/background run, in phase order and
+   * error-isolated. Processors that require a transcript no-op when `transcriptPath` is null.
+   */
+  runPostProcessors(context: PostProcessorContext): Promise<void>;
 }
 
 export interface ChannelsApi {
@@ -129,6 +142,8 @@ export interface AgentApi {
   /** Contribute a section to the agent's system prompt (replaces pi's coding prompt). */
   systemPrompt(builder: () => string): void;
   provideContext(provider: ContextProvider): void;
+  /** Run the registered context providers and return their non-null blocks (for headless runs). */
+  collectContext(input: ContextProviderInput): Promise<ContextBlock[]>;
   readonly models: ModelTiers;
   /** Side-channel LLM work: headless runs and structured classification. */
   readonly side: SideRunner;

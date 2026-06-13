@@ -30,12 +30,16 @@ const now = () => current;
 const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) => {
   const deliver = vi.fn<(delivery: Delivery) => void>();
   const notify = vi.fn<(notification: TaskNotification) => void>();
+  const collectContext = vi.fn<ExecutorDeps["collectContext"]>().mockResolvedValue([]);
+  const runPostProcessors = vi.fn<ExecutorDeps["runPostProcessors"]>().mockResolvedValue(undefined);
 
   const deps: ExecutorDeps = {
     repository,
     side,
     deliver,
     notify,
+    collectContext,
+    runPostProcessors,
     maxIterations,
     maxConcurrent,
     timezone: "UTC",
@@ -43,7 +47,7 @@ const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) =
     log: fakeLog,
   };
 
-  return { ...deps, deliver, notify };
+  return { ...deps, deliver, notify, collectContext, runPostProcessors };
 };
 
 const pendingInstance = (): TaskInstanceRecord =>
@@ -104,6 +108,28 @@ describe("executeBackgroundInstance", () => {
     );
     expect(deps.notify).toHaveBeenCalledWith(
       expect.objectContaining({ instanceId: instance.id, status: "completed" }),
+    );
+  });
+
+  it("injects workspace context into the prompt and runs post-processors on completion", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "report ready" });
+    const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
+    const deps = makeDeps({ run, classify });
+    deps.collectContext.mockResolvedValue([{ tag: "memories", content: "MEM-INDEX" }]);
+
+    const instance = pendingInstance();
+    await executeBackgroundInstance(deps, instance);
+
+    // The collected context is prepended to the run prompt in the live-session format.
+    const runArgs = run.mock.calls[0]?.[0];
+    expect(deps.collectContext).toHaveBeenCalled();
+    expect(runArgs?.prompt as string).toContain('<context owner="memories">');
+    expect(runArgs?.prompt as string).toContain("MEM-INDEX");
+    expect(runArgs?.prompt as string).toContain("summarize the inbox");
+
+    // Post-processors run after completion (transcript-less workspace persistence).
+    expect(deps.runPostProcessors).toHaveBeenCalledWith(
+      expect.objectContaining({ transcriptPath: null, session: null }),
     );
   });
 

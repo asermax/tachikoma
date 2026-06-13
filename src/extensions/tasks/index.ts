@@ -68,6 +68,8 @@ export default defineExtension<TasksConfig>({
       deliver: (delivery) => app.channels.deliver(delivery),
       // User-facing output goes through deliver(); this signal is for other extensions.
       notify: (notification) => app.events.emit("tasks:instance-finished", notification),
+      collectContext: (input) => app.agent.collectContext(input),
+      runPostProcessors: (context) => app.sessions.runPostProcessors(context),
       maxIterations: app.extensionConfig.backgroundMaxIterations,
       maxConcurrent: app.extensionConfig.backgroundMaxConcurrent,
       timezone,

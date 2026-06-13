@@ -10,8 +10,67 @@ import { componentLogger, type Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
 import type { SessionRegistry } from "../sessions/registry.ts";
 import type { Workspace } from "../workspace.ts";
-import type { AppContext, TachikomaExtension } from "./api.ts";
+import type {
+  AppContext,
+  ContextBlock,
+  ContextProvider,
+  ContextProviderInput,
+  PostProcessingPhase,
+  PostProcessor,
+  PostProcessorContext,
+  TachikomaExtension,
+} from "./api.ts";
 import type { Registrations } from "./registrations.ts";
+
+const POST_PROCESSING_PHASE_ORDER: PostProcessingPhase[] = ["main", "preFinalize", "finalize"];
+
+/** Run context providers, dropping nulls and isolating failures (used for headless/background runs). */
+const collectContextBlocks = async (
+  providers: ContextProvider[],
+  input: ContextProviderInput,
+  log: Logger,
+): Promise<ContextBlock[]> => {
+  const results = await Promise.allSettled(providers.map((provider) => provider.provide(input)));
+
+  const blocks: ContextBlock[] = [];
+  results.forEach((result, index) => {
+    if (result.status === "fulfilled") {
+      if (result.value != null) blocks.push(result.value);
+    } else {
+      log.error(
+        { provider: providers[index]?.name, err: result.reason },
+        "context provider failed",
+      );
+    }
+  });
+
+  return blocks;
+};
+
+/** Run post-processors once in phase order, error-isolated (no per-session state tracking). */
+const runPostProcessorsOnce = async (
+  processors: PostProcessor[],
+  context: PostProcessorContext,
+): Promise<void> => {
+  for (const phase of POST_PROCESSING_PHASE_ORDER) {
+    const phaseProcessors = processors.filter((processor) => (processor.phase ?? "main") === phase);
+
+    const results = await Promise.allSettled(
+      phaseProcessors.map((processor) =>
+        processor.process({ ...context, log: context.log.child({ processor: processor.name }) }),
+      ),
+    );
+
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        context.log.error(
+          { processor: phaseProcessors[index]?.name, err: result.reason },
+          "post-processor failed",
+        );
+      }
+    });
+  }
+};
 
 export interface HostServices {
   config: Config;
@@ -145,6 +204,8 @@ export class ExtensionHost {
         onOpen: (hook) => services.regs.sessionOpenHooks.push(hook),
         onExchange: (processor) => services.regs.exchangeProcessors.push(processor),
         registerProcessor: (processor) => services.regs.postProcessors.push(processor),
+        runPostProcessors: (context) =>
+          runPostProcessorsOnce(services.regs.postProcessors, context),
       },
 
       channels: {
@@ -159,6 +220,7 @@ export class ExtensionHost {
         },
         systemPrompt: (builder) => services.regs.systemPromptBuilders.push(builder),
         provideContext: (provider) => services.regs.contextProviders.push(provider),
+        collectContext: (input) => collectContextBlocks(services.regs.contextProviders, input, log),
         models: services.agent.tiers,
         side: new SideRunner(services.agent, log),
       },

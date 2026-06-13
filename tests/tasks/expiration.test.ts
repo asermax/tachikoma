@@ -85,6 +85,8 @@ describe("expireWaitingInstances", () => {
       side,
       deliver: vi.fn<(delivery: Delivery) => void>(),
       notify: vi.fn(),
+      collectContext: vi.fn<ExecutorDeps["collectContext"]>().mockResolvedValue([]),
+      runPostProcessors: vi.fn<ExecutorDeps["runPostProcessors"]>().mockResolvedValue(undefined),
       maxIterations: 10,
       maxConcurrent: 3,
       timezone: "UTC",

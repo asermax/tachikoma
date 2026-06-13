@@ -5,7 +5,14 @@ import { type Static, Type } from "typebox";
 import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
 import type { Delivery } from "../../channels/types.ts";
+import { textMessage } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
+import {
+  type ContextBlock,
+  type ContextProviderInput,
+  formatContextBlocks,
+  type PostProcessorContext,
+} from "../api.ts";
 import type { TaskRepository } from "./repository.ts";
 import type { TaskInstanceRecord } from "./schema.ts";
 
@@ -30,6 +37,10 @@ export interface ExecutorDeps {
   side: BackgroundSide;
   deliver: (delivery: Delivery) => void;
   notify: (notification: TaskNotification) => void;
+  /** Run the registered context providers, returning their blocks to inject into the task prompt. */
+  collectContext: (input: ContextProviderInput) => Promise<ContextBlock[]>;
+  /** Run the registered post-processors after a task completes (workspace persistence). */
+  runPostProcessors: (context: PostProcessorContext) => Promise<void>;
   maxIterations: number;
   maxConcurrent: number;
   timezone: string | undefined;
@@ -144,7 +155,18 @@ export const executeBackgroundInstance = async (
   deps: ExecutorDeps,
   instance: TaskInstanceRecord,
 ): Promise<void> => {
-  const { repository, side, deliver, notify, maxIterations, timezone, now, log } = deps;
+  const {
+    repository,
+    side,
+    deliver,
+    notify,
+    collectContext,
+    runPostProcessors,
+    maxIterations,
+    timezone,
+    now,
+    log,
+  } = deps;
 
   const definition =
     instance.definitionId != null ? repository.getDefinition(instance.definitionId) : null;
@@ -176,6 +198,17 @@ export const executeBackgroundInstance = async (
 
   try {
     const system = buildSystemPrompt(now(), timezone);
+
+    // Inject the same workspace context the live session gets (memory indexes, projects, …) so the
+    // task knows what's available. Static per workspace, so it is gathered once and reused across
+    // the evaluator-loop iterations (each iteration is an independent side run).
+    const contextBlocks = await collectContext({
+      message: textMessage("background-task", instance.prompt),
+      session: null,
+    });
+    const contextPreamble =
+      contextBlocks.length > 0 ? `${formatContextBlocks(contextBlocks)}\n\n` : "";
+
     let prompt =
       resuming && instance.question != null
         ? buildResumePrompt(
@@ -234,7 +267,7 @@ export const executeBackgroundInstance = async (
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       const { text } = await side.run({
         system,
-        prompt,
+        prompt: `${contextPreamble}${prompt}`,
         customTools: [notifyTool, askUserTool],
         tier: "processor",
         backgroundExtensions: true,
@@ -279,6 +312,9 @@ export const executeBackgroundInstance = async (
           question: null,
           resumeContext: null,
         });
+        // Persist any workspace changes the task made (git commit/push, project state). Transcript-
+        // dependent processors (episodic memory) no-op — background runs persist no transcript.
+        await runPostProcessors({ session: null, transcriptPath: null, log });
         deliver({ text: `✅ ${source} — completed.\n\n${text}`, gate: "idle" });
         notify({
           source,
