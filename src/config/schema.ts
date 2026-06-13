@@ -34,6 +34,7 @@ export const ConfigSchema = Type.Object({
       level: Type.String({ default: "info" }),
       pretty: Type.Boolean({ default: true }),
       toFile: Type.Boolean({ default: true }),
+      rotateFrequency: StringEnum(["hourly", "daily"] as const, { default: "daily" }),
       retentionDays: Type.Number({ default: 7 }),
     },
     { default: {} },

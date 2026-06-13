@@ -23,9 +23,12 @@ path = "~/tachikoma"
 [logging]
 level = "info"
 pretty = true
-# Persist structured JSON logs under {workspace}/.tachikoma/logs, rotated on each
-# startup and pruned after retentionDays. stderr output is kept regardless.
+# Persist structured JSON logs under {workspace}/.tachikoma/logs. stderr output
+# is kept regardless. Files roll automatically by rotateFrequency while running
+# ("hourly" | "daily"); a stable current.log symlinks to the active file.
 toFile = true
+rotateFrequency = "daily"
+# Days of logs to retain; older rolled files are pruned on rotation.
 retentionDays = 7
 
 [channels]

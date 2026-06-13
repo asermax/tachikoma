@@ -7,7 +7,7 @@ import { EventBus } from "./events.ts";
 import { ExtensionHost } from "./extensions/host.ts";
 import { firstPartyExtensions } from "./extensions/index.ts";
 import { createRegistrations } from "./extensions/registrations.ts";
-import { componentLogger, createRootLogger, rotateLogs } from "./log.ts";
+import { componentLogger, createRootLogger, retainedFiles } from "./log.ts";
 import { adaptConfig, adaptWorkspace, adaptWorkspaceData } from "./migration/index.ts";
 import { Scheduler } from "./scheduler.ts";
 import { SessionRegistry } from "./sessions/registry.ts";
@@ -24,11 +24,19 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
   const workspace = new Workspace(config.workspace.path);
   await workspace.ensure();
 
-  if (config.logging.toFile) await rotateLogs(workspace.logsDir, config.logging.retentionDays);
-
-  const log = createRootLogger({
-    ...config.logging,
-    file: config.logging.toFile ? join(workspace.logsDir, "tachikoma.log") : undefined,
+  const log = await createRootLogger({
+    level: config.logging.level,
+    pretty: config.logging.pretty,
+    file: config.logging.toFile
+      ? {
+          path: join(workspace.logsDir, "tachikoma"),
+          frequency: config.logging.rotateFrequency,
+          retainedFiles: retainedFiles(
+            config.logging.retentionDays,
+            config.logging.rotateFrequency,
+          ),
+        }
+      : undefined,
   });
   if (created) log.info({ configPath }, "generated default configuration");
 

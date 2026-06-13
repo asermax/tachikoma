@@ -35,7 +35,7 @@ export class Workspace {
     return join(this.dataDir, "tachikoma.db");
   }
 
-  /** Persisted diagnostic logs for daemon runs (rotated on startup). */
+  /** Persisted diagnostic logs for daemon runs (rotated by pino-roll). */
   get logsDir(): string {
     return join(this.dataDir, "logs");
   }

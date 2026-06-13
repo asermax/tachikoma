@@ -1,30 +1,39 @@
-import { mkdtemp, readFile, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 
-import { createRootLogger, rotateLogs } from "../src/log.ts";
+import { createRootLogger, retainedFiles } from "../src/log.ts";
 
 const tempDir = () => mkdtemp(join(tmpdir(), "tachi-log-"));
 
+const rolledLogs = async (dir: string): Promise<string[]> =>
+  (await readdir(dir)).filter((name) => name.endsWith(".log") && name !== "current.log");
+
 describe("createRootLogger", () => {
-  it("normalizes an uppercase level to lowercase", () => {
-    const logger = createRootLogger({ level: "INFO", pretty: false });
+  it("normalizes an uppercase level to lowercase", async () => {
+    const logger = await createRootLogger({ level: "INFO", pretty: false });
 
     expect(logger.level).toBe("info");
   });
 
-  it("writes a parseable JSON line to the file destination", async () => {
+  it("writes a parseable JSON line to a rolled file", async () => {
     const dir = await tempDir();
-    const file = join(dir, "tachikoma.log");
 
-    const logger = createRootLogger({ level: "info", pretty: false, file });
+    const logger = await createRootLogger({
+      level: "info",
+      pretty: false,
+      file: { path: join(dir, "tachikoma"), frequency: "daily", retainedFiles: 7 },
+    });
     logger.info({ marker: "abc" }, "hello from the file sink");
     logger.flush();
     await delay(50);
 
-    const contents = await readFile(file, "utf8");
+    const files = await rolledLogs(dir);
+    expect(files.length).toBeGreaterThanOrEqual(1);
+
+    const contents = await readFile(join(dir, files[0] as string), "utf8");
     const line = contents
       .trim()
       .split("\n")
@@ -35,44 +44,54 @@ describe("createRootLogger", () => {
     expect(parsed.msg).toBe("hello from the file sink");
     expect(parsed.marker).toBe("abc");
   });
+
+  it("rotates to a new file while running on a short frequency", async () => {
+    const dir = await tempDir();
+
+    // Numeric frequency (ms) drives pino-roll's real timer — no fake timers.
+    const logger = await createRootLogger({
+      level: "info",
+      pretty: false,
+      file: { path: join(dir, "tachikoma"), frequency: 60, retainedFiles: 5 },
+    });
+
+    logger.info("before rotation");
+    logger.flush();
+    await delay(200);
+
+    logger.info("after rotation");
+    logger.flush();
+    await delay(50);
+
+    expect((await rolledLogs(dir)).length).toBeGreaterThanOrEqual(2);
+  });
+
+  // Guards the schema↔pino-roll contract: every config-valid frequency must build
+  // a stream (pino-roll throws on unsupported strings, e.g. "weekly").
+  it.each(["hourly", "daily"])("builds a file sink for the %s frequency", async (frequency) => {
+    const dir = await tempDir();
+
+    await expect(
+      createRootLogger({
+        level: "info",
+        pretty: false,
+        file: { path: join(dir, "tachikoma"), frequency, retainedFiles: 7 },
+      }),
+    ).resolves.toBeDefined();
+  });
 });
 
-describe("rotateLogs", () => {
-  it("archives the current log under a timestamped name", async () => {
-    const dir = await tempDir();
-    await writeFile(join(dir, "tachikoma.log"), "old contents\n", "utf8");
-
-    const now = new Date("2026-06-13T14:05:09");
-    await rotateLogs(dir, 7, now);
-
-    const archived = join(dir, "tachikoma.2026-06-13_14-05-09.log");
-    await expect(readFile(archived, "utf8")).resolves.toBe("old contents\n");
-    await expect(stat(join(dir, "tachikoma.log"))).rejects.toThrow();
+describe("retainedFiles", () => {
+  it("keeps retentionDays of files at any frequency", () => {
+    expect(retainedFiles(7, "daily")).toBe(7);
+    expect(retainedFiles(7, "hourly")).toBe(168);
   });
 
-  it("prunes archives older than retentionDays while keeping recent ones", async () => {
-    const dir = await tempDir();
-    const now = new Date("2026-06-13T12:00:00");
-
-    const stale = join(dir, "tachikoma.2026-06-01_00-00-00.log");
-    const fresh = join(dir, "tachikoma.2026-06-12_00-00-00.log");
-    await writeFile(stale, "stale\n", "utf8");
-    await writeFile(fresh, "fresh\n", "utf8");
-
-    const staleTime = new Date("2026-06-01T00:00:00");
-    const freshTime = new Date("2026-06-12T00:00:00");
-    await utimes(stale, staleTime, staleTime);
-    await utimes(fresh, freshTime, freshTime);
-
-    await rotateLogs(dir, 7, now);
-
-    await expect(stat(stale)).rejects.toThrow();
-    await expect(readFile(fresh, "utf8")).resolves.toBe("fresh\n");
+  it("falls back to one-file-per-day for unmapped frequencies", () => {
+    expect(retainedFiles(5, "weekly")).toBe(5);
   });
 
-  it("is a no-op when no current log exists", async () => {
-    const dir = await tempDir();
-
-    await expect(rotateLogs(dir, 7, new Date())).resolves.toBeUndefined();
+  it("never returns less than one", () => {
+    expect(retainedFiles(0, "daily")).toBe(1);
   });
 });
