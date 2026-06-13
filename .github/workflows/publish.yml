@@ -4,13 +4,40 @@ on:
   push:
     branches: [master]
 
+# Serialize releases so two pushes to master cannot publish concurrently.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
 jobs:
+  quality-gate:
+    name: Quality gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm biome check .
+
+      - run: pnpm tsc --noEmit
+
+      - run: pnpm vitest run
+
   release:
     name: Release
     runs-on: ubuntu-latest
+    needs: quality-gate
     permissions:
       contents: write
       issues: write
@@ -31,4 +58,10 @@ jobs:
 
       - run: pnpm semantic-release
         env:
+          # GITHUB_TOKEN authenticates the changelog/git/github plugins (tag + GitHub release).
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # NPM_TOKEN authenticates @semantic-release/npm to publish to the registry.
+          # HUMAN FOLLOW-UP: this repo secret must be created (Settings > Secrets and
+          # variables > Actions) with an npm automation token, or the publish step fails.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
