@@ -19,6 +19,11 @@ const TelegramConfigSchema = Type.Object({
     default: true,
     description: "Fire one push notification per background delivery (on its last chunk)",
   }),
+  pushNotificationMinSeconds: Type.Number({
+    default: 10,
+    description:
+      "Minimum streamed-response duration (seconds) before a completion push is forced; shorter turns stream without a push (the user is assumed to still be watching)",
+  }),
   extraFileRoots: Type.Array(Type.String(), {
     default: [],
     description: "Extra absolute roots send_telegram_file may read from",
@@ -38,7 +43,14 @@ export default defineExtension<TelegramConfig>({
   configSchema: TelegramConfigSchema,
 
   setup(app) {
-    const { botToken, chatId, allowMedia, pushNotifications, extraFileRoots } = app.extensionConfig;
+    const {
+      botToken,
+      chatId,
+      allowMedia,
+      pushNotifications,
+      pushNotificationMinSeconds,
+      extraFileRoots,
+    } = app.extensionConfig;
 
     if (botToken === "" || chatId === 0) {
       app.log.info(
@@ -68,6 +80,7 @@ export default defineExtension<TelegramConfig>({
       chatId,
       allowMedia,
       pushNotifications,
+      pushNotificationMinSeconds,
       mediaDir,
       stop: () => app.sessions.abortExchange(),
       store,

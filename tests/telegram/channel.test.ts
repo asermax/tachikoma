@@ -110,6 +110,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     chatId: 42,
     allowMedia: false,
     pushNotifications: false,
+    pushNotificationMinSeconds: 0,
     mediaDir: "/tmp/media",
     stop,
     store,
@@ -411,6 +412,85 @@ describe("respond push notification", () => {
     // Copy failed: no delete, the streamed message (id 1) stands, no push.
     expect(calls.filter((call) => call.type === "delete")).toEqual([]);
     expect(channel.lastOutboundMessageId).toBe(1);
+  });
+
+  it("skips the push for a quick turn under the duration threshold", async () => {
+    const { channel, runtime, calls } = makeChannel({
+      pushNotifications: true,
+      pushNotificationMinSeconds: 60,
+    });
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(calls.filter((call) => call.type === "copy")).toEqual([]);
+    expect(channel.lastOutboundMessageId).toBe(1);
+  });
+
+  it("skips the push when a notifying tool (file/pin/buttons) already delivered one", async () => {
+    const { channel, runtime, calls } = makeChannel({ pushNotifications: true });
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Here is the file." },
+        { kind: "tool-start", toolCallId: "t1", toolName: "send_telegram_file", args: {} },
+        { kind: "tool-end", toolCallId: "t1", toolName: "send_telegram_file", isError: false },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    // The file tool already pushed; the streamed response is left in place.
+    expect(calls.filter((call) => call.type === "copy")).toEqual([]);
+    expect(calls.filter((call) => call.type === "delete")).toEqual([]);
+    expect(channel.lastOutboundMessageId).toBe(1);
+  });
+
+  it("copies only the last message of a multi-chunk response", async () => {
+    const { channel, runtime, calls } = makeChannel({ pushNotifications: true });
+    await channel.start(runtime);
+
+    const big = "a".repeat(4200);
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: big },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    // Two chunks are sent (ids 1 and 2); only the final one (id 2) is copied and
+    // deleted — the first chunk stands untouched.
+    const copies = calls.filter((call) => call.type === "copy");
+    expect(copies).toEqual([{ type: "copy", messageId: 2 }]);
+    expect(calls).toContainEqual({ type: "delete", messageId: 2 });
+    expect(calls).not.toContainEqual({ type: "delete", messageId: 1 });
+    expect(channel.lastOutboundMessageId).toBe(3);
+  });
+
+  it("records the streamed id (not a copied one) when the push is skipped", async () => {
+    const { channel, runtime, recorded } = makeChannel({
+      pushNotifications: true,
+      pushNotificationMinSeconds: 60,
+    });
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: inboundWith("hi", 7),
+      events: stream([
+        { kind: "text", text: "Hello" },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(recorded).toContainEqual({ messageId: "1", sessionId: 100, direction: "outgoing" });
   });
 });
 

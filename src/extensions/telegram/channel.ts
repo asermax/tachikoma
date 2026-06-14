@@ -35,6 +35,8 @@ export interface TelegramChannelOptions {
   chatId: number;
   allowMedia: boolean;
   pushNotifications: boolean;
+  /** Minimum streamed-response duration (seconds) before a completion push is forced. */
+  pushNotificationMinSeconds: number;
   mediaDir: string;
   /** Abort the in-flight agent run — wired from sessions.abortExchange. */
   stop: () => Promise<void>;
@@ -46,6 +48,14 @@ export interface TelegramChannelOptions {
 
 export const STOP_COMMAND = "/stop";
 export const STOP_ACKNOWLEDGEMENT = "⏹ Stopped.";
+
+/**
+ * Agent tools that already deliver a notifying message during the turn (a file, a
+ * pin, an inline-button message). When one of these runs the user is already
+ * pushed, so forcing an extra push on the streamed response would double-notify —
+ * the copy-delete is skipped.
+ */
+const NOTIFYING_TOOLS = new Set(["send_telegram_file", "pin_message", "send_message_with_buttons"]);
 
 export class TelegramChannel implements Channel {
   readonly name = "telegram";
@@ -206,6 +216,8 @@ export class TelegramChannel implements Channel {
         this.options.pushNotifications,
       );
       this.activeRenderer = renderer;
+      const startedAt = Date.now();
+      let notifyingToolUsed = false;
 
       try {
         for await (const event of events) {
@@ -215,6 +227,9 @@ export class TelegramChannel implements Channel {
               break;
 
             case "tool-start":
+              // Tools that already push (file/pin/buttons) make a completion push
+              // redundant — skip the copy-delete so the user isn't double-notified.
+              if (NOTIFYING_TOOLS.has(event.toolName)) notifyingToolUsed = true;
               await renderer.appendTool(event.toolName, event.args);
               break;
 
@@ -251,13 +266,22 @@ export class TelegramChannel implements Channel {
       const finalized = await renderer.finalize();
 
       // Telegram edits never notify, so a streamed response — edited in place as
-      // it arrives — never fires a push. When push notifications are on, force one
-      // on completion by copying the finalized message (a fresh send that notifies)
-      // and deleting the streamed original; the copy's id is what later reply
-      // routing records. A failure leaves the streamed message in place (delivered,
-      // just without a push) rather than losing it.
+      // it arrives — never fires a push. Force one on completion by copying the
+      // finalized message (a fresh send that notifies) and deleting the streamed
+      // original, but only when the turn ran long enough that the user likely
+      // stepped away (quick turns skip it to avoid a flicker while they're still
+      // watching) and no notifying tool already pushed. For a multi-message
+      // response only the final chunk is copied — it carries the push and its id is
+      // what reply routing records; a failure leaves the streamed message in place.
+      const elapsedSeconds = (Date.now() - startedAt) / 1000;
+      const shouldPush =
+        this.options.pushNotifications &&
+        !notifyingToolUsed &&
+        finalized != null &&
+        elapsedSeconds >= this.options.pushNotificationMinSeconds;
+
       let outboundId = finalized;
-      if (this.options.pushNotifications && finalized != null) {
+      if (shouldPush && finalized != null) {
         try {
           outboundId = await forceNotification(this.bot.api, this.options.chatId, finalized);
         } catch (error) {
