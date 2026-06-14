@@ -3,9 +3,12 @@ import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-codi
 /**
  * A pi extension factory that injects a context block ONCE per session as a persisted,
  * hidden message — stored in the session transcript, sent to the LLM, never shown to the
- * user. The block is prepared on `session_start` (so `provide` can read the session ctx
- * and run async fs/git work) and injected on the first `before_agent_start` (pi's documented
- * "make it visible to the model" step). Empty content yields no injection.
+ * user. The block is prepared and injected on the first `before_agent_start` (pi's documented
+ * "make it visible to the model" step): `provide` runs there with the session ctx, so it can
+ * read the workspace and run async fs/git work. We deliberately do NOT prepare on
+ * `session_start` — that event does not fire ahead of the first agent start for the sessions
+ * Tachikoma opens via `createAgentSession`, so content stayed empty and nothing was injected.
+ * Empty content yields no injection (and leaves the section eligible to inject on a later turn).
  *
  * Bound through `app.agent.use(..., { sessionScopes })`, so a section reaches exactly the
  * agents whose scope includes it — the background task agent inherits a section only when it
@@ -22,16 +25,14 @@ export interface PersistentContextSectionOptions {
 export const persistentContextSection =
   (customType: string, { provide }: PersistentContextSectionOptions): ExtensionFactory =>
   (pi) => {
-    let content = "";
-
-    pi.on("session_start", async (_event, ctx) => {
-      content = (typeof provide === "function" ? await provide(ctx) : provide).trim();
-    });
-
     let injected = false;
 
-    pi.on("before_agent_start", () => {
-      if (injected || content === "") return undefined;
+    pi.on("before_agent_start", async (_event, ctx) => {
+      if (injected) return undefined;
+
+      const content = (typeof provide === "function" ? await provide(ctx) : provide).trim();
+
+      if (content === "") return undefined;
 
       injected = true;
 

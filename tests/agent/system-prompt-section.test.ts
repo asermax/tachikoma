@@ -11,27 +11,20 @@ const drive = (factory: ReturnType<typeof persistentContextSection>) => {
   factory({ on: (event: string, handler: Handler) => handlers.set(event, handler) } as never);
 
   return {
-    sessionStart: (ctx?: unknown) =>
-      handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, ctx),
-    beforeAgentStart: () =>
-      handlers.get("before_agent_start")?.() as
-        | { message: { customType: string; content: string; display: boolean } }
-        | undefined,
+    beforeAgentStart: (ctx?: unknown) =>
+      handlers.get("before_agent_start")?.({ type: "before_agent_start" }, ctx) as Promise<
+        { message: { customType: string; content: string; display: boolean } } | undefined
+      >,
   };
 };
 
 describe("persistentContextSection", () => {
-  it("prepares on session_start and injects a persisted hidden message once", async () => {
+  it("injects a persisted hidden message once on before_agent_start", async () => {
     const driver = drive(
       persistentContextSection("tasks-usage", { provide: () => "use the task tools" }),
     );
 
-    // No injection before session_start prepared the content.
-    expect(driver.beforeAgentStart()).toBeUndefined();
-
-    await driver.sessionStart();
-
-    const first = driver.beforeAgentStart();
+    const first = await driver.beforeAgentStart();
     expect(first).toEqual({
       message: {
         customType: "tasks-usage",
@@ -41,7 +34,7 @@ describe("persistentContextSection", () => {
     });
 
     // Subsequent agent runs in the same session do not re-inject.
-    expect(driver.beforeAgentStart()).toBeUndefined();
+    expect(await driver.beforeAgentStart()).toBeUndefined();
   });
 
   it("passes the session ctx to provide and awaits async providers", async () => {
@@ -55,29 +48,30 @@ describe("persistentContextSection", () => {
       }),
     );
 
-    await driver.sessionStart({ cwd: "/ws" } as ExtensionContext);
+    const result = await driver.beforeAgentStart({ cwd: "/ws" } as ExtensionContext);
 
     expect(seenCwd).toBe("/ws");
     // Content is trimmed before wrapping.
-    expect(driver.beforeAgentStart()?.message.content).toBe(
-      '<context owner="memories">\nmemory layout\n</context>',
-    );
+    expect(result?.message.content).toBe('<context owner="memories">\nmemory layout\n</context>');
   });
 
-  it("injects nothing when the prepared content is empty", async () => {
-    const driver = drive(persistentContextSection("memories", { provide: () => "   " }));
+  it("injects nothing when the content is empty, staying eligible for a later turn", async () => {
+    let value = "   ";
+    const driver = drive(persistentContextSection("memories", { provide: () => value }));
 
-    await driver.sessionStart();
+    expect(await driver.beforeAgentStart()).toBeUndefined();
 
-    expect(driver.beforeAgentStart()).toBeUndefined();
+    // Empty content does not consume the one-shot: once it has content, it injects.
+    value = "memory layout";
+    expect((await driver.beforeAgentStart())?.message.content).toBe(
+      '<context owner="memories">\nmemory layout\n</context>',
+    );
   });
 
   it("accepts a static string for provide", async () => {
     const driver = drive(persistentContextSection("git-usage", { provide: "use git tools" }));
 
-    await driver.sessionStart();
-
-    expect(driver.beforeAgentStart()?.message.content).toBe(
+    expect((await driver.beforeAgentStart())?.message.content).toBe(
       '<context owner="git-usage">\nuse git tools\n</context>',
     );
   });
