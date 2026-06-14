@@ -38,7 +38,7 @@ submit() ─ mid-exchange & not /queue & not /new & not system? ─→ session.s
   → exchange processors → re-evaluate the delivery queue
 ```
 
-On session resume, bridging context (summaries of sessions closed since the resumed session's prior close) reaches the agent through a host-owned pi extension factory (`hostFactory()`, registered in `src/app.ts` alongside extension factories): on `before_agent_start` it drains `pendingContext` into one hidden `bridging-context` message. Extension-contributed context (memory, projects, subsystem usage) does not flow through the coordinator — each extension registers its own context section via `app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })`, injected directly by pi (see [DES-001](../design/DES-001-unified-extension-api.md)).
+On session resume, bridging context (summaries of sessions closed since the resumed session's prior close) reaches the agent through a host-owned pi extension factory (`hostFactory()`, registered in `src/app.ts` alongside extension factories): on `before_agent_start` it drains `pendingContext` (a `string[]`) into one hidden `tachikoma-context` message. Extension-contributed context (memory, projects, subsystem usage) does not flow through the coordinator — each extension registers its own context section via `app.agent.use(provideContext(provide, customType?), { sessionScopes })`, injected directly by pi (see [DES-001](../design/DES-001-unified-extension-api.md)).
 
 ## Components
 
@@ -71,7 +71,7 @@ On session resume, bridging context (summaries of sessions closed since the resu
 
 ### Context injection via a host-owned pi extension
 
-**Choice**: Providers fill a `pendingContext` buffer per exchange; `hostFactory()` injects it on `before_agent_start` as a single non-displayed `tachikoma-context` message with `<context owner="…">` sections, then clears the buffer.
+**Choice**: Resume bridging fills a `pendingContext` buffer (a `string[]`); `hostFactory()` injects it on `before_agent_start` as a single non-displayed `tachikoma-context` message (blocks joined by blank lines, no XML wrapper), then clears the buffer.
 **Why**: Keeps the user's prompt text clean, makes context an auditable single message in the transcript, and uses pi's sanctioned injection point instead of mutating `agent.state` by hand.
 **Alternatives Considered**:
 - Prepending context to the prompt string: pollutes the visible user message and the rolling summary input

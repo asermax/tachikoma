@@ -37,7 +37,6 @@ const buildHost = (): ExtensionHost => {
     coordinator: {},
     regs: {
       piFactories: [],
-      systemPromptBuilders: [],
       exchangeProcessors: [],
       postProcessors: [],
       inboundMiddleware: [],

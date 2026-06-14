@@ -25,7 +25,7 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R3 | Registered inbound middleware runs as a chain before session resolution, receiving the message, the active session record (or null), and `closeSession`/`resumeSession` controls |
 | R4 | When no session is active, the coordinator opens a pi `AgentSession` with all registered extension factories bound, creates a database record, emits `session:opened`, and runs session-open hooks with error isolation |
 | R5 | Session records persist channel, pi transcript path, summary, last exchange, created/closed/resumed timestamps, and per-processor post-processing state; the registry supports create, get, update, close, reopen, dangling lookup, and resumable listing within a time window |
-| R6 | On session resume, the coordinator injects bridging context (summaries of sessions closed since the resumed session's prior close) as a single hidden `bridging-context` message via pi's `before_agent_start`. Extension-contributed context (memory, projects, subsystem usage) is not coordinator-gathered — each extension registers its own context section (`app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })`, see [DES-001](../design/DES-001-unified-extension-api.md)) injected directly through pi |
+| R6 | On session resume, the coordinator injects bridging context (summaries of sessions closed since the resumed session's prior close) as a single hidden `tachikoma-context` message via pi's `before_agent_start`. Extension-contributed context (memory, projects, subsystem usage) is not coordinator-gathered — each extension registers its own context section (`app.agent.use(provideContext(provide, customType?), { sessionScopes })`, see [DES-001](../design/DES-001-unified-extension-api.md)) injected directly through pi |
 | R7 | Each exchange streams domain `AgentEvent`s to the active channel's `respond()`; media attachments are rendered into the prompt as an `<attachments>` block |
 | R8 | Exchange processors run in parallel after every completed exchange with the session record, user text, and latest assistant text, error-isolated; the coordinator's cached session record is refreshed afterwards |
 | R9 | Closing a session disposes the pi session, stamps `closedAt`, emits `session:closed`, and runs post-processing |
@@ -92,8 +92,8 @@ One database row per conversation; the active pi session and its record travel t
 The coordinator's host-owned pi extension injects only bridging context — there is no per-message provider gathering. Extension context is contributed by each extension's own context section (see [agent-integration](agent-integration.md) / [DES-001](../design/DES-001-unified-extension-api.md)).
 
 **Acceptance Criteria**:
-- Given a resumed session, when summaries exist for sessions that closed since its prior close, then they are buffered as a `bridging-context` block (oldest-first)
-- Given a buffered bridging block, when pi fires `before_agent_start`, then it is injected as a `<context owner="bridging-context">…</context>` section in a single non-displayed message and the pending buffer is cleared
+- Given a resumed session, when summaries exist for sessions that closed since its prior close, then they are buffered (oldest-first)
+- Given a buffered bridging block, when pi fires `before_agent_start`, then it is injected as a single non-displayed `tachikoma-context` message (raw content, no XML wrapper) and the pending buffer is cleared
 - Given no resume (or no intervening closed sessions), when an exchange starts, then no bridging message is injected
 
 ### Exchange Processors (R8)

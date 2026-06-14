@@ -21,7 +21,7 @@ Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the 
 
 **Interactions:**
 - The `AppContext` service table and extension lifetimes are defined in [DES-001](../design/DES-001-unified-extension-api.md); authoring conventions in [DES-002](../design/DES-002-extension-authoring.md)
-- The `Registrations` object filled here is consumed by the coordinator (middleware, processors, channels) and the `AgentManager` (pi factories — including extension context sections — and system prompt builders) — both documented in their own areas
+- The `Registrations` object filled here is consumed by the coordinator (middleware, processors, channels) and the `AgentManager` (pi factories — including extension context sections); the core base prompt is owned by `AgentManager` itself, not registered here — both documented in their own areas
 - Every feature extension depends on this shell; the `external` extension extends it at runtime via `app.registerExtension`
 
 ## Design Overview

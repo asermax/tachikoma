@@ -127,12 +127,11 @@ export interface UseFactoryOptions {
 
 export interface AgentApi {
   /**
-   * Contribute a pi extension factory, scoped to the given sessions. Persisted context sections
-   * use this same form via `persistentContextSection(name, { provide })` as the factory.
+   * Contribute a pi extension factory, scoped to the given sessions. Context sections use this same
+   * form via `provideContext(provide, customType?)` as the factory: with no `customType` the content
+   * is appended to the system prompt, with a `customType` it is injected as a hidden message.
    */
   use(factory: ExtensionFactory, options?: UseFactoryOptions): void;
-  /** Contribute a section to the agent's system prompt (replaces pi's coding prompt). */
-  systemPrompt(builder: () => string): void;
   readonly models: ModelTiers;
   /** Side-channel LLM work: headless runs and structured classification. */
   readonly side: SideRunner;

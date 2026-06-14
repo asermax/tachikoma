@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { Type } from "typebox";
 
-import { persistentContextSection } from "../../agent/system-prompt-section.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { createStaleWorkflowCleanup, DEFAULT_STALE_HOURS } from "./cleanup.ts";
 import { validateWorkflowGraph } from "./composition.ts";
@@ -62,7 +62,7 @@ export default defineExtension<WorkflowsConfig>({
       });
     });
 
-    app.agent.use(persistentContextSection("workflows-usage", { provide: WORKFLOWS_USAGE }));
+    app.agent.use(provideContext(WORKFLOWS_USAGE, "workflows-usage"));
 
     app.sessions.registerProcessor(
       createStaleWorkflowCleanup(repository, app.extensionConfig.staleHours),

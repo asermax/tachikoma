@@ -9,23 +9,28 @@
 A system prompt that **replaces pi's coding-agent base** — the standing identity for an execution
 context (the main conversational session, the autonomous background-task agent, a delegated
 subagent) — lives in the core module `src/agent/prompts.ts` and shares the single
-`OPERATIONAL_GUIDANCE` block for role-agnostic working hygiene. The extension that runs the context
-composes its prompt by calling a builder/constant from that module and installs it through the
-DES-001 seam (`app.agent.systemPrompt(...)` for the main session, `side.run({ system })` for headless
-runs) — it does not author base-prompt text inline.
+`OPERATIONAL_GUIDANCE` block for role-agnostic working hygiene. The **core installs it**, not an
+extension: `AgentManager` applies `buildMainSystemPrompt({ workspaceRoot })` as the
+`systemPromptOverride` for any non-bare session that brings no explicit prompt (the main session and
+forks); headless/background runs pass their own via `side.run({ system })`. The main base prompt holds
+only the identity, the shared guidance, and the workspace root — it does **not** include the
+user-editable SOUL.md/USER.md content.
 
 A prompt that is **a discrete task handed to a side-run** (a classifier, extractor, summarizer, or
 one-shot writer) is *not* a base prompt and stays co-located with the feature that owns it.
 
-**Per-extension usage/context guidance** (how to use a subsystem — its tools, constraints, and
-when to reach for it) is likewise *not* a base prompt: it supplements the standing identity rather
-than replacing pi's base. Each extension **owns its own guidance text** (e.g. `src/extensions/<name>/usage.ts`)
-and injects it as a persisted context section through the DES-001 seam
-`app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })`. The shared helper
-that turns that text into a `before_agent_start` factory (`persistentContextSection`, `src/agent/system-prompt-section.ts`)
-lives in core, but the **text stays with the feature**. Scope each section to the sessions where the
-extension's tools actually exist (`["main", "background"]` vs main-only) — never describe a tool to
-an agent that cannot call it.
+**Per-extension context** (a subsystem's usage guidance, or user-editable identity content like
+SOUL.md/USER.md) is *not* the core base prompt: it supplements the standing identity rather than
+replacing pi's base. Each extension **owns its own text** (e.g. `src/extensions/<name>/usage.ts`, or
+the `context` extension's SOUL/USER files) and contributes it through the DES-001 seam
+`app.agent.use(provideContext(provide, customType?), { sessionScopes })`. The shared helper
+(`provideContext`, `src/agent/system-prompt-section.ts`) turns that text into a `before_agent_start`
+factory with two delivery modes: **with a `customType`** the content is injected as a hidden message
+(subsystem usage guidance, volatile state like memory indexes / project state); **with no
+`customType`** it is appended to the turn's system prompt (the `context` extension's SOUL/USER, which
+layer the persona onto the core base prompt). The helper lives in core, but the **text stays with the
+feature**. Scope each section to the sessions where it belongs (`["main", "background"]` vs main-only)
+— never describe a tool to an agent that cannot call it.
 
 The deciding predicate: *does this prompt stand in for pi's coding-agent identity for a whole
 execution context?* If yes → core `prompts.ts` + shared `OPERATIONAL_GUIDANCE`. If it is a
@@ -51,15 +56,20 @@ frame a whole conversation, and would only add noise to the core module.
 ```ts
 // src/agent/prompts.ts — base prompts + shared hygiene live here
 export const OPERATIONAL_GUIDANCE = `- Be concise and direct.\n- ...`;
-export const buildMainSystemPrompt = ({ soul, user, workspaceRoot }) => [...].join("\n\n");
+export const buildMainSystemPrompt = ({ workspaceRoot }) => [...].join("\n\n"); // identity + hygiene + root
 export const SUBAGENT_SYSTEM_PROMPT = `You are a focused worker ...\n${OPERATIONAL_GUIDANCE}`;
 
-// src/extensions/context/index.ts — the extension composes, it does not author base text
-app.agent.systemPrompt(() => buildMainSystemPrompt({ soul, user, workspaceRoot }));
+// src/agent/manager.ts — the CORE installs the base prompt
+systemPromptOverride = options.systemPrompt ?? (!bare ? buildMainSystemPrompt({ workspaceRoot }) : undefined);
+
+// src/extensions/context/index.ts — SOUL/USER are user-editable supplements, appended on top
+app.agent.use(provideContext(() => fresh("SOUL.md")));
+app.agent.use(provideContext(() => fresh("USER.md")));
 ```
 
-**Why**: The context's standing identity replaces pi's base, so it belongs in `prompts.ts`; the
-extension is a consumer of the builder and shares the one `OPERATIONAL_GUIDANCE`.
+**Why**: The standing identity replaces pi's base, so it belongs in `prompts.ts` and is installed by
+the core; SOUL/USER are user-editable workspace content layered on top via `provideContext`, sharing
+the one `OPERATIONAL_GUIDANCE` through the core base prompt rather than re-stating it.
 
 ### Don't Do This
 
@@ -87,7 +97,7 @@ operator config."
 
 ## Related
 
-- See also: [DES-001](DES-001-unified-extension-api.md) — the `app.agent.systemPrompt` / `side.run` registration seam this pattern flows through
+- See also: [DES-001](DES-001-unified-extension-api.md) — the `app.agent.use(provideContext(...))` / `side.run` registration seams this pattern flows through (the core installs the base prompt directly via `AgentManager`)
 - See also: [ADR-001](../architecture/ADR-001-agent-sdk.md) — the always-replace-pi-base / don't-inherit-operator-append stance
 - Related feature: [../feature-designs/foundational-context.md](../feature-designs/foundational-context.md) — the main-session identity
 - Related feature: [../feature-designs/agent-integration.md](../feature-designs/agent-integration.md) — `isolatePrompt` and the side-run seam

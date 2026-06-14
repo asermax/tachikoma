@@ -213,7 +213,6 @@ export class ExtensionHost {
           if (targets.main) services.regs.piFactories.push(factory);
           if (targets.background) services.regs.backgroundFactories.push(factory);
         },
-        systemPrompt: (builder) => services.regs.systemPromptBuilders.push(builder),
         models: services.agent.tiers,
         side: new SideRunner(services.agent, log),
         forkAndContinue: (sourceSessionFile, prompt, tier, tools) =>

@@ -29,9 +29,9 @@ tests/<name>/
 |---|---|
 | feature config | `configSchema` (TypeBox) + `app.extensionConfig` — section `[extensions.<name>]` |
 | startup init | `app.bootstrap("hook-name", fn)` — idempotent, fail = abort startup |
-| inject a persisted context section | `app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })` — `provide` is a string or `(ctx) => string \| Promise<string>` (empty → no injection) |
+| inject a context section as a hidden message | `app.agent.use(provideContext(provide, "custom-type"), { sessionScopes })` — `provide` is a string or `(ctx) => string \| Promise<string>` (empty → no injection) |
+| append a context section to the system prompt | `app.agent.use(provideContext(provide), { sessionScopes })` — same `provide`, no `customType` → appended to the turn's system prompt |
 | add agent tools / pi hooks | `app.agent.use((pi) => { pi.registerTool({...}); pi.on(...); })` |
-| system prompt section | `app.agent.systemPrompt(() => "...")` |
 | cheap LLM side-calls | `app.agent.side.complete/classify` (typed via TypeBox schema) |
 | headless agent run | `app.agent.side.run({ prompt, system, tools, tier })` |
 | react after each exchange | `app.sessions.onExchange({ name, process })` |

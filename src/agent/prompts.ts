@@ -1,10 +1,11 @@
 /**
  * System prompts for every Tachikoma execution context (main session, background tasks,
  * delegated subagents). Each context replaces pi's native coding-agent base entirely, so this
- * module is the single owner of the prompt text — extensions compose role prompts from these
- * builders rather than authoring base-prompt text inline. The operational hygiene below is
- * reproduced here (not inherited from the user's `~/.pi/agent/APPEND_SYSTEM.md`) so a deployment
- * never depends on the operator's personal pi config.
+ * module is the single owner of the prompt text. The core installs these: `AgentManager` applies
+ * `buildMainSystemPrompt` for the main session, while background tasks and delegated subagents pass
+ * their own via `side.run({ system })`. The operational hygiene below is reproduced here (not
+ * inherited from the user's `~/.pi/agent/APPEND_SYSTEM.md`) so a deployment never depends on the
+ * operator's personal pi config.
  */
 
 /** Role-agnostic working hygiene shared by every context. The single source for these rules. */
@@ -25,18 +26,16 @@ ${OPERATIONAL_GUIDANCE}
 - Before acting on a message, evaluate the available skills: if a skill's description fits what's being asked — or would help you interpret or carry it out — read its skill file and follow it before proceeding on your own. Make this a habit on every message, not just obvious matches.`;
 
 export interface MainSystemPromptParts {
-  soul: string;
-  user: string;
   workspaceRoot: string;
 }
 
-/** Main conversational session: assistant identity + personality (SOUL) + hygiene + user knowledge. */
-export const buildMainSystemPrompt = ({
-  soul,
-  user,
-  workspaceRoot,
-}: MainSystemPromptParts): string =>
-  [MAIN_IDENTITY, soul, MAIN_GUIDANCE, user, `Workspace root: ${workspaceRoot}`].join("\n\n");
+/**
+ * Main conversational session base prompt: assistant identity + working hygiene + workspace root.
+ * Personality (SOUL.md) and user knowledge (USER.md) are user-editable workspace content layered on
+ * top by the context extension via `provideContext`, not baked into this core base prompt.
+ */
+export const buildMainSystemPrompt = ({ workspaceRoot }: MainSystemPromptParts): string =>
+  [MAIN_IDENTITY, MAIN_GUIDANCE, `Workspace root: ${workspaceRoot}`].join("\n\n");
 
 const BACKGROUND_IDENTITY = `You are Tachikoma running a scheduled task on your own, with no one watching in real time.
 Complete the task described below; your work is saved automatically.`;

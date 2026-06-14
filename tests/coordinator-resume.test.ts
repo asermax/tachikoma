@@ -147,7 +147,7 @@ describe("Coordinator.resumeSession bridging context", () => {
     if (captured != null) injected.push(captured.message.content);
 
     expect(injected).toHaveLength(1);
-    expect(injected[0]).toContain('owner="bridging-context"');
+    expect(injected[0]).not.toContain("<context");
     expect(injected[0]?.indexOf("first thing that happened")).toBeLessThan(
       injected[0]?.indexOf("second thing that happened") ?? -1,
     );

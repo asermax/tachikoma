@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 
-import { persistentContextSection } from "../../agent/system-prompt-section.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { createGitGuardrailFactory } from "./guardrail.ts";
 import { initializeWorkspaceRepo } from "./hooks.ts";
@@ -44,7 +44,7 @@ export default defineExtension<GitConfig>({
     });
     app.agent.use(createGitGuardrailFactory(app.log), { sessionScopes: ["main", "background"] });
 
-    app.agent.use(persistentContextSection("git-usage", { provide: GIT_USAGE }), {
+    app.agent.use(provideContext(GIT_USAGE, "git-usage"), {
       sessionScopes: ["main", "background"],
     });
 

@@ -12,7 +12,7 @@ const PI_NATIVE_BASE = "expert coding assistant operating inside pi";
 
 describe("role system prompts", () => {
   it("share the single OPERATIONAL_GUIDANCE block across every context (AC1)", () => {
-    const main = buildMainSystemPrompt({ soul: "SOUL", user: "USER", workspaceRoot: "/ws" });
+    const main = buildMainSystemPrompt({ workspaceRoot: "/ws" });
     const background = buildBackgroundSystemPrompt({ dateHeader: "Monday UTC" });
 
     for (const prompt of [main, background, SUBAGENT_SYSTEM_PROMPT]) {
@@ -21,7 +21,7 @@ describe("role system prompts", () => {
   });
 
   it("are self-contained — no pi-native base, no machine-config inheritance (AC7)", () => {
-    const main = buildMainSystemPrompt({ soul: "SOUL", user: "USER", workspaceRoot: "/ws" });
+    const main = buildMainSystemPrompt({ workspaceRoot: "/ws" });
     const background = buildBackgroundSystemPrompt({ dateHeader: "Monday UTC" });
 
     for (const prompt of [main, background, SUBAGENT_SYSTEM_PROMPT]) {
@@ -30,19 +30,16 @@ describe("role system prompts", () => {
     }
   });
 
-  it("builds the main prompt from identity, personality, user knowledge, and delegate-awareness (AC1)", () => {
-    const prompt = buildMainSystemPrompt({
-      soul: "SOUL_CONTENT",
-      user: "USER_CONTENT",
-      workspaceRoot: "/home/me/workspace",
-    });
+  it("builds the main base prompt from identity, hygiene, delegate-awareness, and workspace root — not SOUL/USER (AC5)", () => {
+    const prompt = buildMainSystemPrompt({ workspaceRoot: "/home/me/workspace" });
 
     expect(prompt).toContain("personal assistant");
-    expect(prompt).toContain("SOUL_CONTENT");
-    expect(prompt).toContain("USER_CONTENT");
     expect(prompt).toContain("Workspace root: /home/me/workspace");
     expect(prompt).toContain("delegate_to_agent");
     expect(prompt).toContain("hard to reverse");
+    // SOUL/USER are appended via provideContext, not part of the core base prompt.
+    expect(prompt).not.toContain("# Soul");
+    expect(prompt).not.toContain("# User");
   });
 
   it("composes the passed dateHeader into the background prompt with autonomy bits (AC1)", () => {
@@ -56,7 +53,7 @@ describe("role system prompts", () => {
   });
 
   it("tells main and background to proactively evaluate skills, but not the skill-less subagent", () => {
-    const main = buildMainSystemPrompt({ soul: "SOUL", user: "USER", workspaceRoot: "/ws" });
+    const main = buildMainSystemPrompt({ workspaceRoot: "/ws" });
     const background = buildBackgroundSystemPrompt({ dateHeader: "Monday UTC" });
 
     expect(main).toContain("evaluate the available skills");

@@ -16,12 +16,12 @@ import type { Config } from "../config/schema.ts";
 import type { Logger } from "../log.ts";
 import type { Workspace } from "../workspace.ts";
 import { type ModelTier, ModelTiers } from "./models.ts";
+import { buildMainSystemPrompt } from "./prompts.ts";
 
 export interface AgentSessionSources {
   piFactories: ExtensionFactory[];
   /** Factories bound into background task runs (scoped via `app.agent.use(f, { sessionScopes: [..., "background"] })`). */
   backgroundFactories: ExtensionFactory[];
-  systemPromptBuilders: (() => string)[];
 }
 
 export interface OpenSessionOptions {
@@ -126,11 +126,12 @@ export class AgentManager {
     const workspace = this.workspace;
 
     const bare = options.bare === true;
+    // The main base prompt (identity + hygiene + workspace root) is core-owned: it replaces pi's
+    // coding-agent base for any non-bare session that does not bring its own system prompt. SOUL/USER
+    // are layered on top by the context extension via provideContext (a before_agent_start append).
     const systemPromptOverride =
       options.systemPrompt ??
-      (!bare && this.sources.systemPromptBuilders.length > 0
-        ? this.composeSystemPrompt()
-        : undefined);
+      (!bare ? buildMainSystemPrompt({ workspaceRoot: workspace.root }) : undefined);
 
     const extensionFactories = selectExtensionFactories({ ...options, bare }, this.sources);
 
@@ -212,9 +213,5 @@ export class AgentManager {
     } finally {
       session.dispose();
     }
-  }
-
-  private composeSystemPrompt(): string {
-    return this.sources.systemPromptBuilders.map((build) => build()).join("\n\n");
   }
 }

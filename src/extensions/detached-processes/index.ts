@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { Type } from "typebox";
 
-import { persistentContextSection } from "../../agent/system-prompt-section.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { SystemctlScopeInspector } from "./cgroup.ts";
 import { SystemdRunLimiter } from "./limits.ts";
@@ -77,10 +77,9 @@ export default defineExtension<DetachedProcessesConfig>({
       { sessionScopes: ["main", "background"] },
     );
 
-    app.agent.use(
-      persistentContextSection("detached-processes-usage", { provide: DETACHED_PROCESSES_USAGE }),
-      { sessionScopes: ["main", "background"] },
-    );
+    app.agent.use(provideContext(DETACHED_PROCESSES_USAGE, "detached-processes-usage"), {
+      sessionScopes: ["main", "background"],
+    });
 
     app.scheduler.every(
       "detached-watch",

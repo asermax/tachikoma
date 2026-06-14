@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 
-import { persistentContextSection } from "../../agent/system-prompt-section.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { buildProjectsContext } from "./context-provider.ts";
 import { syncProjects } from "./hooks.ts";
@@ -38,10 +38,10 @@ export default defineExtension<ProjectsConfig>({
       sessionScopes: ["main", "background"],
     });
     app.agent.use(
-      persistentContextSection("projects", {
-        provide: () => buildProjectsContext(workspaceRoot, app.log),
-      }),
-      { sessionScopes: ["main", "background"] },
+      provideContext(() => buildProjectsContext(workspaceRoot, app.log), "projects"),
+      {
+        sessionScopes: ["main", "background"],
+      },
     );
 
     app.sessions.registerProcessor(

@@ -1,6 +1,6 @@
 import { type Static, Type } from "typebox";
 
-import { persistentContextSection } from "../../agent/system-prompt-section.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { createCoreContextProcessor } from "../context/processor.ts";
 import { commitAll } from "../git/commit.ts";
@@ -56,7 +56,7 @@ export default defineExtension<MemoryConfig>({
     app.bootstrap("init-memory-layout", () => ensureMemoryLayout(workspaceRoot, app.log));
 
     app.agent.use(
-      persistentContextSection("memories", { provide: () => buildMemoryContext(workspaceRoot) }),
+      provideContext(() => buildMemoryContext(workspaceRoot), "memories"),
       { sessionScopes: ["main", "background"] },
     );
 

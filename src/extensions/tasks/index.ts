@@ -1,6 +1,6 @@
 import { Type } from "typebox";
 
-import { persistentContextSection } from "../../agent/system-prompt-section.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { NOTIFY_EVENT, SEVERITIES } from "../notifications/payload.ts";
 import { BackgroundRunner } from "./executor.ts";
@@ -80,7 +80,7 @@ export default defineExtension<TasksConfig>({
       sessionScopes: ["main", "background"],
     });
 
-    app.agent.use(persistentContextSection("tasks-usage", { provide: buildTasksUsage(timezone) }), {
+    app.agent.use(provideContext(buildTasksUsage(timezone), "tasks-usage"), {
       sessionScopes: ["main", "background"],
     });
 

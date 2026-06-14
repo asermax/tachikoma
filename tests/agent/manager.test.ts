@@ -115,7 +115,6 @@ const makeSources = (
 ) => ({
   piFactories: [{ id: "pi" }] as unknown as ExtensionFactory[],
   backgroundFactories: [{ id: "bg" }] as unknown as ExtensionFactory[],
-  systemPromptBuilders: [] as (() => string)[],
   ...overrides,
 });
 
@@ -217,38 +216,29 @@ describe("AgentManager.apiKeyFor", () => {
 });
 
 describe("AgentManager.open", () => {
-  it("composes the system prompt from builders for a non-bare session", async () => {
-    const sources = makeSources({ systemPromptBuilders: [() => "alpha", () => "beta"] });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), sources, makeLog());
+  it("applies the core main base prompt for a non-bare session (AC4)", async () => {
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
 
     await manager.open();
 
     const loaderOptions = capturedLoaderOptions[0];
     expect(loaderOptions.systemPromptOverride).toBeTypeOf("function");
-    expect((loaderOptions.systemPromptOverride as () => string)()).toBe("alpha\n\nbeta");
+    const prompt = (loaderOptions.systemPromptOverride as () => string)();
+    expect(prompt).toContain("personal assistant");
+    expect(prompt).toContain("Workspace root: /ws/root");
     expect(loaderReload).toHaveBeenCalledOnce();
   });
 
-  it("omits the system prompt override when bare with no explicit prompt", async () => {
-    const sources = makeSources({ systemPromptBuilders: [() => "alpha"] });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), sources, makeLog());
+  it("omits the system prompt override when bare with no explicit prompt (AC4)", async () => {
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
 
     await manager.open({ bare: true });
 
     expect(capturedLoaderOptions[0]).not.toHaveProperty("systemPromptOverride");
   });
 
-  it("omits the system prompt override when non-bare but no builders exist", async () => {
+  it("uses an explicit system prompt over the core base prompt (AC4)", async () => {
     const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
-
-    await manager.open();
-
-    expect(capturedLoaderOptions[0]).not.toHaveProperty("systemPromptOverride");
-  });
-
-  it("uses an explicit system prompt over the composed one", async () => {
-    const sources = makeSources({ systemPromptBuilders: [() => "alpha"] });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), sources, makeLog());
 
     await manager.open({ systemPrompt: "explicit" });
 

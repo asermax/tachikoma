@@ -6,7 +6,7 @@
 
 Agent integration is the layer that embeds the pi agent SDK: `AgentManager` (`src/agent/manager.ts`) constructs `AgentSession`s with shared auth, model registry, and workspace wiring; `ModelTiers` (`src/agent/models.ts`) maps configured model references to pi registry entries by role; the adapter (`src/agent/adapter.ts`) converts pi session events into SDK-free domain `AgentEvent`s; and `SideRunner` (`src/agent/side-run.ts`) provides side-channel LLM work — one-shot completions, structured classification, and headless agent runs.
 
-Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `models`, `side` — see [DES-001](../design/DES-001-unified-extension-api.md)); the [conversation loop](conversation-loop.md) consumes it for the main session.
+Extensions reach this layer only through `app.agent` (`use`, `models`, `side` — see [DES-001](../design/DES-001-unified-extension-api.md)); the [conversation loop](conversation-loop.md) consumes it for the main session.
 
 ## User Stories
 
@@ -20,9 +20,9 @@ Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `mo
 | ID | Requirement |
 |----|-------------|
 | R0 | `AgentManager.open()` builds pi sessions against the workspace: `cwd` is the workspace root, `agentDir` is `{workspace}/.tachikoma/pi`, with shared `AuthStorage`, `ModelRegistry`, and `SettingsManager` |
-| R1 | Main sessions bind all registered pi extension factories and override the system prompt with the registered builders' output, joined in registration order |
+| R1 | Main sessions bind all registered pi extension factories and override the system prompt with the core base prompt (`buildMainSystemPrompt({ workspaceRoot })` — identity + guidance + workspace root), unless an explicit `systemPrompt` option is given |
 | R2 | Session persistence modes: new persisted session under the workspace sessions dir, resume from an existing pi session file, fork a fresh session seeded with another session file's full history (`forkFromFile`, via `SessionManager.forkFrom` — read-only on the source), or ephemeral in-memory |
-| R3 | `bare` sessions skip registered factories and system prompt builders (headless side work); explicit `systemPrompt`, `tools`, and `tier` options override defaults; an opt-in `isolatePrompt` additionally suppresses pi's `APPEND_SYSTEM.md` append, project context files (AGENTS.md/CLAUDE.md), and the skills catalog so the session sees exactly its own `systemPrompt` (plus pi's date/cwd footer); an opt-in `bindBackgroundFactories` binds the registered background factories (those scoped via `app.agent.use(f, { sessionScopes: [..., "background"] })`) instead of no factories |
+| R3 | `bare` sessions skip registered factories and the core base prompt (headless side work); explicit `systemPrompt`, `tools`, and `tier` options override defaults; an opt-in `isolatePrompt` additionally suppresses pi's `APPEND_SYSTEM.md` append, project context files (AGENTS.md/CLAUDE.md), and the skills catalog so the session sees exactly its own `systemPrompt` (plus pi's date/cwd footer); an opt-in `bindBackgroundFactories` binds the registered background factories (those scoped via `app.agent.use(f, { sessionScopes: [..., "background"] })`) instead of no factories |
 | R4 | Auth resolution: a workspace-local `{piDir}/auth.json` is used when it has actual content; otherwise the machine-level pi login (`~/.pi/agent/auth.json` plus env vars) is shared; `apiKeyFor(provider)` exposes key lookup |
 | R5 | Four model roles — `main`, `searcher`, `processor`, `classifier` — configured as optional `provider/model-id[:thinkingLevel]` strings; unset roles fall back along classifier → processor → main (searcher → main), then to pi's resolution (settings default, else first credentialed model); malformed references and models missing from pi's registry fail with errors naming the reference and tier |
 | R6 | Session model fallback is logged as a warning; the thinking level comes from the role's `:level` suffix when present, otherwise pi's `defaultThinkingLevel` |
@@ -31,7 +31,7 @@ Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `mo
 | R9 | `SideRunner.classify()` returns schema-validated structured output (default tier `classifier`): JSON-instructed prompt, tolerant JSON extraction, TypeBox validation, one retry on failure |
 | R10 | `SideRunner.run()` executes a headless agent run in an ephemeral bare session with an explicit pi tool allowlist (default none), returning the final assistant text and disposing the session; an `isolatePrompt` flag forwards to `open()` to fully isolate the system prompt (used by delegated subagents with self-contained prompts); a `backgroundExtensions` flag binds the background-factory subset and drops the hard tool allowlist (so the bound factory tools stay active), used by autonomous background task runs |
 | R10a | `AgentManager.forkAndContinue(sourceSessionFile, prompt, tier, tools?)` (exposed to extensions as `app.agent.forkAndContinue`) forks the source session on the **non-bare** path — so the fork keeps the composed persona and the agent's own tools, with the source conversation live in its history — then sends `prompt` as one follow-up user turn, runs to completion, and disposes; the optional `tools` allowlist hard-limits the fork's toolset (the SDK `tools` option is independent of the system prompt, so persona survives while tools are restricted). Used by memory extraction and the core-context processor |
-| R11a | `app.sessions.runPostProcessors(context)` runs the registered post-processors once in phase order (error-isolated), letting headless/background runs reuse the live-session post-processing pipeline. Context injection needs no equivalent collection call: extension context sections (`app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })`) reach background runs directly through their background-scoped pi factories' `before_agent_start` |
+| R11a | `app.sessions.runPostProcessors(context)` runs the registered post-processors once in phase order (error-isolated), letting headless/background runs reuse the live-session post-processing pipeline. Context injection needs no equivalent collection call: extension context sections (`app.agent.use(provideContext(provide, customType?), { sessionScopes })`) reach background runs directly through their background-scoped pi factories' `before_agent_start` |
 
 ## Behaviors
 
@@ -40,12 +40,12 @@ Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `mo
 One `open()` path serves the main conversational session, boundary resumption, and headless side runs.
 
 **Acceptance Criteria**:
-- Given registered factories and system prompt builders, when `open()` is called with no options, then the session binds every factory and uses the builders' sections joined with blank lines as `systemPromptOverride`
+- Given registered factories, when `open()` is called with no options, then the session binds every factory and uses the core base prompt (`buildMainSystemPrompt({ workspaceRoot })`) as `systemPromptOverride`
 - Given `open({ sessionFile })`, when the session is created, then pi resumes from that JSONL transcript (`SessionManager.open`)
 - Given `open({ inMemory: true })`, when the session is created, then nothing is persisted to disk (`SessionManager.inMemory`)
 - Given `open({ forkFromFile })`, when the session is created, then `SessionManager.forkFrom` copies that file's full history into a fresh session (source untouched) and the new session continues from it; opened non-bare, the fork keeps the composed persona and the agent's tools
 - Given `forkAndContinue(file, prompt, tier, tools)`, when invoked, then a non-bare fork of `file` is opened with the `tools` allowlist applied, `prompt` is sent as one turn, and the session is disposed in `finally`; the persona and history survive while the toolset is restricted to `tools`
-- Given `open({ bare: true })`, when the session is created, then no factories or prompt builders are bound; an explicit `systemPrompt` option takes precedence over composed builders
+- Given `open({ bare: true })`, when the session is created, then no factories are bound and no core base prompt is applied; an explicit `systemPrompt` option takes precedence over the core base prompt
 - Given `open({ isolatePrompt: true })`, when the session is created, then pi's `APPEND_SYSTEM.md` append, project context files, and skills catalog are suppressed (`appendSystemPromptOverride: () => []`, `noContextFiles`, `noSkills`) alongside the explicit `systemPrompt`; without the flag none of these suppressions apply
 - Given `open({ tools, tier })`, when the session is created, then pi's tool set is restricted to the named built-ins and the model resolves from that tier's chain; with the whole chain unset, no model is passed so pi's own resolution (session restore → settings → first available) applies
 

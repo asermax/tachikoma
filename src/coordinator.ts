@@ -28,7 +28,7 @@ export class Coordinator {
   private wake: (() => void) | null = null;
   private active: ActiveSession | null = null;
   /** Bridging-context blocks injected once on the next agent run (session resume). */
-  private pendingContext: { tag: string; content: string }[] = [];
+  private pendingContext: string[] = [];
   private readonly heldDeliveries: QueuedItem[] = [];
   /** Timestamp of the most recently completed exchange; the queue's idle-window anchor. */
   private lastExchangeAt: Date | null = null;
@@ -176,9 +176,7 @@ export class Coordinator {
       pi.on("before_agent_start", () => {
         if (this.pendingContext.length === 0) return undefined;
 
-        const content = this.pendingContext
-          .map((block) => `<context owner="${block.tag}">\n${block.content}\n</context>`)
-          .join("\n\n");
+        const content = this.pendingContext.join("\n\n");
         this.pendingContext = [];
 
         return {
@@ -323,7 +321,7 @@ export class Coordinator {
       .join("\n\n");
     if (content.length === 0) return;
 
-    this.pendingContext.push({ tag: "bridging-context", content });
+    this.pendingContext.push(content);
   }
 
   // ---- internals ------------------------------------------------------------------

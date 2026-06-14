@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 
-import { buildMainSystemPrompt } from "../../agent/prompts.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 
 const SOUL_TEMPLATE = `# Soul
@@ -32,9 +32,10 @@ const readOrCreate = async (path: string, template: string): Promise<string> => 
 };
 
 /**
- * Foundational context: SOUL.md (personality) and USER.md (durable user knowledge)
- * compose the system prompt. AGENTS.md is discovered natively by pi from the
- * workspace root, so it needs no handling here.
+ * Foundational context: SOUL.md (personality) and USER.md (durable user knowledge) are appended to
+ * the agent's system prompt — layered on top of the core base prompt (identity + hygiene + workspace
+ * root, owned by AgentManager). AGENTS.md is discovered natively by pi from the workspace root, so it
+ * needs no handling here.
  */
 export default defineExtension({
   name: "context",
@@ -59,12 +60,7 @@ export default defineExtension({
       }
     };
 
-    app.agent.systemPrompt(() =>
-      buildMainSystemPrompt({
-        soul: fresh(app.workspace.resolve("SOUL.md"), soul),
-        user: fresh(app.workspace.resolve("USER.md"), user),
-        workspaceRoot: app.workspace.root,
-      }),
-    );
+    app.agent.use(provideContext(() => fresh(app.workspace.resolve("SOUL.md"), soul)));
+    app.agent.use(provideContext(() => fresh(app.workspace.resolve("USER.md"), user)));
   },
 });

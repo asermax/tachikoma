@@ -19,7 +19,6 @@ export interface Registrations {
    * piFactories — a factory scoped to `"background"` only lives here without being a main factory.
    */
   backgroundFactories: ExtensionFactory[];
-  systemPromptBuilders: (() => string)[];
   exchangeProcessors: ExchangeProcessor[];
   postProcessors: PostProcessor[];
   inboundMiddleware: InboundMiddleware[];
@@ -32,7 +31,6 @@ export interface Registrations {
 export const createRegistrations = (): Registrations => ({
   piFactories: [],
   backgroundFactories: [],
-  systemPromptBuilders: [],
   exchangeProcessors: [],
   postProcessors: [],
   inboundMiddleware: [],

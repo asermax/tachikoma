@@ -1,47 +1,56 @@
 import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 /**
- * A pi extension factory that injects a context block ONCE per session as a persisted,
- * hidden message — stored in the session transcript, sent to the LLM, never shown to the
- * user. The block is prepared and injected on the first `before_agent_start` (pi's documented
- * "make it visible to the model" step): `provide` runs there with the session ctx, so it can
- * read the workspace and run async fs/git work. We deliberately do NOT prepare on
- * `session_start` — that event does not fire ahead of the first agent start for the sessions
- * Tachikoma opens via `createAgentSession`, so content stayed empty and nothing was injected.
- * Empty content yields no injection (and leaves the section eligible to inject on a later turn).
- *
- * Bound through `app.agent.use(..., { sessionScopes })`, so a section reaches exactly the
- * agents whose scope includes it — the background task agent inherits a section only when it
- * is bound to `"background"`, keeping guidance aligned with where the tools actually exist.
+ * Content for a context section: a static string, or a function (given the session ctx, optionally
+ * async) for content that depends on session/workspace state.
  */
-export interface PersistentContextSectionOptions {
-  /**
-   * The section content: a static string, or a function (run on session_start, given the
-   * session ctx, optionally async) for content that depends on session/workspace state.
-   */
-  provide: string | ((ctx: ExtensionContext) => string | Promise<string>);
-}
+export type ContextProvider = string | ((ctx: ExtensionContext) => string | Promise<string>);
 
-export const persistentContextSection =
-  (customType: string, { provide }: PersistentContextSectionOptions): ExtensionFactory =>
+const resolve = async (provide: ContextProvider, ctx: ExtensionContext): Promise<string> =>
+  (typeof provide === "function" ? await provide(ctx) : provide).trim();
+
+/**
+ * Contribute context to an agent through pi's native `before_agent_start` hook (the documented "make
+ * it visible to the model" step, where `provide` can read the workspace and run async fs/git work).
+ * We deliberately do NOT prepare on `session_start` — that event does not fire ahead of the first
+ * agent start for the sessions Tachikoma opens via `createAgentSession`. Two delivery modes:
+ *
+ *  - no `customType` → append `content` to the turn's system prompt. The override is rebuilt per
+ *    agent start, so the append must re-fire every turn; `provide` runs once and the result is
+ *    cached, preserving a per-session snapshot while keeping the append present on every turn.
+ *  - with `customType` → inject `content` once as a hidden, persisted message (stored in the
+ *    transcript, sent to the LLM, never shown to the user).
+ *
+ * Empty content contributes nothing and stays eligible for a later turn. Content is never XML-wrapped.
+ *
+ * Bound through `app.agent.use(..., { sessionScopes })`, so a section reaches exactly the agents
+ * whose scope includes it.
+ */
+export const provideContext =
+  (provide: ContextProvider, customType?: string): ExtensionFactory =>
   (pi) => {
+    let cached: string | null = null;
     let injected = false;
 
-    pi.on("before_agent_start", async (_event, ctx) => {
-      if (injected) return undefined;
+    pi.on("before_agent_start", async (event, ctx) => {
+      if (customType != null) {
+        if (injected) return undefined;
 
-      const content = (typeof provide === "function" ? await provide(ctx) : provide).trim();
+        const content = await resolve(provide, ctx);
+        if (content === "") return undefined;
 
-      if (content === "") return undefined;
+        injected = true;
 
-      injected = true;
+        return { message: { customType, content, display: false } };
+      }
 
-      return {
-        message: {
-          customType,
-          content: `<context owner="${customType}">\n${content}\n</context>`,
-          display: false,
-        },
-      };
+      if (cached == null) {
+        const content = await resolve(provide, ctx);
+        if (content === "") return undefined;
+
+        cached = content;
+      }
+
+      return { systemPrompt: `${event.systemPrompt}\n\n${cached}` };
     });
   };

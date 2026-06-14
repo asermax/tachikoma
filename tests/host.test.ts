@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { persistentContextSection } from "../src/agent/system-prompt-section.ts";
+import { provideContext } from "../src/agent/system-prompt-section.ts";
 import {
   type AppContext,
   defineExtension,
@@ -118,11 +118,11 @@ describe("agent.use context-section registration", () => {
     const ext = defineExtension({
       name: "ctx-test",
       setup(app) {
-        app.agent.use(persistentContextSection("both", { provide: "B" }), {
+        app.agent.use(provideContext("B", "both"), {
           sessionScopes: ["main", "background"],
         });
-        app.agent.use(persistentContextSection("main-only", { provide: "M" }));
-        app.agent.use(persistentContextSection("bg-only", { provide: "G" }), {
+        app.agent.use(provideContext("M", "main-only"));
+        app.agent.use(provideContext("G", "bg-only"), {
           sessionScopes: ["background"],
         });
       },
@@ -403,10 +403,6 @@ describe("ExtensionHost context API delegation", () => {
 
     expect(app.agent.models).toBe(tiers);
     expect(app.agent.side).toBeDefined();
-
-    const builder = () => "prompt-section";
-    app.agent.systemPrompt(builder);
-    expect(services.regs.systemPromptBuilders).toContain(builder);
 
     await app.agent.forkAndContinue("/sess.jsonl", "go", "fast");
     expect(forkAndContinue).toHaveBeenCalledWith("/sess.jsonl", "go", "fast", undefined);
