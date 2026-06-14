@@ -28,7 +28,10 @@ const TOOL_DISPLAY: Record<string, (args: ToolArgs) => string> = {
   read: (args) => `Reading ${asString(args.path)}`,
   grep: (args) => `Searching for '${asString(args.pattern)}'`,
   find: (args) => `Finding files: ${asString(args.pattern)}`,
-  bash: (args) => `Running: ${asString(args.command)}`,
+  bash: (args) =>
+    typeof args.description === "string" && args.description.length > 0
+      ? args.description
+      : `Running: ${asString(args.command)}`,
   edit: (args) => `Editing ${asString(args.path)}`,
   write: (args) => `Writing ${asString(args.path)}`,
   ls: (args) => `Listing ${asString(args.path)}`,

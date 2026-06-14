@@ -26,6 +26,14 @@ describe("formatToolActivity", () => {
     expect(formatToolActivity("delegate_to_agent", {})).toBe("Delegating to an agent");
   });
 
+  it("prefers the Bash description over the command in the live label", () => {
+    expect(
+      formatToolActivity("bash", { description: "Run the test suite", command: "npm test" }),
+    ).toBe("Run the test suite");
+    // Missing description still falls back to the command, as before.
+    expect(formatToolActivity("bash", { command: "ls -la" })).toBe("Running: ls -la");
+  });
+
   it("falls back to the humanized name for unknown tools", () => {
     expect(formatToolActivity("run_task_now", {})).toBe("Run Task Now");
     expect(formatToolActivity("mcp__projects__list_projects", {})).toBe("List Projects");
