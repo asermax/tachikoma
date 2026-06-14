@@ -1,3 +1,10 @@
+## [3.1.1](https://github.com/asermax/tachikoma/compare/v3.1.0...v3.1.1) (2026-06-14)
+
+
+### Bug Fixes
+
+* **agent:** inject persistent context on before_agent_start ([f196363](https://github.com/asermax/tachikoma/commit/f1963636e2615fb7635070c64fd937204921d0ef))
+
 # [3.1.0](https://github.com/asermax/tachikoma/compare/v3.0.0...v3.1.0) (2026-06-14)
 
 
