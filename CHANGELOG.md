@@ -1,3 +1,10 @@
+# [3.6.0](https://github.com/asermax/tachikoma/compare/v3.5.0...v3.6.0) (2026-06-14)
+
+
+### Features
+
+* **skills:** add display-only description to delegate_to_agent ([6035f84](https://github.com/asermax/tachikoma/commit/6035f84852c738fe7aaa32aae3dc370f657e3ea0))
+
 # [3.5.0](https://github.com/asermax/tachikoma/compare/v3.4.0...v3.5.0) (2026-06-14)
 
 
