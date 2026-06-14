@@ -4,6 +4,7 @@ import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-a
 
 import { streamPrompt } from "./agent/adapter.ts";
 import type { AgentManager } from "./agent/manager.ts";
+import { lastAssistantText } from "./agent/side-run.ts";
 import { buildDigest } from "./channels/delivery-digest.ts";
 import { compareQueued, evaluate, type QueuedItem } from "./channels/delivery-queue.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
@@ -393,7 +394,7 @@ export class Coordinator {
     active: ActiveSession,
     message: InboundMessage,
   ): Promise<void> {
-    const assistantText = lastAssistantText(active.session);
+    const assistantText = lastAssistantText(active.session.messages);
 
     const results = await Promise.allSettled(
       this.regs.exchangeProcessors.map((processor) =>
@@ -553,26 +554,4 @@ const renderPrompt = (message: InboundMessage): string => {
     .join("\n");
 
   return `${message.text}\n\n<attachments>\n${attachments}\n</attachments>`;
-};
-
-const lastAssistantText = (session: AgentSession): string => {
-  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-    const message = session.messages[index];
-    if (message == null || message.role !== "assistant") continue;
-
-    const content = (message as { content?: unknown }).content;
-    if (!Array.isArray(content)) continue;
-
-    return content
-      .filter(
-        (block): block is { type: "text"; text: string } =>
-          typeof block === "object" &&
-          block != null &&
-          (block as { type?: string }).type === "text",
-      )
-      .map((block) => block.text)
-      .join("");
-  }
-
-  return "";
 };
