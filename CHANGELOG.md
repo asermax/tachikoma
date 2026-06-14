@@ -1,3 +1,28 @@
+# [3.0.0](https://github.com/asermax/tachikoma/compare/v2.4.0...v3.0.0) (2026-06-14)
+
+
+### Bug Fixes
+
+* **cli:** tolerate a stray positional argument ([05888bf](https://github.com/asermax/tachikoma/commit/05888bfc264f053ca8d85120d5f1d49f3fd18732))
+* **context:** delete header-only pending-signals file instead of warning ([9ce0461](https://github.com/asermax/tachikoma/commit/9ce0461549a3a172e3f48a3be4e1aa32af4e4ffd))
+* **telegram:** restore legacy message rendering ([467320a](https://github.com/asermax/tachikoma/commit/467320a3157840342e7e70efb1ceb2c02b17b824))
+
+
+### Features
+
+* **agent:** inject extension context via persisted before_agent_start sections ([2f0cb93](https://github.com/asermax/tachikoma/commit/2f0cb93f042bd19dc20b52465c504f97366c7f06))
+* **agent:** prompt main and background roles to evaluate skills ([7b9bc47](https://github.com/asermax/tachikoma/commit/7b9bc47dd8edc9212232b58d24a19e23c3eaa89b))
+* **delivery:** queue background notifications as tiered agent turns ([70918d1](https://github.com/asermax/tachikoma/commit/70918d1242b7bc575d65079f3b00795989bff838))
+
+
+### BREAKING CHANGES
+
+* **delivery:** app.channels.deliver now takes { text, tier?, immediate?, metadata? } instead of gate/target/priority/maxHoldSeconds; the [extensions.notifications].maxHoldSeconds and [extensions.tasks].sessionTaskMaxHoldSeconds config keys are removed (timing is now per-tier in the coordinator).
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
 # [2.4.0](https://github.com/asermax/tachikoma/compare/v2.3.0...v2.4.0) (2026-06-14)
 
 
