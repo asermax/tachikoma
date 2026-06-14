@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AppContext, UseFactoryOptions } from "../../src/extensions/api.ts";
 import skills from "../../src/extensions/skills/index.ts";
 
-const repoSkillsDir = resolve(import.meta.dirname, "../../skills");
+const repoSkillsDir = resolve(import.meta.dirname, "../../src/extensions/skills/builtin-skills");
 
 const setup = async (
   config: { enabled: boolean } = { enabled: true },

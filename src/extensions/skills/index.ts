@@ -13,9 +13,8 @@ interface SkillsConfig {
   enabled: boolean;
 }
 
-// Built-in authoring skills ship inside the repo's skills/ directory, three levels
-// up from this module (src/extensions/skills → repo root).
-const builtinSkillsDir = resolve(import.meta.dirname, "../../../skills");
+// Built-in authoring skills ship alongside this extension, in its builtin-skills/ directory.
+const builtinSkillsDir = resolve(import.meta.dirname, "builtin-skills");
 
 /**
  * Workspace skills: contributes the workspace skills directory as a pi skill source.

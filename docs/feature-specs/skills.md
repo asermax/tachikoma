@@ -4,7 +4,7 @@
 
 ## Overview
 
-Skills give the agent packaged expertise: Agent Skills-format directories from both the user's workspace (`{workspace}/skills/`) and the repo-root `skills/` directory (built-in authoring skills) are contributed to pi as native skill sources, so pi's progressive disclosure surfaces each skill's description in the system prompt and the agent reads the full `SKILL.md` only when relevant. The extension itself stays thin — it wires the sources, adds a `/reload` path so the live session can pick up skill changes, and adds the one capability pi does not cover: agent definitions bundled inside skills become delegable subagents through a `delegate_to_agent` tool. A built-in `general-purpose` agent ships alongside the skill-bundled ones, so the main agent can always delegate focused, context-heavy work (e.g. exploring files) even with no skills installed.
+Skills give the agent packaged expertise: Agent Skills-format directories from both the user's workspace (`{workspace}/skills/`) and the skills extension's bundled `builtin-skills/` directory (built-in authoring skills) are contributed to pi as native skill sources, so pi's progressive disclosure surfaces each skill's description in the system prompt and the agent reads the full `SKILL.md` only when relevant. The extension itself stays thin — it wires the sources, adds a `/reload` path so the live session can pick up skill changes, and adds the one capability pi does not cover: agent definitions bundled inside skills become delegable subagents through a `delegate_to_agent` tool. A built-in `general-purpose` agent ships alongside the skill-bundled ones, so the main agent can always delegate focused, context-heavy work (e.g. exploring files) even with no skills installed.
 
 ## User Stories
 
@@ -18,7 +18,7 @@ Skills give the agent packaged expertise: Agent Skills-format directories from b
 | ID | Requirement |
 |----|-------------|
 | R0 | A bootstrap hook creates `{workspace}/skills/` if missing (idempotent) |
-| R1 | Two skill sources are contributed via the `resources_discover` event in every agent session: the workspace skills directory (`{workspace}/skills/`) and the built-in authoring skills shipped in the repo-root `skills/` directory; discovery, progressive disclosure, and `/skill:` commands are pi-native |
+| R1 | Two skill sources are contributed via the `resources_discover` event in every agent session: the workspace skills directory (`{workspace}/skills/`) and the built-in authoring skills bundled in the skills extension's `builtin-skills/` directory; discovery, progressive disclosure, and `/skill:` commands are pi-native |
 | R2 | Skills follow the Agent Skills standard (`SKILL.md` with YAML frontmatter) — no Tachikoma-specific skill format exists |
 | R3 | Markdown files under `<skill>/agents/` are discovered as agent definitions, namespaced as `<skill>/<agent>` to prevent cross-skill collisions |
 | R4 | Agent frontmatter: `description` is required (missing means the file is skipped with a warning); `name` defaults to the file stem; `tools` accepts a YAML list or a comma-separated string; `model` is an optional `provider/model-id[:thinkingLevel]` reference (a non-string value is warned and ignored, leaving the agent on the default tier); the markdown body is the agent's system prompt |
@@ -40,7 +40,7 @@ The session factory answers pi's `resources_discover` event with the workspace s
 
 **Acceptance Criteria**:
 - Given the workspace has no `skills/` directory, when bootstrap runs, then the directory is created; a second run makes no changes
-- Given a valid Agent Skills package in the workspace or built-in `skills/` directory, when an agent session is created, then pi surfaces the skill through progressive disclosure (description in the system prompt, content loaded on demand)
+- Given a valid Agent Skills package in the workspace or the bundled `builtin-skills/` directory, when an agent session is created, then pi surfaces the skill through progressive disclosure (description in the system prompt, content loaded on demand)
 - Given a skill is added while the app is running, when the next agent session is created, then the new skill is discovered; the running session can also pick it up via `/reload` or `reload_resources`
 - Given the agent calls `reload_resources`, when it executes, then `/reload` is queued as a follow-up message (so it runs in command context) and resources refresh once the current run finishes
 

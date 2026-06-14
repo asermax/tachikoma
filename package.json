@@ -12,7 +12,6 @@
   "files": [
     "dist",
     "drizzle",
-    "skills",
     "README.md"
   ],
   "publishConfig": {
@@ -58,7 +57,7 @@
     "lint": "biome check .",
     "fmt": "biome check --write .",
     "typecheck": "tsc --noEmit",
-    "prepack": "pnpm tsc -p tsconfig.build.json"
+    "prepack": "pnpm tsc -p tsconfig.build.json && cp -r src/extensions/skills/builtin-skills dist/extensions/skills/builtin-skills"
   },
   "engines": {
     "node": ">=22.19.0"
