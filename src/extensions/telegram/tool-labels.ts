@@ -41,9 +41,12 @@ const delegateLabel = (args: ToolArgs, verb: string): string => {
   return `${verb} to ${agent}${desc != null ? `: ${desc}` : ""}`;
 };
 
-/** Truncate a value to `max` chars, appending an ellipsis when it overflows. */
-const truncate = (value: string, max = 40): string =>
-  value.length > max ? `${value.slice(0, max)}...` : value;
+/** Max chars of a bash command shown in a tool label (live line + baked summary). */
+const COMMAND_LABEL_MAX = 40;
+
+/** Truncate a value, appending an ellipsis when it overflows. */
+const truncate = (value: string): string =>
+  value.length > COMMAND_LABEL_MAX ? `${value.slice(0, COMMAND_LABEL_MAX)}...` : value;
 
 // Present-progressive live-activity labels keyed by pi's tool name. Each entry
 // maps a tool's args to a friendly line shown while the tool runs. pi's built-in
