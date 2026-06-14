@@ -49,6 +49,13 @@ export const cleanPendingSignals = async (
   const entries = parsePendingSignals(content);
 
   if (entries.length === 0) {
+    // A file holding only the header (every signal promoted or expired) is a normal
+    // end-state, not an anomaly — drop the stale skeleton rather than warning.
+    if (content.replace(PENDING_SIGNALS_HEADER, "").trim() === "") {
+      await unlink(filePath);
+      return;
+    }
+
     log.warn({ file: filePath }, "pending signals file has content but no parseable entries");
     return;
   }

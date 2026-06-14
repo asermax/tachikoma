@@ -159,6 +159,33 @@ describe("cleanPendingSignals", () => {
   it("no-ops when the file is missing", async () => {
     await expect(cleanPendingSignals(dataDir, fakeLog)).resolves.toBeUndefined();
   });
+
+  it("deletes a header-only file without warning", async () => {
+    const signalsFile = join(dataDir, PENDING_SIGNALS_FILENAME);
+    await writeFile(signalsFile, "# Pending Signals\n\n", "utf8");
+    const warn = vi.fn();
+    const log = { debug: vi.fn(), info: vi.fn(), warn } as unknown as Logger;
+
+    await cleanPendingSignals(dataDir, log);
+
+    await expect(readFile(signalsFile, "utf8")).rejects.toThrow();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("warns when the file has genuine content but no parseable entries", async () => {
+    const signalsFile = join(dataDir, PENDING_SIGNALS_FILENAME);
+    await writeFile(signalsFile, "# Pending Signals\n\nsome malformed note\n", "utf8");
+    const warn = vi.fn();
+    const log = { debug: vi.fn(), info: vi.fn(), warn } as unknown as Logger;
+
+    await cleanPendingSignals(dataDir, log);
+
+    expect(warn).toHaveBeenCalledWith(
+      { file: signalsFile },
+      "pending signals file has content but no parseable entries",
+    );
+    expect(await readFile(signalsFile, "utf8")).toContain("some malformed note");
+  });
 });
 
 describe("parsePendingSignals", () => {

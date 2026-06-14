@@ -24,7 +24,7 @@ A companion `core-context` post-processor (`src/extensions/context/processor.ts`
 | R4 | A `core-context` post-processor (`preFinalize` phase) forks the just-ended pi session (`app.agent.forkAndContinue(piSessionFile, instruction, "processor", MEMORY_FILE_TOOLS)`) so the same assistant — full conversation live in its history, persona intact — updates SOUL.md, USER.md, and AGENTS.md; the source transcript is never mutated |
 | R5 | The processor skips (no fork) when the session has no transcript (`piSessionFile` is null) |
 | R6 | Ambiguous signals are staged in `{dataDir}/pending-signals.md` as dated markdown entries (`- **YYYY-MM-DD**: text`); the current entries are injected into the processor's follow-up instruction as a numbered snapshot (S1..Sn) |
-| R7 | Pending signals older than 30 days are cleared before each run; the file is deleted when every entry has expired; unparseable content is left alone with a warning |
+| R7 | Pending signals older than 30 days are cleared before each run; the file is deleted when every entry has expired or when only the header remains (a normal end-state); genuine non-header content with no parseable entries is left alone with a warning |
 | R8 | The update policy is prompt-encoded and conservative: clear evidence updates files directly, ambiguous signals are staged, semantically recurring staged signals are promoted and removed, corrections are extracted as positive instructions, stale content is pruned, and size limits are enforced (USER.md ~120 lines, AGENTS.md ~400 lines) |
 | R9 | The fork is hard-limited to file tools (`read`, `grep`, `find`, `ls`, `edit`, `write`) on the `processor` tier — the allowlist also filters out the conversation's messaging/notification/task tools — and a silent-background directive instructs it to modify only the three context files and the pending signals file, verifying workspace claims before writing them; it may read anywhere in the workspace |
 | R10 | The processor registration lives in the memory extension's setup — `[extensions.memory] enabled = false` also disables core context updates |
@@ -61,5 +61,6 @@ The agent manages the signals file directly with its file tools — appending da
 - Given pending signals exist, when the processor builds its prompt, then entries appear as `S1: **date**: text` lines and the prompt names the signals file path for direct editing
 - Given no signals file or an empty one, when the prompt is built, then the section reads "No pending signals at this time."
 - Given entries older than 30 days, when the processor runs, then they are removed from the file before the snapshot is taken; if all entries expired, the file is deleted
-- Given a signals file with content but no parseable entries, when cleanup runs, then the file is left untouched and a warning is logged
+- Given a signals file containing only the header (every signal promoted or expired), when cleanup runs, then the file is deleted and no warning is logged
+- Given a signals file with genuine non-header content but no parseable entries, when cleanup runs, then the file is left untouched and a warning is logged
 - Given the prompt instructions, then recurring signals are promoted to context-file updates and their lines deleted, first occurrences are staged with the current date, and stale signals are deleted proactively
