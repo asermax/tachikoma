@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 
-import { createRootLogger, retainedFiles } from "../src/log.ts";
+import { componentLogger, createRootLogger, retainedFiles } from "../src/log.ts";
 
 const tempDir = () => mkdtemp(join(tmpdir(), "tachi-log-"));
 
@@ -16,6 +16,13 @@ describe("createRootLogger", () => {
     const logger = await createRootLogger({ level: "INFO", pretty: false });
 
     expect(logger.level).toBe("info");
+  });
+
+  it("builds a pretty stderr logger when pretty is enabled", async () => {
+    const logger = await createRootLogger({ level: "debug", pretty: true });
+
+    expect(logger.level).toBe("debug");
+    expect(() => logger.info("pretty line")).not.toThrow();
   });
 
   it("writes a parseable JSON line to a rolled file", async () => {
@@ -93,5 +100,14 @@ describe("retainedFiles", () => {
 
   it("never returns less than one", () => {
     expect(retainedFiles(0, "daily")).toBe(1);
+  });
+});
+
+describe("componentLogger", () => {
+  it("binds the component name onto a child logger", async () => {
+    const root = await createRootLogger({ level: "info", pretty: false });
+    const child = componentLogger(root, "scheduler");
+
+    expect(child.bindings().component).toBe("scheduler");
   });
 });

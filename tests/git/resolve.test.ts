@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -61,6 +61,41 @@ describe("createGitResolver", () => {
     expect(
       (await git?.execute("id", { args: ["status", "--porcelain"] }))?.content[0]?.text,
     ).toContain("file.txt");
+  });
+
+  it("its tools accept an absolute path verbatim", async () => {
+    await initRepo(base);
+
+    const run = vi.fn(async (): Promise<HeadlessRunResult> => ({ text: "" }));
+    await createGitResolver({ run })(base, "origin/main", log);
+
+    const tools = run.mock.calls[0]?.[0].customTools ?? [];
+    const write = tools.find((tool) => tool.name === "write_resolved");
+    const read = tools.find((tool) => tool.name === "read_conflict");
+
+    const absolute = join(base, "absolute.txt");
+    await write?.execute("id", { path: absolute, content: "by absolute path\n" });
+
+    expect(await readFile(absolute, "utf8")).toBe("by absolute path\n");
+    expect((await read?.execute("id", { path: absolute }))?.content[0]?.text).toContain(
+      "by absolute path",
+    );
+  });
+
+  it("marks oversized conflict reads as truncated", async () => {
+    await initRepo(base);
+    await writeFile(join(base, "huge.txt"), "x".repeat(300_000), "utf8");
+
+    const run = vi.fn(async (): Promise<HeadlessRunResult> => ({ text: "" }));
+    await createGitResolver({ run })(base, "origin/main", log);
+
+    const read = (run.mock.calls[0]?.[0].customTools ?? []).find(
+      (tool) => tool.name === "read_conflict",
+    );
+
+    expect((await read?.execute("id", { path: "huge.txt" }))?.content[0]?.text).toContain(
+      "[truncated]",
+    );
   });
 
   it("its git tool refuses push, fetch, reset, and remote operations", async () => {

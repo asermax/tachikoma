@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -127,5 +127,84 @@ describe("discoverSkillAgents", () => {
 
     expect(discoverSkillAgents(skillsRoot, fakeLog)).toEqual([]);
     expect(discoverSkillAgents(join(skillsRoot, "nope"), fakeLog)).toEqual([]);
+  });
+
+  it("treats an empty string model as null", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      '---\ndescription: Finds sources\nmodel: ""\n---\n\nBody.',
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.model).toBeNull();
+  });
+
+  it("falls back to the stem when the frontmatter name is an empty string", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      '---\ndescription: Finds sources\nname: ""\n---\n\nBody.',
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.name).toBe("research/scout");
+  });
+
+  it("treats an empty comma-separated tools string as null", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      '---\ndescription: Finds sources\ntools: " , , "\n---\n\nBody.',
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.tools).toBeNull();
+  });
+
+  it("treats an empty tools list as null", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\ntools: []\n---\n\nBody.",
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.tools).toBeNull();
+  });
+
+  it("warns on a tools array containing non-string entries and falls back to null", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\ntools:\n  - read\n  - 5\n---\n\nBody.",
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.tools).toBeNull();
+  });
+
+  it("discovers agents reachable through a symlinked markdown file", async () => {
+    await writeAgent("research", "real.md", "---\ndescription: Real agent\n---\n\nBody.");
+
+    const agentsDir = join(skillsRoot, "research", "agents");
+    await symlink(join(agentsDir, "real.md"), join(agentsDir, "linked.md"));
+
+    expect(
+      discoverSkillAgents(skillsRoot, fakeLog)
+        .map((agent) => agent.name)
+        .sort(),
+    ).toEqual(["research/linked", "research/real"]);
+  });
+
+  it("logs and skips an agent whose file cannot be read", async () => {
+    const warn = vi.mocked(fakeLog.warn).mockClear();
+
+    const agentsDir = join(skillsRoot, "research", "agents");
+    await mkdir(agentsDir, { recursive: true });
+    await symlink(join(agentsDir, "missing-target.md"), join(agentsDir, "dangling.md"));
+
+    const agents = discoverSkillAgents(skillsRoot, fakeLog);
+
+    expect(agents).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({ skill: "research", agent: "dangling.md" }),
+      "failed to load skill agent — skipped",
+    );
   });
 });

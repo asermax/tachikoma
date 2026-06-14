@@ -55,6 +55,34 @@ describe("transcript archive processor", () => {
     await expect(readFile(dest, "utf8")).resolves.toContain('"id":"1"');
   });
 
+  it("falls back to the source filename when the header session id is empty", async () => {
+    const src = join(workspace, "20260612_empty.jsonl");
+    await writeFile(src, `${JSON.stringify({ type: "session", id: "" })}\n`, "utf8");
+
+    await createTranscriptArchiveProcessor(workspace).process({
+      session,
+      transcriptPath: src,
+      log: fakeLog,
+    });
+
+    const dest = join(workspace, "memories", "transcripts", "20260612_empty.jsonl");
+    await expect(readFile(dest, "utf8")).resolves.toContain('"type":"session"');
+  });
+
+  it("falls back to the source filename when the header id is not a string", async () => {
+    const src = join(workspace, "20260612_numeric.jsonl");
+    await writeFile(src, `${JSON.stringify({ type: "session", id: 42 })}\n`, "utf8");
+
+    await createTranscriptArchiveProcessor(workspace).process({
+      session,
+      transcriptPath: src,
+      log: fakeLog,
+    });
+
+    const dest = join(workspace, "memories", "transcripts", "20260612_numeric.jsonl");
+    await expect(readFile(dest, "utf8")).resolves.toContain('"id":42');
+  });
+
   it("never throws when the source transcript is missing", async () => {
     await expect(
       createTranscriptArchiveProcessor(workspace).process({
@@ -139,6 +167,14 @@ describe("pruneTranscripts", () => {
 
     await expect(pruneTranscripts(workspace, 90, fakeLog, now)).resolves.toBeUndefined();
     expect(fakeLog.warn).not.toHaveBeenCalled();
+  });
+
+  it("uses the system clock when no clock is injected", async () => {
+    await writeFile(join(transcripts(), "fresh.jsonl"), "{}\n", "utf8");
+
+    await pruneTranscripts(workspace, 90, fakeLog);
+
+    expect(await readdir(transcripts())).toEqual(["fresh.jsonl"]);
   });
 
   it("warns and continues when one entry cannot be removed", async () => {

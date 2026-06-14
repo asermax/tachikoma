@@ -10,10 +10,12 @@ import { runGit } from "../../src/extensions/git/git.ts";
 import { createGitProcessor } from "../../src/extensions/git/processor.ts";
 import { commitFile, fakeLogger, headOf, initRepo, lastSubject, makeTempDir } from "./helpers.ts";
 
-const context = (): PostProcessorContext => ({
+const ctxLog = (): PostProcessorContext["log"] => fakeLogger();
+
+const context = (log = ctxLog()): PostProcessorContext => ({
   session: {} as SessionRecord,
   transcriptPath: null,
-  log: fakeLogger(),
+  log,
 });
 
 const completerReturning = (message: string): Completer => ({
@@ -83,5 +85,77 @@ describe("git processor", () => {
     }).process(context());
 
     expect(await headOf(origin)).toBe(await headOf(workspace));
+  });
+
+  it("warns and keeps changes local when the push cannot be reconciled", async () => {
+    const origin = join(base, "origin.git");
+    await runGit(base, ["init", "--bare", "-b", "main", origin]);
+    await runGit(workspace, ["remote", "add", "origin", origin]);
+    await runGit(workspace, ["push", "-u", "origin", "main"]);
+
+    const other = join(base, "other");
+    await runGit(base, ["clone", origin, "other"]);
+    await runGit(other, ["config", "user.name", "Other"]);
+    await runGit(other, ["config", "user.email", "other@local"]);
+    await runGit(other, ["config", "commit.gpgsign", "false"]);
+    await commitFile(other, "seed.txt", "remote edit\n", "Remote conflicting edit");
+    await runGit(other, ["push", "origin", "main"]);
+
+    await writeFile(join(workspace, "seed.txt"), "local edit\n", "utf8");
+    const log = ctxLog();
+
+    await createGitProcessor({
+      workspaceRoot: workspace,
+      side: completerReturning("Local change"),
+    }).process(context(log));
+
+    expect(await lastSubject(workspace)).toBe("Local change");
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ result: "REBASE_FAILED" }),
+      expect.stringContaining("push failed"),
+    );
+  });
+
+  it("succeeds on retry when the second commit pass clears the tree", async () => {
+    const hook = join(workspace, ".git", "hooks", "post-commit");
+    const leftover = join(workspace, "leftover.txt");
+    await writeFile(
+      hook,
+      `#!/bin/sh\nif [ ! -f "${leftover}" ]; then echo dirty > "${leftover}"; fi\n`,
+      { mode: 0o755 },
+    );
+
+    await writeFile(join(workspace, "notes.md"), "content\n", "utf8");
+    const log = ctxLog();
+
+    await createGitProcessor({
+      workspaceRoot: workspace,
+      side: completerReturning("Add notes"),
+    }).process(context(log));
+
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("retrying"));
+    expect(log.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("remain after git processor retry"),
+    );
+    expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
+  });
+
+  it("warns when changes still remain after the retry pass", async () => {
+    const hook = join(workspace, ".git", "hooks", "post-commit");
+    const stamp = join(workspace, "post-commit-stamp");
+    await writeFile(hook, `#!/bin/sh\ndate +%s%N >> "${stamp}"\n`, { mode: 0o755 });
+
+    await writeFile(join(workspace, "notes.md"), "content\n", "utf8");
+    const log = ctxLog();
+
+    await createGitProcessor({
+      workspaceRoot: workspace,
+      side: completerReturning("Add notes"),
+    }).process(context(log));
+
+    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("retrying"));
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.stringContaining("remain after git processor retry"),
+    );
   });
 });

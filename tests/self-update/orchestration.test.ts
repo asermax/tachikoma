@@ -199,6 +199,67 @@ describe("runUpgrade", () => {
     expect(restarter.restart).not.toHaveBeenCalled();
   });
 
+  it("returns registry-unavailable when the latest version cannot be fetched", async () => {
+    const state = createState();
+    const install = vi.fn(async () => {});
+    const restarter = createRestarter();
+
+    const outcome = await runUpgrade({
+      registry: registryReturning(null),
+      installer: { install },
+      restarter,
+      devInstall: devInstallReturning(false),
+      state,
+      currentVersion: CURRENT,
+      log: fakeLog,
+      now,
+    });
+
+    expect(outcome.status).toBe("registry-unavailable");
+    expect(install).not.toHaveBeenCalled();
+    expect(restarter.restart).not.toHaveBeenCalled();
+  });
+
+  it("defaults the clock to real time when no now() is supplied", async () => {
+    const state = createState();
+    const install = vi.fn(async () => {});
+    const restarter = createRestarter();
+
+    await expect(
+      runUpgrade({
+        registry: registryReturning("2.1.0"),
+        installer: { install },
+        restarter,
+        devInstall: devInstallReturning(false),
+        state,
+        currentVersion: CURRENT,
+        log: fakeLog,
+      }),
+    ).rejects.toThrow("__restart__");
+
+    expect(state.getUpgradeMarker()?.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("stringifies a non-Error install failure in the thrown message", async () => {
+    const state = createState();
+    const install = vi.fn(async () => {
+      throw "raw string failure";
+    });
+
+    await expect(
+      runUpgrade({
+        registry: registryReturning("2.1.0"),
+        installer: { install },
+        restarter: createRestarter(),
+        devInstall: devInstallReturning(false),
+        state,
+        currentVersion: CURRENT,
+        log: fakeLog,
+        now,
+      }),
+    ).rejects.toThrow("Install of 2.1.0 failed: raw string failure");
+  });
+
   it("refuses to retry a known-failed version", async () => {
     const state = createState();
     state.setFailedVersion("2.1.0");
@@ -420,5 +481,31 @@ describe("reconcileStartup", () => {
     const [, payload] = emit.mock.calls[0] as [string, { severity: string }];
     expect(payload.severity).toBe("urgent");
     expect(state.getFailedVersion()).toBe("2.1.0");
+  });
+
+  it("stringifies a non-Error rollback failure in the urgent notice", async () => {
+    const state = createState();
+    state.setUpgradeMarker({
+      previousVersion: "2.0.1",
+      targetVersion: "2.1.0",
+      startedAt: now().toISOString(),
+    });
+    const install = vi.fn(async () => {
+      throw "raw rollback failure";
+    });
+    const emit = vi.fn();
+
+    await reconcileStartup({
+      installer: { install },
+      restarter: createRestarter(),
+      state,
+      currentVersion: "2.0.1",
+      emit,
+      log: fakeLog,
+    });
+
+    const [, payload] = emit.mock.calls[0] as [string, { text: string; severity: string }];
+    expect(payload.severity).toBe("urgent");
+    expect(payload.text).toContain("raw rollback failure");
   });
 });

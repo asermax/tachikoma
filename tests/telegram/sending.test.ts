@@ -1,10 +1,13 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   deliverText,
+  editWithMarkdownFallback,
   isMarkdownParseError,
+  isMessageNotModifiedError,
   notifyViaCopyDelete,
   sendChunked,
   sendWithMarkdownFallback,
+  startTyping,
 } from "../../src/extensions/telegram/sending.ts";
 import type { Logger } from "../../src/log.ts";
 
@@ -20,6 +23,11 @@ const parseError = () =>
     description: "Bad Request: can't parse entities: Can't find end of the entity",
   });
 
+const notModifiedError = () =>
+  Object.assign(new Error("400: Bad Request: message is not modified"), {
+    description: "Bad Request: message is not modified",
+  });
+
 describe("isMarkdownParseError", () => {
   it("recognizes Telegram entity-parse rejections", () => {
     expect(isMarkdownParseError(parseError())).toBe(true);
@@ -29,6 +37,144 @@ describe("isMarkdownParseError", () => {
     expect(isMarkdownParseError(new Error("chat not found"))).toBe(false);
     expect(isMarkdownParseError(null)).toBe(false);
     expect(isMarkdownParseError("can't parse entities")).toBe(false);
+  });
+
+  it("uses the Error message when there is no description string", () => {
+    expect(isMarkdownParseError(new Error("can't parse entities here"))).toBe(true);
+  });
+
+  it("ignores a non-string description", () => {
+    expect(isMarkdownParseError({ description: 42 })).toBe(false);
+  });
+});
+
+describe("isMessageNotModifiedError", () => {
+  it("recognizes not-modified rejections", () => {
+    expect(isMessageNotModifiedError(notModifiedError())).toBe(true);
+  });
+
+  it("rejects unrelated errors", () => {
+    expect(isMessageNotModifiedError(new Error("chat not found"))).toBe(false);
+  });
+});
+
+describe("editWithMarkdownFallback", () => {
+  it("edits with Markdown parse mode", async () => {
+    const editMessageText = vi.fn().mockResolvedValue(true);
+
+    await editWithMarkdownFallback({ editMessageText }, 42, 7, "*hi*");
+
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    expect(editMessageText).toHaveBeenCalledWith(42, 7, "*hi*", { parse_mode: "Markdown" });
+  });
+
+  it("swallows a not-modified rejection without retrying as plain text", async () => {
+    const editMessageText = vi.fn().mockRejectedValue(notModifiedError());
+
+    await expect(
+      editWithMarkdownFallback({ editMessageText }, 42, 7, "same"),
+    ).resolves.toBeUndefined();
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates non-parse, non-not-modified errors", async () => {
+    const editMessageText = vi.fn().mockRejectedValue(new Error("chat not found"));
+
+    await expect(editWithMarkdownFallback({ editMessageText }, 42, 7, "x")).rejects.toThrow(
+      "chat not found",
+    );
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to plain text on a parse rejection", async () => {
+    const editMessageText = vi
+      .fn()
+      .mockImplementation(
+        async (_chat: number, _id: number, _text: string, other?: { parse_mode?: string }) => {
+          if (other?.parse_mode != null) throw parseError();
+          return true;
+        },
+      );
+
+    await editWithMarkdownFallback({ editMessageText }, 42, 7, "broken *markdown");
+
+    expect(editMessageText).toHaveBeenCalledTimes(2);
+    expect(editMessageText).toHaveBeenLastCalledWith(42, 7, "broken *markdown");
+  });
+
+  it("swallows a not-modified rejection on the plain-text fallback", async () => {
+    const editMessageText = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        throw parseError();
+      })
+      .mockImplementationOnce(async () => {
+        throw notModifiedError();
+      });
+
+    await expect(
+      editWithMarkdownFallback({ editMessageText }, 42, 7, "broken *markdown"),
+    ).resolves.toBeUndefined();
+    expect(editMessageText).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates a non-not-modified failure from the plain-text fallback", async () => {
+    const editMessageText = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        throw parseError();
+      })
+      .mockImplementationOnce(async () => {
+        throw new Error("chat not found");
+      });
+
+    await expect(
+      editWithMarkdownFallback({ editMessageText }, 42, 7, "broken *markdown"),
+    ).rejects.toThrow("chat not found");
+    expect(editMessageText).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("startTyping", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends an immediate typing action and refreshes on an interval until stopped", () => {
+    const sendChatAction = vi.fn().mockResolvedValue(true);
+
+    const stop = startTyping({ sendChatAction }, 42, fakeLog);
+
+    expect(sendChatAction).toHaveBeenCalledTimes(1);
+    expect(sendChatAction).toHaveBeenCalledWith(42, "typing");
+
+    vi.advanceTimersByTime(5000);
+    expect(sendChatAction).toHaveBeenCalledTimes(2);
+
+    stop();
+    vi.advanceTimersByTime(10000);
+    expect(sendChatAction).toHaveBeenCalledTimes(2);
+  });
+
+  it("logs when the typing action fails", async () => {
+    const log = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    } as unknown as Logger;
+    const sendChatAction = vi.fn().mockRejectedValue(new Error("flood"));
+
+    const stop = startTyping({ sendChatAction }, 42, log);
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(log.debug).toHaveBeenCalledWith({ err: expect.any(Error) }, "typing chat action failed");
+
+    stop();
   });
 });
 
@@ -146,6 +292,21 @@ describe("notifyViaCopyDelete", () => {
     expect(await notifyViaCopyDelete(api, 42, 10, fakeLog, 0)).toBe(20);
     expect(api.deleteMessage).toHaveBeenCalledTimes(3);
   });
+
+  it("returns the copy id when a retry eventually deletes the original", async () => {
+    let attempts = 0;
+    const api = {
+      copyMessage: vi.fn().mockResolvedValue({ message_id: 20 }),
+      deleteMessage: vi.fn().mockImplementation(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("delete failed");
+        return true;
+      }),
+    };
+
+    expect(await notifyViaCopyDelete(api, 42, 10, fakeLog, 0)).toBe(20);
+    expect(api.deleteMessage).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("deliverText", () => {
@@ -195,5 +356,22 @@ describe("deliverText", () => {
     expect(id).toBe(1);
     expect(calls).toEqual(["send:n"]);
     expect(api.sendMessage).toHaveBeenCalledWith(42, "notice", { parse_mode: "Markdown" });
+  });
+
+  it("returns null when there is nothing to send", async () => {
+    const { api } = fakeApi();
+
+    expect(await deliverText(api, 42, "   ", true, fakeLog, 0)).toBeNull();
+    expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the original id when the copy+delete push fails", async () => {
+    const { api } = fakeApi();
+    api.copyMessage.mockRejectedValue(new Error("copy failed"));
+
+    const id = await deliverText(api, 42, "notice", true, fakeLog, 0);
+
+    expect(id).toBe(1);
+    expect(api.deleteMessage).not.toHaveBeenCalled();
   });
 });

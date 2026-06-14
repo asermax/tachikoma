@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -15,7 +16,9 @@ import {
   handleSendFile,
   handleSendMessageWithButtons,
   handleUnpinMessage,
+  registerTelegramTools,
   type ToolApi,
+  type ToolDeps,
 } from "../../src/extensions/telegram/tools.ts";
 
 const fakeApi = () =>
@@ -50,6 +53,8 @@ describe("handleSendFile", () => {
 
     await writeFile(join(workspace, "pic.png"), "fake image");
     await writeFile(join(workspace, "notes.txt"), "fake notes");
+    await writeFile(join(workspace, "song.mp3"), "fake audio");
+    await writeFile(join(workspace, "clip.mp4"), "fake video");
     await writeFile(join(outside, "secret.txt"), "nope");
   });
 
@@ -86,10 +91,48 @@ describe("handleSendFile", () => {
     expect(api.sendDocument).toHaveBeenCalledWith(42, expect.anything(), {});
   });
 
+  it("sends audio files as audio", async () => {
+    const api = fakeApi();
+
+    await handleSendFile(deps(api), { filePath: "song.mp3" });
+
+    expect(api.sendAudio).toHaveBeenCalledWith(42, expect.anything(), {});
+    expect(api.sendDocument).not.toHaveBeenCalled();
+  });
+
+  it("sends video files as video", async () => {
+    const api = fakeApi();
+
+    await handleSendFile(deps(api), { filePath: "clip.mp4" });
+
+    expect(api.sendVideo).toHaveBeenCalledWith(42, expect.anything(), {});
+    expect(api.sendDocument).not.toHaveBeenCalled();
+  });
+
   it("rejects missing files", async () => {
     await expect(handleSendFile(deps(fakeApi()), { filePath: "missing.txt" })).rejects.toThrow(
       /File not found/,
     );
+  });
+
+  it("accepts an allowed root that already ends with a path separator", async () => {
+    const api = fakeApi();
+
+    await handleSendFile(
+      { api, chatId: 42, workspaceRoot: workspace, allowedRoots: [`${workspace}${sep}`] },
+      { filePath: "notes.txt" },
+    );
+
+    expect(api.sendDocument).toHaveBeenCalled();
+  });
+
+  it("rejects directories that are not regular files", async () => {
+    const api = fakeApi();
+
+    await expect(handleSendFile(deps(api), { filePath: "." })).rejects.toThrow(
+      /not a regular file/,
+    );
+    expect(api.sendDocument).not.toHaveBeenCalled();
   });
 
   it("rejects files outside the allowed roots", async () => {
@@ -295,5 +338,86 @@ describe("validateButtons", () => {
       value: `v${index}`,
     }));
     expect(() => validateButtons([row])).toThrow(/exceeds the cap/);
+  });
+});
+
+describe("registerTelegramTools", () => {
+  type RegisteredTool = {
+    name: string;
+    execute: (toolCallId: string, params: unknown) => Promise<{ content: { text: string }[] }>;
+  };
+
+  const register = (deps: ToolDeps) => {
+    const tools = new Map<string, RegisteredTool>();
+    const pi = {
+      registerTool: (definition: RegisteredTool) => {
+        tools.set(definition.name, definition);
+      },
+    } as unknown as ExtensionAPI;
+
+    registerTelegramTools(pi, deps);
+
+    return tools;
+  };
+
+  const baseDeps = (api: ToolApi): ToolDeps => ({
+    api,
+    chatId: 42,
+    workspaceRoot: "/tmp/ws",
+    allowedRoots: ["/tmp/ws"],
+    getLastInboundMessageId: () => 5,
+    getLastOutboundMessageId: () => 7,
+    store: { record: vi.fn(), findSessionId: vi.fn(() => null) },
+    currentSessionId: () => 100,
+  });
+
+  it("registers all five telegram tools", () => {
+    const tools = register(baseDeps(fakeApi()));
+
+    expect([...tools.keys()].sort()).toEqual([
+      "pin_message",
+      "react_to_message",
+      "send_message_with_buttons",
+      "send_telegram_file",
+      "unpin_message",
+    ]);
+  });
+
+  it("routes execute callbacks through the handlers and wraps their text results", async () => {
+    const api = fakeApi();
+    const tools = register(baseDeps(api));
+
+    const react = await tools.get("react_to_message")?.execute("call-1", { emoji: "👍" });
+    expect(react?.content[0].text).toBe("Reacted to message 5 with 👍");
+    expect(api.setMessageReaction).toHaveBeenCalled();
+
+    const pin = await tools.get("pin_message")?.execute("call-2", {});
+    expect(pin?.content[0].text).toBe("Message pinned (ID: 7)");
+
+    const unpin = await tools.get("unpin_message")?.execute("call-3", { messageId: 7 });
+    expect(unpin?.content[0].text).toBe("Message unpinned (ID: 7)");
+
+    const buttons = await tools
+      .get("send_message_with_buttons")
+      ?.execute("call-4", { prompt: "Proceed?", buttons: [[{ label: "Yes", value: "yes" }]] });
+    expect(buttons?.content[0].text).toBe("Buttons sent (message_id: 11)");
+  });
+
+  it("delivers a file through the send_telegram_file execute callback", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "tachi-telegram-reg-"));
+    await writeFile(join(workspace, "pic.png"), "fake image");
+
+    const api = fakeApi();
+    const tools = register({
+      ...baseDeps(api),
+      workspaceRoot: workspace,
+      allowedRoots: [workspace],
+    });
+
+    const sent = await tools.get("send_telegram_file")?.execute("call-5", { filePath: "pic.png" });
+    expect(sent?.content[0].text).toBe("File sent: pic.png");
+    expect(api.sendPhoto).toHaveBeenCalled();
+
+    await rm(workspace, { recursive: true, force: true });
   });
 });

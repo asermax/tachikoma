@@ -45,6 +45,41 @@ describe("rolling summary processor", () => {
     expect(update).not.toHaveBeenCalled();
   });
 
+  it("labels the previous summary as none when the session has no summary", async () => {
+    const side: Completer = { complete: vi.fn().mockResolvedValue("fresh") };
+    const { api } = fakeSessions();
+    const emptySession = { id: 4, summary: null } as SessionRecord;
+
+    await createSummaryProcessor(side, api, fakeLog).process({
+      session: emptySession,
+      userText: "hello",
+      assistantText: "hi",
+    });
+
+    expect(side.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        user: expect.stringContaining("Previous summary: (none)"),
+      }),
+    );
+  });
+
+  it("clips an over-long summary and exchange", async () => {
+    const side: Completer = { complete: vi.fn().mockResolvedValue("s".repeat(700)) };
+    const { api, update } = fakeSessions();
+
+    await createSummaryProcessor(side, api, fakeLog).process({
+      session,
+      userText: "u".repeat(3000),
+      assistantText: "a".repeat(3000),
+    });
+
+    const [, payload] = update.mock.calls[0];
+    expect(payload.summary).toHaveLength(601);
+    expect(payload.summary.endsWith("…")).toBe(true);
+    expect(payload.lastExchange).toHaveLength(2001);
+    expect(payload.lastExchange.endsWith("…")).toBe(true);
+  });
+
   it("still records the exchange when summarization fails", async () => {
     const side: Completer = { complete: vi.fn().mockRejectedValue(new Error("nope")) };
     const { api, update } = fakeSessions();

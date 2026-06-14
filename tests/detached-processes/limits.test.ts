@@ -43,6 +43,12 @@ describe("SystemdRunLimiter", () => {
     expect(log.warn).toHaveBeenCalled();
   });
 
+  it("uses the real systemd-run probe by default without throwing", async () => {
+    const limiter = new SystemdRunLimiter(fakeLog());
+
+    await expect(limiter.detect()).resolves.toBeUndefined();
+  });
+
   it("never wraps when no limit is requested", async () => {
     const limiter = new SystemdRunLimiter(fakeLog());
     await limiter.detect(async () => "ok");

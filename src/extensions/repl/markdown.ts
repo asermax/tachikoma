@@ -41,6 +41,7 @@ export const renderMarkdown = (source: string): string => {
     const heading = HEADING.exec(line);
 
     if (heading != null) {
+      /* v8 ignore next -- group 2 `(.*)` always matches; the `?? ""` guard is unreachable */
       out.push(`${BOLD}${UNDERLINE}${renderInline(heading[2] ?? "")}${RESET}`);
       continue;
     }
@@ -48,6 +49,7 @@ export const renderMarkdown = (source: string): string => {
     const item = LIST_ITEM.exec(line);
 
     if (item != null) {
+      /* v8 ignore next -- groups 1 `(\s*)` and 3 `(.*)` always match; the `?? ""` guards are unreachable */
       out.push(`${item[1] ?? ""}${CYAN}•${RESET} ${renderInline(item[3] ?? "")}`);
       continue;
     }

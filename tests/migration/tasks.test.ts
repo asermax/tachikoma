@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -138,6 +138,110 @@ describe("adaptLegacyTasks", () => {
 
     await adaptLegacyTasks(db, workspace, fakeLog);
 
+    expect(db.select().from(taskDefinitions).all()).toHaveLength(0);
+  });
+
+  it("imports a bare ISO instant schedule (oldest installs) as a once task", async () => {
+    const { workspace, db } = await setup([
+      cronDef({ id: "bare", schedule: "2026-08-01T09:00:00.000Z" }),
+    ]);
+
+    await adaptLegacyTasks(db, workspace, fakeLog);
+
+    const row = db.select().from(taskDefinitions).all()[0];
+    expect(row?.schedule).toEqual({ type: "once", at: "2026-08-01T09:00:00.000Z" });
+  });
+
+  it("imports a JSON-string schedule as a once task", async () => {
+    const { workspace, db } = await setup([
+      cronDef({ id: "str", schedule: JSON.stringify("2026-09-01T10:00:00.000Z") }),
+    ]);
+
+    await adaptLegacyTasks(db, workspace, fakeLog);
+
+    const row = db.select().from(taskDefinitions).all()[0];
+    expect(row?.schedule).toEqual({ type: "once", at: "2026-09-01T10:00:00.000Z" });
+  });
+
+  it("skips schedules that JSON-parse but cannot be mapped", async () => {
+    const { workspace, db } = await setup([
+      cronDef({ id: "json-null", schedule: "null" }),
+      cronDef({ id: "json-number", schedule: "42" }),
+      cronDef({ id: "string-bad-date", schedule: JSON.stringify("not-a-date") }),
+      cronDef({ id: "once-bad-at", schedule: JSON.stringify({ type: "once", at: "nope" }) }),
+      cronDef({ id: "unknown-type", schedule: JSON.stringify({ type: "weekly" }) }),
+    ]);
+
+    await adaptLegacyTasks(db, workspace, fakeLog);
+
+    expect(db.select().from(taskDefinitions).all()).toHaveLength(0);
+  });
+
+  it("drops unparseable timestamps and defaults since/createdAt to now", async () => {
+    const { workspace, db } = await setup([
+      cronDef({
+        id: "bad-dates",
+        last_fired_at: "garbage",
+        since: "garbage",
+        created_at: null,
+      }),
+    ]);
+
+    // Timestamps persist at one-second resolution, so floor the lower bound.
+    const before = Math.floor(Date.now() / 1000) * 1000;
+
+    await adaptLegacyTasks(db, workspace, fakeLog);
+
+    const row = db.select().from(taskDefinitions).all()[0];
+    expect(row?.lastFiredAt).toBeNull();
+    expect(row?.since.getTime()).toBeGreaterThanOrEqual(before);
+    expect(row?.createdAt.getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it("is a no-op when the backup lacks a task_definitions table", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-migration-notable-"));
+    const workspace = new Workspace(dir);
+    await workspace.ensure();
+
+    const backup = new Database(join(workspace.dataDir, LEGACY_BACKUP_DB));
+    backup.exec("CREATE TABLE other (id TEXT)");
+    backup.close();
+
+    const db = createDatabase(workspace.databaseFile);
+    runMigrations(db);
+
+    await adaptLegacyTasks(db, workspace, fakeLog);
+
+    expect(db.select().from(taskDefinitions).all()).toHaveLength(0);
+  });
+
+  it("warns and skips when the backup database cannot be read", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-migration-corrupt-"));
+    const workspace = new Workspace(dir);
+    await workspace.ensure();
+
+    await writeFile(join(workspace.dataDir, LEGACY_BACKUP_DB), "this is not a sqlite database");
+
+    const db = createDatabase(workspace.databaseFile);
+    runMigrations(db);
+    const log = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+
+    await adaptLegacyTasks(db, workspace, log);
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ backupFile: expect.any(String) }),
+      "could not read legacy task definitions — skipping import",
+    );
+    expect(db.select().from(taskDefinitions).all()).toHaveLength(0);
+  });
+
+  it("does not warn when there are no legacy rows to report", async () => {
+    const { workspace, db } = await setup([]);
+    const log = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+
+    await adaptLegacyTasks(db, workspace, log);
+
+    expect(log.warn).not.toHaveBeenCalled();
     expect(db.select().from(taskDefinitions).all()).toHaveLength(0);
   });
 });

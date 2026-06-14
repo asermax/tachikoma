@@ -149,6 +149,16 @@ describe("streamPrompt", () => {
     ]);
   });
 
+  it("stringifies a non-Error rejection value", async () => {
+    const session = fakeSession(async () => {
+      throw "plain string failure";
+    });
+
+    const events = await collect(streamPrompt(session, "hi"));
+
+    expect(events[0]).toMatchObject({ kind: "error", message: "plain string failure" });
+  });
+
   it("classifies auth failures as non-recoverable", async () => {
     const session = fakeSession(async () => {
       throw new Error("authentication failed: invalid api key");
@@ -164,6 +174,66 @@ describe("streamPrompt", () => {
         errorKind: "auth",
       },
     ]);
+  });
+
+  it("maps thinking deltas to thinking events and drops unknown message updates", async () => {
+    const session = fakeSession(async (emit) => {
+      emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "thinking_delta", delta: "pondering" },
+      });
+      emit({
+        type: "message_update",
+        assistantMessageEvent: { type: "signature_delta", delta: "ignored" },
+      });
+    });
+
+    const events = await collect(streamPrompt(session, "hi"));
+
+    expect(events).toEqual([
+      { kind: "thinking", text: "pondering" },
+      { kind: "result", stopReason: "done", sessionId: "session-1" },
+    ]);
+  });
+
+  it("maps compaction and auto-retry events to status updates", async () => {
+    const session = fakeSession(async (emit) => {
+      emit({ type: "compaction_start" });
+      emit({ type: "auto_retry_start" });
+    });
+
+    const events = await collect(streamPrompt(session, "hi"));
+
+    expect(events).toEqual([
+      { kind: "status", text: "Compacting conversation…" },
+      { kind: "status", text: "Provider hiccup — retrying…" },
+      { kind: "result", stopReason: "done", sessionId: "session-1" },
+    ]);
+  });
+
+  it("drops unrecognized session events", async () => {
+    const session = fakeSession(async (emit) => {
+      emit({ type: "agent_start" });
+    });
+
+    const events = await collect(streamPrompt(session, "hi"));
+
+    expect(events).toEqual([{ kind: "result", stopReason: "done", sessionId: "session-1" }]);
+  });
+
+  it("defaults tool-start args to an empty object when absent", async () => {
+    const session = fakeSession(async (emit) => {
+      emit({ type: "tool_execution_start", toolCallId: "t9", toolName: "noop" });
+    });
+
+    const events = await collect(streamPrompt(session, "hi"));
+
+    expect(events[0]).toEqual({
+      kind: "tool-start",
+      toolCallId: "t9",
+      toolName: "noop",
+      args: {},
+    });
   });
 
   it("sanitizes lone surrogates out of streamed text", async () => {

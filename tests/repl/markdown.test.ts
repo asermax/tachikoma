@@ -24,6 +24,10 @@ describe("renderMarkdown", () => {
     expect(renderMarkdown("**y**")).toBe(`${BOLD}y${RESET}`);
   });
 
+  it("renders underscore italic spans", () => {
+    expect(renderMarkdown("_x_")).toBe(`${ITALIC}x${RESET}`);
+  });
+
   it("renders inline code", () => {
     expect(renderMarkdown("call `foo()` now")).toBe(`call ${YELLOW}foo()${RESET} now`);
   });

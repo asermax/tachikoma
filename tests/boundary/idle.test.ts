@@ -6,9 +6,8 @@ import type { Logger } from "../../src/log.ts";
 
 const fakeLog = { info: vi.fn(), error: vi.fn() } as unknown as Logger;
 
-const setup = (idleCloseSeconds: number) => {
+const setup = (idleCloseSeconds: number, closeIfIdle = vi.fn().mockResolvedValue(true)) => {
   let processor: ExchangeProcessor | null = null;
-  const closeIfIdle = vi.fn().mockResolvedValue(true);
 
   const sessions: IdleSessions = {
     onExchange: (registered) => {
@@ -63,5 +62,37 @@ describe("idle close boundary", () => {
     await vi.advanceTimersByTimeAsync(3_600_000);
 
     expect(closeIfIdle).not.toHaveBeenCalled();
+  });
+
+  it("logs the close when a session was actually closed", async () => {
+    const { exchange } = setup(900, vi.fn().mockResolvedValue(true));
+
+    await exchange();
+    await vi.advanceTimersByTimeAsync(900_000);
+
+    expect(fakeLog.info).toHaveBeenCalledWith(
+      { idleCloseSeconds: 900 },
+      "idle timeout reached — session closed",
+    );
+  });
+
+  it("does not log when no session was idle", async () => {
+    vi.mocked(fakeLog.info).mockClear();
+    const { exchange } = setup(900, vi.fn().mockResolvedValue(false));
+
+    await exchange();
+    await vi.advanceTimersByTimeAsync(900_000);
+
+    expect(fakeLog.info).not.toHaveBeenCalled();
+  });
+
+  it("logs an error when the close attempt rejects", async () => {
+    const error = new Error("close failed");
+    const { exchange } = setup(900, vi.fn().mockRejectedValue(error));
+
+    await exchange();
+    await vi.advanceTimersByTimeAsync(900_000);
+
+    expect(fakeLog.error).toHaveBeenCalledWith({ err: error }, "idle close failed");
   });
 });

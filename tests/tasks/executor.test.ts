@@ -346,6 +346,50 @@ describe("executeBackgroundInstance", () => {
     expect(completed?.resumeContext).toBeNull();
   });
 
+  it("labels the source with the definition name when the instance has one", async () => {
+    const classify = vi.fn().mockResolvedValue({ status: "error", reason: "blocked" });
+    const side = makeSide(() => "cannot proceed", classify);
+    const deps = makeDeps(side);
+
+    const definition = repository.createDefinition({
+      name: "Inbox Triage",
+      schedule: { type: "cron", expression: "* * * * *" },
+      taskType: "background",
+      prompt: "triage the inbox",
+    });
+    const instance = repository.createInstance({
+      definitionId: definition.id,
+      taskType: "background",
+      prompt: "triage the inbox",
+      scheduledFor: current,
+    });
+
+    await executeBackgroundInstance(deps, instance);
+
+    expect(deps.deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("Inbox Triage") }),
+    );
+    expect(deps.notify).toHaveBeenCalledWith(
+      expect.objectContaining({ source: "Background task: Inbox Triage" }),
+    );
+  });
+
+  it("records the session file as null when the opened session has none", async () => {
+    const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
+    const side = makeSide(() => "all done", classify);
+    // A session opened without a backing file forces the null transcript branch.
+    side.session.sessionFile = null as unknown as string;
+    const deps = makeDeps(side);
+
+    const instance = pendingInstance();
+    await executeBackgroundInstance(deps, instance);
+
+    expect(repository.getInstance(instance.id)?.piSessionFile).toBeNull();
+    expect(deps.runPostProcessors).toHaveBeenCalledWith(
+      expect.objectContaining({ transcriptPath: null }),
+    );
+  });
+
   it("fails the instance when the run itself throws and disposes the session", async () => {
     const classify = vi.fn();
     const side = makeSide(() => {
@@ -403,6 +447,38 @@ describe("BackgroundRunner", () => {
 
     expect(side.openBackgroundSession).toHaveBeenCalledTimes(1);
     expect(repository.getInstance(instance.id)?.status).toBe("completed");
+  });
+
+  it("logs and clears in-flight when an executor rejects outside its own guard", async () => {
+    const side = makeSide(
+      () => "done",
+      vi.fn().mockResolvedValue({ status: "complete", reason: "done" }),
+    );
+    const deps = makeDeps(side);
+
+    const instance = pendingInstance();
+
+    // updateInstance fires before executeBackgroundInstance's try block, so a throw
+    // here escapes the executor and must be caught by the runner's own .catch.
+    const failingRepository = {
+      ...repository,
+      getResumableInstances: () => [],
+      getPendingInstances: () => [instance],
+      getDefinition: () => null,
+      updateInstance: () => {
+        throw new Error("db write failed");
+      },
+    } as unknown as TaskRepository;
+
+    const runner = new BackgroundRunner({ ...deps, repository: failingRepository });
+
+    runner.tick();
+    await runner.drain();
+
+    expect(fakeLog.error).toHaveBeenCalledWith(
+      expect.objectContaining({ instanceId: instance.id }),
+      "background executor crashed",
+    );
   });
 
   it("leaves a waiting instance without a response untouched", async () => {

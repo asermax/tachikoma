@@ -9,6 +9,7 @@ import {
   buildCrossStoreManifest,
   buildStoreManifestForContext,
   type MaintenanceDeps,
+  maintenanceSystemPrompt,
   runContextMaintenanceTick,
   runMaintenanceTick,
 } from "../../src/extensions/memory/maintenance.ts";
@@ -117,8 +118,52 @@ describe("buildCrossStoreManifest", () => {
     expect(manifest).not.toContain("### Facts Files");
   });
 
+  it("skips other stores whose directories hold no markdown files", async () => {
+    await mkdir(join(workspace, "memories", "episodic"), { recursive: true });
+    await writeFile(join(workspace, "memories", "episodic", "notes.txt"), "not md", "utf8");
+    await mkdir(join(workspace, "memories", "preferences"), { recursive: true });
+    await writeFile(join(workspace, "memories", "preferences", "style.md"), "x", "utf8");
+
+    const manifest = await buildCrossStoreManifest(workspace, "facts");
+
+    expect(manifest).not.toContain("### Episodic Files");
+    expect(manifest).toContain("### Preferences Files");
+  });
+
   it("returns null when nothing else exists", async () => {
     expect(await buildCrossStoreManifest(workspace, "facts")).toBeNull();
+  });
+});
+
+describe("maintenanceSystemPrompt", () => {
+  it("falls back to the system clock when no clock is injected", async () => {
+    const prompt = await maintenanceSystemPrompt("facts", { workspaceRoot: workspace, settings });
+
+    expect(prompt).toContain("facts memory cleanup");
+  });
+
+  it("appends the cross-store manifest when another store has files", async () => {
+    await mkdir(join(workspace, "memories", "preferences"), { recursive: true });
+    await writeFile(join(workspace, "memories", "preferences", "style.md"), "x", "utf8");
+
+    const prompt = await maintenanceSystemPrompt("facts", {
+      workspaceRoot: workspace,
+      settings,
+      now: monday,
+    });
+
+    expect(prompt).toContain("## Cross-Store Visibility");
+    expect(prompt).toContain("- `memories/preferences/style.md`");
+  });
+
+  it("omits the cross-store manifest when no other stores have files", async () => {
+    const prompt = await maintenanceSystemPrompt("facts", {
+      workspaceRoot: workspace,
+      settings,
+      now: monday,
+    });
+
+    expect(prompt).not.toContain("## Cross-Store Visibility");
   });
 });
 
@@ -172,6 +217,18 @@ describe("buildStoreManifestForContext", () => {
 
     expect(manifest).toContain("### Preferences Files");
     expect(manifest).toContain("- `memories/preferences/style.md`");
+  });
+
+  it("skips store directories that hold no markdown files", async () => {
+    await mkdir(join(workspace, "memories", "episodic"), { recursive: true });
+    await writeFile(join(workspace, "memories", "episodic", "raw.txt"), "not md", "utf8");
+    await mkdir(join(workspace, "memories", "facts"), { recursive: true });
+    await writeFile(join(workspace, "memories", "facts", "tech.md"), "x", "utf8");
+
+    const manifest = await buildStoreManifestForContext(workspace);
+
+    expect(manifest).not.toContain("### Episodic Files");
+    expect(manifest).toContain("### Facts Files");
   });
 
   it("returns null when no stores have files", async () => {

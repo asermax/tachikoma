@@ -47,6 +47,32 @@ describe("mapTextMessage", () => {
 
     expect(inbound?.metadata).toEqual({ messageId: 7 });
   });
+
+  it("truncates a long replied-to quote with a head…tail ellipsis", () => {
+    const longText = `${"H".repeat(400)}${"T".repeat(400)}`;
+    const inbound = mapTextMessage({
+      message_id: 8,
+      text: "follow up",
+      reply_to_message: { message_id: 4, text: longText } as never,
+    });
+
+    const quoteLine = inbound?.text.split("\n")[1] ?? "";
+    expect(quoteLine).toContain("…");
+    expect(quoteLine.startsWith("> H")).toBe(true);
+    expect(quoteLine.endsWith("T")).toBe(true);
+    expect(inbound?.text.length).toBeLessThan(longText.length);
+  });
+
+  it("ignores a replied-to message whose text is blank", () => {
+    const inbound = mapTextMessage({
+      message_id: 9,
+      text: "hi",
+      reply_to_message: { message_id: 4, text: "   " } as never,
+    });
+
+    expect(inbound?.text).toBe("hi");
+    expect(inbound?.metadata).toEqual({ messageId: 9, replyToMessageId: "4" });
+  });
 });
 
 describe("mapReaction", () => {
@@ -81,6 +107,27 @@ describe("mapReaction", () => {
   it("returns null when nothing changed", () => {
     expect(mapReaction(reaction(12, 42, ["👍"], ["👍"]))).toBeNull();
   });
+
+  it("reports a removal-only change without an addition clause", () => {
+    const inbound = mapReaction(reaction(12, 42, [], ["👍"]));
+
+    expect(inbound?.text).toBe("The user removed reaction 👍 to a previous message.");
+  });
+
+  it("ignores non-emoji reaction types and treats absent reaction lists as empty", () => {
+    const event = {
+      message_id: 15,
+      new_reaction: [
+        { type: "custom_emoji", custom_emoji_id: "abc" },
+        { type: "emoji", emoji: "🔥" },
+      ],
+      old_reaction: undefined,
+    } as unknown as MessageReactionUpdated;
+
+    const inbound = mapReaction(event);
+
+    expect(inbound?.text).toBe("The user reacted 🔥 to a previous message.");
+  });
 });
 
 describe("mapMediaMessage", () => {
@@ -97,6 +144,20 @@ describe("mapMediaMessage", () => {
   it("defaults to empty text without a caption", () => {
     expect(mapMediaMessage({ message_id: 6 }, attachment).text).toBe("");
   });
+
+  it("prepends a reply quote and records the reply target", () => {
+    const inbound = mapMediaMessage(
+      {
+        message_id: 6,
+        caption: "see this",
+        reply_to_message: { message_id: 2, text: "the prior note" } as never,
+      },
+      attachment,
+    );
+
+    expect(inbound.text).toBe("Replied to:\n> the prior note\n\nsee this");
+    expect(inbound.metadata).toEqual({ messageId: 6, replyToMessageId: "2" });
+  });
 });
 
 describe("mapButtonTap", () => {
@@ -105,6 +166,10 @@ describe("mapButtonTap", () => {
 
     expect(inbound.text).toBe("The user tapped the option `yes` out of the options you displayed.");
     expect(inbound.metadata).toEqual({ buttonValue: "yes", messageId: 9 });
+  });
+
+  it("omits the message id from metadata when none is given", () => {
+    expect(mapButtonTap("no", null).metadata).toEqual({ buttonValue: "no" });
   });
 });
 

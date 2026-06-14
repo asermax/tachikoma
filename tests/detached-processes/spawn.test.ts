@@ -1,8 +1,16 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { isAlive, spawnProcess } from "../../src/extensions/detached-processes/spawn.ts";
+import type { ProcessLimiter } from "../../src/extensions/detached-processes/limits.ts";
+import {
+  exitCodePath,
+  isAlive,
+  spawnProcess,
+  terminate,
+} from "../../src/extensions/detached-processes/spawn.ts";
 import { createWatcherTick } from "../../src/extensions/detached-processes/watcher.ts";
 import { createTestContext, type TestContext, waitFor } from "./setup.ts";
 
@@ -11,6 +19,14 @@ let ctx: TestContext;
 beforeEach(async () => {
   ctx = await createTestContext();
 });
+
+const deadPid = (): number => {
+  const result = spawnSync("true");
+
+  if (result.pid == null || result.pid === 0) throw new Error("failed to obtain a dead pid");
+
+  return result.pid;
+};
 
 describe("spawnProcess", () => {
   it("captures output and the watcher tick detects the exit", async () => {
@@ -71,5 +87,96 @@ describe("spawnProcess", () => {
     await expect(spawnProcess(ctx.spawnDeps, { name: "x", command: " " })).rejects.toThrow(
       /command must not be empty/,
     );
+  });
+
+  const limitedLimiter: ProcessLimiter = {
+    wrap: (_id, command) => ({ file: "sh", args: ["-c", command], limited: true }),
+  };
+
+  it("invokes the onExit callback and records the limit when the command is wrapped as limited", async () => {
+    const onExit = vi.fn();
+
+    const record = await spawnProcess(
+      { ...ctx.spawnDeps, limiter: limitedLimiter, onExit },
+      { name: "limited", command: "true", memoryLimitMb: 64 },
+    );
+
+    expect(record.memoryLimitMb).toBe(64);
+
+    await waitFor(() => onExit.mock.calls.length > 0);
+    expect(onExit).toHaveBeenCalledWith(record.id);
+  });
+
+  it("records a null limit when wrapped as limited but no limit was requested", async () => {
+    const record = await spawnProcess(
+      { ...ctx.spawnDeps, limiter: limitedLimiter },
+      { name: "limited-null", command: "true", memoryLimitMb: null },
+    );
+
+    expect(record.memoryLimitMb).toBeNull();
+
+    await waitFor(() => !isAlive(record.pid));
+  });
+
+  it("writes a signal-derived exit code to the sidecar when killed by a signal", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, { name: "signalled", command: "sleep 30" });
+
+    process.kill(record.pid, "SIGKILL");
+
+    await waitFor(() => !isAlive(record.pid));
+    await createWatcherTick(ctx.reconcile)();
+
+    expect(ctx.repository.get(record.id)?.exitCode).toBe(137);
+    expect(await readFile(exitCodePath(ctx.processesDir, record.id), "utf-8")).toBe("137");
+  });
+
+  it("kills the process group and rethrows when the db write fails after spawn", async () => {
+    const error = new Error("db write failed");
+    const repository = {
+      ...ctx.repository,
+      create: vi.fn(() => {
+        throw error;
+      }),
+    } as unknown as typeof ctx.repository;
+
+    await expect(
+      spawnProcess({ ...ctx.spawnDeps, repository }, { name: "doomed", command: "sleep 30" }),
+    ).rejects.toThrow(/db write failed/);
+  });
+});
+
+describe("terminate", () => {
+  it("returns immediately when the process group is already gone", async () => {
+    await expect(
+      terminate({ pid: deadPid() }, ctx.log, { graceSeconds: 1 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("returns after signalling when graceSeconds is 0", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, { name: "fire", command: "sleep 30" });
+
+    await terminate(record, ctx.log, { graceSeconds: 0 });
+
+    await waitFor(() => !isAlive(record.pid));
+  });
+
+  it("escalates to SIGKILL after the grace period when SIGTERM is ignored", async () => {
+    const warn = vi.fn();
+    const record = await spawnProcess(ctx.spawnDeps, {
+      name: "stubborn",
+      // Install the TERM trap before signalling readiness so the grace loop is
+      // guaranteed to observe a live, signal-ignoring leader even under load.
+      command: "trap '' TERM; echo ready; while true; do sleep 1; done",
+    });
+
+    await waitFor(
+      () =>
+        existsSync(record.stdoutPath) && readFileSync(record.stdoutPath, "utf-8").includes("ready"),
+    );
+
+    await terminate(record, { ...ctx.log, warn }, { graceSeconds: 1 });
+
+    expect(warn).toHaveBeenCalled();
+    await waitFor(() => !isAlive(record.pid));
   });
 });

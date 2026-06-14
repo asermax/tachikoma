@@ -85,3 +85,78 @@ describe("SessionRegistry.listClosedBetween", () => {
     expect(ids).toEqual([summarized.id]);
   });
 });
+
+describe("SessionRegistry.get", () => {
+  it("returns a created session by id", () => {
+    const registry = new SessionRegistry(db);
+
+    const created = registry.create("repl", "/tmp/s.jsonl");
+
+    expect(registry.get(created.id)?.id).toBe(created.id);
+  });
+
+  it("returns null for an unknown id", () => {
+    const registry = new SessionRegistry(db);
+
+    expect(registry.get(9999)).toBeNull();
+  });
+});
+
+describe("SessionRegistry close/reopen", () => {
+  it("close stamps closedAt and reopen clears it while stamping lastResumedAt", () => {
+    const registry = new SessionRegistry(db);
+
+    const created = registry.create("repl", "/tmp/s.jsonl");
+
+    const closed = registry.close(created.id);
+    expect(closed.closedAt).not.toBeNull();
+
+    const reopened = registry.reopen(created.id);
+    expect(reopened.closedAt).toBeNull();
+    expect(reopened.lastResumedAt).not.toBeNull();
+  });
+});
+
+describe("SessionRegistry.findDangling", () => {
+  it("returns only sessions that were never closed", () => {
+    const registry = new SessionRegistry(db);
+
+    const open = registry.create("repl", "/tmp/open.jsonl");
+    const closed = registry.create("repl", "/tmp/closed.jsonl");
+    registry.close(closed.id);
+
+    const ids = registry.findDangling().map((session) => session.id);
+
+    expect(ids).toContain(open.id);
+    expect(ids).not.toContain(closed.id);
+  });
+});
+
+describe("SessionRegistry channel-message routing", () => {
+  it("records a mapping and resolves the owning session by message id", () => {
+    const registry = new SessionRegistry(db);
+
+    const session = registry.create("telegram", "/tmp/s.jsonl");
+    registry.recordChannelMessage("telegram", "m-1", session.id, "inbound");
+
+    expect(registry.findSessionByMessageId("telegram", "m-1")?.id).toBe(session.id);
+  });
+
+  it("upserts the mapping on conflict, repointing it to the latest session", () => {
+    const registry = new SessionRegistry(db);
+
+    const first = registry.create("telegram", "/tmp/a.jsonl");
+    const second = registry.create("telegram", "/tmp/b.jsonl");
+
+    registry.recordChannelMessage("telegram", "m-1", first.id, "inbound");
+    registry.recordChannelMessage("telegram", "m-1", second.id, "outbound");
+
+    expect(registry.findSessionByMessageId("telegram", "m-1")?.id).toBe(second.id);
+  });
+
+  it("returns null when no mapping exists for the message id", () => {
+    const registry = new SessionRegistry(db);
+
+    expect(registry.findSessionByMessageId("telegram", "missing")).toBeNull();
+  });
+});

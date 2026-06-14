@@ -1,6 +1,10 @@
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
-import { handleNotifyUser } from "../../src/extensions/notifications/tools.ts";
+import {
+  createNotifyToolFactory,
+  handleNotifyUser,
+} from "../../src/extensions/notifications/tools.ts";
 
 describe("handleNotifyUser", () => {
   it("emits a notify event with the agent as source", () => {
@@ -34,5 +38,27 @@ describe("handleNotifyUser", () => {
 
     expect(() => handleNotifyUser(emit, { text: "   " })).toThrow(/cannot be empty/);
     expect(emit).not.toHaveBeenCalled();
+  });
+});
+
+interface RegisteredTool {
+  name: string;
+  execute: (toolCallId: string, params: unknown) => Promise<{ content: { text: string }[] }>;
+}
+
+describe("createNotifyToolFactory", () => {
+  it("registers notify_user and emits through the tool's execute", async () => {
+    const emit = vi.fn();
+    const tools: RegisteredTool[] = [];
+    const pi = { registerTool: (tool: RegisteredTool) => tools.push(tool) };
+
+    createNotifyToolFactory(emit)(pi as unknown as Parameters<ExtensionFactory>[0]);
+
+    expect(tools.map((tool) => tool.name)).toEqual(["notify_user"]);
+
+    const result = await tools[0]?.execute("call-1", { text: "ping" });
+
+    expect(result?.content[0]?.text).toBe("Notification sent.");
+    expect(emit.mock.calls[0]?.[1]).toMatchObject({ text: "ping", source: "agent" });
   });
 });

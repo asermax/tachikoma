@@ -1,17 +1,21 @@
-import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { AppDatabase } from "../../src/db/index.ts";
 import { findWorkflow } from "../../src/extensions/workflows/loader.ts";
 import { WorkflowStateRepository } from "../../src/extensions/workflows/repository.ts";
+import { workflowStates } from "../../src/extensions/workflows/schema.ts";
 import {
   handleEndWorkflow,
   handleQueryWorkflow,
   handleStartWorkflow,
   handleUpdateWorkflowState,
+  registerWorkflowTools,
   type WorkflowToolDeps,
 } from "../../src/extensions/workflows/tools.ts";
 import { createFakeLog, createTestDatabase, writeWorkflowFixture } from "./helpers.ts";
@@ -21,6 +25,7 @@ const log = createFakeLog();
 let deps: WorkflowToolDeps;
 let repository: WorkflowStateRepository;
 let skillsRoot: string;
+let db: AppDatabase;
 
 beforeEach(async () => {
   skillsRoot = await mkdtemp(join(tmpdir(), "tachi-workflows-skills-"));
@@ -31,7 +36,8 @@ beforeEach(async () => {
     { id: "03-write", frontmatter: "title: Write" },
   ]);
 
-  repository = new WorkflowStateRepository(await createTestDatabase());
+  db = await createTestDatabase();
+  repository = new WorkflowStateRepository(db);
 
   deps = {
     repository,
@@ -416,5 +422,318 @@ describe("condition steps", () => {
 
     expect(response).toContain("Next step **Last** (`03-last`) started.");
     expect(repository.get(state.id)?.stepStates["02-gate"]).toBe("skipped");
+  });
+});
+
+// ---- edge cases ----------------------------------------------------------------
+
+describe("handleStartWorkflow edge cases", () => {
+  it("rejects a workflow with no steps", async () => {
+    const emptyRoot = await mkdtemp(join(tmpdir(), "tachi-workflows-empty-"));
+    await mkdir(join(emptyRoot, "hollow", "workflows", "void"), { recursive: true });
+
+    const emptyDeps: WorkflowToolDeps = {
+      ...deps,
+      findWorkflow: (skill, workflow) => findWorkflow(emptyRoot, skill, workflow, log),
+    };
+
+    expect(() => handleStartWorkflow(emptyDeps, "hollow", "void")).toThrow(/has no steps/);
+  });
+
+  it("removes the scratchpad when persistence fails", () => {
+    const failing = Object.create(repository) as WorkflowStateRepository;
+    failing.create = () => {
+      throw new Error("disk full");
+    };
+    failing.getActive = () => null;
+
+    const failingDeps: WorkflowToolDeps = { ...deps, repository: failing };
+
+    expect(() => handleStartWorkflow(failingDeps, "writing", "draft")).toThrow(/disk full/);
+    expect(readdirSync(deps.scratchpadDir)).toHaveLength(0);
+  });
+});
+
+describe("handleEndWorkflow completion label", () => {
+  it("reports a single-record completion without a cleanup count", () => {
+    handleStartWorkflow(deps, "writing", "draft");
+    const state = repository.getActive("writing", "draft");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    const response = handleEndWorkflow(deps, state.id, "complete");
+
+    expect(response).toContain("Workflow **draft** completed.");
+    expect(response).not.toContain("records cleaned up");
+  });
+});
+
+describe("handleQueryWorkflow composed child and corruption", () => {
+  const writeComposition = async () => {
+    await writeWorkflowFixture(skillsRoot, "review", "outer", [
+      { id: "01-prep", frontmatter: "title: Prep" },
+      { id: "02-sub", frontmatter: "title: Sub\ncomposes: inner" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "review", "inner", [
+      { id: "01-a", frontmatter: "title: A", body: "Do A." },
+    ]);
+  };
+
+  const descendIntoChild = () => {
+    handleStartWorkflow(deps, "review", "outer");
+    const state = repository.getActive("review", "outer");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    handleUpdateWorkflowState(deps, state.id, "01-prep", "start");
+    handleUpdateWorkflowState(deps, state.id, "01-prep", "complete");
+
+    return state;
+  };
+
+  it("explains how to reach a composed child queried by its own id", async () => {
+    await writeComposition();
+    const state = descendIntoChild();
+    const child = repository.getActiveChild(state.id);
+
+    if (child == null) throw new Error("expected an active child");
+
+    const view = handleQueryWorkflow(deps, child.id);
+
+    expect(view).toContain("This is a composed child");
+    expect(view).toContain(`Parent workflow ID: \`${state.id}\``);
+  });
+
+  it("flags a composition step whose target is no longer registered", async () => {
+    await writeComposition();
+    const state = descendIntoChild();
+
+    const corruptedDeps: WorkflowToolDeps = {
+      ...deps,
+      findWorkflow: (skill, workflow) =>
+        workflow === "inner" ? null : findWorkflow(skillsRoot, skill, workflow, log),
+    };
+
+    const view = handleQueryWorkflow(corruptedDeps, state.id);
+
+    expect(view).toContain("Workflow definition corruption detected");
+    expect(view).toContain("references `review/inner`");
+  });
+
+  it("flags a composition step with a malformed composes value", () => {
+    handleStartWorkflow(deps, "writing", "draft");
+    const state = repository.getActive("writing", "draft");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    db.update(workflowStates)
+      .set({
+        // A non-composes step alongside a started, malformed composes step exercises
+        // both the skip-non-composes path and the resolve-throws path of detection.
+        stepStates: { "01-plain": "completed", "02-bad": "started" },
+        definitionSnapshot: [
+          { id: "01-plain", title: "Plain", required: true, path: "/tmp/none" },
+          { id: "02-bad", title: "Bad", required: true, path: "/tmp/none", composes: "a/b/c/" },
+        ],
+      })
+      .where(eq(workflowStates.id, state.id))
+      .run();
+
+    const view = handleQueryWorkflow(deps, state.id);
+
+    expect(view).toContain("Workflow definition corruption detected");
+    expect(view).toContain("references `a/b/c/`");
+  });
+
+  it("falls back to ids when rendering states with snapshot gaps", () => {
+    handleStartWorkflow(deps, "writing", "draft");
+    const state = repository.getActive("writing", "draft");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    db.update(workflowStates)
+      .set({
+        // stepStates is missing entries for the snapshot steps, forcing the
+        // pending fallback; the loop block reads a step absent from the snapshot.
+        stepStates: {},
+        loopState: { "99-ghost": { items: ["x"], index: 0 } },
+      })
+      .where(eq(workflowStates.id, state.id))
+      .run();
+
+    const view = handleQueryWorkflow(deps, state.id);
+
+    expect(view).toContain("**Plan** (`01-plan`): pending");
+    expect(view).toContain("### Loop step: 99-ghost (`99-ghost`)");
+  });
+});
+
+describe("handleEndWorkflow failure", () => {
+  it("throws when the cascade deletes nothing despite a live record", () => {
+    handleStartWorkflow(deps, "writing", "draft");
+    const state = repository.getActive("writing", "draft");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    const stubborn = Object.create(repository) as WorkflowStateRepository;
+    stubborn.abortCascade = () => [];
+
+    const stubbornDeps: WorkflowToolDeps = { ...deps, repository: stubborn };
+
+    expect(() => handleEndWorkflow(stubbornDeps, state.id, "abort")).toThrow(
+      /Failed to end workflow/,
+    );
+  });
+});
+
+describe("handleQueryWorkflow rendering branches", () => {
+  it("throws when querying an unknown workflow id", () => {
+    expect(() => handleQueryWorkflow(deps, "missing-id")).toThrow(/not found or no longer active/);
+  });
+
+  it("renders a started step with no instructions file using only the prefix", async () => {
+    await writeWorkflowFixture(skillsRoot, "writing", "noinstr", [
+      { id: "01-only", frontmatter: "title: Only" },
+    ]);
+
+    handleStartWorkflow(deps, "writing", "noinstr");
+    const state = repository.getActive("writing", "noinstr");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    db.update(workflowStates)
+      .set({
+        definitionSnapshot: [
+          { id: "01-only", title: "Only", required: true, path: "/nonexistent-path" },
+        ],
+      })
+      .where(eq(workflowStates.id, state.id))
+      .run();
+
+    const response = handleUpdateWorkflowState(deps, state.id, "01-only", "start");
+
+    expect(response).toContain("Step **Only** (`01-only`) started.");
+    expect(response).toContain("Step path: `/nonexistent-path`");
+  });
+
+  it("renders a completed loop block (all iterations done) in the query view", async () => {
+    await writeWorkflowFixture(skillsRoot, "batch", "loopq", [
+      { id: "01-each", frontmatter: "title: Each\nloop: handle" },
+      { id: "02-end", frontmatter: "title: End" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "batch", "handle", [
+      { id: "01-do", frontmatter: "title: Do", body: "Do it." },
+    ]);
+
+    handleStartWorkflow(deps, "batch", "loopq");
+    const state = repository.getActive("batch", "loopq");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    handleUpdateWorkflowState(deps, state.id, "01-each", "start", ["only"]);
+    handleUpdateWorkflowState(deps, state.id, "01-do", "complete");
+
+    const view = handleQueryWorkflow(deps, state.id);
+
+    expect(view).toContain("### Loop step: Each (`01-each`)");
+    expect(view).toContain("1 / 1 (complete)");
+  });
+
+  it("renders the active loop child with its breadcrumb item during iteration", async () => {
+    await writeWorkflowFixture(skillsRoot, "batch", "process", [
+      { id: "01-each", frontmatter: "title: Each\nloop: handle" },
+      { id: "02-end", frontmatter: "title: End" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "batch", "handle", [
+      { id: "01-do", frontmatter: "title: Do", body: "Do it." },
+      { id: "02-after", frontmatter: "title: After" },
+    ]);
+
+    handleStartWorkflow(deps, "batch", "process");
+    const state = repository.getActive("batch", "process");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    handleUpdateWorkflowState(deps, state.id, "01-each", "start", ["alpha", "beta"]);
+
+    const view = handleQueryWorkflow(deps, state.id);
+
+    expect(view).toContain("(item: alpha)");
+    expect(view).toContain("### Active Child: handle");
+    expect(view).toContain("**Do** (`01-do`): started");
+  });
+
+  it("renders a zero-iteration loop block in the query view", async () => {
+    await writeWorkflowFixture(skillsRoot, "batch", "loopz", [
+      { id: "01-each", frontmatter: "title: Each\nloop: handle" },
+      { id: "02-end", frontmatter: "title: End" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "batch", "handle", [
+      { id: "01-do", frontmatter: "title: Do" },
+    ]);
+
+    handleStartWorkflow(deps, "batch", "loopz");
+    const state = repository.getActive("batch", "loopz");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    handleUpdateWorkflowState(deps, state.id, "01-each", "start", []);
+
+    const view = handleQueryWorkflow(deps, state.id);
+
+    expect(view).toContain("completed with zero iterations");
+  });
+});
+
+describe("registerWorkflowTools", () => {
+  const collectTools = () => {
+    const tools = new Map<string, (toolCallId: string, params: unknown) => Promise<unknown>>();
+    const pi = {
+      registerTool: vi.fn(
+        (def: { name: string; execute: (id: string, p: unknown) => Promise<unknown> }) => {
+          tools.set(def.name, def.execute);
+        },
+      ),
+    };
+
+    registerWorkflowTools(pi as never, deps);
+
+    return tools;
+  };
+
+  it("wires each handler through pi.registerTool", async () => {
+    const tools = collectTools();
+
+    expect([...tools.keys()].sort()).toEqual(
+      ["end_workflow", "query_workflow", "start_workflow", "update_workflow_state"].sort(),
+    );
+
+    const started = (await tools.get("start_workflow")?.("c1", {
+      skill_name: "writing",
+      workflow_name: "draft",
+    })) as { content: { text: string }[] };
+    expect(started.content[0]?.text).toContain("Workflow started: **draft**");
+
+    const state = repository.getActive("writing", "draft");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    const updated = (await tools.get("update_workflow_state")?.("c2", {
+      workflow_id: state.id,
+      step: "01-plan",
+      action: "start",
+    })) as { content: { text: string }[] };
+    expect(updated.content[0]?.text).toContain("Step **Plan** (`01-plan`) started.");
+
+    const queried = (await tools.get("query_workflow")?.("c3", {})) as {
+      content: { text: string }[];
+    };
+    expect(queried.content[0]?.text).toContain("Active Workflows");
+
+    const ended = (await tools.get("end_workflow")?.("c4", {
+      workflow_id: state.id,
+      action: "abort",
+    })) as { content: { text: string }[] };
+    expect(ended.content[0]?.text).toContain("aborted");
   });
 });

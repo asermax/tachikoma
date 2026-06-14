@@ -251,4 +251,94 @@ describe("StreamRenderer", () => {
     expect(await renderer.finalize()).toBeNull();
     expect(api.calls).toEqual([]);
   });
+
+  it("sends the first chunk fresh when the final edit fails", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    // Render a streaming message, then make the final in-place edit reject so finalize
+    // falls back to sending that chunk as a brand-new message.
+    await renderer.appendText("Hello.\n\n");
+    expect(api.calls).toEqual([{ type: "send", text: "Hello.", parseMode: "Markdown" }]);
+
+    api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+
+    const lastId = await renderer.finalize();
+
+    expect(fakeLog.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      "final edit failed — sending as a new message",
+    );
+    expect(api.calls.at(-1)).toEqual({ type: "send", text: "Hello.", parseMode: "Markdown" });
+    expect(lastId).toBe(2);
+  });
+
+  it("bakes a tool marker with no leading text when a tool precedes any output", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    // A tool runs before any text: the baked marker has no preceding paragraph,
+    // so no separating newline is prefixed.
+    await renderer.appendTool("grep", { pattern: "first" });
+    await renderer.appendText("Now the answer.");
+
+    expect(await renderer.finalize()).toBe(1);
+    expect(api.calls.at(-1)?.text).toBe("_🔧 Searching for `first`_\n\nNow the answer.");
+  });
+
+  it("does not double the newline when the buffer already ends with one", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    // Buffer ends in a newline before baking, so the separator guard is skipped.
+    await renderer.appendText("Line one.\n");
+    await renderer.appendTool("read", { path: "/a/b.ts" });
+    await renderer.appendText("Done.");
+
+    expect(await renderer.finalize()).toBe(1);
+    expect(api.calls.at(-1)?.text).toBe("Line one.\n\n_🔧 Reading `b.ts`_\n\nDone.");
+  });
+
+  it("drops the live line when appending it would exceed the edit limit", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    // Settled text fills the budget; a transient line cannot be appended beneath
+    // it without overflowing, so only the settled text renders.
+    const big = `${"a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH - 5)}\n\n`;
+    await renderer.appendText(big);
+
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.showTransient("status that pushes past the limit");
+
+    // The whole buffer (its trailing break included) renders; the transient is dropped.
+    expect(api.calls.at(-1)?.text).toBe(big);
+  });
+
+  it("returns null from a broken finalize when no buffer text survives", async () => {
+    const api = fakeApi();
+    api.sendMessage.mockRejectedValue(new Error("400: chat not found"));
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    // The first send (a transient-only render) fails, marking the renderer broken
+    // while the buffer is still empty; the broken finalize then has nothing to send.
+    await renderer.showTransient("status");
+
+    expect(await renderer.finalize()).toBeNull();
+  });
+
+  it("swallows a delete failure while cleaning up the placeholder", async () => {
+    const api = fakeApi();
+    api.deleteMessage.mockRejectedValue(new Error("400: message to delete not found"));
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.showTransient("Compacting…");
+
+    expect(await renderer.finalize()).toBeNull();
+    expect(fakeLog.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      "streaming message cleanup failed",
+    );
+  });
 });

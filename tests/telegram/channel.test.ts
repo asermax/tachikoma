@@ -1,9 +1,10 @@
-import type { Bot } from "grammy";
-import { describe, expect, it, vi } from "vitest";
+import { type Bot, GrammyError, HttpError } from "grammy";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ChannelRuntime } from "../../src/channels/types.ts";
 import type { AgentEvent } from "../../src/domain/agent-events.ts";
 import { textMessage } from "../../src/domain/message.ts";
+import { packCallbackData } from "../../src/extensions/telegram/buttons.ts";
 import {
   STOP_ACKNOWLEDGEMENT,
   STOP_COMMAND,
@@ -74,17 +75,29 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
       return { message_id: next };
     }),
     setMyCommands: vi.fn(async () => true),
+    getFile: vi.fn(async () => ({ file_path: "documents/file.bin" })),
+    editMessageReplyMarkup: vi.fn(async () => true),
   };
+
+  let errorHandler: (boundary: { error: unknown }) => void = () => {};
+  let running = false;
+  const startCalls: unknown[] = [];
 
   const bot = {
     api,
     token: "token",
     on: (event: string, handler: UpdateHandler) => handlers.set(event, handler),
-    catch: () => {},
+    catch: (handler: (boundary: { error: unknown }) => void) => {
+      errorHandler = handler;
+    },
     init: async () => {},
-    start: async () => {},
-    isRunning: () => false,
-    stop: async () => {},
+    start: async (opts: unknown) => {
+      startCalls.push(opts);
+    },
+    isRunning: () => running,
+    stop: vi.fn(async () => {
+      running = false;
+    }),
   } as unknown as Bot;
 
   const stop = vi.fn(async () => {});
@@ -116,17 +129,52 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     });
   };
 
-  const dispatchReaction = async (messageId: number, emoji: string, userId = 42) => {
+  const dispatchReaction = async (
+    messageId: number,
+    emoji: string,
+    userId = 42,
+    chatId = 42,
+    oldEmoji: string | null = null,
+  ) => {
     const handler = handlers.get("message_reaction");
     if (handler == null) throw new Error("message_reaction handler not registered");
 
     await handler({
-      chat: { id: 42 },
+      chat: { id: chatId },
       messageReaction: {
         message_id: messageId,
         user: { id: userId },
         new_reaction: [{ type: "emoji", emoji }],
-        old_reaction: [],
+        old_reaction: oldEmoji == null ? [] : [{ type: "emoji", emoji: oldEmoji }],
+      },
+    });
+  };
+
+  const dispatchMessage = async (message: Record<string, unknown>, chatId = 42) => {
+    const handler = handlers.get("message");
+    if (handler == null) throw new Error("message handler not registered");
+
+    await handler({ chat: { id: chatId }, message });
+  };
+
+  const dispatchCallback = async (
+    overrides: {
+      data?: string;
+      fromId?: number;
+      messageId?: number | null;
+      answer?: () => Promise<unknown>;
+    } = {},
+  ) => {
+    const handler = handlers.get("callback_query:data");
+    if (handler == null) throw new Error("callback_query:data handler not registered");
+
+    await handler({
+      answerCallbackQuery: overrides.answer ?? (async () => true),
+      callbackQuery: {
+        from: { id: overrides.fromId ?? 42 },
+        data: overrides.data ?? "",
+        message:
+          overrides.messageId === null ? undefined : { message_id: overrides.messageId ?? 5 },
       },
     });
   };
@@ -140,10 +188,18 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     runtime,
     dispatchText,
     dispatchReaction,
+    dispatchMessage,
+    dispatchCallback,
     store,
     recorded,
     mappings,
     session,
+    triggerError: (error: unknown) => errorHandler({ error }),
+    startCalls,
+    setRunning: (value: boolean) => {
+      running = value;
+    },
+    botStop: bot.stop,
   };
 };
 
@@ -439,5 +495,466 @@ describe("inbound reactions", () => {
     await dispatchReaction(12, "👍", 999);
 
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("ignores reactions from a different chat", async () => {
+    const { channel, runtime, submit, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchReaction(12, "👍", 42, 999);
+
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("drops a reaction that nets to no change", async () => {
+    const { channel, runtime, submit, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchReaction(12, "👍", 42, 42, "👍");
+
+    expect(submit).not.toHaveBeenCalled();
+  });
+});
+
+describe("inbound chat filtering", () => {
+  it("ignores text messages from a different chat", async () => {
+    const { channel, runtime, submit, dispatchMessage } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchMessage({ message_id: 1, text: "hello" }, 999);
+
+    expect(submit).not.toHaveBeenCalled();
+  });
+});
+
+describe("callback queries", () => {
+  it("submits an authorized button tap and removes a single-use keyboard", async () => {
+    const { channel, runtime, submit, api, dispatchCallback } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: packCallbackData("approve", true), messageId: 8 });
+
+    expect(api.editMessageReplyMarkup).toHaveBeenCalledWith(42, 8);
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ buttonValue: "approve" }) }),
+    );
+  });
+
+  it("keeps a multi-use keyboard in place", async () => {
+    const { channel, runtime, submit, api, dispatchCallback } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: packCallbackData("more", false), messageId: 8 });
+
+    expect(api.editMessageReplyMarkup).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ buttonValue: "more" }) }),
+    );
+  });
+
+  it("does not attempt keyboard removal when the message id is absent", async () => {
+    const { channel, runtime, submit, api, dispatchCallback } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: packCallbackData("approve", true), messageId: null });
+
+    expect(api.editMessageReplyMarkup).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ buttonValue: "approve" }) }),
+    );
+  });
+
+  it("drops taps from an unauthorized user", async () => {
+    const { channel, runtime, submit, dispatchCallback } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: packCallbackData("approve", true), fromId: 999 });
+
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("ignores unrecognized callback data", async () => {
+    const { channel, runtime, submit, dispatchCallback } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "garbage" });
+
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("warns but proceeds when answering the callback fails", async () => {
+    const { channel, runtime, submit, dispatchCallback } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchCallback({
+      data: packCallbackData("approve", false),
+      messageId: 8,
+      answer: async () => {
+        throw new Error("answer failed");
+      },
+    });
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ buttonValue: "approve" }) }),
+    );
+  });
+
+  it("warns when single-use keyboard removal fails", async () => {
+    const { channel, runtime, submit, api, dispatchCallback } = makeChannel();
+    api.editMessageReplyMarkup.mockRejectedValueOnce(new Error("removal failed"));
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: packCallbackData("approve", true), messageId: 8 });
+    await settle();
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ metadata: expect.objectContaining({ buttonValue: "approve" }) }),
+    );
+  });
+});
+
+describe("error boundary", () => {
+  it("logs grammy api errors", async () => {
+    const { channel, runtime, triggerError } = makeChannel();
+    await channel.start(runtime);
+
+    const error = Object.create(GrammyError.prototype) as GrammyError;
+    Object.assign(error, { error_code: 400, description: "bad request" });
+
+    triggerError(error);
+
+    expect(fakeLog.error).toHaveBeenCalledWith(
+      expect.objectContaining({ errorCode: 400, description: "bad request" }),
+      "telegram api rejected request",
+    );
+  });
+
+  it("logs http errors", async () => {
+    const { channel, runtime, triggerError } = makeChannel();
+    await channel.start(runtime);
+
+    const error = Object.create(HttpError.prototype) as HttpError;
+
+    triggerError(error);
+
+    expect(fakeLog.error).toHaveBeenCalledWith(expect.anything(), "could not reach telegram");
+  });
+
+  it("logs unknown errors", async () => {
+    const { channel, runtime, triggerError } = makeChannel();
+    await channel.start(runtime);
+
+    triggerError(new Error("boom"));
+
+    expect(fakeLog.error).toHaveBeenCalledWith(
+      expect.anything(),
+      "telegram update handling failed",
+    );
+  });
+});
+
+describe("respond error and result events", () => {
+  it("sends a recoverable error notice", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([{ kind: "error", message: "transient", recoverable: true }]),
+    });
+
+    expect(calls).toContainEqual({ type: "send", text: "⚠️ Error: transient" });
+  });
+
+  it("sends an unrecoverable error notice with a follow-up hint", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([{ kind: "error", message: "fatal", recoverable: false }]),
+    });
+
+    const notice = calls.find((call) => call.text?.startsWith("⚠️ Error: fatal"));
+    expect(notice?.text).toContain("needs your attention");
+  });
+
+  it("logs a result event that carries usage data", async () => {
+    const { channel, runtime } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        {
+          kind: "result",
+          stopReason: "done",
+          sessionId: 100,
+          result: { costUsd: 0.01, usage: { totalTokens: 42 } },
+        } as unknown as AgentEvent,
+      ]),
+    });
+
+    expect(fakeLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 100, costUsd: 0.01, tokens: 42 }),
+      "exchange complete",
+    );
+  });
+});
+
+describe("status error handling", () => {
+  it("swallows a typing action failure when no response is streaming", async () => {
+    const { channel, runtime, api } = makeChannel();
+    api.sendChatAction.mockRejectedValueOnce(new Error("nope"));
+    await channel.start(runtime);
+
+    channel.status("Gathering…");
+    await settle();
+
+    expect(api.sendChatAction).toHaveBeenCalled();
+  });
+});
+
+describe("shutdownStatus error handling", () => {
+  it("warns when the shutdown status update fails", async () => {
+    const { channel, runtime, api } = makeChannel();
+    api.sendMessage.mockRejectedValueOnce(new Error("send failed"));
+    await channel.start(runtime);
+
+    await channel.shutdownStatus("Wrapping up…");
+
+    expect(fakeLog.warn).toHaveBeenCalledWith(expect.anything(), "shutdown status update failed");
+  });
+});
+
+describe("message recording errors", () => {
+  it("swallows a store.record failure", async () => {
+    const { channel, runtime, store } = makeChannel({
+      store: {
+        record: vi.fn(() => {
+          throw new Error("db down");
+        }),
+        findSessionId: vi.fn(() => null),
+      },
+    });
+    void store;
+    await channel.start(runtime);
+
+    await expect(
+      channel.respond({
+        message: inboundWith("hi", 7),
+        events: stream([
+          { kind: "text", text: "Hi" },
+          { kind: "result", stopReason: "done" },
+        ]),
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("skips recording the inbound id when it is not numeric", async () => {
+    const { channel, runtime, recorded } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: {
+        text: "hi",
+        channel: "telegram",
+        receivedAt: new Date(),
+        media: [],
+        metadata: { messageId: "not-a-number" },
+      } as never,
+      events: stream([
+        { kind: "text", text: "Hi" },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(recorded).toEqual([{ messageId: "1", sessionId: 100, direction: "outgoing" }]);
+  });
+});
+
+describe("media handling", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const documentMessage = (overrides: Record<string, unknown> = {}) => ({
+    message_id: 5,
+    document: { file_id: "doc-1", file_name: "report.pdf", file_size: 1024 },
+    ...overrides,
+  });
+
+  it("ignores media when allowMedia is disabled", async () => {
+    const { channel, runtime, submit, dispatchMessage } = makeChannel({ allowMedia: false });
+    await channel.start(runtime);
+
+    await dispatchMessage(documentMessage());
+
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("ignores unresolvable media messages", async () => {
+    const { channel, runtime, submit, dispatchMessage } = makeChannel({ allowMedia: true });
+    await channel.start(runtime);
+
+    await dispatchMessage({ message_id: 5, location: { latitude: 1, longitude: 2 } });
+
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("downloads media and submits an attachment", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    })) as unknown as typeof fetch;
+
+    const { channel, runtime, submit, dispatchMessage } = makeChannel({
+      allowMedia: true,
+      mediaDir: "/tmp/tachi-media-test",
+    });
+    await channel.start(runtime);
+
+    await dispatchMessage(documentMessage());
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ media: expect.arrayContaining([expect.anything()]) }),
+    );
+  });
+
+  it("notifies with the size message when the file is too large", async () => {
+    const { channel, runtime, submit, calls, dispatchMessage } = makeChannel({
+      allowMedia: true,
+    });
+    await channel.start(runtime);
+
+    await dispatchMessage(
+      documentMessage({
+        document: { file_id: "doc-1", file_name: "huge.bin", file_size: 21 * 1024 * 1024 },
+      }),
+    );
+
+    expect(submit).not.toHaveBeenCalled();
+    const notice = calls.find((call) => call.type === "send");
+    expect(notice?.text).toContain("File too large");
+  });
+
+  it("sends a generic notice when the download fails", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })) as unknown as typeof fetch;
+
+    const { channel, runtime, submit, calls, dispatchMessage } = makeChannel({
+      allowMedia: true,
+      mediaDir: "/tmp/tachi-media-test",
+    });
+    await channel.start(runtime);
+
+    await dispatchMessage(documentMessage());
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(calls).toContainEqual({
+      type: "send",
+      text: "Failed to download the file. Please try again.",
+    });
+  });
+
+  it("swallows a failure while sending the media failure notice", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      arrayBuffer: async () => new ArrayBuffer(0),
+    })) as unknown as typeof fetch;
+
+    const { channel, runtime, api, dispatchMessage } = makeChannel({
+      allowMedia: true,
+      mediaDir: "/tmp/tachi-media-test",
+    });
+    api.sendMessage.mockRejectedValueOnce(new Error("send failed"));
+    await channel.start(runtime);
+
+    await dispatchMessage(documentMessage());
+
+    expect(fakeLog.warn).toHaveBeenCalledWith(expect.anything(), "media failure notice failed");
+  });
+});
+
+describe("routeReply with non-string reply target", () => {
+  it("leaves the message untouched when there is no reply-to id", async () => {
+    const { channel, runtime, submit, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchText("plain message");
+
+    const submitted = submit.mock.calls[0]?.[0];
+    expect(submitted.metadata.resumeSessionId).toBeUndefined();
+  });
+});
+
+describe("deliver", () => {
+  it("sends the delivery text and tracks the last outbound id", async () => {
+    const { channel, runtime, calls } = makeChannel({ pushNotifications: false });
+    await channel.start(runtime);
+
+    await channel.deliver({ text: "scheduled reminder" });
+
+    expect(calls).toContainEqual({ type: "send", text: "scheduled reminder" });
+    expect(channel.lastOutboundMessageId).toBe(1);
+  });
+});
+
+describe("status while streaming with a failing renderer", () => {
+  it("swallows a transient render failure", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+
+    const { events, push, end } = pushableStream();
+    const responding = channel.respond({ message: textMessage("telegram", "hi"), events });
+    await settle();
+
+    api.sendMessage.mockRejectedValueOnce(new Error("render failed"));
+    channel.status("Pondering…");
+    await settle();
+
+    push({ kind: "text", text: "Answer" });
+    end();
+    await responding;
+  });
+});
+
+describe("stop", () => {
+  it("stops the bot when it is running", async () => {
+    const { channel, runtime, setRunning, botStop } = makeChannel();
+    await channel.start(runtime);
+    setRunning(true);
+
+    await channel.stop();
+
+    expect(botStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing when the bot is not running", async () => {
+    const { channel, runtime, botStop } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.stop();
+
+    expect(botStop).not.toHaveBeenCalled();
+  });
+});
+
+describe("runtime guard", () => {
+  it("throws when handling a message before start", async () => {
+    const { channel } = makeChannel();
+
+    await expect(
+      channel.respond({
+        message: textMessage("telegram", "hi"),
+        events: stream([{ kind: "result", stopReason: "done" }]),
+      }),
+    ).rejects.toThrow("telegram channel not started");
   });
 });

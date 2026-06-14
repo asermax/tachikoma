@@ -8,7 +8,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { AppDatabase } from "../../src/db/index.ts";
-import { createStaleWorkflowCleanup } from "../../src/extensions/workflows/cleanup.ts";
+import {
+  createStaleWorkflowCleanup,
+  type StaleRepository,
+} from "../../src/extensions/workflows/cleanup.ts";
 import { WorkflowStateRepository } from "../../src/extensions/workflows/repository.ts";
 import { workflowStates } from "../../src/extensions/workflows/schema.ts";
 import { createFakeLog, createTestDatabase } from "./helpers.ts";
@@ -104,5 +107,51 @@ describe("stale workflow cleanup", () => {
     await expect(
       createStaleWorkflowCleanup(broken, 24).process(processorContext()),
     ).resolves.toBeUndefined();
+  });
+
+  it("leaves the scratchpad alone when abortCascade deletes nothing", async () => {
+    const stale = await createWorkflow("stale-noop", "draft");
+    backdate(stale.id, 25);
+
+    const repo: StaleRepository = {
+      listStale: () => [stale],
+      abortCascade: () => [],
+    };
+
+    await createStaleWorkflowCleanup(repo, 24).process(processorContext());
+
+    expect(existsSync(stale.scratchpadPath)).toBe(true);
+  });
+
+  it("isolates a per-workflow failure and continues with the rest", async () => {
+    const failing = await createWorkflow("fail-1", "draft");
+    const good = await createWorkflow("good-1", "publish");
+    backdate(failing.id, 25);
+    backdate(good.id, 25);
+
+    const log = createFakeLog();
+    const repo: StaleRepository = {
+      listStale: () => [failing, good],
+      abortCascade: (id) => {
+        if (id === failing.id) {
+          throw new Error("cascade blew up");
+        }
+
+        return repository.abortCascade(id);
+      },
+    };
+
+    await createStaleWorkflowCleanup(repo, 24).process({
+      session: { id: 1 } as SessionRecord,
+      transcriptPath: null,
+      log,
+    });
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ workflowId: failing.id }),
+      "failed to clean up stale workflow",
+    );
+    expect(existsSync(good.scratchpadPath)).toBe(false);
+    expect(repository.get(good.id)).toBeNull();
   });
 });

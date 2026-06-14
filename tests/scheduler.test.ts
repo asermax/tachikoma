@@ -95,4 +95,91 @@ describe("Scheduler.every", () => {
     release();
     scheduler.stopAll();
   });
+
+  it("logs an error when a manual trigger throws", async () => {
+    const log = createLogger();
+    const scheduler = new Scheduler(log);
+
+    const fn = vi.fn().mockRejectedValue(new Error("trigger boom"));
+    const job = scheduler.every("failing-trigger", 1, fn);
+
+    await job.trigger();
+
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "failing-trigger" }),
+      "scheduled job failed",
+    );
+
+    scheduler.stopAll();
+  });
+});
+
+describe("Scheduler.cron", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ now: new Date("2026-06-14T12:00:00Z") });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("fires on its cron pattern", async () => {
+    const scheduler = new Scheduler(createLogger(), "UTC");
+
+    const fn = vi.fn();
+    scheduler.cron("minutely", "* * * * *", fn);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    scheduler.stopAll();
+  });
+
+  it("runs the manual trigger immediately, bypassing the schedule", async () => {
+    const scheduler = new Scheduler(createLogger(), "UTC");
+
+    const fn = vi.fn();
+    const job = scheduler.cron("hourly", "0 * * * *", fn);
+
+    await job.trigger();
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    scheduler.stopAll();
+  });
+
+  it("replaces a prior cron job when re-registering the same name", async () => {
+    const scheduler = new Scheduler(createLogger(), "UTC");
+
+    const first = vi.fn();
+    const second = vi.fn();
+
+    scheduler.cron("dup-cron", "* * * * *", first);
+    scheduler.cron("dup-cron", "* * * * *", second);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(first).not.toHaveBeenCalled();
+    expect(second).toHaveBeenCalledTimes(1);
+
+    scheduler.stopAll();
+  });
+
+  it("logs scheduled cron failures via the catch handler", async () => {
+    const log = createLogger();
+    const scheduler = new Scheduler(log, "UTC");
+
+    const fn = vi.fn().mockRejectedValue(new Error("cron boom"));
+    scheduler.cron("flaky-cron", "* * * * *", fn);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(fn).toHaveBeenCalled();
+    expect(log.error).toHaveBeenCalledWith(
+      expect.objectContaining({ job: "flaky-cron" }),
+      "scheduled job failed",
+    );
+
+    scheduler.stopAll();
+  });
 });

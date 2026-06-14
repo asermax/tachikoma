@@ -127,4 +127,110 @@ describe("adaptConfig", () => {
     await expect(adaptConfig(path, fakeLog, async () => true)).resolves.toBeNull();
     await expect(readFile(path, "utf8")).resolves.toBe(afterFirst);
   });
+
+  it("returns null and warns when the config cannot be parsed", async () => {
+    const log = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+    const path = await makeConfig("this is = = not valid toml [[[");
+
+    const config = await adaptConfig(path, log, async () => true);
+
+    expect(config).toBeNull();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ path }),
+      expect.stringContaining("could not parse"),
+    );
+  });
+
+  it("detects an old-shape config from a string channel alone", async () => {
+    const path = await makeConfig('channel = "repl"\n');
+
+    const config = await adaptConfig(path, fakeLog, async () => true);
+
+    expect(config).not.toBeNull();
+    expect(config?.channels.default).toBe("repl");
+  });
+
+  it("detects an old-shape config from a legacy agent role key alone", async () => {
+    const path = await makeConfig('[agent]\nclassifier_model = "haiku"\n');
+
+    const config = await adaptConfig(path, fakeLog, async () => true);
+
+    expect(config).not.toBeNull();
+    expect(config?.agent.classifier).toBe("anthropic/haiku");
+  });
+
+  it("treats an array-valued section as not a table during detection", async () => {
+    const path = await makeConfig('telegram = ["a", "b"]\nchannel = "repl"\n');
+
+    const config = await adaptConfig(path, fakeLog, async () => true);
+
+    expect(config).not.toBeNull();
+    expect(config?.extensions.telegram).toBeUndefined();
+  });
+
+  it("ignores empty-string and missing fields across legacy sections", async () => {
+    const log = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+    const path = await makeConfig(
+      [
+        'channel = "repl"',
+        "",
+        "[workspace]",
+        "path = 123",
+        "",
+        "[agent]",
+        'model = ""',
+        'session_resume_window = "nope"',
+        "",
+        "[logging]",
+        "level = 5",
+        'console = "yes"',
+        "",
+        "[telegram]",
+        "bot_token = 99",
+        'authorized_chat_id = "x"',
+        'push_notifications = "no"',
+        "inbound_reactions = true",
+        "",
+        "[telegram.send_file]",
+        'extra_roots = ["~/ok", 7, "~/also"]',
+      ].join("\n"),
+    );
+
+    const config = await adaptConfig(path, log, async () => true);
+
+    expect(config).not.toBeNull();
+    expect(config?.agent.main).toBeUndefined();
+    expect(config?.extensions.telegram).toEqual({ extraFileRoots: ["~/ok", "~/also"] });
+
+    const rewritten = await readFile(path, "utf8");
+    expect(rewritten).not.toContain("[workspace]");
+    expect(rewritten).not.toContain("[agent]");
+    expect(rewritten).not.toContain("[sessions]");
+    expect(rewritten).not.toContain("[logging]");
+    expect(log.info).toHaveBeenCalledWith(expect.stringContaining("inbound_reactions"));
+  });
+
+  it("omits extraFileRoots when send_file.extra_roots is not an array", async () => {
+    const path = await makeConfig(
+      '[telegram]\nbot_token = "t:1"\n\n[telegram.send_file]\nextra_roots = "nope"\n',
+    );
+
+    const config = await adaptConfig(path, fakeLog, async () => true);
+
+    expect(config).not.toBeNull();
+    expect(config?.extensions.telegram).toEqual({ botToken: "t:1" });
+  });
+
+  it("does not log a dropped-sections notice when every section is carried", async () => {
+    const info = vi.fn();
+    const log = { info, warn: vi.fn() } as unknown as Logger;
+    const path = await makeConfig('channel = "repl"\n');
+
+    await adaptConfig(path, log, async () => true);
+
+    const droppedNotice = info.mock.calls.find((call) =>
+      typeof call[1] === "string" ? call[1].includes("without a pi equivalent") : false,
+    );
+    expect(droppedNotice).toBeUndefined();
+  });
 });

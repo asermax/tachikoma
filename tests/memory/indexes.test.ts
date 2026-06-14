@@ -37,6 +37,17 @@ describe("formatMemoryIndex", () => {
   it("returns null when no entries parse", () => {
     expect(formatMemoryIndex("facts", "# Memory Index\n")).toBeNull();
   });
+
+  it("uses the generic description for a store without a tailored one", () => {
+    const formatted = formatMemoryIndex(
+      "episodic",
+      "[Summary](./2026-06-10.md): A day's summary\n",
+    );
+
+    expect(formatted).toContain("## Episodic Index");
+    expect(formatted).toContain("Browse the entries below. When a file seems relevant");
+    expect(formatted).not.toContain("Stable reference information");
+  });
 });
 
 describe("buildMemoryContext", () => {

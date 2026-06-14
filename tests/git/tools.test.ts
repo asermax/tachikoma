@@ -10,6 +10,7 @@ import {
   handleCommitWorkspace,
   handleListRecentCommits,
   handleQueryGitStatus,
+  handleScrubWorkspace,
 } from "../../src/extensions/git/tools.ts";
 import { commitFile, fakeLogger, initRepo, lastSubject, makeTempDir } from "./helpers.ts";
 
@@ -48,6 +49,32 @@ describe("handleQueryGitStatus", () => {
 
     expect(output).toContain("Uncommitted changes:");
     expect(output).toContain("pending.md");
+  });
+
+  it("reports a detached HEAD when symbolic-ref has no branch", async () => {
+    await commitFile(workspace, "second.txt", "second\n", "Second commit");
+    await runGit(workspace, ["checkout", "--detach", "HEAD"]);
+
+    const output = await handleQueryGitStatus(deps);
+
+    expect(output).toContain("Detached HEAD or unborn branch");
+  });
+
+  it("throws when git status fails outside a repository", async () => {
+    const nonRepo = join(await makeTempDir(), "loose");
+    await mkdir(nonRepo);
+
+    await expect(handleQueryGitStatus({ ...deps, workspaceRoot: nonRepo })).rejects.toThrow(
+      /git status failed/,
+    );
+  });
+});
+
+describe("handleScrubWorkspace", () => {
+  it("returns the scrub outcome message for paths absent from history", async () => {
+    const message = await handleScrubWorkspace(deps, { paths: ["never-existed.txt"] });
+
+    expect(message).toMatch(/never-existed\.txt/);
   });
 });
 
@@ -102,13 +129,46 @@ describe("handleCommitWorkspace", () => {
   });
 });
 
+interface RegisteredTool {
+  name: string;
+  execute: (toolCallId: string, params: unknown) => Promise<{ content: { text: string }[] }>;
+}
+
 describe("createGitToolsFactory", () => {
-  it("registers the workspace git tools", () => {
-    const names: string[] = [];
-    const pi = { registerTool: (tool: { name: string }) => names.push(tool.name) };
+  const register = (): RegisteredTool[] => {
+    const tools: RegisteredTool[] = [];
+    const pi = { registerTool: (tool: RegisteredTool) => tools.push(tool) };
 
     createGitToolsFactory(deps)(pi as unknown as Parameters<ExtensionFactory>[0]);
 
-    expect(names).toEqual(["query_git_status", "list_recent_commits", "commit_workspace", "scrub"]);
+    return tools;
+  };
+
+  it("registers the workspace git tools", () => {
+    expect(register().map((tool) => tool.name)).toEqual([
+      "query_git_status",
+      "list_recent_commits",
+      "commit_workspace",
+      "scrub",
+    ]);
+  });
+
+  it("wires each tool's execute to the matching handler", async () => {
+    const tools = register();
+    const byName = (name: string) => tools.find((tool) => tool.name === name) as RegisteredTool;
+
+    const status = await byName("query_git_status").execute("call-1", {});
+    expect(status.content[0]?.text).toContain("On branch main");
+
+    await commitFile(workspace, "later.txt", "later\n", "Later commit");
+    const commits = await byName("list_recent_commits").execute("call-2", { limit: 1 });
+    expect(commits.content[0]?.text).toContain("Later commit");
+
+    await writeFile(join(workspace, "draft.md"), "draft\n", "utf8");
+    const committed = await byName("commit_workspace").execute("call-3", { message: "Save draft" });
+    expect(committed.content[0]?.text).toContain("Save draft");
+
+    const scrubbed = await byName("scrub").execute("call-4", { paths: ["never-existed.txt"] });
+    expect(scrubbed.content[0]?.text).toMatch(/never-existed\.txt/);
   });
 });

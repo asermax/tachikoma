@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -11,21 +11,35 @@ import skills from "../../src/extensions/skills/index.ts";
 
 const repoSkillsDir = resolve(import.meta.dirname, "../../skills");
 
-const setup = async (): Promise<{
+const setup = async (
+  config: { enabled: boolean } = { enabled: true },
+): Promise<{
+  workspaceDir: string;
   workspaceSkillsDir: string;
   on: ReturnType<typeof vi.fn>;
   registerTool: ReturnType<typeof vi.fn>;
   useOptions: UseFactoryOptions | undefined;
+  log: {
+    info: ReturnType<typeof vi.fn>;
+    warn: ReturnType<typeof vi.fn>;
+    debug: ReturnType<typeof vi.fn>;
+  };
+  runBootstrap: (name: string) => Promise<void>;
 }> => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-skills-ext-"));
   let factory: ExtensionFactory | null = null;
   let useOptions: UseFactoryOptions | undefined;
+  const bootstrapHooks = new Map<string, () => void | Promise<void>>();
+
+  const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 
   const app = {
-    extensionConfig: { enabled: true },
-    log: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
+    extensionConfig: config,
+    log,
     workspace: { resolve: (...segments: string[]) => join(workspaceDir, ...segments) },
-    bootstrap: vi.fn(),
+    bootstrap: vi.fn((name: string, hook: () => void | Promise<void>) => {
+      bootstrapHooks.set(name, hook);
+    }),
     agent: {
       use: (registered: ExtensionFactory, options?: UseFactoryOptions) => {
         factory = registered;
@@ -46,7 +60,17 @@ const setup = async (): Promise<{
     sendUserMessage: vi.fn(),
   } as unknown as ExtensionAPI);
 
-  return { workspaceSkillsDir: join(workspaceDir, "skills"), on, registerTool, useOptions };
+  return {
+    workspaceDir,
+    workspaceSkillsDir: join(workspaceDir, "skills"),
+    on,
+    registerTool,
+    useOptions,
+    log,
+    runBootstrap: async (name: string) => {
+      await bootstrapHooks.get(name)?.();
+    },
+  };
 };
 
 describe("skills extension", () => {
@@ -79,5 +103,26 @@ describe("skills extension", () => {
     const { useOptions } = await setup();
 
     expect(useOptions?.sessionScopes).toContain("background");
+  });
+
+  it("creates the workspace skills directory on bootstrap", async () => {
+    const { workspaceSkillsDir, runBootstrap } = await setup();
+
+    expect(existsSync(workspaceSkillsDir)).toBe(false);
+
+    await runBootstrap("ensure-skills-dir");
+
+    expect(existsSync(workspaceSkillsDir)).toBe(true);
+
+    await rm(workspaceSkillsDir, { recursive: true, force: true });
+  });
+
+  it("does nothing but log when disabled by configuration", async () => {
+    const { on, registerTool, useOptions, log } = await setup({ enabled: false });
+
+    expect(log.info).toHaveBeenCalledWith("skills disabled by configuration");
+    expect(on).not.toHaveBeenCalled();
+    expect(registerTool).not.toHaveBeenCalled();
+    expect(useOptions).toBeUndefined();
   });
 });

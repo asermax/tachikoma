@@ -2,12 +2,13 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_CONFIG_TEMPLATE } from "../src/config/default-template.ts";
-import { loadConfig } from "../src/config/load.ts";
+import { defaultConfigPath, loadConfig } from "../src/config/load.ts";
 import { ConfigError, parseWithSchema } from "../src/config/parse.ts";
 import { ConfigSchema } from "../src/config/schema.ts";
+import { resolveTimezone } from "../src/config/timezone.ts";
 
 describe("config loading", () => {
   it("generates a commented default file on first run", async () => {
@@ -100,5 +101,76 @@ describe("config loading", () => {
     const { config } = await loadConfig(path);
 
     expect(config.scheduler.timezone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  });
+
+  it("re-throws read errors that are not ENOENT", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+
+    await expect(loadConfig(dir)).rejects.toMatchObject({ code: "EISDIR" });
+  });
+
+  it("uses the default config path when none is provided", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+    vi.stubEnv("XDG_CONFIG_HOME", dir);
+
+    try {
+      const { path, created } = await loadConfig();
+
+      expect(created).toBe(true);
+      expect(path).toBe(join(dir, "tachikoma", "config.toml"));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+});
+
+describe("defaultConfigPath", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("honors XDG_CONFIG_HOME when set", () => {
+    vi.stubEnv("XDG_CONFIG_HOME", "/xdg/conf");
+
+    expect(defaultConfigPath()).toBe(join("/xdg/conf", "tachikoma", "config.toml"));
+  });
+
+  it("falls back to ~/.config when XDG_CONFIG_HOME is unset", async () => {
+    vi.stubEnv("XDG_CONFIG_HOME", undefined);
+    const { homedir } = await import("node:os");
+
+    expect(defaultConfigPath()).toBe(join(homedir(), ".config", "tachikoma", "config.toml"));
+  });
+});
+
+describe("parseWithSchema", () => {
+  it("renders root-level validation errors with a '/' instance path", () => {
+    try {
+      parseWithSchema(ConfigSchema, "not-an-object", "label");
+      expect.unreachable("expected a ConfigError");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ConfigError);
+      expect((error as ConfigError).message).toContain("/:");
+    }
+  });
+});
+
+describe("resolveTimezone", () => {
+  let dateTimeFormatSpy: ReturnType<typeof vi.spyOn> | undefined;
+
+  beforeEach(() => {
+    dateTimeFormatSpy = undefined;
+  });
+
+  afterEach(() => {
+    dateTimeFormatSpy?.mockRestore();
+  });
+
+  it("re-throws non-RangeError failures from Intl.DateTimeFormat", () => {
+    dateTimeFormatSpy = vi.spyOn(Intl, "DateTimeFormat").mockImplementation(() => {
+      throw new TypeError("boom");
+    });
+
+    expect(() => resolveTimezone("America/New_York", "label")).toThrow(TypeError);
   });
 });
