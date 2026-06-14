@@ -1,3 +1,20 @@
+# [2.4.0](https://github.com/asermax/tachikoma/compare/v2.3.0...v2.4.0) (2026-06-14)
+
+
+### Bug Fixes
+
+* **config:** raise TOML syntax errors as ConfigError ([c770c6d](https://github.com/asermax/tachikoma/commit/c770c6dcb5a887c510e800edd1844416367ae85b))
+* **tasks:** wrap one-shot prune deletes in a transaction ([f3c838c](https://github.com/asermax/tachikoma/commit/f3c838c326e7dfbc0aa7561faa053dcf5a523486))
+
+
+### Features
+
+* **agent:** add forkAndContinue for conversation-aware post-processing ([7cd35d0](https://github.com/asermax/tachikoma/commit/7cd35d0ef6657f89cba79401e1bcc2b8bf4f72d9))
+* **log:** redact sensitive fields from log output ([4f55466](https://github.com/asermax/tachikoma/commit/4f55466bb726edf81bf701a4406e59091b3645de))
+* **log:** rotate logs continuously with pino-roll ([6ce81af](https://github.com/asermax/tachikoma/commit/6ce81af63e2af4922c541808f528c754f04dc78a))
+* **memory:** fork the session for memory and core-context extraction ([c28f6aa](https://github.com/asermax/tachikoma/commit/c28f6aafbed3f2689fbef0942dd7503c5c89f2ed))
+* **telegram:** retry on rate limits and discriminate API errors ([85c2a55](https://github.com/asermax/tachikoma/commit/85c2a55488e4968704d9219384b257f2fccdc43f))
+
 # [2.3.0](https://github.com/asermax/tachikoma/compare/v2.2.0...v2.3.0) (2026-06-13)
 
 
