@@ -34,6 +34,13 @@ const delegateDescription = (args: ToolArgs): string | null => {
   return desc.length > DELEGATE_DESC_MAX ? `${desc.slice(0, DELEGATE_DESC_MAX)}...` : desc;
 };
 
+/** Shared delegate phrasing for the live label (`Delegating`) and summary (`delegating`). */
+const delegateLabel = (args: ToolArgs, verb: string): string => {
+  const agent = typeof args.agent === "string" ? args.agent : "an agent";
+  const desc = delegateDescription(args);
+  return `${verb} to ${agent}${desc != null ? `: ${desc}` : ""}`;
+};
+
 // Present-progressive live-activity labels keyed by pi's tool name. Each entry
 // maps a tool's args to a friendly line shown while the tool runs. pi's built-in
 // tools are lowercase (`read`, `grep`, …) and take a `path`/`pattern`/`command`
@@ -47,11 +54,7 @@ const TOOL_DISPLAY: Record<string, (args: ToolArgs) => string> = {
   edit: (args) => `Editing ${asString(args.path)}`,
   write: (args) => `Writing ${asString(args.path)}`,
   ls: (args) => `Listing ${asString(args.path)}`,
-  delegate_to_agent: (args) => {
-    const agent = typeof args.agent === "string" ? args.agent : "an agent";
-    const desc = delegateDescription(args);
-    return `Delegating to ${agent}${desc != null ? `: ${desc}` : ""}`;
-  },
+  delegate_to_agent: (args) => delegateLabel(args, "Delegating"),
 };
 
 /**
@@ -110,11 +113,7 @@ const TOOL_SUMMARY: Record<string, (args: ToolArgs) => string> = {
     typeof args.path === "string" ? `editing ${code(basename(args.path))}` : "editing a file",
   write: (args) =>
     typeof args.path === "string" ? `writing ${code(basename(args.path))}` : "writing a file",
-  delegate_to_agent: (args) => {
-    const agent = typeof args.agent === "string" ? args.agent : "an agent";
-    const desc = delegateDescription(args);
-    return `delegating to ${agent}${desc != null ? `: ${desc}` : ""}`;
-  },
+  delegate_to_agent: (args) => delegateLabel(args, "delegating"),
 };
 
 // Aggregated phrasing for a tool used more than twice in one segment.
