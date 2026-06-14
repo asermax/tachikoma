@@ -69,25 +69,4 @@ describe("SessionRegistry", () => {
 
     expect(registry.findDangling().map((s) => s.id)).toEqual([dangling.id]);
   });
-
-  it("maps channel messages back to their owning session", () => {
-    const registry = new SessionRegistry(db);
-    const session = registry.create("telegram", null);
-
-    registry.recordChannelMessage("telegram", "42", session.id, "outgoing");
-
-    expect(registry.findSessionByMessageId("telegram", "42")?.id).toBe(session.id);
-    expect(registry.findSessionByMessageId("telegram", "999")).toBeNull();
-  });
-
-  it("re-points a channel message id on conflict", () => {
-    const registry = new SessionRegistry(db);
-    const first = registry.create("telegram", null);
-    const second = registry.create("telegram", null);
-
-    registry.recordChannelMessage("telegram", "42", first.id, "outgoing");
-    registry.recordChannelMessage("telegram", "42", second.id, "incoming");
-
-    expect(registry.findSessionByMessageId("telegram", "42")?.id).toBe(second.id);
-  });
 });

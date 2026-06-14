@@ -2,7 +2,6 @@ import { and, asc, desc, eq, gt, isNotNull, isNull, lte } from "drizzle-orm";
 
 import { type SessionRecord, sessions } from "../db/core-schema.ts";
 import type { AppDatabase } from "../db/index.ts";
-import { type ChannelMessageDirection, channelMessages } from "../extensions/telegram/schema.ts";
 
 export class SessionRegistry {
   private readonly db: AppDatabase;
@@ -67,35 +66,5 @@ export class SessionRegistry {
       )
       .orderBy(asc(sessions.closedAt))
       .all();
-  }
-
-  /** Record a channel message id ↔ session mapping for reply-to routing. */
-  recordChannelMessage(
-    channel: string,
-    messageId: string,
-    sessionId: number,
-    direction: ChannelMessageDirection,
-  ): void {
-    this.db
-      .insert(channelMessages)
-      .values({ channel, messageId, sessionId, direction, createdAt: new Date() })
-      .onConflictDoUpdate({
-        target: [channelMessages.channel, channelMessages.messageId],
-        set: { sessionId, direction },
-      })
-      .run();
-  }
-
-  /** Resolve the session that owns a recorded channel message, if any. */
-  findSessionByMessageId(channel: string, messageId: string): SessionRecord | null {
-    const mapping = this.db
-      .select()
-      .from(channelMessages)
-      .where(and(eq(channelMessages.channel, channel), eq(channelMessages.messageId, messageId)))
-      .get();
-
-    if (mapping == null) return null;
-
-    return this.get(mapping.sessionId);
   }
 }

@@ -131,32 +131,3 @@ describe("SessionRegistry.findDangling", () => {
     expect(ids).not.toContain(closed.id);
   });
 });
-
-describe("SessionRegistry channel-message routing", () => {
-  it("records a mapping and resolves the owning session by message id", () => {
-    const registry = new SessionRegistry(db);
-
-    const session = registry.create("telegram", "/tmp/s.jsonl");
-    registry.recordChannelMessage("telegram", "m-1", session.id, "inbound");
-
-    expect(registry.findSessionByMessageId("telegram", "m-1")?.id).toBe(session.id);
-  });
-
-  it("upserts the mapping on conflict, repointing it to the latest session", () => {
-    const registry = new SessionRegistry(db);
-
-    const first = registry.create("telegram", "/tmp/a.jsonl");
-    const second = registry.create("telegram", "/tmp/b.jsonl");
-
-    registry.recordChannelMessage("telegram", "m-1", first.id, "inbound");
-    registry.recordChannelMessage("telegram", "m-1", second.id, "outbound");
-
-    expect(registry.findSessionByMessageId("telegram", "m-1")?.id).toBe(second.id);
-  });
-
-  it("returns null when no mapping exists for the message id", () => {
-    const registry = new SessionRegistry(db);
-
-    expect(registry.findSessionByMessageId("telegram", "missing")).toBeNull();
-  });
-});

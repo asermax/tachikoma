@@ -6,9 +6,9 @@ import { type Static, Type } from "typebox";
 
 import { expandHome } from "../../workspace.ts";
 import { defineExtension } from "../api.ts";
-import { type ChannelMessageStore, TelegramChannel } from "./channel.ts";
-import { CHANNEL_NAME } from "./inbound.ts";
+import { TelegramChannel } from "./channel.ts";
 import { ensureMediaDir } from "./media.ts";
+import { TelegramMessageStore } from "./store.ts";
 import { registerTelegramTools } from "./tools.ts";
 
 const TelegramConfigSchema = Type.Object({
@@ -67,12 +67,7 @@ export default defineExtension<TelegramConfig>({
 
     const mediaDir = join(app.workspace.dataDir, "media");
 
-    const store: ChannelMessageStore = {
-      record: (messageId, sessionId, direction) =>
-        app.sessions.recordChannelMessage(CHANNEL_NAME, messageId, sessionId, direction),
-      findSessionId: (messageId) =>
-        app.sessions.findSessionByMessageId(CHANNEL_NAME, messageId)?.id ?? null,
-    };
+    const store = new TelegramMessageStore(app.db);
 
     const currentSessionId = () => app.sessions.current()?.id ?? null;
 

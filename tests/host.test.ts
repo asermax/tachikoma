@@ -329,8 +329,6 @@ describe("ExtensionHost context API delegation", () => {
       get: vi.fn(() => ({ id: 2 })),
       update: vi.fn(() => ({ id: 2 })),
       listResumable: vi.fn(() => [{ id: 3 }]),
-      recordChannelMessage: vi.fn(),
-      findSessionByMessageId: vi.fn(() => ({ id: 4 })),
     };
 
     const services = createServices({
@@ -348,11 +346,6 @@ describe("ExtensionHost context API delegation", () => {
 
     app.sessions.listResumable();
     expect(registry.listResumable).toHaveBeenCalledWith(60);
-
-    app.sessions.recordChannelMessage("telegram", "m1", 7, "inbound");
-    expect(registry.recordChannelMessage).toHaveBeenCalledWith("telegram", "m1", 7, "inbound");
-
-    expect(app.sessions.findSessionByMessageId("telegram", "m1")).toEqual({ id: 4 });
 
     await app.sessions.close();
     expect(coordinator.closeActiveSession).toHaveBeenCalled();
