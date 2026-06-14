@@ -242,6 +242,8 @@ export class ExtensionHost {
         collectContext: (input) => collectContextBlocks(services.regs.contextProviders, input, log),
         models: services.agent.tiers,
         side: new SideRunner(services.agent, log),
+        forkAndContinue: (sourceSessionFile, prompt, tier, tools) =>
+          services.agent.forkAndContinue(sourceSessionFile, prompt, tier, tools),
       },
 
       inbound: {

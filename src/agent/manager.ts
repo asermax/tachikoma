@@ -27,6 +27,14 @@ export interface AgentSessionSources {
 export interface OpenSessionOptions {
   /** Resume from an existing pi session file instead of starting fresh. */
   sessionFile?: string | null;
+  /**
+   * Fork a NEW session seeded with the full history of an existing pi session file. The source
+   * transcript is read-only (never mutated): `SessionManager.forkFrom` copies its entries into a
+   * fresh session file. Used by memory extraction to continue the just-ended conversation as the
+   * same assistant. Must be opened on the normal (non-bare) path so the fork keeps the composed
+   * persona and the agent's own tool set.
+   */
+  forkFromFile?: string | null;
   /** Ephemeral side session: nothing persisted to disk. */
   inMemory?: boolean;
   /** Skip registered extension factories and system prompt builders (headless side work). */
@@ -138,9 +146,11 @@ export class AgentManager {
     const sessionManager =
       options.inMemory === true
         ? SessionManager.inMemory(workspace.root)
-        : options.sessionFile != null
-          ? SessionManager.open(options.sessionFile, workspace.sessionsDir)
-          : SessionManager.create(workspace.root, workspace.sessionsDir);
+        : options.forkFromFile != null
+          ? SessionManager.forkFrom(options.forkFromFile, workspace.root, workspace.sessionsDir)
+          : options.sessionFile != null
+            ? SessionManager.open(options.sessionFile, workspace.sessionsDir)
+            : SessionManager.create(workspace.root, workspace.sessionsDir);
 
     // An explicit model reference pins the model directly; otherwise a configured
     // role pins the model (and optional thinking suffix). An unset chain omits both
@@ -173,6 +183,35 @@ export class AgentManager {
     }
 
     return session;
+  }
+
+  /**
+   * Fork the conversation in `sourceSessionFile` into a fresh session and continue it headlessly:
+   * the same assistant (composed persona + full history live) is handed `prompt` as a single
+   * follow-up user turn, run to completion, and disposed. The source transcript is never mutated.
+   *
+   * `tools` is an optional hard allowlist. We stay non-bare so the persona and history survive, but
+   * a `tools` allowlist still restricts the fork to exactly those built-in tool names (the SDK's
+   * `tools` option is independent of the system prompt and also filters out extension tools) — so a
+   * memory-extraction fork keeps the assistant but can only touch files, never messaging/task tools.
+   */
+  async forkAndContinue(
+    sourceSessionFile: string,
+    prompt: string,
+    tier: ModelTier,
+    tools?: string[],
+  ): Promise<void> {
+    const session = await this.open({
+      forkFromFile: sourceSessionFile,
+      tier,
+      ...(tools != null ? { tools } : {}),
+    });
+
+    try {
+      await session.prompt(prompt);
+    } finally {
+      session.dispose();
+    }
   }
 
   private composeSystemPrompt(): string {

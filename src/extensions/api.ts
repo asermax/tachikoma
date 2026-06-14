@@ -1,6 +1,6 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
-import type { ModelTiers } from "../agent/models.ts";
+import type { ModelTier, ModelTiers } from "../agent/models.ts";
 import type { SideRunner } from "../agent/side-run.ts";
 import type { Channel, Delivery } from "../channels/types.ts";
 import type { Config } from "../config/schema.ts";
@@ -159,6 +159,19 @@ export interface AgentApi {
   readonly models: ModelTiers;
   /** Side-channel LLM work: headless runs and structured classification. */
   readonly side: SideRunner;
+  /**
+   * Fork the conversation in `sourceSessionFile` into a fresh session and continue it headlessly:
+   * the same assistant (composed persona + full history live) is handed `prompt` as one follow-up
+   * user turn, run to completion, and disposed. The source transcript is never mutated. `tools` is
+   * an optional hard allowlist restricting the fork to those built-in tool names. Used by memory
+   * extraction to fold a just-ended conversation into the memory store.
+   */
+  forkAndContinue(
+    sourceSessionFile: string,
+    prompt: string,
+    tier: ModelTier,
+    tools?: string[],
+  ): Promise<void>;
 }
 
 export interface InboundApi {
