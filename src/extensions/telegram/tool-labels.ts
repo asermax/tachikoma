@@ -14,35 +14,36 @@ const basename = (path: string): string => path.split("/").filter(Boolean).at(-1
 /** Wrap a value in Telegram inline-code markdown for visual grouping. */
 const code = (value: string): string => `\`${value}\``;
 
-// Present-progressive live-activity labels keyed by tool name. Each entry maps
-// a tool's args to a friendly line shown while the tool runs.
+// Present-progressive live-activity labels keyed by pi's tool name. Each entry
+// maps a tool's args to a friendly line shown while the tool runs. pi's built-in
+// tools are lowercase (`read`, `grep`, …) and take a `path`/`pattern`/`command`
+// arg shape — these keys must match what pi emits, not Claude Code's names.
 const TOOL_DISPLAY: Record<string, (args: ToolArgs) => string> = {
-  Read: (args) => `Reading ${asString(args.file_path)}`,
-  Grep: (args) => `Searching for '${asString(args.pattern)}'`,
-  Glob: (args) => `Globbing ${asString(args.pattern)}`,
-  Bash: (args) => `Running: ${asString(args.command)}`,
-  Edit: (args) => `Editing ${asString(args.file_path)}`,
-  Write: (args) => `Writing ${asString(args.file_path)}`,
-  LS: (args) => `Listing ${asString(args.path)}`,
-  Agent: (args) =>
-    typeof args.description === "string" ? `Agent: ${args.description}` : "Agent...",
-  ToolSearch: (args) => `Searching tools: ${asString(args.query)}`,
+  read: (args) => `Reading ${asString(args.path)}`,
+  grep: (args) => `Searching for '${asString(args.pattern)}'`,
+  find: (args) => `Finding files: ${asString(args.pattern)}`,
+  bash: (args) => `Running: ${asString(args.command)}`,
+  edit: (args) => `Editing ${asString(args.path)}`,
+  write: (args) => `Writing ${asString(args.path)}`,
+  ls: (args) => `Listing ${asString(args.path)}`,
+  delegate_to_agent: (args) =>
+    typeof args.agent === "string" ? `Delegating to ${args.agent}` : "Delegating to an agent",
 };
 
 /**
  * Turn a raw tool name into a human-readable label. MCP tool names follow the
- * pattern `mcp__<server>__<tool>`; we keep only the trailing tool segment,
- * humanize the underscores, and title-case it. Non-MCP names pass through.
+ * pattern `mcp__<server>__<tool>`, so we keep only the trailing tool segment;
+ * every name is then split on its underscores and title-cased. Humanizing the
+ * underscores away also keeps the label safe inside Telegram's `_italic_`
+ * markdown, where a raw `snake_case` name would be mis-parsed as emphasis.
  */
 export const formatToolName = (name: string): string => {
-  if (!name.startsWith("mcp__")) return name;
+  const base = name.startsWith("mcp__") ? (name.split("__").at(-1) ?? name) : name;
 
-  const lastSegment = name.split("__").at(-1) ?? name;
-
-  return lastSegment
+  return base
     .split("_")
     .filter((word) => word.length > 0)
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 };
 
@@ -72,40 +73,32 @@ const bashSummary = (args: ToolArgs): string => {
 // Past-segment summary phrasings (lowercase verb phrases, basenames for brevity).
 // Inline code groups the argument visually, so quotes are omitted around it.
 const TOOL_SUMMARY: Record<string, (args: ToolArgs) => string> = {
-  Read: (args) =>
-    typeof args.file_path === "string"
-      ? `reading ${code(basename(args.file_path))}`
-      : "reading a file",
-  Grep: (args) =>
+  read: (args) =>
+    typeof args.path === "string" ? `reading ${code(basename(args.path))}` : "reading a file",
+  grep: (args) =>
     typeof args.pattern === "string"
       ? `searching for ${code(args.pattern)}`
       : "searching for a pattern",
-  Glob: (args) =>
-    typeof args.pattern === "string" ? `globbing ${code(args.pattern)}` : "globbing a pattern",
-  Bash: bashSummary,
-  Edit: (args) =>
-    typeof args.file_path === "string"
-      ? `editing ${code(basename(args.file_path))}`
-      : "editing a file",
-  Write: (args) =>
-    typeof args.file_path === "string"
-      ? `writing ${code(basename(args.file_path))}`
-      : "writing a file",
-  Agent: (args) =>
-    typeof args.description === "string" ? `agent: ${args.description}` : "dispatched an agent",
-  ToolSearch: () => "searching tools",
+  find: (args) =>
+    typeof args.pattern === "string" ? `finding ${code(args.pattern)}` : "finding files",
+  bash: bashSummary,
+  edit: (args) =>
+    typeof args.path === "string" ? `editing ${code(basename(args.path))}` : "editing a file",
+  write: (args) =>
+    typeof args.path === "string" ? `writing ${code(basename(args.path))}` : "writing a file",
+  delegate_to_agent: (args) =>
+    typeof args.agent === "string" ? `delegating to ${args.agent}` : "delegating to an agent",
 };
 
 // Aggregated phrasing for a tool used more than twice in one segment.
 const TOOL_AGGREGATE: Record<string, (count: number) => string> = {
-  Read: (count) => `reading ${count} files`,
-  Grep: (count) => `running ${count} searches`,
-  Glob: (count) => `running ${count} glob searches`,
-  Bash: (count) => `running ${count} commands`,
-  Edit: (count) => `editing ${count} files`,
-  Write: (count) => `writing ${count} files`,
-  Agent: (count) => `dispatching ${count} agents`,
-  ToolSearch: (count) => `running ${count} tool searches`,
+  read: (count) => `reading ${count} files`,
+  grep: (count) => `running ${count} searches`,
+  find: (count) => `running ${count} file searches`,
+  bash: (count) => `running ${count} commands`,
+  edit: (count) => `editing ${count} files`,
+  write: (count) => `writing ${count} files`,
+  delegate_to_agent: (count) => `delegating to ${count} agents`,
 };
 
 const summaryPhrase = (toolName: string, args: ToolArgs): string => {

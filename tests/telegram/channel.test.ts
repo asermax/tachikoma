@@ -246,8 +246,8 @@ describe("respond streaming", () => {
         {
           kind: "tool-start",
           toolCallId: "t1",
-          toolName: "Read",
-          args: { file_path: "/a/b/notes.md" },
+          toolName: "read",
+          args: { path: "/a/b/notes.md" },
         },
         { kind: "text", text: "Done." },
         { kind: "result", stopReason: "done" },
@@ -257,7 +257,7 @@ describe("respond streaming", () => {
     const messageCalls = calls.filter((call) => call.type !== "action");
     expect(messageCalls).toEqual([
       { type: "send", text: "Hello.\n\n_🔧 Reading /a/b/notes.md_" },
-      { type: "edit", messageId: 1, text: "Hello.\n\n*🔧 Reading `notes.md`*\n\nDone." },
+      { type: "edit", messageId: 1, text: "Hello.\n\n_🔧 Reading `notes.md`_\n\nDone." },
     ]);
     expect(channel.lastOutboundMessageId).toBe(1);
   });

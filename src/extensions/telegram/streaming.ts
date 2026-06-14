@@ -118,7 +118,7 @@ export class StreamRenderer {
     if (this.buffer.length > 0 && !this.buffer.endsWith("\n")) this.buffer += "\n";
 
     const prefix = this.buffer.length > 0 ? "\n" : "";
-    this.buffer += `${prefix}*🔧 ${summary}*\n\n`;
+    this.buffer += `${prefix}_🔧 ${summary}_\n\n`;
   }
 
   private async flush(force: boolean): Promise<void> {

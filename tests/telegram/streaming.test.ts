@@ -98,7 +98,7 @@ describe("StreamRenderer", () => {
     // Settled text plus a live tool line renders the whole buffer beneath it,
     // even without a trailing paragraph break.
     await renderer.appendText("Let me search.");
-    await renderer.appendTool("Grep", { pattern: "skippable" });
+    await renderer.appendTool("grep", { pattern: "skippable" });
     expect(api.calls.at(-1)).toEqual({
       type: "send",
       text: "Let me search.\n\n_🔧 Searching for 'skippable'_",
@@ -111,7 +111,7 @@ describe("StreamRenderer", () => {
     expect(api.calls.at(-1)).toEqual({
       type: "edit",
       messageId: 1,
-      text: "Let me search.\n\n*🔧 Searching for `skippable`*\n\nFound it.",
+      text: "Let me search.\n\n_🔧 Searching for `skippable`_\n\nFound it.",
       parseMode: "Markdown",
     });
   });
@@ -146,13 +146,13 @@ describe("StreamRenderer", () => {
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
     await renderer.appendText("Done.");
-    await renderer.appendTool("Read", { file_path: "/tmp/notes/config.ts" });
+    await renderer.appendTool("read", { path: "/tmp/notes/config.ts" });
 
     expect(await renderer.finalize()).toBe(1);
     expect(api.calls.at(-1)).toEqual({
       type: "edit",
       messageId: 1,
-      text: "Done.\n\n*🔧 Reading `config.ts`*",
+      text: "Done.\n\n_🔧 Reading `config.ts`_",
       parseMode: "Markdown",
     });
   });
