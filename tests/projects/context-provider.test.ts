@@ -25,7 +25,7 @@ describe("buildProjectsContext", () => {
     const content = await buildProjectsContext(workspace, fakeLogger());
 
     expect(content).toContain("## Projects");
-    expect(content).toContain("register_project");
+    expect(content).toContain("list_projects");
     expect(content).toContain("No projects are currently registered.");
   });
 

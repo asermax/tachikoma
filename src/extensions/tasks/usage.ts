@@ -15,7 +15,5 @@ Two task types:
 
 Scheduling (evaluated in ${zone}):
 - **cron** for recurring tasks (\`0 9 * * *\` daily 9am, \`0 */2 * * *\` every 2h).
-- **ISO datetime** for one-shots (\`2026-04-01T15:00:00\` = local; add \`Z\`/offset for explicit zone). One-shots auto-disable after firing.
-
-Tools: \`create_task\`, \`list_tasks\`, \`get_task\`, \`update_task\`, \`delete_task\` manage definitions; \`run_task_now\` fires a background task immediately (an existing one by id/name, or an ad-hoc prompt); \`query_task_instances\` inspects past/current firings. Prefer \`list_tasks\`/\`get_task\` before creating to avoid duplicates; disable with \`update_task enabled=false\` rather than deleting when you may want it back. In a conversation, \`respond_to_task\` forwards the user's reply to a background task that is waiting for input.`;
+- **ISO datetime** for one-shots (\`2026-04-01T15:00:00\` = local; add \`Z\`/offset for explicit zone). One-shots auto-disable after firing.`;
 };

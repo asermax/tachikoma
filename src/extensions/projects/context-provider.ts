@@ -5,7 +5,7 @@ const USAGE = `## Projects
 
 You can manage external git repositories alongside your workspace, stored as git submodules under \`projects/\`. They are synced on startup, and any project with uncommitted changes is committed and pushed at session close (before the workspace commit, so submodule pointers land together). Git auth (SSH keys, tokens) is the user's responsibility — if a clone or push fails on auth, point them to configure credentials externally.
 
-Tools: \`register_project\` (\`name\`, \`url\`) clones a repo in as a project; \`deregister_project\` (\`name\`; \`force=true\` to discard uncommitted changes) removes one; \`list_projects\` shows the registered projects with their branch and uncommitted-change counts. The state below is a snapshot from session start — use \`list_projects\` for the live picture.`;
+The state below is a snapshot from session start — use \`list_projects\` for the live picture.`;
 
 /**
  * Memory/projects context: the usage guidance plus a session-start snapshot of each registered

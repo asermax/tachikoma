@@ -8,8 +8,4 @@ Skills can define ordered, multi-step processes — workflows — that track sta
 
 Workflows are not auto-detected: read a skill's SKILL.md to see which workflows it offers and when to use them.
 
-Tools:
-- \`start_workflow\` (\`skill_name\`, \`workflow_name\`) — begin a workflow; returns the step list, a scratchpad path, and the first step's instructions.
-- \`update_workflow_state\` (\`workflow_id\`, \`step\`, \`action\`: start | complete | skip; \`items\` for loop steps) — advance a step. Completing or skipping auto-starts the next step (and auto-finalizes the workflow after the last). Always pass the **top-level** workflow id; the engine routes to the deepest active (composed/loop) layer and shows a breadcrumb.
-- \`query_workflow\` (optional \`workflow_id\`) — list active workflows, or inspect one's full state. Use it to recover after losing track of where you were.
-- \`end_workflow\` (\`workflow_id\`, \`action\`: complete | abort) — only needed to cancel early; normal completion is automatic.`;
+When advancing a step, always pass the **top-level** workflow id; the engine routes to the deepest active (composed/loop) layer and shows a breadcrumb.`;
