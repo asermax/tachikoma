@@ -1,3 +1,15 @@
+# [3.1.0](https://github.com/asermax/tachikoma/compare/v3.0.0...v3.1.0) (2026-06-14)
+
+
+### Bug Fixes
+
+* **telegram:** map tool labels to pi tool names and italicize markers ([60c80dd](https://github.com/asermax/tachikoma/commit/60c80dd09e817e7821190e36262a343b050dc7a8))
+
+
+### Features
+
+* **telegram:** render responses as MarkdownV2 via telegramify-markdown ([f5aff9a](https://github.com/asermax/tachikoma/commit/f5aff9a4b5ca8425988ab45fbaef6df321b6b3cd))
+
 # [3.0.0](https://github.com/asermax/tachikoma/compare/v2.4.0...v3.0.0) (2026-06-14)
 
 
