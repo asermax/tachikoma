@@ -36,10 +36,16 @@ export class StreamRenderer {
   private lastEditAt = 0;
   private broken = false;
 
-  constructor(api: StreamApi, chatId: number, log: Logger) {
+  /**
+   * @param seedMessageId An existing message id to edit in place instead of
+   * sending a fresh one — used to reclaim the preparation lead-in so the streamed
+   * response replaces it (or deletes it, via finalize, when the exchange has no text).
+   */
+  constructor(api: StreamApi, chatId: number, log: Logger, seedMessageId: number | null = null) {
     this.api = api;
     this.chatId = chatId;
     this.log = log;
+    this.messageId = seedMessageId;
   }
 
   async appendText(text: string): Promise<void> {

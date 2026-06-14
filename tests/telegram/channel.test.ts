@@ -340,15 +340,38 @@ describe("respond streaming", () => {
 });
 
 describe("status", () => {
-  it("falls back to a typing action when no response is streaming", async () => {
-    const { channel, runtime, api } = makeChannel();
+  it("surfaces a preparation status on a lead-in message while keeping typing alive", async () => {
+    const { channel, runtime, api, calls } = makeChannel();
     await channel.start(runtime);
 
     channel.status("Gathering context…");
     await settle();
 
     expect(api.sendChatAction).toHaveBeenCalledWith(42, "typing");
-    expect(api.sendMessage).not.toHaveBeenCalled();
+    expect(calls).toContainEqual({
+      type: "send",
+      text: toTelegramMarkdown("_Gathering context…_"),
+    });
+  });
+
+  it("edits the lead-in message in place on a follow-up preparation status", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    channel.status("Checking conversation topic…");
+    await settle();
+    channel.status("Resuming a previous conversation");
+    await settle();
+
+    expect(calls).toContainEqual({
+      type: "send",
+      text: toTelegramMarkdown("_Checking conversation topic…_"),
+    });
+    expect(calls).toContainEqual({
+      type: "edit",
+      messageId: 1,
+      text: toTelegramMarkdown("_Resuming a previous conversation_"),
+    });
   });
 
   it("renders through the streaming message while a response is active", async () => {
@@ -375,6 +398,88 @@ describe("status", () => {
       messageId: 1,
       text: toTelegramMarkdown("Answer"),
     });
+  });
+});
+
+describe("preparation lead-in handoff", () => {
+  it("reclaims the lead-in so streamed text edits it in place instead of sending a new message", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    channel.status("Checking conversation topic…");
+    await settle();
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello paragraph one.\n\nParagraph two." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    const sends = calls.filter((call) => call.type === "send");
+    expect(sends).toEqual([
+      { type: "send", text: toTelegramMarkdown("_Checking conversation topic…_") },
+    ]);
+    const edits = calls.filter((call) => call.type === "edit");
+    expect(edits.length).toBeGreaterThan(0);
+    expect(edits.every((call) => call.messageId === 1)).toBe(true);
+  });
+
+  it("deletes the lead-in message when the exchange yields no text", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    channel.status("Checking conversation topic…");
+    await settle();
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([{ kind: "result", stopReason: "done" }]),
+    });
+
+    expect(calls.filter((call) => call.type === "send")).toEqual([
+      { type: "send", text: toTelegramMarkdown("_Checking conversation topic…_") },
+    ]);
+    expect(calls).toContainEqual({ type: "delete", messageId: 1 });
+  });
+
+  it("sends a fresh message when no lead-in was created (no preparation status)", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello paragraph one.\n\nParagraph two." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(calls.filter((call) => call.type === "send")).toEqual([
+      { type: "send", text: toTelegramMarkdown("Hello paragraph one.") },
+    ]);
+  });
+});
+
+describe("receipt typing", () => {
+  it("fires a typing action before submitting an inbound text message", async () => {
+    const { channel, runtime, api, submit, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchText("hello");
+
+    expect(api.sendChatAction).toHaveBeenCalledWith(42, "typing");
+    expect(submit).toHaveBeenCalledWith(expect.objectContaining({ text: "hello" }));
+  });
+
+  it("does not fire typing for a /stop message", async () => {
+    const { channel, runtime, api, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchText(STOP_COMMAND);
+
+    expect(api.sendChatAction).not.toHaveBeenCalled();
   });
 });
 
@@ -826,6 +931,24 @@ describe("media handling", () => {
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({ media: expect.arrayContaining([expect.anything()]) }),
     );
+  });
+
+  it("fires typing before downloading an inbound media message", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    })) as unknown as typeof fetch;
+
+    const { channel, runtime, api, submit, dispatchMessage } = makeChannel({
+      allowMedia: true,
+      mediaDir: "/tmp/tachi-media-test",
+    });
+    await channel.start(runtime);
+
+    await dispatchMessage(documentMessage());
+
+    expect(api.sendChatAction).toHaveBeenCalledWith(42, "typing");
+    expect(submit).toHaveBeenCalled();
   });
 
   it("notifies with the size message when the file is too large", async () => {

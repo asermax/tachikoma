@@ -56,6 +56,12 @@ export class TelegramChannel implements Channel {
   private lastInboundId: number | null = null;
   private lastOutboundId: number | null = null;
   private activeRenderer: StreamRenderer | null = null;
+  /**
+   * Provisional message shown during preparation (boundary/preprocessor status
+   * lines). respond() seeds the StreamRenderer with it so the streamed response
+   * edits it in place — or deletes it via finalize when the exchange has no text.
+   */
+  private leadInMessageId: number | null = null;
   private shutdownMessageId: number | null = null;
 
   constructor(bot: Bot, options: TelegramChannelOptions) {
@@ -185,8 +191,13 @@ export class TelegramChannel implements Channel {
     const log = this.log();
 
     await this.mutex.run(async () => {
+      // Reclaim the preparation lead-in (if any) as the streaming message so the
+      // response text replaces it in place instead of opening a second message.
+      const seedMessageId = this.leadInMessageId;
+      this.leadInMessageId = null;
+
       const stopTyping = startTyping(this.bot.api, this.options.chatId, log);
-      const renderer = new StreamRenderer(this.bot.api, this.options.chatId, log);
+      const renderer = new StreamRenderer(this.bot.api, this.options.chatId, log, seedMessageId);
       this.activeRenderer = renderer;
 
       try {
@@ -282,10 +293,51 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    // No streaming message to surface the line in — show liveness via typing.
+    // Preparation phase (no streaming renderer yet): keep the typing indicator
+    // alive and surface the line on a provisional lead-in message that respond()
+    // hands to the StreamRenderer — so the streamed response replaces it (or
+    // deletes it when the exchange yields no text).
+    this.pingTyping();
+    void this.showLeadIn(text);
+  }
+
+  /** One-shot typing action to signal liveness on receipt or during preparation. */
+  private pingTyping(): void {
     void this.bot.api
       .sendChatAction(this.options.chatId, "typing")
-      .catch((error) => this.log().debug({ err: error }, "status typing action failed"));
+      .catch((error) => this.log().debug({ err: error }, "typing action failed"));
+  }
+
+  /**
+   * Surface a preparation status line on a single provisional message, created on
+   * the first call and edited in place thereafter. Serialized through the send
+   * mutex so it orders cleanly behind any in-flight send; respond() reclaims it as
+   * the streaming message, so the lead-in never lingers across a normal exchange.
+   */
+  private async showLeadIn(text: string): Promise<void> {
+    const log = this.log();
+    const display = `_${text}_`;
+
+    await this.mutex.run(async () => {
+      try {
+        if (this.leadInMessageId == null) {
+          this.leadInMessageId = await sendWithMarkdownFallback(
+            this.bot.api,
+            this.options.chatId,
+            display,
+          );
+        } else {
+          await editWithMarkdownFallback(
+            this.bot.api,
+            this.options.chatId,
+            this.leadInMessageId,
+            display,
+          );
+        }
+      } catch (error) {
+        log.debug({ err: error }, "lead-in status failed");
+      }
+    });
   }
 
   /**
@@ -335,6 +387,8 @@ export class TelegramChannel implements Channel {
     if (inbound == null) return;
 
     this.lastInboundId = message.message_id;
+    // Bridge the gap until respond()'s typing loop takes over.
+    this.pingTyping();
     this.runtimeOrThrow().submit(this.routeReply(inbound));
   }
 
@@ -368,6 +422,8 @@ export class TelegramChannel implements Channel {
     }
 
     this.lastInboundId = message.message_id;
+    // Bridge the download latency until respond()'s typing loop takes over.
+    this.pingTyping();
 
     try {
       const destPath = join(this.options.mediaDir, generateMediaFilename(resolved));

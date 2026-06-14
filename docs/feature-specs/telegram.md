@@ -44,6 +44,7 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | R20 | When an inbound message (text, media, or reaction) targets a previously recorded message — via Telegram reply-to or the reacted-to message id — and that message maps to a known session, the turn carries `metadata.resumeSessionId` so the boundary force-routes it to the owning session; a target with no recorded session falls back to normal active-session/boundary routing |
 | R21 | A reply to a message that carries text quotes a truncated form of that text as a `Replied to:` prefix on the turn so the agent sees what was replied to |
 | R22 | `shutdownStatus(text)` renders shutdown-sequence progress on a single dedicated message: the first call sends it as an italic `_<text>_` message, subsequent calls edit that message in place; it is serialized through the send mutex and the final line is left visible in the chat. The coordinator calls it during teardown (see [conversation-loop](conversation-loop.md) R15/R17) because the streaming renderer that hosts normal `status()` lines no longer exists |
+| R23 | On receipt of a submitted inbound text or media message (excluding `/stop`, which aborts), the channel fires a one-shot `typing` chat action immediately in its message handler — ahead of `runtime.submit()` (text) or the media download — so an indicator is visible before the coordinator's preparation work (inbox drain, inbound middleware, session open) runs, bridging the gap until `respond()`'s typing refresh loop takes over. During preparation (the window before streaming starts), `status()` lines surface on a single provisional lead-in message: the first creates it, subsequent lines edit it in place, and the typing indicator is refreshed alongside. When the response streams, `respond()` reclaims that message as the streaming message so the response text replaces it in place; if the exchange yields no text, the lead-in is deleted. Messages steered into or queued behind a live exchange skip preparation, so no lead-in is shown for them |
 
 ## Behaviors
 
@@ -103,6 +104,18 @@ The channel renders each exchange progressively under the mutex: a `StreamRender
 - Given Telegram rejects a converted send with a "can't parse entities" or "message is too long" error, when the fallback runs, then the raw text is resent without `parse_mode` and the message is delivered unformatted
 - Given a `respond()` and a `deliver()` overlap, when both run, then the mutex serializes them FIFO and their API calls never interleave
 - Given the coordinator calls `shutdownStatus()` during teardown, when the first line arrives, then a dedicated italic message is sent; when subsequent lines arrive (e.g. `Post-processing: …`, `Done`), then that same message is edited in place rather than new messages being sent
+
+### Receipt and Preparation Feedback (R23)
+
+The channel gives immediate feedback the moment a message arrives and keeps a visible status line through preparation (boundary detection, middleware, session open) — the window before `respond()` starts streaming. The preparation lead-in is a single provisional message that the streaming response reclaims, so feedback never opens a second message and never lingers past a normal exchange. (If an exchange aborts after a lead-in already appeared — a rare preparation error with no response — that line may remain until a later preparation or response reclaims the same message.)
+
+**Acceptance Criteria**:
+- Given an authorized text or media message that will be submitted, when handled, then a one-shot `typing` chat action fires immediately on receipt — before the message is submitted (text) or before its download begins (media)
+- Given a `/stop` message, when handled, then no typing action fires (only `⏹ Stopped.` is sent)
+- Given a `status()` line arrives during preparation (no streaming renderer active), when handled, then it surfaces on a single provisional italic `_<text>_` message — created on the first line, edited in place on subsequent lines — and the `typing` indicator is refreshed
+- Given a lead-in message exists when `respond()` starts, when the exchange streams text, then the lead-in is reclaimed as the streaming message (the response text edits it in place rather than sending a second message)
+- Given a lead-in message exists when `respond()` starts, when the exchange yields no text, then the lead-in message is deleted
+- Given a message is steered into a live exchange or queued behind it, when submitted, then it skips preparation and no lead-in is shown for it
 
 ### Inbound Media (R8, R9, R10)
 
