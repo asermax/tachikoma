@@ -46,6 +46,7 @@
     "@semantic-release/npm": "13.1.5",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "^25.9.3",
+    "@vitest/coverage-v8": "4.1.8",
     "drizzle-kit": "^0.31.10",
     "semantic-release": "25.0.5",
     "typescript": "^6.0.3",

@@ -12,6 +12,9 @@ run *args:
 test *args:
     pnpm vitest run {{ args }}
 
+coverage *args:
+    pnpm vitest run --coverage {{ args }}
+
 lint:
     pnpm biome check .
 
