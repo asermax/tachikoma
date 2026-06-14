@@ -109,6 +109,17 @@ describe("summarizeToolActivities", () => {
     expect(summarizeToolActivities([{ toolName: "bash", args: {} }])).toBe("Running a command");
   });
 
+  it("escapes backticks in the inline-code wrapper (CommonMark 6.1 double-backtick)", () => {
+    // Bash command containing a backtick — single backticks would collide.
+    expect(
+      summarizeToolActivities([{ toolName: "bash", args: { command: "echo `whoami`" } }]),
+    ).toBe("Running: `` echo `whoami` ``");
+    // The same handling applies to other inline-code summaries (e.g. a pattern).
+    expect(summarizeToolActivities([{ toolName: "grep", args: { pattern: "a`b" } }])).toBe(
+      "Searching for `` a`b ``",
+    );
+  });
+
   it("summarizes unknown tools by their humanized name", () => {
     expect(summarizeToolActivities([{ toolName: "run_task_now", args: {} }])).toBe(
       "Used Run Task Now",

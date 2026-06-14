@@ -11,8 +11,14 @@ const asString = (value: unknown, fallback = "..."): string =>
 
 const basename = (path: string): string => path.split("/").filter(Boolean).at(-1) ?? path;
 
-/** Wrap a value in Telegram inline-code markdown for visual grouping. */
-const code = (value: string): string => `\`${value}\``;
+/**
+ * Wrap a value in Telegram inline-code markdown for visual grouping. When the
+ * content itself contains a backtick, single backticks would collide and break
+ * the span, so we switch to a double-backtick span with space padding per
+ * CommonMark 6.1 (mirrors the legacy `code_wrap`).
+ */
+const code = (value: string): string =>
+  value.includes("`") ? `\`\` ${value} \`\`` : `\`${value}\``;
 
 // Present-progressive live-activity labels keyed by pi's tool name. Each entry
 // maps a tool's args to a friendly line shown while the tool runs. pi's built-in
