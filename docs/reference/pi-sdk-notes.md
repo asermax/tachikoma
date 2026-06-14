@@ -38,7 +38,7 @@ const { session, extensionsResult, modelFallbackMessage } = await createAgentSes
   customTools: [defineTool({ ... })],
   excludeTools: [...],
   resourceLoader: loader,
-  sessionManager: SessionManager.create(cwd) | .inMemory() | .continueRecent(cwd) | .open(path),
+  sessionManager: SessionManager.create(cwd) | .inMemory() | .continueRecent(cwd) | .open(path) | .forkFrom(srcPath, targetCwd, sessionDir),
   settingsManager: SettingsManager.create() | .inMemory({...}),  // applyOverrides(), flush(), drainErrors()
   authStorage, modelRegistry,
 });
@@ -90,9 +90,11 @@ Extensions: TS modules (loaded via jiti, no compile) exporting `default function
 
 JSONL trees at `~/.pi/agent/sessions/--<cwd-slug>--/<timestamp>_<uuid>.jsonl`; entries have `id`/`parentId`; entry types include `session` (header, may carry `parentSession`), `message`, `model_change`, `compaction`, `branch_summary`, `label`, `custom` (extension state via `appendEntry`), `custom_message`.
 
-`SessionManager` instance API: `getEntries/getTree/getPath/getLeafEntry/getEntry/getChildren/getLabel/appendLabelChange/appendMessage/branch(entryId)/branchWithSummary(id, summary)/createBranchedSession(leafId)/getSessionFile`. Static: `list(cwd)`, `listAll(cwd)`.
+`SessionManager` instance API: `getEntries/getTree/getPath/getLeafEntry/getEntry/getChildren/getLabel/appendLabelChange/appendMessage/branch(entryId)/branchWithSummary(id, summary)/createBranchedSession(leafId)/getSessionFile`. Static: `list(cwd)`, `listAll(cwd)`, `forkFrom(srcPath, targetCwd, sessionDir?)` — reads the source read-only and writes a fresh history-seeded session file (`parentSession` points at the source).
 
-**Post-processing pattern:** open the transcript read-only via `SessionManager.open(path)`, walk entries, and run one-shot extraction with `pi-ai` `complete()`/`completeSimple()` or an in-memory `createAgentSession` seeded via `session.agent.state.messages`. `terminate: true` tool results give structured output.
+**Post-processing patterns (two shapes):**
+- **Conversation-aware (fork-continue):** for work that benefits from the live conversation — memory extraction, core-context — fork the just-ended session with `SessionManager.forkFrom` (wrapped by `AgentManager.forkAndContinue`) and send a follow-up user instruction. The same assistant continues with the full history live and persona intact; pass a `tools` allowlist to restrict it (the `tools` option is independent of the system prompt, so persona survives). The source transcript is never mutated.
+- **Context-free (one-shot):** for work that needs no conversation context — boundary classification, rolling summaries, commit messages, nightly store maintenance — run `pi-ai` `complete()`/`completeSimple()` or a bare in-memory `createAgentSession` with a tool allowlist. `terminate: true` tool results give structured output.
 
 ## Skills
 

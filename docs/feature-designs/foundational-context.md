@@ -16,7 +16,7 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 **Constraints:**
 - `app.agent.systemPrompt` builders are synchronous (`() => string`), so only synchronous file I/O (`readFileSync`) can run at composition time — no `await`ed reads
 - pi already discovers AGENTS.md from the workspace root; duplicating it in the override would inject it twice
-- Headless side runs have plain file tools and no MCP — any agent-managed state must be a file (see `docs/reference/pi-sdk-notes.md`)
+- The fork is tool-limited by a plain allowlist and there is no MCP — any agent-managed state must be a file (see `docs/reference/pi-sdk-notes.md`)
 
 **Interactions:**
 - The system prompt override is composed per session open by `AgentManager` (see [agent-integration](./agent-integration.md))
@@ -27,7 +27,7 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 
 ## Design Overview
 
-Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook creates SOUL.md and USER.md from templates on first run and caches their contents as a fallback, and a registered system-prompt builder re-reads both files from disk synchronously on every build (`readFileSync`, falling back to the cached snapshot only on a read error) and calls the core `buildMainSystemPrompt` ([DES-005](../design/DES-005-base-prompt-ownership.md)), which combines the identity, the shared `OPERATIONAL_GUIDANCE` plus interactive guidance, the file contents, and the workspace root. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it renders the closed conversation from the pi transcript, expires and snapshots the pending-signals file, and hands everything to a headless agent that edits the three context files and the signals file directly.
+Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook creates SOUL.md and USER.md from templates on first run and caches their contents as a fallback, and a registered system-prompt builder re-reads both files from disk synchronously on every build (`readFileSync`, falling back to the cached snapshot only on a read error) and calls the core `buildMainSystemPrompt` ([DES-005](../design/DES-005-base-prompt-ownership.md)), which combines the identity, the shared `OPERATIONAL_GUIDANCE` plus interactive guidance, the file contents, and the workspace root. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it expires and snapshots the pending-signals file, builds a follow-up instruction, then forks the just-ended pi session (`forkAndContinue`) so the same assistant — full conversation live in its history — edits the three context files and the signals file directly, hard-limited to file tools.
 
 ## Components
 
@@ -36,7 +36,7 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/extensions/context/index.ts` | Extension wiring: `load-context-files` bootstrap hook, `readOrCreate` with templates, system prompt builder that re-reads SOUL.md/USER.md from disk per build (`fresh()` with cached fallback) and delegates composition to core `buildMainSystemPrompt` | Only ENOENT triggers template creation — other read errors abort startup; per-build `readFileSync` so processor edits apply next session; AGENTS.md deliberately untouched (pi native discovery); base-prompt text lives in core, not inline ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
-| `src/extensions/context/processor.ts` | `createCoreContextProcessor` (`core-context`, `preFinalize`); pending-signals parse/serialize/clean; the full update policy as `SYSTEM_TEMPLATE` | Reuses `loadConversation` and `localIsoDate` from the memory extension; signals live in `dataDir`, outside user-visible workspace content |
+| `src/extensions/context/processor.ts` | `createCoreContextProcessor` (`core-context`, `preFinalize`); pending-signals parse/serialize/clean; the full update policy as `INSTRUCTION_TEMPLATE` (follow-up user-instruction shape, with a silent-background directive) | Forks via `forkAndContinue` with the `MEMORY_FILE_TOOLS` allowlist; reuses `localIsoDate` from the memory extension; signals live in `dataDir`, outside user-visible workspace content |
 
 ## Key Decisions
 
@@ -56,9 +56,9 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 ### File-based pending signals edited by the agent
 
 **Choice**: Store ambiguous signals as a dated markdown list at `{dataDir}/pending-signals.md`; the agent stages/promotes/discards by editing the file directly with its file tools, while the host only parses it for the prompt snapshot and enforces the 30-day expiry.
-**Why**: Headless pi runs have file tools and no custom-tool transport, so dedicated add/remove tools have nowhere to live; a strict line format (`- **YYYY-MM-DD**: text`) keeps the file machine-parseable anyway.
+**Why**: The fork runs under a plain file-tool allowlist with no custom-tool transport, so the legacy implementation's dedicated MCP tools (`add_pending_signal`/`remove_pending_signal`) have nowhere to live — and they are unnecessary: a strict line format (`- **YYYY-MM-DD**: text`) lets the agent stage/promote/discard with the same `edit`/`write` tools it already uses for the context files. This is what unblocked the fork conversion: the pending-signals mechanism was already file-based, so no MCP porting was needed.
 **Alternatives Considered**:
-- Custom tools via `customTools` on the side session: more host code for the same effect, and the agent still needs file tools for the context files themselves
+- Legacy MCP `add_pending_signal`/`remove_pending_signal` tools on the fork: pi has no MCP layer, and file edits cover the same need
 - Database-backed signals: loses direct user inspectability and requires injection plumbing both ways
 
 **Consequences**:
@@ -69,10 +69,10 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 ### preFinalize phase, registered by the memory extension
 
 **Choice**: The processor runs in the `preFinalize` phase and is registered in `src/extensions/memory/index.ts` next to the extraction processors.
-**Why**: Phase ordering guarantees context updates land after memory extraction (`main`) and before the git commit (`finalize`), so every closed session commits consistent context files. Registration lives in memory for now because the processor shares its dependencies (`loadConversation`, `maxTranscriptChars` config, `app.agent.side`) — the code marks this as transitional until the context extension grows its own processor wiring.
+**Why**: Phase ordering guarantees context updates land after memory extraction (`main`) and before the git commit (`finalize`), so every closed session commits consistent context files. Registration lives in memory for now because the processor shares its dependency surface with extraction (the `forkAndContinue` primitive and `MEMORY_FILE_TOOLS`) — the code marks this as transitional until the context extension grows its own processor wiring.
 **Alternatives Considered**:
 - `main` phase: would race with extraction processors that read AGENTS.md for deduplication
-- Registering in `context/index.ts` today: duplicates the transcript-rendering config knob or forces a premature shared-config story
+- Registering in `context/index.ts` today: forces a premature shared-wiring story for the fork primitive and the tool allowlist
 
 **Consequences**:
 - Pro: deterministic ordering relative to extraction and the workspace commit
@@ -84,13 +84,13 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 
 **Given**: A staged signal "User seemed to prefer shorter responses" from a previous session
 **When**: A new session closes where the user says "your answers are way too long"
-**Then**: The headless agent sees the signal as `S1` in its prompt, updates SOUL.md with the conciseness preference, and deletes the promoted line from the signals file.
+**Then**: The forked agent sees the signal as `S1` in its follow-up instruction, updates SOUL.md with the conciseness preference, and deletes the promoted line from the signals file.
 
 ### Scenario: Session closes with no transcript
 
 **Given**: A `PostProcessorContext` whose `transcriptPath` is null (the coordinator fills it from the session record's `piSessionFile`, so this is a session that produced no transcript)
 **When**: Post-processing reaches `core-context`
-**Then**: The processor's `process({ transcriptPath, log })` sees `transcriptPath == null`, logs a debug line, and returns without issuing a headless run.
+**Then**: The processor's `process({ transcriptPath, log })` sees `transcriptPath == null`, logs a debug line, and returns without forking.
 
 ### Scenario: All staged signals have expired
 

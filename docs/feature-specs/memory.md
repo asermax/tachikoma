@@ -4,7 +4,7 @@
 
 ## Overview
 
-The `memory` extension (`src/extensions/memory/`) maintains long-term memory as git-versioned markdown under the workspace `memories/` directory, organized into three stores — episodic (date-stamped summaries), facts (topic-named reference information), preferences (topic-named subjective choices) — plus raw transcript archives. A static index of the store is injected into every message's context; extraction processors fold each closed conversation into the stores via headless agent runs; nightly maintenance crons consolidate and prune each store, and a separate nightly job prunes transcript archives older than a configurable retention window.
+The `memory` extension (`src/extensions/memory/`) maintains long-term memory as git-versioned markdown under the workspace `memories/` directory, organized into three stores — episodic (date-stamped summaries), facts (topic-named reference information), preferences (topic-named subjective choices) — plus raw transcript archives. A static index of the store is injected into every message's context; extraction processors fold each closed conversation into the stores by forking the just-ended pi session (the same assistant continues, with the full conversation live in its history, tool-limited to file edits); nightly maintenance crons consolidate and prune each store, and a separate nightly job prunes transcript archives older than a configurable retention window.
 
 Memory agents have no delete tool: files to be removed are emptied by the agent and swept by the host afterwards. Facts and preferences each carry a `MEMORY.md` index mapping filenames to one-line descriptions, kept in sync at write time and rebuilt weekly. The extension's setup also hosts the registration of the `core-context` processor (see [foundational-context](./foundational-context.md)).
 
@@ -23,10 +23,10 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 | R2 | A `memory-index` context provider injects a `memories`-tagged block on every message: a layout section describing the stores plus the parsed facts and preferences indexes; it returns null when `memories/` does not exist |
 | R3 | Index entries must match `[Name](./file.md): description`; malformed lines are skipped, and an index with no usable entries contributes no section |
 | R4 | One post-processor per store (`memory-episodic`, `memory-facts`, `memory-preferences`), all in the `main` phase, runs at session close |
-| R5 | Transcript parsing keeps only user/assistant text from the pi JSONL — tool calls, tool results, thinking blocks, and non-message entries are dropped; malformed lines are skipped |
-| R6 | The rendered conversation is capped at `maxTranscriptChars` (default 24000) with tail priority — newest turns are kept and a truncation marker is prepended when older turns are dropped |
-| R7 | Extraction is skipped (no LLM call) when the session has no transcript or the transcript renders to an empty conversation |
-| R8 | Each extraction runs a headless agent (`app.agent.side.run`) on the `processor` tier with file tools (`read`, `grep`, `find`, `ls`, `edit`, `write`) and a store-specific system prompt with `$WORKSPACE` and `{date}` substituted |
+| R5 | Each extraction forks the just-ended pi session — `app.agent.forkAndContinue(piSessionFile, instruction, "processor", MEMORY_FILE_TOOLS)`, backed by `SessionManager.forkFrom` — so the extraction agent is the same assistant with the full conversation live in its history and the composed persona intact; the source transcript is never mutated |
+| R6 | The fork is hard-limited to file tools (`read`, `grep`, `find`, `ls`, `edit`, `write`) — even though it reuses the live session, the allowlist also filters out the conversation's messaging/notification/task tools — and the store instruction carries a silent-background directive (no chat reply, no messaging/task tools, only its store's files) |
+| R7 | Extraction is skipped (no fork) when the session has no transcript (`piSessionFile` is null); the forked agent itself decides when a conversation yields nothing worth recording |
+| R8 | Each extraction's instruction is a follow-up user turn to the same assistant ("We just finished the conversation above. Using what you already know …"), with `$WORKSPACE` and `{date}` substituted — not a persona-resetting system prompt |
 | R9 | Episodic extraction writes exactly one local-date file per day (`YYYY-MM-DD.md`), merging into an existing day file and folding variant-named files back into the canonical one; trivial conversations may produce nothing |
 | R10 | Facts extraction targets stable reference information with broad topic filenames; it searches for overlap before creating files, consolidates at write time, prunes contradicted entries, and keeps files under ~40 lines |
 | R11 | Preferences extraction targets subjective choices; it applies a facts-vs-preferences self-check, skips preferences already captured in AGENTS.md, and keeps files under ~30 lines |
@@ -41,7 +41,7 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 | R19 | Facts/preferences maintenance prompts include light index-consistency instructions on weekdays and a full `MEMORY.md` rebuild on Sundays; episodic maintenance includes no index section |
 | R20 | Maintenance prompts include the store-purpose section, a names-only cross-store manifest (other stores plus existing root context files; omitted when nothing else exists), contradiction-detection instructions, and the scope section |
 | R20a | The foundational-context maintenance tick reviews `SOUL.md`, `USER.md`, `AGENTS.md` at the workspace root for staleness, redundancy, overlap, and size (USER.md ~120 lines, AGENTS.md ~400 lines); it is cleanup-only (adds no new content — that is the per-session `core-context` processor's job), especially conservative for SOUL.md, runs no `sweepEmptyMarkdown` (edits in place, never empties), and its prompt carries the store-purpose section plus a names-only memory-store manifest so context defers to the more authoritative facts store (omitted when the stores are empty) |
-| R21 | Configuration lives under `[extensions.memory]`: `enabled`, `maxTranscriptChars`, and `maintenance` (`enabled`, three store schedules, `contextSchedule`, `recentDays`, `weeklyThresholdMonths`, `monthlyThresholdMonths`, plus `transcriptsSchedule` and `transcriptRetentionDays` for transcript retention) |
+| R21 | Configuration lives under `[extensions.memory]`: `enabled` and `maintenance` (`enabled`, three store schedules, `contextSchedule`, `recentDays`, `weeklyThresholdMonths`, `monthlyThresholdMonths`, plus `transcriptsSchedule` and `transcriptRetentionDays` for transcript retention) |
 | R22 | `enabled = false` registers nothing — no bootstrap hook, provider, processors, or crons |
 | R23 | A transcript-prune cron deletes `.jsonl` files in `memories/transcripts/` whose modification time (set at archive write) is strictly older than `transcriptRetentionDays` (default 90); it is deterministic host-side deletion (no headless agent run), skips non-`.jsonl` files, never throws (missing dir is a silent no-op; per-file failures warn and continue), and is disabled — retaining transcripts forever — when `transcriptRetentionDays <= 0` (i.e. zero or any negative value) |
 
@@ -64,11 +64,11 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 
 ### Extraction at Session Close (R4–R8, R13, R14)
 
+
 **Acceptance Criteria**:
-- Given a closed session with a transcript, when the `main` phase runs, then each store's processor renders the conversation and issues one headless run whose system prompt names the absolute store directory and whose prompt embeds the conversation in role-prefixed form
-- Given a transcript with tool calls, tool results, thinking blocks, and malformed lines, when parsed, then only user and assistant text turns survive
-- Given a conversation longer than `maxTranscriptChars`, when rendered, then the newest turns are kept, `[earlier conversation truncated]` is prepended, and a single overlong turn is tail-clipped to fit
-- Given no transcript or an empty rendering, when a processor runs, then no headless run is issued
+- Given a closed session with a transcript, when the `main` phase runs, then each store's processor forks that pi session (`forkAndContinue`) and hands the same assistant one follow-up instruction naming the absolute store directory, hard-limited to file tools — the full conversation is already live in the fork's history, not replayed as text
+- Given the fork reuses the live session, when the allowlist is applied, then the extraction agent can only use the file tools (`read`/`grep`/`find`/`ls`/`edit`/`write`); the conversation's messaging/notification/task tools are filtered out, and the silent-background directive reinforces this
+- Given no transcript (`piSessionFile` is null), when a processor runs, then no fork is issued
 - Given the agent emptied a file (merge or obsolescence), when the run completes, then the sweep deletes it while non-empty files survive
 
 ### Transcript Archival (R15)
@@ -94,5 +94,5 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 ### Configuration (R21, R22)
 
 **Acceptance Criteria**:
-- Given no `[extensions.memory]` section, when the extension loads, then defaults apply: enabled, 24000 transcript chars, maintenance enabled with schedules `0 3 * * *` / `20 3 * * *` / `40 3 * * *` (stores), `0 4 * * *` (context), `50 3 * * *` (transcripts), thresholds 15 days / 3 months / 12 months, and `transcriptRetentionDays` 90
+- Given no `[extensions.memory]` section, when the extension loads, then defaults apply: enabled, maintenance enabled with schedules `0 3 * * *` / `20 3 * * *` / `40 3 * * *` (stores), `0 4 * * *` (context), `50 3 * * *` (transcripts), thresholds 15 days / 3 months / 12 months, and `transcriptRetentionDays` 90
 - Given `enabled = false`, when the extension loads, then setup logs the disabled state and registers nothing

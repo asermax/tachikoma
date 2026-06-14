@@ -7,16 +7,16 @@
 
 ## Purpose
 
-Explains how long-term memory is built on pi primitives: transcript re-reading plus headless side runs.
+Explains how long-term memory is built on pi primitives: forking the just-ended session and continuing it as a tool-restricted follow-up turn.
 
 ## Problem Context
 
-pi sessions are in-process JSONL trees, there is no MCP, and tool scoping is by tool list only (see `docs/reference/pi-sdk-notes.md`) — there is no session-forking-with-scoped-permissions mechanism to lean on. Memory extraction therefore has to work from the persisted transcript and express all policy — store routing, deduplication, consolidation, validation — in prompts executed by ephemeral headless agents.
+pi sessions are in-process JSONL trees stored on disk and forkable: `SessionManager.forkFrom` copies a session file's history into a fresh session without mutating the source, and `tools` on `createAgentSession` is an allowlist independent of the system prompt (see `docs/reference/pi-sdk-notes.md`). Memory extraction leans on this: at session close it forks the just-ended conversation so the same assistant — full history live, persona intact — folds it into the stores, with policy (store routing, deduplication, consolidation, validation) expressed in a follow-up user instruction. Tool discipline is enforced by a hard `MEMORY_FILE_TOOLS` allowlist on the fork, not by a separate ephemeral persona.
 
 **Constraints:**
-- Headless runs (`SideRunner.run`) get pi built-in file tools only; there is no delete tool and no per-directory write enforcement
-- Extraction prompts must be bounded — transcripts can exceed any context window
-- Everything is registered through the extension API (DES-001) and validated without live LLM calls (DES-002)
+- The fork gets a hard file-tool allowlist (`MEMORY_FILE_TOOLS`); there is no delete tool and no per-directory write enforcement, so emptying-a-file plus a host sweep stands in for deletion
+- The fork loads the whole conversation as live history — fidelity is full, but cost scales with conversation length (×3 stores, run in parallel)
+- Everything is registered through the extension API (DES-001) and validated without live LLM calls (DES-002) — tests fake `forkAndContinue` and assert on its arguments
 
 **Interactions:**
 - Post-processing phases (`main` → `preFinalize` → `finalize`) are run by the coordinator on session close (see [conversation-loop](./conversation-loop.md))
@@ -26,19 +26,19 @@ pi sessions are in-process JSONL trees, there is no MCP, and tool scoping is by 
 
 ## Design Overview
 
-`src/extensions/memory/index.ts` only wires: a bootstrap hook for the layout, a context provider for index injection, one extraction processor per store, the core-context and transcript-archive processors, three store maintenance crons, a foundational-context maintenance cron, and a transcript-prune cron. All logic lives in sibling modules taking narrow dependencies (`Pick<SideRunner, "run">`), so tests fake the runner and assert on the options it receives.
+`src/extensions/memory/index.ts` only wires: a bootstrap hook for the layout, a context provider for index injection, one extraction processor per store, the core-context and transcript-archive processors, three store maintenance crons, a foundational-context maintenance cron, and a transcript-prune cron. Extraction and core-context take a narrow `Pick<AgentManager, "forkAndContinue">` dependency; the maintenance ticks take `Pick<SideRunner, "run">` (they have no conversation to fork). Tests fake those and assert on the arguments they receive.
 
 ```
 message ──> memory-index provider ──> <context owner="memories"> layout + indexes
-session close ──> main:        memory-episodic | memory-facts | memory-preferences (parallel)
-                  preFinalize: core-context
+session close ──> main:        memory-episodic | memory-facts | memory-preferences (parallel forks)
+                  preFinalize: core-context (fork)
                   finalize:    transcript-archive | git-commit
 nightly cron ──> runMaintenanceTick(store) ──> headless run ──> sweepEmptyMarkdown
 nightly cron ──> runContextMaintenanceTick ──> headless run (SOUL/USER/AGENTS, cleanup-only, no sweep)
 nightly cron ──> pruneTranscripts ──> delete transcripts older than retentionDays (no agent)
 ```
 
-Each extraction renders the transcript to role-prefixed text, composes the store's system prompt from shared sections, runs the headless agent, then sweeps emptied files.
+Each extraction forks the just-ended pi session (`forkAndContinue`), composes the store's instruction from shared sections, hands the forked assistant one follow-up turn under a file-tool allowlist, then sweeps emptied files. The nightly maintenance ticks differ: they have no conversation to fork, so they run bare headless side-runs (`SideRunner.run`) over the store on disk.
 
 ## Components
 
@@ -46,30 +46,29 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/memory/index.ts` | Wiring and config schema (`enabled`, `maxTranscriptChars`, `maintenance`) | Registers `createCoreContextProcessor` on behalf of the context extension (marked transitional); staggered maintenance schedules as config defaults |
+| `src/extensions/memory/index.ts` | Wiring and config schema (`enabled`, `maintenance`) | Registers `createCoreContextProcessor` on behalf of the context extension (marked transitional); staggered maintenance schedules as config defaults |
 | `src/extensions/memory/layout.ts` | Store paths, `ensureMemoryLayout` (dirs + index seeding), `sweepEmptyMarkdown`, `fileExists` | Placeholder index entries for pre-existing files; sweep treats ≤64-byte whitespace-only files as empty |
 | `src/extensions/memory/indexes.ts` | `createMemoryIndexProvider`, `formatMemoryIndex` | Strict entry regex — malformed lines vanish; layout section always injected when `memories/` exists |
-| `src/extensions/memory/extraction.ts` | `createExtractionProcessor` per store; store base prompts; prompt assembly | `main` phase; skip on missing/empty transcript; sweep after every run |
+| `src/extensions/memory/extraction.ts` | `createExtractionProcessor` per store; store base prompts (follow-up user-instruction shape); `storeInstruction`/`MEMORY_FILE_TOOLS`; the silent-background section | `main` phase; forks via `forkAndContinue` with the `MEMORY_FILE_TOOLS` allowlist; skip on missing transcript; sweep after every run |
 | `src/extensions/memory/prompts.ts` | Shared prompt sections: store purpose, classification examples, context dedup, workspace validation, index update, light index maintenance, scope | The scope section defines the empty-file deletion protocol |
-| `src/extensions/memory/transcript.ts` | `parseTranscript`, `renderConversation`, `loadConversation` | Text-only turns; tail-priority truncation with marker |
 | `src/extensions/memory/archive.ts` | `createTranscriptArchiveProcessor` (`finalize`) writes archives; `pruneTranscripts` (nightly cron) deletes old ones | Names archive after the JSONL header session id; age-based prune by file mtime; both never throw |
 | `src/extensions/memory/maintenance.ts` | `runMaintenanceTick`, per-store maintenance prompts, `buildCrossStoreManifest`, `maintenanceSystemPrompt`; `runContextMaintenanceTick`, `contextMaintenanceSystemPrompt`, `buildStoreManifestForContext` for foundational-context cleanup | Injectable `now` clock for the Sunday rebuild dispatch; context tick is cleanup-only and runs no sweep (edits in place); both `runMaintenanceTick` and `runContextMaintenanceTick` call `commitChanges` after the headless run so each nightly pass commits its edits (`chore(memory): scheduled <store>/context file maintenance`) — the transcript prune does not commit |
 | `src/extensions/memory/dates.ts` | `localIsoDate` | Local timezone — memory filenames follow the user's day, not UTC |
 
 ## Key Decisions
 
-### Transcript re-read plus headless run instead of session forking
+### Fork-continue the just-ended session instead of replaying the transcript as text
 
-**Choice**: Extraction processors read the persisted pi JSONL (`loadConversation`), render user/assistant text capped at `maxTranscriptChars` with tail priority, and run an ephemeral in-memory pi session (`app.agent.side.run`) with file tools.
-**Why**: This is pi's documented post-processing pattern (open the transcript read-only, run one-shot extraction). Forking the live session is unnecessary — the extraction agent needs the conversation content, not the conversational context — and an ephemeral session leaves nothing on disk and binds no Tachikoma extensions.
+**Choice**: Extraction processors fork the just-ended pi session (`forkAndContinue`, backed by `SessionManager.forkFrom`) and hand the same assistant — full conversation live in its history, composed persona intact — one follow-up user instruction, hard-limited to `MEMORY_FILE_TOOLS`. The source transcript is never mutated. This mirrors the legacy Python implementation, which forked the SDK session (`fork_session=True`) rather than replaying text.
+**Why**: The agent that just had the conversation already holds it in full fidelity (real turns, tool activity, thinking), so "use what you already know" is more faithful and natural than re-reading a flattened, truncated `<conversation>` blob. `forkFrom` copies the history into a fresh file without touching the original; the `tools` allowlist (independent of persona) keeps the fork from messaging the user or firing tasks even though it reuses the live session.
 **Alternatives Considered**:
-- Seeding an agent session with `session.agent.state.messages` (true fork): carries tool noise and unbounded context into every extraction
+- Transcript re-read + ephemeral headless run (the prior TS shape): bounded cost but lossy — flattened to user/assistant text, tail-truncated at a char cap, tool activity and thinking discarded
 - `complete()` one-shots without tools: the agent could not read existing memories, grep for overlap, or edit files — the entire dedup/consolidation policy depends on tools
 
 **Consequences**:
-- Pro: extraction cost is bounded by the char cap; the tail bias keeps a session's conclusions
-- Pro: processors are pure functions of `(transcriptPath, workspaceRoot)` — trivially testable with a faked runner
-- Con: tool activity and thinking are invisible to extraction; only what was said survives into memory
+- Pro: full-fidelity context — the extraction agent sees exactly what it lived, not a truncated rendering
+- Pro: processors are thin over `forkAndContinue(transcriptPath, instruction, "processor", MEMORY_FILE_TOOLS)` — tested by faking the forker and asserting its arguments
+- Con: the fork loads the whole conversation as live tokens, so cost scales with conversation length (×3 stores, parallel); no char cap bounds it
 
 ### Empty-file deletion protocol with host-side sweep
 
