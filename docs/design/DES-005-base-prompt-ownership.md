@@ -21,8 +21,8 @@ one-shot writer) is *not* a base prompt and stays co-located with the feature th
 when to reach for it) is likewise *not* a base prompt: it supplements the standing identity rather
 than replacing pi's base. Each extension **owns its own guidance text** (e.g. `src/extensions/<name>/usage.ts`)
 and injects it as a persisted context section through the DES-001 seam
-`app.agent.use({ name, contextProvider, sessionScopes })`. The shared helper that turns that text
-into a `before_agent_start` factory (`persistentContextSection`, `src/agent/system-prompt-section.ts`)
+`app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })`. The shared helper
+that turns that text into a `before_agent_start` factory (`persistentContextSection`, `src/agent/system-prompt-section.ts`)
 lives in core, but the **text stays with the feature**. Scope each section to the sessions where the
 extension's tools actually exist (`["main", "background"]` vs main-only) — never describe a tool to
 an agent that cannot call it.

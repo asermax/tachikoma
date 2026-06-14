@@ -50,7 +50,7 @@ Isolation spans the whole third-party startup, not just loading. `app.registerEx
 ### The `defineExtension` contract replaces the manifest plugin system
 
 **Choice**: Third-party extensions are ordinary `defineExtension` modules — the same shape as `src/extensions/<name>/index.ts` in-tree. Validation checks only that shape (`name`, `setup`, optional `configSchema`); there is no manifest file, no contribution declarations, no namespacing layer.
-**Why**: DES-001 already gives extensions everything the plugin system provided through bespoke manifest sections — config (`configSchema` + `[extensions.<name>]`), startup hooks (`app.bootstrap`), context sections (`app.agent.use({ contextProvider })`), post-processors (`app.sessions.registerProcessor`), events (`app.events`), tools (`app.agent.use`). A second declaration format would duplicate that surface and drift from it.
+**Why**: DES-001 already gives extensions everything the plugin system provided through bespoke manifest sections — config (`configSchema` + `[extensions.<name>]`), startup hooks (`app.bootstrap`), context sections (`app.agent.use(persistentContextSection(name, { provide }))`), post-processors (`app.sessions.registerProcessor`), events (`app.events`), tools (`app.agent.use`). A second declaration format would duplicate that surface and drift from it.
 **Alternatives Considered**: A manifest-based plugin system (rejected: parallel API to maintain); pi's own `packages`/`extensions` settings (rejected: those load *pi* session-scoped extensions only, not process-scoped Tachikoma features).
 **Consequences**:
 - Pro: One authoring story — DES-002 applies verbatim to third-party authors; reading any first-party extension teaches the format

@@ -2,7 +2,6 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import type { AgentManager } from "../agent/manager.ts";
 import { SideRunner } from "../agent/side-run.ts";
-import { persistentContextSection } from "../agent/system-prompt-section.ts";
 import { parseWithSchema } from "../config/parse.ts";
 import type { Config } from "../config/schema.ts";
 import type { Coordinator } from "../coordinator.ts";
@@ -15,7 +14,6 @@ import type { SessionRegistry } from "../sessions/registry.ts";
 import type { Workspace } from "../workspace.ts";
 import {
   type AppContext,
-  type ContextSectionRegistration,
   type PostProcessingPhase,
   type PostProcessor,
   type PostProcessorContext,
@@ -209,21 +207,8 @@ export class ExtensionHost {
       },
 
       agent: {
-        use: (
-          factoryOrRegistration: ExtensionFactory | ContextSectionRegistration,
-          options?: UseFactoryOptions,
-        ) => {
-          const [factory, scopes] =
-            typeof factoryOrRegistration === "function"
-              ? [factoryOrRegistration, options?.sessionScopes]
-              : [
-                  persistentContextSection(factoryOrRegistration.name ?? "context", {
-                    provide: factoryOrRegistration.contextProvider,
-                  }),
-                  factoryOrRegistration.sessionScopes,
-                ];
-
-          const targets = factoryBindingTargets({ sessionScopes: scopes });
+        use: (factory: ExtensionFactory, options?: UseFactoryOptions) => {
+          const targets = factoryBindingTargets(options);
 
           if (targets.main) services.regs.piFactories.push(factory);
           if (targets.background) services.regs.backgroundFactories.push(factory);

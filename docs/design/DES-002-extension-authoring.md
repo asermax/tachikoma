@@ -29,7 +29,7 @@ tests/<name>/
 |---|---|
 | feature config | `configSchema` (TypeBox) + `app.extensionConfig` — section `[extensions.<name>]` |
 | startup init | `app.bootstrap("hook-name", fn)` — idempotent, fail = abort startup |
-| inject a persisted context section | `app.agent.use({ name, contextProvider, sessionScopes })` — `contextProvider` is a string or `(ctx) => string \| Promise<string>` (empty → no injection) |
+| inject a persisted context section | `app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })` — `provide` is a string or `(ctx) => string \| Promise<string>` (empty → no injection) |
 | add agent tools / pi hooks | `app.agent.use((pi) => { pi.registerTool({...}); pi.on(...); })` |
 | system prompt section | `app.agent.systemPrompt(() => "...")` |
 | cheap LLM side-calls | `app.agent.side.complete/classify` (typed via TypeBox schema) |

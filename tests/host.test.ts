@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { persistentContextSection } from "../src/agent/system-prompt-section.ts";
 import {
   defineExtension,
   type SessionScope,
@@ -74,13 +75,13 @@ describe("agent.use context-section registration", () => {
     const ext = defineExtension({
       name: "ctx-test",
       setup(app) {
-        app.agent.use({
-          name: "both",
-          contextProvider: "B",
+        app.agent.use(persistentContextSection("both", { provide: "B" }), {
           sessionScopes: ["main", "background"],
         });
-        app.agent.use({ name: "main-only", contextProvider: "M" });
-        app.agent.use({ name: "bg-only", contextProvider: "G", sessionScopes: ["background"] });
+        app.agent.use(persistentContextSection("main-only", { provide: "M" }));
+        app.agent.use(persistentContextSection("bg-only", { provide: "G" }), {
+          sessionScopes: ["background"],
+        });
       },
     });
 

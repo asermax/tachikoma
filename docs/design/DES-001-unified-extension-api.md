@@ -31,7 +31,7 @@ export default defineExtension({
     app.bootstrap("memory", async () => { /* idempotent init */ });
     app.scheduler.cron("0 3 * * *", () => maintenanceTick(app));
     app.sessions.registerProcessor({ name: "episodic", phase: "main", process: extractEpisodic });
-    app.agent.use({ name: "memory-index", contextProvider: injectIndex, sessionScopes: ["main", "background"] });
+    app.agent.use(persistentContextSection("memory-index", { provide: injectIndex }), { sessionScopes: ["main", "background"] });
 
     // ---- session-scoped (factory invoked for every agent session) ----
     app.agent.use((pi) => {
@@ -65,14 +65,14 @@ Session factories receive pi's native `ExtensionAPI` — no wrapping, no renamin
 | `app.scheduler` | croner-backed jobs: `cron(expr, fn, opts)`, `every(seconds, fn)`; all jobs named and owned by the extension |
 | `app.sessions` | session registry access + lifecycle hooks: `onOpen`, `onExchange`, `registerProcessor` (post-processing), `current()`, `close()`, `openNew()`, `resume(id)` |
 | `app.channels` | `register(channel)` for channel extensions; `deliver({ text, tier: "urgent" \| "normal" \| "low", metadata })` for background output (queued, surfaced as an agent turn), or `deliver({ text, immediate: true })` for a synchronous channel ack |
-| `app.agent` | `use(factory, { sessionScopes })` (pi extension factories) or `use({ contextProvider, sessionScopes, name })` (a persisted context section), `systemPrompt(builder)` (system-prompt section), `models` (tier lookup: agent/searcher/processor/classifier), `side` (headless side sessions for extraction/background work) |
+| `app.agent` | `use(factory, { sessionScopes })` (pi extension factories — a persisted context section uses this same form with `persistentContextSection(name, { provide })` as the factory), `systemPrompt(builder)` (system-prompt section), `models` (tier lookup: agent/searcher/processor/classifier), `side` (headless side sessions for extraction/background work) |
 | `app.bootstrap(name, hook)` | ordered, idempotent startup hooks |
 | `app.onShutdown(name, hook)` | hook run once during shutdown, before the coordinator's final delivery drain (so it can push queued output into that drain); error-isolated |
 | `app.status(text)` | progress line surfaced through the active channel during processing |
 
 ### Pipelines
 
-- **Context sections** (`app.agent.use({ contextProvider, sessionScopes, name })`): each contributes a `<context owner="…">` block injected once per session as a persisted hidden message via pi's `before_agent_start` (prepared on `session_start`, so `contextProvider` may read the session ctx and be async, and may be a static string). Sessions bind a section by `sessionScopes` (main and/or background), so context reaches the background agent exactly when scoped to it. Empty content contributes nothing. This is the single mechanism for extension-contributed context — there is no separate provider-collection layer.
+- **Context sections** (`app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })`): each contributes a `<context owner="…">` block injected once per session as a persisted hidden message via pi's `before_agent_start` (prepared on `session_start`, so `provide` may read the session ctx and be async, and may be a static string). A section is just an ordinary extension factory built by `persistentContextSection`, registered through the same `use(factory, options)` form as any other factory. Sessions bind a section by `sessionScopes` (main and/or background), so context reaches the background agent exactly when scoped to it. Empty content contributes nothing. This is the single mechanism for extension-contributed context — there is no separate provider-collection layer.
 - **Exchange processors** (`app.sessions.onExchange`): run after every completed prompt cycle (rolling summary, last-exchange tracking). Parallel, error-isolated.
 - **Post-processing** (`app.sessions.registerProcessor`): run when a session closes, in phases `main` → `preFinalize` → `finalize`; parallel within a phase, error-isolated, completion recorded per processor on the session row.
 - **Inbound middleware** (`app.inbound.use`): runs on every inbound message before the agent sees it; this is where boundary detection decides to continue, close + open, or resume a session.

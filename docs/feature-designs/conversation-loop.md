@@ -38,7 +38,7 @@ submit() ─ mid-exchange & not /queue & not /new & not system? ─→ session.s
   → exchange processors → re-evaluate the delivery queue
 ```
 
-On session resume, bridging context (summaries of sessions closed since the resumed session's prior close) reaches the agent through a host-owned pi extension factory (`hostFactory()`, registered in `src/app.ts` alongside extension factories): on `before_agent_start` it drains `pendingContext` into one hidden `bridging-context` message. Extension-contributed context (memory, projects, subsystem usage) does not flow through the coordinator — each extension registers its own context section via `app.agent.use({ contextProvider, sessionScopes })`, injected directly by pi (see [DES-001](../design/DES-001-unified-extension-api.md)).
+On session resume, bridging context (summaries of sessions closed since the resumed session's prior close) reaches the agent through a host-owned pi extension factory (`hostFactory()`, registered in `src/app.ts` alongside extension factories): on `before_agent_start` it drains `pendingContext` into one hidden `bridging-context` message. Extension-contributed context (memory, projects, subsystem usage) does not flow through the coordinator — each extension registers its own context section via `app.agent.use(persistentContextSection(name, { provide }), { sessionScopes })`, injected directly by pi (see [DES-001](../design/DES-001-unified-extension-api.md)).
 
 ## Components
 

@@ -26,7 +26,7 @@ pi sessions are in-process JSONL trees stored on disk and forkable: `SessionMana
 
 ## Design Overview
 
-`src/extensions/memory/index.ts` only wires: a bootstrap hook for the layout, a `memories` context section for index injection (`app.agent.use({ contextProvider: () => buildMemoryContext(root), sessionScopes: ["main", "background"] })`), one extraction processor per store, the core-context and transcript-archive processors, three store maintenance crons, a foundational-context maintenance cron, and a transcript-prune cron. Extraction and core-context take a narrow `Pick<AgentManager, "forkAndContinue">` dependency; the maintenance ticks take `Pick<SideRunner, "run">` (they have no conversation to fork). Tests fake those and assert on the arguments they receive.
+`src/extensions/memory/index.ts` only wires: a bootstrap hook for the layout, a `memories` context section for index injection (`app.agent.use(persistentContextSection("memories", { provide: () => buildMemoryContext(root) }), { sessionScopes: ["main", "background"] })`), one extraction processor per store, the core-context and transcript-archive processors, three store maintenance crons, a foundational-context maintenance cron, and a transcript-prune cron. Extraction and core-context take a narrow `Pick<AgentManager, "forkAndContinue">` dependency; the maintenance ticks take `Pick<SideRunner, "run">` (they have no conversation to fork). Tests fake those and assert on the arguments they receive.
 
 ```
 session start ──> memories context section ──> <context owner="memories"> layout + indexes (once)

@@ -45,7 +45,7 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 **Choice**: Register SOUL.md/USER.md through `app.agent.systemPrompt`, which feeds pi's `systemPromptOverride` (DES-001), rather than injecting them as per-message context blocks.
 **Why**: Identity is system-prompt material — it must frame every turn by replacing pi's coding prompt (the only way to stop being a coding agent), not arrive as an injected context message.
 **Alternatives Considered**:
-- A persisted context section (`app.agent.use({ contextProvider, … })`): injected as a hidden message rather than replacing pi's base prompt — the right home for subsystem usage guidance and volatile state (memory indexes, project state), but not for standing identity
+- A persisted context section (`app.agent.use(persistentContextSection(name, { provide }), …)`): injected as a hidden message rather than replacing pi's base prompt — the right home for subsystem usage guidance and volatile state (memory indexes, project state), but not for standing identity
 - Writing into AGENTS.md: conflates personality and user knowledge with operational instructions, and loses the template/bootstrap story
 
 **Consequences**:
@@ -94,9 +94,9 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 
 ### Scenario: All staged signals have expired
 
-**Given**: A signals file whose entries are all older than 30 days
+**Given**: A signals file whose entries are all older than 30 days (or a file left with only the header after every signal was promoted)
 **When**: The processor runs
-**Then**: `cleanPendingSignals` deletes the file, and the prompt's signals section reads "No pending signals at this time."
+**Then**: `cleanPendingSignals` deletes the file — a header-only file is treated as a normal empty end-state, not an anomaly worth warning about — and the prompt's signals section reads "No pending signals at this time."
 
 ## Notes
 

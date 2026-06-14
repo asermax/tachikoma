@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 
+import { persistentContextSection } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { type NotifyEmitter, runCheck } from "./checker.ts";
 import {
@@ -82,7 +83,7 @@ export default defineExtension<SelfUpdateConfig>({
     app.agent.use(createUpgradeToolFactory(upgradeDeps));
     app.agent.use(createRestartToolFactory(() => restarter));
 
-    app.agent.use({ name: "self-update-usage", contextProvider: SELF_UPDATE_USAGE });
+    app.agent.use(persistentContextSection("self-update-usage", { provide: SELF_UPDATE_USAGE }));
 
     app.scheduler.cron("self-update-check", app.extensionConfig.checkCron, () =>
       runCheck({ registry, state, currentVersion, emit, log: app.log }),

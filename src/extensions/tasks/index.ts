@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 
+import { persistentContextSection } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { BackgroundRunner } from "./executor.ts";
 import { expireWaitingInstances } from "./expiration.ts";
@@ -79,9 +80,7 @@ export default defineExtension<TasksConfig>({
       sessionScopes: ["main", "background"],
     });
 
-    app.agent.use({
-      name: "tasks-usage",
-      contextProvider: buildTasksUsage(timezone),
+    app.agent.use(persistentContextSection("tasks-usage", { provide: buildTasksUsage(timezone) }), {
       sessionScopes: ["main", "background"],
     });
 

@@ -1,5 +1,6 @@
 import { type Static, Type } from "typebox";
 
+import { persistentContextSection } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { createCoreContextProcessor } from "../context/processor.ts";
 import { commitAll } from "../git/commit.ts";
@@ -54,11 +55,10 @@ export default defineExtension<MemoryConfig>({
 
     app.bootstrap("init-memory-layout", () => ensureMemoryLayout(workspaceRoot, app.log));
 
-    app.agent.use({
-      name: "memories",
-      contextProvider: () => buildMemoryContext(workspaceRoot),
-      sessionScopes: ["main", "background"],
-    });
+    app.agent.use(
+      persistentContextSection("memories", { provide: () => buildMemoryContext(workspaceRoot) }),
+      { sessionScopes: ["main", "background"] },
+    );
 
     // Each store registers its own processor; phase:"main" runs them via Promise.allSettled,
     // so the three run as three parallel forks of the just-ended conversation.

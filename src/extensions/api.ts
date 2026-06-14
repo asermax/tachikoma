@@ -2,7 +2,6 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import type { ModelTier, ModelTiers } from "../agent/models.ts";
 import type { SideRunner } from "../agent/side-run.ts";
-import type { PersistentContextSectionOptions } from "../agent/system-prompt-section.ts";
 import type { Channel, Delivery } from "../channels/types.ts";
 import type { Config } from "../config/schema.ts";
 import type { SessionRecord } from "../db/core-schema.ts";
@@ -126,21 +125,12 @@ export interface UseFactoryOptions {
   sessionScopes?: SessionScope[];
 }
 
-/**
- * Single-object form of `agent.use` for contributing a persisted, hidden context section
- * (pi `before_agent_start`, once per session) instead of a raw factory. The owner tag/customType
- * defaults to `"context"`.
- */
-export interface ContextSectionRegistration extends UseFactoryOptions {
-  contextProvider: PersistentContextSectionOptions["provide"];
-  name?: string;
-}
-
 export interface AgentApi {
-  /** Contribute a pi extension factory to every agent session the host creates. */
+  /**
+   * Contribute a pi extension factory, scoped to the given sessions. Persisted context sections
+   * use this same form via `persistentContextSection(name, { provide })` as the factory.
+   */
   use(factory: ExtensionFactory, options?: UseFactoryOptions): void;
-  /** Contribute a persisted context section, scoped to the given sessions. */
-  use(registration: ContextSectionRegistration): void;
   /** Contribute a section to the agent's system prompt (replaces pi's coding prompt). */
   systemPrompt(builder: () => string): void;
   readonly models: ModelTiers;
