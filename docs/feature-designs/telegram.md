@@ -84,7 +84,7 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 
 **Choice**: A 19-line `Mutex` (`run()` chains onto a tail promise) wraps both `respond()` and `deliver()`.
 **Why**: Immediate-gated deliveries can arrive while an exchange is rendering. Without serialization, the chunked send of a response and the silent-send/copy/delete sequence of a delivery would interleave in the chat. `tests/telegram/mutex.test.ts` proves two concurrent `deliverText` calls never interleave their API calls.
-**Alternatives Considered**: async-mutex dependency; queueing deliveries inside the channel; relying on the coordinator's idle gating alone (insufficient — `gate: "immediate"` bypasses it).
+**Alternatives Considered**: async-mutex dependency; queueing deliveries inside the channel; relying on the coordinator's delivery queue alone (insufficient — `immediate: true` command acks and the shutdown digest still call `channel.deliver()` directly, racing an in-flight render).
 
 **Consequences**:
 - Pro: Send sequences are atomic with respect to each other; FIFO order preserved

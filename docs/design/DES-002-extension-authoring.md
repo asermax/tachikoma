@@ -38,7 +38,7 @@ tests/<name>/
 | work at session close | `app.sessions.registerProcessor({ name, phase?, process })` — phases main → preFinalize → finalize |
 | intercept inbound messages | `app.inbound.use(middleware)` |
 | periodic work | `app.scheduler.cron(name, pattern, fn)` / `.every(name, seconds, fn)` |
-| user-facing background output | `app.channels.deliver({ text, gate: "idle" \| "immediate", maxHoldSeconds })` |
+| background output (queued, surfaced as an agent turn) | `app.channels.deliver({ text, tier: "urgent" \| "normal" \| "low" })` |
 | small persistent state | `app.state.get/set/delete` (namespaced KV) |
 | structured persistence | drizzle tables via `app.db` |
 | cross-extension signals | `app.events.on/emit` |

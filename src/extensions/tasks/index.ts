@@ -13,7 +13,6 @@ import { buildTasksUsage } from "./usage.ts";
 
 interface TasksConfig {
   timezone?: string;
-  sessionTaskMaxHoldSeconds: number;
   backgroundMaxIterations: number;
   backgroundMaxConcurrent: number;
   waitTimeoutSeconds: number;
@@ -36,7 +35,6 @@ export default defineExtension<TasksConfig>({
 
   configSchema: Type.Object({
     timezone: Type.Optional(Type.String()),
-    sessionTaskMaxHoldSeconds: Type.Number({ default: 900 }),
     backgroundMaxIterations: Type.Number({ default: 10 }),
     // Cap on concurrent background runs — surplus pending instances wait for a
     // free slot on a later tick, bounding the side-run / API burst they cause.
@@ -100,7 +98,7 @@ export default defineExtension<TasksConfig>({
         now,
         log: app.log,
         onExpired: (instance, reason) => {
-          app.channels.deliver({ text: `❌ Background task failed: ${reason}`, gate: "idle" });
+          app.channels.deliver({ text: `❌ Background task failed: ${reason}`, tier: "normal" });
           app.events.emit("tasks:instance-finished", {
             source: "Background task",
             instanceId: instance.id,
@@ -116,7 +114,7 @@ export default defineExtension<TasksConfig>({
         now,
         log: app.log,
         onStuck: (instance, reason) => {
-          app.channels.deliver({ text: `❌ Background task failed: ${reason}`, gate: "idle" });
+          app.channels.deliver({ text: `❌ Background task failed: ${reason}`, tier: "normal" });
           app.events.emit("tasks:instance-finished", {
             source: "Background task",
             instanceId: instance.id,
@@ -129,7 +127,6 @@ export default defineExtension<TasksConfig>({
       deliverSessionTasks({
         repository,
         deliver: (delivery) => app.channels.deliver(delivery),
-        maxHoldSeconds: app.extensionConfig.sessionTaskMaxHoldSeconds,
         now,
         log: app.log,
       });

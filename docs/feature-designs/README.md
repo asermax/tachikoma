@@ -25,7 +25,7 @@ Design rationale describing **how** each feature is built — components, key de
 |---------|-------------|
 | [skills](skills.md) | Contributes workspace Agent Skills to pi's progressive disclosure, plus a `delegate_to_agent` tool for skill-bundled subagents |
 | [workflows](workflows.md) | Multi-step processes as step-directory trees backed by a DB-persisted state machine that survives compaction and session boundaries |
-| [tasks](tasks.md) | Scheduled work — cron/one-shot definitions firing as idle-gated session messages or autonomous background runs |
+| [tasks](tasks.md) | Scheduled work — cron/one-shot definitions firing as queued session turns or autonomous background runs |
 
 ## Channels, Projects & Git
 
@@ -40,7 +40,7 @@ Design rationale describing **how** each feature is built — components, key de
 | Feature | Description |
 |---------|-------------|
 | [detached-processes](detached-processes.md) | Dispatch, inspect, and terminate OS-level shell commands that outlive Tachikoma, with exit-watching and startup reconciliation |
-| [notifications](notifications.md) | Routes notifications from any producer to the active channel — urgent immediately, the rest batched and idle-gated |
+| [notifications](notifications.md) | Routes notifications from any producer into the conversation as agent turns — severity maps to a delivery tier (urgent leads), batched into a digest |
 | [self-update](self-update.md) | In-app updates: scheduled npm-registry version check + notify, an `upgrade_self` tool that installs and re-execs, and automatic rollback of a failed upgrade on the next boot |
 | [external-extensions](external-extensions.md) | Loads out-of-tree extensions via the same `defineExtension` contract, with agent tools to install/update/list/uninstall |
 | [migration](migration.md) | Startup adaptation of a workspace last used by a legacy install — non-destructive database/config/context/skill/task migration, self-detecting and idempotent |

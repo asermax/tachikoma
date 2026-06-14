@@ -32,7 +32,8 @@ describe("commands extension", () => {
 
     expect(closeSession).toHaveBeenCalledTimes(1);
     expect(message.metadata.handled).toBe(true);
-    expect(deliver).toHaveBeenCalled();
+    // A synchronous command ack renders straight to the channel, never the queue.
+    expect(deliver).toHaveBeenCalledWith(expect.objectContaining({ immediate: true }));
     expect(next).not.toHaveBeenCalled();
   });
 

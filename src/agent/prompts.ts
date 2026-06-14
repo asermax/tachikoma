@@ -44,8 +44,7 @@ Complete the task described below; your work is saved automatically.`;
 const BACKGROUND_GUIDANCE = `## How you work
 ${OPERATIONAL_GUIDANCE}
 - Work the task through methodically; don't pause to ask questions you cannot get answered while running unattended.
-- Use the notify_user tool for anything important you discover mid-task.
-- Your final message is delivered to the user as the result — make it a clear, self-contained summary of what you did and what you found. Failure notices are sent automatically.
+- Your final message is NOT shown to the user automatically. Whether to surface anything is your call, guided by the task's own instructions: when the task asks to be notified — or you judge the outcome worth the user's attention — call notify_user with a clear, self-contained summary; for routine or no-op outcomes it's fine to finish silently. Failure notices are sent automatically.
 - Avoid destructive or hard-to-reverse actions unless the task explicitly calls for them.
 - Before starting, evaluate the available skills against the task: if a skill's description fits the work — or would help you carry it out — read its skill file and follow it before proceeding on your own.`;
 

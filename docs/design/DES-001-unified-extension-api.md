@@ -64,10 +64,10 @@ Session factories receive pi's native `ExtensionAPI` — no wrapping, no renamin
 | `app.events` | typed app event bus (publish/subscribe across extensions and core) |
 | `app.scheduler` | croner-backed jobs: `cron(expr, fn, opts)`, `every(seconds, fn)`; all jobs named and owned by the extension |
 | `app.sessions` | session registry access + lifecycle hooks: `onOpen`, `onExchange`, `registerProcessor` (post-processing), `current()`, `close()`, `openNew()`, `resume(id)` |
-| `app.channels` | `register(channel)` for channel extensions; `deliver(item, { gate: "idle" \| "immediate", maxHoldSeconds })` for background-originated output |
+| `app.channels` | `register(channel)` for channel extensions; `deliver({ text, tier: "urgent" \| "normal" \| "low", metadata })` for background output (queued, surfaced as an agent turn), or `deliver({ text, immediate: true })` for a synchronous channel ack |
 | `app.agent` | `use(factory, { sessionScopes })` (pi extension factories) or `use({ contextProvider, sessionScopes, name })` (a persisted context section), `systemPrompt(builder)` (system-prompt section), `models` (tier lookup: agent/searcher/processor/classifier), `side` (headless side sessions for extraction/background work) |
 | `app.bootstrap(name, hook)` | ordered, idempotent startup hooks |
-| `app.onShutdown(name, hook)` | hook run once during shutdown, before the coordinator's final delivery flush (so it can push held output into that flush); error-isolated |
+| `app.onShutdown(name, hook)` | hook run once during shutdown, before the coordinator's final delivery drain (so it can push queued output into that drain); error-isolated |
 | `app.status(text)` | progress line surfaced through the active channel during processing |
 
 ### Pipelines

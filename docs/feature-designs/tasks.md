@@ -7,14 +7,14 @@
 
 ## Purpose
 
-This document explains how scheduled tasks are implemented on the unified extension API: the single-tick orchestration, the definition/instance split, idle-gated session delivery, and the background evaluator loop over a single persistent pi session per instance.
+This document explains how scheduled tasks are implemented on the unified extension API: the single-tick orchestration, the definition/instance split, queued session delivery as agent turns, and the background evaluator loop over a single persistent pi session per instance.
 
 ## Problem Context
 
 pi deliberately provides no scheduling, idle gating, or buffered delivery — those are host concerns ([pi-sdk-notes](../reference/pi-sdk-notes.md)). The tasks extension must express that capability using only the AppContext services an extension is given (DES-001): `app.scheduler`, `app.channels.deliver`, `app.agent.side`, `app.db`, `app.events`.
 
 **Constraints:**
-- Extensions cannot reach coordinator internals — idle gating is owned by the conversation loop and reachable only through `app.channels.deliver` with `gate: "idle"` (see [conversation-loop.md](../feature-specs/conversation-loop.md))
+- Extensions cannot reach coordinator internals — the priority queue (tier ordering + idle/max-hold timing) is owned by the conversation loop and reachable only through `app.channels.deliver` with a `tier` (see [conversation-loop.md](../feature-specs/conversation-loop.md))
 - Ticks must be cheap and idempotent: the scheduler's overlap protection skips a tick if the previous one is still running, so passes cannot assume exactly-once timing
 - Background runs must not block the tick — a slow agent run can span many ticks
 - Tests fake `SideRunner` and the delivery function with `Pick<>` types (DES-002), so all logic modules take their dependencies as narrow parameters
@@ -26,14 +26,14 @@ pi deliberately provides no scheduling, idle gating, or buffered delivery — th
 
 ## Design Overview
 
-`src/extensions/tasks/index.ts` wires one `tasks-tick` job (`app.scheduler.every`, 60 s) that runs five pure passes in order: `generateDueInstances` (definitions → pending instances), `expireWaitingInstances` (waiting timeout sweep), `failStuckRunningInstances` (running timeout sweep), `deliverSessionTasks` (pending session instances → idle-gated channel delivery), and `BackgroundRunner.tick()` (pending background instances → detached evaluator-loop executions). A second, slower `tasks-one-shot-cleanup` job (`app.scheduler.every`, 3600 s) runs `cleanupExpiredOneShots` (retention pruning). Each pass is a standalone module taking its dependencies (`repository`, `deliver`, `side`, `now`, `log`) as parameters; `index.ts` contains no logic beyond wiring and the crash-recovery bootstrap hook.
+`src/extensions/tasks/index.ts` wires one `tasks-tick` job (`app.scheduler.every`, 60 s) that runs five pure passes in order: `generateDueInstances` (definitions → pending instances), `expireWaitingInstances` (waiting timeout sweep), `failStuckRunningInstances` (running timeout sweep), `deliverSessionTasks` (pending session instances → Normal-tier channel delivery), and `BackgroundRunner.tick()` (pending background instances → detached evaluator-loop executions). A second, slower `tasks-one-shot-cleanup` job (`app.scheduler.every`, 3600 s) runs `cleanupExpiredOneShots` (retention pruning). Each pass is a standalone module taking its dependencies (`repository`, `deliver`, `side`, `now`, `log`) as parameters; `index.ts` contains no logic beyond wiring and the crash-recovery bootstrap hook.
 
 ```
 tasks-tick (60s)
   ├─ generation.ts    definitions ──→ pending instances
   ├─ expiration.ts    waiting > timeout (unanswered) ──→ failed (+ notice)
   ├─ stuck-running.ts running > runningTimeout ──→ failed (+ notice, frees slot)
-  ├─ session-delivery.ts  pending session ──→ channels.deliver(idle) ──→ completed
+  ├─ session-delivery.ts  pending session ──→ channels.deliver(Normal) ──→ completed
   └─ executor.ts      answered waiting + pending background ──→ side.run ⇄ side.classify loop (detached)
                         ask_user tool ──→ waiting (+ question delivered)
 
@@ -88,14 +88,14 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 ### Session tasks are injected as agent turns, completed at handoff
 
-**Choice**: `deliverSessionTasks` renders the task prompt into a labelled text block and hands it to `app.channels.deliver` with `gate: "idle"`, `maxHoldSeconds`, and `target: "agent"`; the instance is marked `completed` as soon as the handoff succeeds. The coordinator injects an `agent`-targeted delivery as a fresh turn into the active session (a system-origin `submit` with `boundary: "skip"`), so the agent acts on the prompt and the user sees its response.
-**Why**: Channel delivery is the only proactive-output surface DES-001 gives extensions, and its `target` flag lets the coordinator route the rendered prompt into the live session without the extension touching session internals. The conversation loop still owns gating and hold timers, so the pass stays a pure detector/enqueuer.
-**Alternatives Considered**: Delivering as plain user-facing text (`target: "user"`) so the prompt is shown verbatim rather than acted on; a dedicated buffer extension that owns idleness itself.
+**Choice**: `deliverSessionTasks` renders the task prompt into a labelled text block and hands it to `app.channels.deliver` with `tier: "normal"` and `metadata { kind: "session_task", instanceId }`; the instance is marked `completed` as soon as the handoff succeeds. Every background delivery is agent-targeted now, so the coordinator injects the queued item as a fresh turn into the active session (a system-origin `submit` with `boundary: "skip"`), and the agent acts on the prompt and the user sees its response.
+**Why**: Channel delivery is the only proactive-output surface DES-001 gives extensions, and the coordinator routes every delivery into the live session as a turn without the extension touching session internals. The conversation loop still owns tier ordering and timing, so the pass stays a pure detector/enqueuer.
+**Alternatives Considered**: A dedicated buffer extension that owns idleness itself (the conversation loop's priority queue covers it).
 **Consequences**:
-- Pro: No duplicated idle logic; delivery ordering and hold behavior are uniform with notifications
+- Pro: No duplicated idle logic; tier ordering and timing are uniform with notifications
 - Pro: Rollback-on-throw keeps the instance retryable without a stuck `running` row
 - Pro: The agent acts on the task prompt, so session tasks can drive real work rather than only relaying canned text
-- Con: "Completed" means "handed to the delivery gate", not "the agent's response reached the user"; a held delivery lost at shutdown is not retried
+- Con: "Completed" means "handed to the delivery queue", not "the agent's response reached the user"; a queued delivery lost at shutdown is not retried
 
 ### Persistent pi session per background instance
 
@@ -121,7 +121,7 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 ### Interactive await/respond resumes the persistent session (legacy excerpt-replay fallback)
 
-**Choice**: A background run pauses by calling the in-run `ask_user` custom tool. The tool records the question in a closure flag and returns a "stop and wait" message; after the prompt returns, the executor — seeing the flag set — transitions the instance to `waiting`, persisting `piSessionFile` (alongside the question and the run's final text as `resumeContext`), disposes the session, delivers the question to the user (immediate gate, instance ID in the text), emits a `waiting` status payload, then returns without consulting the evaluator. The main-session `respond_to_task` tool stores the trimmed reply as `userResponse`; `BackgroundRunner.tick` dispatches `getResumableInstances` (answered `waiting`) ahead of `getPendingInstances`, and `executeBackgroundInstance` reopens the recorded `piSessionFile` and prompts only the user's reply — the resumed session has full continuity. A legacy instance with no `piSessionFile` (predating persistent sessions) falls back to a fresh session prompted with a resume prompt replaying `resumeContext` + question + reply. Resume bookkeeping is cleared on completion.
+**Choice**: A background run pauses by calling the in-run `ask_user` custom tool. The tool records the question in a closure flag and returns a "stop and wait" message; after the prompt returns, the executor — seeing the flag set — transitions the instance to `waiting`, persisting `piSessionFile` (alongside the question and the run's final text as `resumeContext`), disposes the session, queues the question to the user (Urgent tier, instance ID in the text), emits a `waiting` status payload, then returns without consulting the evaluator. The main-session `respond_to_task` tool stores the trimmed reply as `userResponse`; `BackgroundRunner.tick` dispatches `getResumableInstances` (answered `waiting`) ahead of `getPendingInstances`, and `executeBackgroundInstance` reopens the recorded `piSessionFile` and prompts only the user's reply — the resumed session has full continuity. A legacy instance with no `piSessionFile` (predating persistent sessions) falls back to a fresh session prompted with a resume prompt replaying `resumeContext` + question + reply. Resume bookkeeping is cleared on completion.
 **Why**: With a persistent pi session per instance (decision above), the paused run already has a session file on disk — `SessionManager.open(sessionFile)` is exactly how the main conversation resumes, so re-entering the paused agent with full tool/file continuity is the same plumbing rather than a prompt-replay approximation. The legacy fallback keeps instances created before this change safe: their `piSessionFile` is null, so they still resume via the old excerpt replay. Keeping the pause signal in a closure flag (rather than a thrown sentinel) lets the agent's final turn text serve as the legacy progress excerpt for free, and keeps every DB write in the executor where the rest of the lifecycle transitions live.
 **Alternatives Considered**: Continuing to resume purely by prompt replay even with a persistent session (discards the available continuity for no gain); routing the reply as a plain inbound message (nothing would re-associate it with the paused instance).
 **Consequences**:
@@ -152,11 +152,12 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 ### Status payloads and user notices travel separately
 
-**Choice**: Completion and failure emit two things: user-facing text via `app.channels.deliver`, and a structured `{ source, instanceId, status, message }` payload on the tasks extension's own `tasks:instance-finished` app event (the `notify` event is owned by notifications/detached-processes; tasks never emit to it). Cross-extension consumers subscribe to `tasks:instance-finished`; this is not a user notification.
-**Why**: User notices need task-specific formatting and idle gating now; the bus payload is a machine-readable signal for future consumers (e.g. task-aware context providers) without coupling tasks to the notifications format or double-delivering to the user.
+**Choice**: Failure (and the maintenance sweeps) emit two things: a Normal-tier failure notice via `app.channels.deliver`, and a structured `{ source, instanceId, status, message }` payload on the tasks extension's own `tasks:instance-finished` app event (the `notify` event is owned by notifications/detached-processes; tasks never emit to it). **Successful completion emits only the status payload** — no programmatic user notice, since the running agent can surface results itself via `notify_user` per the task prompt (R11/R15 in the spec). Cross-extension consumers subscribe to `tasks:instance-finished`; the payload is not a user notification.
+**Why**: A failure happens when no agent turn is producing output, so it must be raised programmatically; a success has a live agent that can decide whether the result is worth surfacing. The bus payload is a machine-readable signal for future consumers (e.g. task-aware context providers) without coupling tasks to the notifications format.
 **Consequences**:
-- Pro: Tasks own their user-facing wording; bus consumers get typed-ish data, not prose
-- Con: Two emission points per outcome must be kept in sync; the shared event name invites confusion (mitigated by the router's quiet-skip rule)
+- Pro: No duplicate/forced success notice; the agent controls result surfacing per the task's intent
+- Pro: Failures (agent-less) still reach the user; bus consumers get typed-ish data, not prose
+- Con: A completed task whose agent chooses not to notify finishes silently (intentional); the failure path's two emission points must stay in sync
 
 ## System Behavior
 
@@ -176,7 +177,7 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 **Given**: A pending background instance
 **When**: The runner dispatches it; iteration 1 returns mid-workflow text (`continue`), iteration 2 announces completion (`complete`)
-**Then**: A single persistent session was opened once and prompted twice; iteration 2's prompt was a short nudge carrying only the evaluator observation (no excerpt replay); the instance ends `completed` with the evaluator reason as result, the session is disposed and post-processing runs with its transcript path, the final text is delivered idle-gated, and a `completed` status payload is emitted.
+**Then**: A single persistent session was opened once and prompted twice; iteration 2's prompt was a short nudge carrying only the evaluator observation (no excerpt replay); the instance ends `completed` with the evaluator reason as result, the session is disposed and post-processing runs with its transcript path, no programmatic result notice is delivered (the agent may have surfaced results via `notify_user`), and a `completed` status payload is emitted.
 
 ### Scenario: more pending background instances than the concurrency cap
 
@@ -188,7 +189,7 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 **Given**: A running background instance that calls `ask_user("Which inbox — work or personal?")`
 **When**: The run returns, then the user later answers via `respond_to_task`
-**Then**: On the pause, the instance becomes `waiting` with `piSessionFile` persisted (plus the question and a progress excerpt), the session is disposed, the question is delivered immediately (text carries the instance ID) and a `waiting` status payload is emitted; the evaluator is not consulted and the slot frees. `respond_to_task` stores the trimmed reply as `userResponse`, leaving the instance `waiting`. The next background dispatch pass picks the instance up ahead of pending work, reopens the recorded pi session, prompts only the user's reply (full continuity), and the evaluator loop continues to completion — clearing `question`/`resumeContext`. (A legacy instance with no session file instead replays the excerpt + question + reply into a fresh session.)
+**Then**: On the pause, the instance becomes `waiting` with `piSessionFile` persisted (plus the question and a progress excerpt), the session is disposed, the question is queued at the Urgent tier (text carries the instance ID) and a `waiting` status payload is emitted; the evaluator is not consulted and the slot frees. `respond_to_task` stores the trimmed reply as `userResponse`, leaving the instance `waiting`. The next background dispatch pass picks the instance up ahead of pending work, reopens the recorded pi session, prompts only the user's reply (full continuity), and the evaluator loop continues to completion — clearing `question`/`resumeContext`. (A legacy instance with no session file instead replays the excerpt + question + reply into a fresh session.)
 
 ### Scenario: a background question is never answered
 
@@ -218,6 +219,6 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 - The `waiting` lifecycle is live: a background run pauses via the `ask_user` tool (the producer), `respond_to_task` (main session) supplies the reply, the background dispatch pass resumes the instance, and the expiration sweep fails an instance whose question goes unanswered past `waitTimeoutSeconds`. State is persisted on `task_instances` via the `question` and `resumeContext` columns (migration `0003_tasks_waiting_resume`) alongside the existing `userResponse`; the persistent session backing the run is recorded in `piSessionFile` (migration `0005_tasks_pi_session_file`) so resume reopens it with full continuity (legacy instances with no session file fall back to `resumeContext` replay).
 - Background-task session files accumulate in the workspace sessions dir — each background run writes a persistent pi JSONL transcript and there is no retention sweep for them yet (related to the broader transient-table retention gap). Out of scope here; flag for a future sweep.
-- Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `sessionTaskMaxHoldSeconds` (900), `backgroundMaxIterations` (10), `backgroundMaxConcurrent` (3), `waitTimeoutSeconds` (7200), `runningTimeoutSeconds` (1800, the stuck-running threshold), `oneShotRetentionSeconds` (172800 = 48 h, the one-shot retention window). The tick (60 s) and cleanup (3600 s) intervals are module constants.
+- Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `backgroundMaxIterations` (10), `backgroundMaxConcurrent` (3), `waitTimeoutSeconds` (7200), `runningTimeoutSeconds` (1800, the stuck-running threshold), `oneShotRetentionSeconds` (172800 = 48 h, the one-shot retention window). Session-task delivery timing is the coordinator's Normal-tier window, not a tasks config. The tick (60 s) and cleanup (3600 s) intervals are module constants.
 - The maintenance sweeps reuse the existing timestamp columns (`startedAt`/`updatedAt` on instances, `lastFiredAt`/`completedAt` for retention) — no schema change or migration was needed.
-- Background runs use the `processor` model tier and pi built-in tools (`read, bash, edit, write, grep, find, ls`) plus two per-run custom tools, `notify_user` and `ask_user`. They **also** bind the curated set of opted-in extension tools: `executor.ts` opens the persistent session via `side.openBackgroundSession(...)`, which sets `bindBackgroundFactories: true` with no `tools` allowlist, and the task tools factory itself is registered with the `background` session scope (index.ts), so the background-opted factories (skills + `delegate_to_agent`, git, projects, detached-processes, notifications, task tools) are all bound into the session — see the "Background runs are capable, not sandboxed" decision above. `respond_to_task` is the one task tool deliberately kept foreground-only (its interactive factory is registered without `background: true`), since a background run must never answer another instance's waiting question.
+- Background runs use the `processor` model tier and pi built-in tools (`read, bash, edit, write, grep, find, ls`) plus one per-run custom tool, `ask_user`. They **also** bind the curated set of opted-in extension tools: `executor.ts` opens the persistent session via `side.openBackgroundSession(...)`, which sets `bindBackgroundFactories: true` with no `tools` allowlist, and the task tools factory itself is registered with the `background` session scope (index.ts), so the background-opted factories (skills + `delegate_to_agent`, git, projects, detached-processes, notifications including the canonical `notify_user`, task tools) are all bound into the session — see the "Background runs are capable, not sandboxed" decision above. The executor no longer defines its own `notify_user`; the single canonical one comes from the notifications extension. `respond_to_task` is the one task tool deliberately kept foreground-only (its interactive factory is registered without `background: true`), since a background run must never answer another instance's waiting question.

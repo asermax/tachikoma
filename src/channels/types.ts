@@ -12,21 +12,23 @@ export interface Exchange {
   events: AsyncIterable<AgentEvent>;
 }
 
-export const DELIVERY_GATES = {
-  idle: "idle",
-  immediate: "immediate",
+export const DELIVERY_TIERS = {
+  urgent: "urgent",
+  normal: "normal",
+  low: "low",
 } as const;
 
-export type DeliveryGate = keyof typeof DELIVERY_GATES;
+export type DeliveryTier = keyof typeof DELIVERY_TIERS;
 
 export interface Delivery {
   text: string;
-  gate?: DeliveryGate;
-  /** "user" renders through the channel; "agent" injects a prompt into the session. */
-  target?: "user" | "agent";
-  /** Higher delivers first when several held items flush together. Default 0. */
-  priority?: number;
-  maxHoldSeconds?: number;
+  /** Queue tier governing ordering and idle/max-hold timing. Default "normal". */
+  tier?: DeliveryTier;
+  /**
+   * Synchronous channel render for command UI (e.g. the /new ack) — bypasses the
+   * priority queue entirely. Background notifications never set this.
+   */
+  immediate?: boolean;
   metadata?: Record<string, unknown>;
 }
 

@@ -6,7 +6,6 @@ import type { TaskDefinitionRecord, TaskInstanceRecord } from "./schema.ts";
 export interface SessionDeliveryDeps {
   repository: TaskRepository;
   deliver: (delivery: Delivery) => void;
-  maxHoldSeconds: number;
   now: () => Date;
   log: Logger;
 }
@@ -28,7 +27,6 @@ export const renderSessionTaskText = (
 export const deliverSessionTasks = ({
   repository,
   deliver,
-  maxHoldSeconds,
   now,
   log,
 }: SessionDeliveryDeps): void => {
@@ -40,11 +38,9 @@ export const deliverSessionTasks = ({
 
     try {
       deliver({
-        text: renderSessionTaskText(instance, definition),
-        gate: "idle",
         // The agent acts on the task inside the session; the user sees its response.
-        target: "agent",
-        maxHoldSeconds,
+        text: renderSessionTaskText(instance, definition),
+        tier: "normal",
         metadata: { kind: "session_task", instanceId: instance.id },
       });
     } catch (error) {

@@ -4,6 +4,8 @@ import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-a
 
 import { streamPrompt } from "./agent/adapter.ts";
 import type { AgentManager } from "./agent/manager.ts";
+import { buildDigest } from "./channels/delivery-digest.ts";
+import { compareQueued, evaluate, type QueuedItem } from "./channels/delivery-queue.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
 import type { SessionRecord } from "./db/core-schema.ts";
 import type { InboundMessage } from "./domain/message.ts";
@@ -26,7 +28,11 @@ export class Coordinator {
   private active: ActiveSession | null = null;
   /** Bridging-context blocks injected once on the next agent run (session resume). */
   private pendingContext: { tag: string; content: string }[] = [];
-  private readonly heldDeliveries: Delivery[] = [];
+  private readonly heldDeliveries: QueuedItem[] = [];
+  /** Timestamp of the most recently completed exchange; the queue's idle-window anchor. */
+  private lastExchangeAt: Date | null = null;
+  /** Single shared timer driving the next queue re-evaluation (never one-per-item). */
+  private deliveryTimer: ReturnType<typeof setTimeout> | null = null;
   private exchanging = false;
   private shuttingDown = false;
   private channel: Channel | null = null;
@@ -36,6 +42,7 @@ export class Coordinator {
   private readonly regs: Registrations;
   private readonly events: EventBus;
   private readonly log: Logger;
+  private readonly now: () => Date;
 
   constructor(
     registry: SessionRegistry,
@@ -43,12 +50,14 @@ export class Coordinator {
     regs: Registrations,
     events: EventBus,
     log: Logger,
+    now: () => Date = () => new Date(),
   ) {
     this.registry = registry;
     this.agent = agent;
     this.regs = regs;
     this.events = events;
     this.log = log;
+    this.now = now;
   }
 
   // ---- channel wiring ---------------------------------------------------------
@@ -142,25 +151,20 @@ export class Coordinator {
   }
 
   deliver(delivery: Delivery): void {
-    // While shutting down, always hold so the final awaited flush handles
-    // everything in order — the immediate-send path would race the teardown.
-    if (
-      !this.shuttingDown &&
-      (delivery.gate === "immediate" || (!this.exchanging && this.active == null))
-    ) {
-      void this.sendDelivery(delivery);
+    // Synchronous command UI (the /new ack) renders straight to the channel — never
+    // queued. During shutdown even these hold so the final awaited drain orders them.
+    if (delivery.immediate === true && !this.shuttingDown) {
+      void this.channel?.deliver(delivery);
       return;
     }
 
-    this.heldDeliveries.push(delivery);
+    this.heldDeliveries.push({
+      ...delivery,
+      tier: delivery.tier ?? "normal",
+      enqueuedAt: this.now().getTime(),
+    });
 
-    if (delivery.maxHoldSeconds != null) {
-      const timer = setTimeout(
-        () => void this.flushDeliveries(true),
-        delivery.maxHoldSeconds * 1000,
-      );
-      timer.unref();
-    }
+    this.scheduleDelivery();
   }
 
   // ---- pi integration -----------------------------------------------------------
@@ -213,12 +217,13 @@ export class Coordinator {
       signal.removeEventListener("abort", onAbort);
 
       // Set the flag before draining: shutdown hooks (e.g. the notifications router)
-      // push their held output into heldDeliveries, which the flag keeps held so the
-      // single awaited flush below — not a racing immediate send — delivers them.
+      // push their held output into heldDeliveries, which the flag keeps queued so the
+      // single awaited drain below — not a racing agent turn — delivers them.
       this.shuttingDown = true;
       await this.runShutdownHooks();
-      // Held notices must not die with the process — push them out before closing.
-      await this.flushDeliveries(true);
+      // No agent turn can run during teardown — render the remaining queue straight to
+      // the channel as one digest so nothing dies with the process.
+      await this.drainQueueToChannel();
 
       const announceShutdown = this.channel != null && this.active != null;
 
@@ -339,7 +344,8 @@ export class Coordinator {
       await this.runExchangeProcessors(active, message);
     } finally {
       this.exchanging = false;
-      void this.flushDeliveries(false);
+      this.lastExchangeAt = this.now();
+      this.scheduleDelivery();
     }
   }
 
@@ -457,15 +463,72 @@ export class Coordinator {
     this.events.emit("session:post-processed", { sessionId: record.id, state });
   }
 
-  private async flushDeliveries(force: boolean): Promise<void> {
-    if (!force && this.exchanging) return;
+  /**
+   * The sole queue decision point. Re-evaluates the held queue and either flushes it as
+   * one agent turn or arms the shared timer for the next actionable moment. Called on
+   * enqueue, on exchange completion, and from the timer itself — never recurses into a
+   * flush directly, so re-evaluation is idempotent and never busy-spins.
+   */
+  private scheduleDelivery(): void {
+    if (this.deliveryTimer != null) {
+      clearTimeout(this.deliveryTimer);
+      this.deliveryTimer = null;
+    }
 
-    // Stable sort: higher priority first, arrival order within a priority.
-    const pending = this.heldDeliveries
-      .splice(0)
-      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
+    if (this.shuttingDown || this.exchanging || this.heldDeliveries.length === 0) return;
 
-    await Promise.all(pending.map((delivery) => this.sendDelivery(delivery)));
+    const result = evaluate(
+      this.now().getTime(),
+      this.lastExchangeAt?.getTime() ?? null,
+      this.heldDeliveries,
+    );
+    if (result == null) return;
+
+    if ("drain" in result) {
+      this.flushQueue();
+      return;
+    }
+
+    this.deliveryTimer = setTimeout(
+      () => this.scheduleDelivery(),
+      Math.max(0, result.wakeAt - this.now().getTime()),
+    );
+    this.deliveryTimer.unref();
+  }
+
+  /**
+   * Drain the whole queue into one system-origin turn. `submit()` skips steering for
+   * system-origin messages and wakes the parked loop, so the digest is delivered as a
+   * fresh turn, never folded into an in-flight exchange.
+   */
+  private flushQueue(): void {
+    const items = this.heldDeliveries.splice(0);
+    if (items.length === 0) return;
+
+    this.submit({
+      text: buildDigest(items),
+      channel: this.channel?.name ?? "system",
+      receivedAt: this.now(),
+      media: [],
+      metadata: { origin: "system", boundary: "skip" },
+    });
+  }
+
+  /** Shutdown-only: render the remaining queue to the channel as one digest. */
+  private async drainQueueToChannel(): Promise<void> {
+    if (this.deliveryTimer != null) {
+      clearTimeout(this.deliveryTimer);
+      this.deliveryTimer = null;
+    }
+
+    const items = this.heldDeliveries.splice(0).sort(compareQueued);
+    if (items.length === 0) return;
+
+    try {
+      await this.channel?.deliver({ text: buildDigest(items) });
+    } catch (error) {
+      this.log.error({ err: error }, "shutdown delivery failed");
+    }
   }
 
   private async runShutdownHooks(): Promise<void> {
@@ -475,26 +538,6 @@ export class Coordinator {
       } catch (err) {
         this.log.error({ hook: name, err }, "shutdown hook failed");
       }
-    }
-  }
-
-  private async sendDelivery(delivery: Delivery): Promise<void> {
-    try {
-      if (delivery.target === "agent" && !this.shuttingDown) {
-        // Inject as a prompt the agent acts on; boundary middleware skips it.
-        this.submit({
-          text: delivery.text,
-          channel: this.channel?.name ?? "system",
-          receivedAt: new Date(),
-          media: [],
-          metadata: { ...(delivery.metadata ?? {}), origin: "system", boundary: "skip" },
-        });
-        return;
-      }
-
-      await this.channel?.deliver(delivery);
-    } catch (error) {
-      this.log.error({ err: error }, "delivery failed");
     }
   }
 }

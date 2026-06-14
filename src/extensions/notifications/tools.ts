@@ -12,7 +12,7 @@ export const NotifyUserParams = Type.Object({
   severity: Type.Optional(
     StringEnum(["info", "warning", "urgent"] as const, {
       description:
-        "'urgent' is delivered immediately; 'info' (default) and 'warning' wait for an idle moment and may be batched into a digest",
+        "Sets delivery priority: 'urgent' jumps the queue with the shortest wait, 'warning' is mid, 'info' (default) is lowest. All wait for a conversation pause and may be batched into a digest",
     }),
   ),
 });
@@ -41,8 +41,8 @@ export const createNotifyToolFactory =
       name: "notify_user",
       label: "Notify User",
       description:
-        "Send a notification to the user outside the normal reply flow. Non-urgent notifications wait for an idle moment and may be combined into a digest; urgent ones are delivered immediately.",
-      promptSnippet: "Notify the user proactively (use sparingly; urgent severity interrupts)",
+        "Send a notification to the user outside the normal reply flow. Notifications wait for a conversation pause and may be combined into a digest; urgent ones jump the queue with the shortest wait.",
+      promptSnippet: "Notify the user proactively (use sparingly; urgent severity leads the queue)",
       promptGuidelines: [
         "Use notify_user only for information the user should see outside your direct reply; reserve severity 'urgent' for genuinely time-sensitive matters.",
       ],

@@ -9,22 +9,20 @@ export type { NotifyPayload, Severity } from "./payload.ts";
 
 interface NotificationsConfig {
   flushWindowSeconds: number;
-  maxHoldSeconds: number;
   dedupTtlSeconds: number;
 }
 
 /**
- * Notification delivery: routes `"notify"` app events to the user by severity —
- * urgent immediately, the rest idle-gated with a max hold, batched into a digest
- * when several accumulate. Also exposes a notify_user tool so the agent itself
- * can emit notifications.
+ * Notification delivery: routes `"notify"` app events into the conversation by
+ * severity → delivery tier (urgent leads), batched into a digest when several
+ * accumulate. Also exposes a notify_user tool — bound only into background task
+ * runs — so an autonomous task can emit notifications.
  */
 export default defineExtension<NotificationsConfig>({
   name: "notifications",
 
   configSchema: Type.Object({
     flushWindowSeconds: Type.Number({ default: 30 }),
-    maxHoldSeconds: Type.Number({ default: 900 }),
     /** Window in which an identical (source + text) notice is dropped, guarding against re-emit/retry storms. */
     dedupTtlSeconds: Type.Number({ default: 60 }),
   }),
@@ -33,7 +31,6 @@ export default defineExtension<NotificationsConfig>({
     const router = new NotificationRouter({
       deliver: (delivery) => app.channels.deliver(delivery),
       flushWindowSeconds: app.extensionConfig.flushWindowSeconds,
-      maxHoldSeconds: app.extensionConfig.maxHoldSeconds,
       dedupTtlSeconds: app.extensionConfig.dedupTtlSeconds,
       log: app.log,
     });
@@ -45,7 +42,9 @@ export default defineExtension<NotificationsConfig>({
     app.agent.use(
       createNotifyToolFactory((event, payload) => app.events.emit(event, payload)),
       {
-        sessionScopes: ["main", "background"],
+        // Background runs only: in the main conversation the agent replies directly,
+        // so out-of-band notification is meaningless there.
+        sessionScopes: ["background"],
       },
     );
   },

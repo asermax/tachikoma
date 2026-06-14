@@ -146,7 +146,7 @@ A thin core shell plus first-party extensions covering the full assistant featur
 **Skills, workflows, tasks:**
 - Skills via pi's native Agent Skills support with the workspace as a skill source, hot-reload, bundled agents, and the authoring guide
 - Workflow engine with directory-based definitions, persisted step state machine, lifecycle tools, and composition (sub-workflows, loops, and conditional steps)
-- Task system: cron and one-shot definitions, management tools, session (idle-gated) and background (autonomous) execution, plus an interactive await/respond flow (`ask_user` / `respond_to_task`) for background runs that pause for user input
+- Task system: cron and one-shot definitions, management tools, session (queued into the conversation) and background (autonomous) execution, plus an interactive await/respond flow (`ask_user` / `respond_to_task`) for background runs that pause for user input
 
 **Channels, projects, git:**
 - Full Telegram channel: streamed rendering, complete media support, push notifications, inbound reactions, and reply routing
@@ -214,7 +214,7 @@ The long-term backlog builds on this foundation — see Future Considerations an
 3. Past conversations resume on topic match, including across process restarts
 4. A pre-existing workspace (memories, context files, skills) works unmodified
 5. Skills are detected and applied via progressive disclosure without a classification pass, and new skills are available without restart
-6. Scheduled tasks run in both session (idle-gated) and background (autonomous, iterative) modes with timezone-aware schedules and restart catch-up
+6. Scheduled tasks run in both session (queued into the conversation) and background (autonomous, iterative) modes with timezone-aware schedules and restart catch-up
 7. Telegram is a full-fidelity channel: streamed responses, full media support, push notifications
 8. Registered projects sync on startup and auto-commit/push on session close; the workspace itself is git-versioned after every session
 9. Detached processes can be dispatched and supervised; notifications buffer and deliver at conversation pauses; third-party extensions load via the external extension loader

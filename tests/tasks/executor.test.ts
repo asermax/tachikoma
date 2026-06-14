@@ -137,10 +137,9 @@ describe("executeBackgroundInstance", () => {
     const openArgs = side.openBackgroundSession.mock.calls[0]?.[0];
     expect(openArgs?.system as string).toContain("Current date and time:");
     expect(openArgs?.system as string).toContain("notify_user");
-    expect((openArgs?.customTools as { name: string }[]).map((t) => t.name)).toEqual([
-      "notify_user",
-      "ask_user",
-    ]);
+    // notify_user comes from the notifications extension (background-scoped); only ask_user
+    // is a custom tool here.
+    expect((openArgs?.customTools as { name: string }[]).map((t) => t.name)).toEqual(["ask_user"]);
 
     // The continuation prompt is a short nudge carrying the evaluator note — NOT an excerpt replay.
     const continuation = side.session.prompt.mock.calls[1]?.[0] as string;
@@ -154,12 +153,9 @@ describe("executeBackgroundInstance", () => {
     expect(completed?.startedAt).toEqual(current);
     expect(side.session.dispose).toHaveBeenCalled();
 
-    expect(deps.deliver).toHaveBeenCalledWith(
-      expect.objectContaining({
-        gate: "idle",
-        text: expect.stringContaining("done: 3 messages summarized"),
-      }),
-    );
+    // Successful completion no longer emits a programmatic notice — the agent self-reports
+    // via notify_user at its discretion. The internal status signal still fires.
+    expect(deps.deliver).not.toHaveBeenCalled();
     expect(deps.notify).toHaveBeenCalledWith(
       expect.objectContaining({ instanceId: instance.id, status: "completed" }),
     );
@@ -266,7 +262,7 @@ describe("executeBackgroundInstance", () => {
 
     expect(deps.deliver).toHaveBeenCalledWith(
       expect.objectContaining({
-        gate: "immediate",
+        tier: "urgent",
         text: expect.stringContaining("Which inbox — work or personal?"),
       }),
     );

@@ -41,13 +41,11 @@ describe("deliverSessionTasks", () => {
     });
     const deliver = vi.fn();
 
-    deliverSessionTasks({ repository, deliver, maxHoldSeconds: 900, now, log: fakeLog });
+    deliverSessionTasks({ repository, deliver, now, log: fakeLog });
 
     expect(deliver).toHaveBeenCalledWith({
       text: "📋 Scheduled task: morning briefing\n\ngive me the briefing",
-      gate: "idle",
-      target: "agent",
-      maxHoldSeconds: 900,
+      tier: "normal",
       metadata: { kind: "session_task", instanceId: instance.id },
     });
 
@@ -69,7 +67,7 @@ describe("deliverSessionTasks", () => {
       throw new Error("channel down");
     });
 
-    deliverSessionTasks({ repository, deliver, maxHoldSeconds: 900, now, log: fakeLog });
+    deliverSessionTasks({ repository, deliver, now, log: fakeLog });
 
     const rolledBack = repository.getInstance(instance.id);
     expect(rolledBack?.status).toBe("pending");
@@ -85,7 +83,7 @@ describe("deliverSessionTasks", () => {
     });
     const deliver = vi.fn();
 
-    deliverSessionTasks({ repository, deliver, maxHoldSeconds: 900, now, log: fakeLog });
+    deliverSessionTasks({ repository, deliver, now, log: fakeLog });
 
     expect(deliver).not.toHaveBeenCalled();
   });

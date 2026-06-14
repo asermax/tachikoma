@@ -160,7 +160,7 @@ export const executeBackgroundInstance = async (
       completedAt: now(),
       result: reason,
     });
-    deliver({ text: `❌ ${source} — ${noticeMessage}`, gate: "idle" });
+    deliver({ text: `❌ ${source} — ${noticeMessage}`, tier: "normal" });
     notify({ source, instanceId: instance.id, status: "failed", message: noticeMessage });
     log.warn({ instanceId: instance.id, reason }, "background task failed");
   };
@@ -187,26 +187,8 @@ export const executeBackgroundInstance = async (
 
     // Workspace context (memory, projects, …) is injected by each extension's background-scoped
     // context section via pi's before_agent_start hook — no manual fold into the opening prompt.
-    const notifyTool = defineTool({
-      name: "notify_user",
-      label: "Notify User",
-      description:
-        "Send the user a notification about something important discovered during this background task.",
-      parameters: Type.Object({
-        text: Type.String({ description: "Notification text" }),
-        severity: StringEnum(["info", "warning", "urgent"] as const, { default: "info" }),
-      }),
-      execute: async (_id, params) => {
-        deliver({
-          text: `${params.severity === "urgent" ? "🚨 " : ""}${source}: ${params.text}`,
-          gate: params.severity === "urgent" ? "immediate" : "idle",
-          priority: params.severity === "urgent" ? 10 : 0,
-        });
-
-        return { content: [{ type: "text", text: "Notification queued." }], details: {} };
-      },
-    });
-
+    // notify_user is the notifications extension's background-scoped tool (bound automatically);
+    // the agent decides whether to use it per the task's own guidance.
     let pendingQuestion: string | null = null;
 
     const askUserTool = defineTool({
@@ -234,7 +216,7 @@ export const executeBackgroundInstance = async (
 
     session = await side.openBackgroundSession({
       system,
-      customTools: [notifyTool, askUserTool],
+      customTools: [askUserTool],
       // A legacy resume replays its excerpt into a fresh session; everything else resumes
       // the run's own persistent session file when one exists.
       sessionFile: legacyResume ? null : instance.piSessionFile,
@@ -275,8 +257,7 @@ export const executeBackgroundInstance = async (
 
         deliver({
           text: `❓ ${source} needs your input (instance ${instance.id}):\n\n${pendingQuestion}`,
-          gate: "immediate",
-          priority: 10,
+          tier: "urgent",
         });
         notify({
           source,
@@ -309,7 +290,8 @@ export const executeBackgroundInstance = async (
         session.dispose();
         session = null;
         await runPostProcessors({ session: null, transcriptPath, log });
-        deliver({ text: `✅ ${source} — completed.\n\n${text}`, gate: "idle" });
+        // No programmatic success notice: the agent surfaces results via notify_user at
+        // its own discretion (per the task prompt). The internal signal still fires.
         notify({
           source,
           instanceId: instance.id,

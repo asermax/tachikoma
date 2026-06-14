@@ -35,7 +35,7 @@ submit() ─ mid-exchange & not /queue & not /new & not system? ─→ session.s
   middleware (may close/resume; may set metadata.handled → short-circuit) → ensureSession ─┐
                                                                   ▼
   channel.respond(streamPrompt(session, prompt))
-  → exchange processors → flush held deliveries
+  → exchange processors → re-evaluate the delivery queue
 ```
 
 On session resume, bridging context (summaries of sessions closed since the resumed session's prior close) reaches the agent through a host-owned pi extension factory (`hostFactory()`, registered in `src/app.ts` alongside extension factories): on `before_agent_start` it drains `pendingContext` into one hidden `bridging-context` message. Extension-contributed context (memory, projects, subsystem usage) does not flow through the coordinator — each extension registers its own context section via `app.agent.use({ contextProvider, sessionScopes })`, injected directly by pi (see [DES-001](../design/DES-001-unified-extension-api.md)).
@@ -46,9 +46,9 @@ On session resume, bridging context (summaries of sessions closed since the resu
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/coordinator.ts` | Inbox loop, mid-exchange steering (`submit`→`session.steer`), `/queue` opt-out, `abortExchange`, middleware chain, session lifecycle (ensure/close/close-if-idle/resume/recover), pipelines, delivery gating, status emission | Serial *new* exchanges, but mid-exchange input steers the live run; promise-based wake instead of polling; one `ActiveSession` pairing the db record with the live pi session; no coordinator-owned idle timer (a boundary policy drives `closeActiveSessionIfIdle`) |
+| `src/coordinator.ts` | Inbox loop, mid-exchange steering (`submit`→`session.steer`), `/queue` opt-out, `abortExchange`, middleware chain, session lifecycle (ensure/close/close-if-idle/resume/recover), pipelines, the delivery priority queue (`DELIVERY_TIERS` in `types.ts`, `TIER_TIMING`/`evaluate` in `delivery-queue.ts`), status emission | Serial *new* exchanges, but mid-exchange input steers the live run; promise-based wake instead of polling; one `ActiveSession` pairing the db record with the live pi session; no coordinator-owned idle timer (a boundary policy drives `closeActiveSessionIfIdle`) |
 | `src/sessions/registry.ts` | Drizzle CRUD over the `sessions` table (`src/db/core-schema.ts`) | Synchronous better-sqlite3 access; lifecycle expressed as timestamp updates (`closedAt`, `lastResumedAt`) rather than a state enum |
-| `src/channels/types.ts` | `Channel`, `Exchange`, `Delivery` contracts | `respond()` consumes the stream to completion, so channel rendering paces the exchange; `DELIVERY_GATES` const map |
+| `src/channels/types.ts` | `Channel`, `Exchange`, `Delivery` contracts | `respond()` consumes the stream to completion, so channel rendering paces the exchange; `DELIVERY_TIERS` const map (per-tier timing lives in `delivery-queue.ts`) |
 | `src/domain/message.ts`, `src/domain/agent-events.ts` | SDK-free domain types crossing the channel boundary | Channels and extensions never import pi types |
 | `src/extensions/host.ts`, `src/extensions/api.ts` | Map `app.sessions` / `app.channels` / `app.inbound` services onto coordinator + registry methods | Registries (`src/extensions/registrations.ts`) are plain mutable arrays filled at setup, read at runtime |
 | `src/app.ts` | Wiring: registers `hostFactory()`, recovers dangling sessions after bootstrap, selects and starts the channel, runs the loop until SIGINT/SIGTERM | Channel selection fails fast listing available names |
@@ -108,29 +108,28 @@ On session resume, bridging context (summaries of sessions closed since the resu
 
 Headless/background runs that have no per-session close lifecycle reach the same processors through `app.sessions.runPostProcessors(context)` (`SessionsApi.runPostProcessors` → `runPostProcessorsOnce` in `src/extensions/host.ts`), which runs every registered processor once in phase order, error-isolated, with **no** per-processor completion-state tracking — there is no session row to record state on. Transcript-dependent processors no-op when `context.transcriptPath` is null.
 
-### Coordinator-held delivery gating instead of a priority buffer
+### Tiered priority queue, delivered as an agent turn
 
-**Choice**: `deliver()` applies the gate inline — `immediate` sends now; `idle` holds in an array flushed when the in-flight exchange ends, with optional per-item `maxHoldSeconds` force-flush timers. A flush sorts held items by descending `Delivery.priority` (default 0) with a stable comparator, so higher-priority items lead and same-priority items keep arrival order. Dispatch (`sendDelivery`) then branches on `Delivery.target` (default `"user"`): `"user"` calls `channel.deliver()` to render it; `"agent"` instead re-submits the delivery text to the coordinator inbox as a system-origin message (`origin: "system"`, `boundary: "skip"`), so the agent acts on it as a prompt rather than the channel surfacing it to the user.
-**Why**: A full priority buffer (a separate subsystem with digests and preemption) is the most complex way to do delivery; the observable requirement is just "don't interleave with an active exchange, order by importance within a flush, never hold forever". The coordinator already knows `exchanging`/`active`, so gating — and the cheap priority sort over the held array — lives where the knowledge is. Producers that care about ordering (e.g. the notifications router mapping severity → priority) set `priority` on the `Delivery`; everything else defaults to 0 and flushes in arrival order.
-
-At shutdown `flushDeliveries` is awaitable (`Promise<void>`, awaiting all sends) so the loop's `finally` does not resolve until the held notices' channel writes settle. The mid-exchange and `maxHoldSeconds` callers stay fire-and-forget (`void`); only the shutdown call awaits.
+**Choice**: Every background delivery is queued and surfaced as an agent turn — there is no direct-to-user path except the `immediate` command-ack escape hatch and the shutdown drain. The timing logic is a pure module (`src/channels/delivery-queue.ts`): a three-tier table (Urgent 30s/120s, Normal 120s/900s, Low 300s/never-force), a `compareQueued` comparator (tier order, then FIFO by `enqueuedAt`), and `evaluate(now, lastExchangeAt, items)` returning `{drain}` (the full sorted batch), `{wakeAt}` (next actionable time), or null. The coordinator holds `QueuedItem[]`, stamps `lastExchangeAt` in `handle()`'s `finally`, and runs everything through one decision point, `scheduleDelivery()`: it clears the single shared unref'd `deliveryTimer`, returns early while `shuttingDown`/`exchanging`/empty, then either `flushQueue()` (drain) or arms the timer for `wakeAt` (callback = `scheduleDelivery` again). `flushQueue()` builds one digest (`delivery-digest.ts`) and `submit()`s it as a system-origin message (`origin: "system"`, `boundary: "skip"`), which skips steering and wakes the parked loop. `deliver()` routes `immediate` straight to `channel.deliver()`, else enqueues with the resolved tier + `enqueuedAt` and calls `scheduleDelivery()`. An injected `now: () => Date` clock keeps the timing testable.
+**Why**: The observable requirement is "queue background output, order by importance, deliver as a turn at a pause, never steer, never hold forever, never wake-spin". The legacy priority buffer (a separate subsystem with preemption and front-time accounting) is the heavyweight way; a single timer + a pure `evaluate` keeps the decision in one idempotent method where the coordinator already knows `exchanging`/`lastExchangeAt`. The front item's timing governing the whole batch means a higher-tier arrival pulls everything with it, and lower tiers ride along for free. Relying on the drain's own `submit→wake` (rather than a separate wake in the `{wakeAt}` branch) avoids waking the loop only to re-park with nothing to do — the timer alone drives re-evaluation.
 **Alternatives Considered**:
-- A separate priority-buffer extension: rejected — ordering is a one-line stable sort over the held array, not worth a subsystem
+- The full legacy priority-buffer subsystem (heap, preemption, per-item front-time): rejected for this pragmatic port — the tier table + front-item-governs-batch covers the need without the state machine.
+- Keeping a numeric `priority` + `gate`/`maxHoldSeconds` on `Delivery`: rejected — named tiers carry the timing, so producers pick a tier instead of hand-tuning four fields.
 
 **Consequences**:
-- Pro: ~20 lines, no extra state machine; channels only implement `deliver()`
-- Pro: within a flush, urgent items lead lower-severity ones via the stable priority sort
-- Con: a max-hold expiry flushes everything, possibly mid-exchange
-- Con: items held while a session is open but quiet wait for the next exchange end (or max-hold) — session close does not flush
+- Pro: one pure, unit-tested decision (`evaluate`) and one idempotent timer; producers only choose a tier
+- Pro: urgent leads normal leads low within a batch; the parked-loop never-woken bug is closed
+- Con: urgent no longer interrupts — it waits for the next idle (30s window), just ahead of the queue
+- Con: a background notice finishes silently unless its producer (or the task agent) emits it — there is no automatic surfacing
 
-### Shutdown drain: flag, hooks, then awaited flush
+### Shutdown drain: flag, hooks, then awaited channel digest
 
-**Choice**: The loop's `finally` sets `shuttingDown = true`, runs every registered `onShutdown` hook (each awaited in a try/catch via `runShutdownHooks`, error-isolated), then `await flushDeliveries(true)`, then closes the active session. The flag changes two delivery paths: `deliver()` always holds while shutting down (the immediate-send branch is guarded by `!this.shuttingDown`), and `sendDelivery()` guards the `target: "agent"` inbox re-submit with `&& !this.shuttingDown` so an agent-target notice falls through to `channel.deliver()` instead.
-**Why**: The inbox loop has already exited by the `finally`, so re-submitting an agent-target delivery would drop it into a dead inbox. Shutdown hooks (e.g. the notifications router's `flushNow`) push their pending output into `heldDeliveries`; holding them behind the flag and letting the single awaited flush drain everything keeps one ordered exit path that the process actually waits on. `onShutdown` mirrors `bootstrap`/`bootstrapHooks` (registered on `Registrations`, exposed on `AppContext`, namespaced `<ext>:<name>`).
-**Alternatives Considered**: Delivering from hooks directly (races teardown, no shared ordering); leaving the flush fire-and-forget (the original bug — sends could be cut off by process exit).
+**Choice**: The loop's `finally` sets `shuttingDown = true`, runs every registered `onShutdown` hook (each awaited in a try/catch via `runShutdownHooks`, error-isolated), then `await drainQueueToChannel()`, then closes the active session. `drainQueueToChannel` clears the timer, sorts the remaining queue with the same `compareQueued`, and renders it as one `buildDigest` straight through `channel.deliver()`. The `shuttingDown` flag makes `scheduleDelivery()` a no-op (so a hook's `deliver()` holds rather than flushing) and suppresses the `immediate` channel-render path (so late acks fold into the final drain too).
+**Why**: The inbox loop has already exited by the `finally`, so a queued item can no longer become an agent turn — rendering the digest straight to the channel is the only way it reaches the user. Shutdown hooks (e.g. the notifications router's `flushNow`) push their pending output into the queue; holding them behind the flag and letting the single awaited drain emit one ordered digest keeps one exit path the process actually waits on. `onShutdown` mirrors `bootstrap`/`bootstrapHooks` (registered on `Registrations`, exposed on `AppContext`, namespaced `<ext>:<name>`).
+**Alternatives Considered**: Delivering from hooks directly (races teardown, no shared ordering); leaving the drain fire-and-forget (sends could be cut off by process exit).
 **Consequences**:
-- Pro: notices held or pending at shutdown reach the user; agent-target text is surfaced rather than lost to the dead inbox
-- Con: `immediate` deliveries arriving during shutdown lose their immediacy (held until the final flush)
+- Pro: notices queued or pushed at shutdown reach the user as one digest rather than dying with the process
+- Con: the shutdown digest is a plain channel render, not an agent turn — no agent framing for those last items
 
 ## System Behavior
 
@@ -154,9 +153,9 @@ At shutdown `flushDeliveries` is awaitable (`Promise<void>`, awaiting all sends)
 
 ### Scenario: Background delivery during a conversation
 
-**Given**: An extension calls `app.channels.deliver({ text, maxHoldSeconds: 300 })` while the agent is generating
-**When**: The exchange completes (or 300 s pass, whichever is first)
-**Then**: The held delivery is sent through `channel.deliver()`; a failure is logged without affecting the loop.
+**Given**: An extension calls `app.channels.deliver({ text, tier: "normal" })` while the agent is generating
+**When**: The exchange completes and the Normal idle window (120 s since the last exchange) elapses — or its 900 s max-hold expires first
+**Then**: The queued item, with any others, is injected as one system-origin digest turn the agent surfaces; it never steers the in-flight exchange.
 
 ### Scenario: Idle timeout (policy in the boundary extension)
 

@@ -2,10 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EventBus } from "../../src/events.ts";
 import { NOTIFY_EVENT, parseNotifyPayload } from "../../src/extensions/notifications/payload.ts";
-import {
-  NotificationRouter,
-  SEVERITY_PRIORITY,
-} from "../../src/extensions/notifications/router.ts";
+import { NotificationRouter, SEVERITY_TIER } from "../../src/extensions/notifications/router.ts";
 import type { Logger } from "../../src/log.ts";
 
 const fakeLog = {
@@ -18,7 +15,6 @@ const fakeLog = {
 const fixedNow = new Date("2026-06-12T10:00:00Z");
 
 const FLUSH_WINDOW_SECONDS = 30;
-const MAX_HOLD_SECONDS = 900;
 const DEDUP_TTL_SECONDS = 60;
 
 const createSetup = (now: () => Date = () => fixedNow) => {
@@ -27,7 +23,6 @@ const createSetup = (now: () => Date = () => fixedNow) => {
   const router = new NotificationRouter({
     deliver,
     flushWindowSeconds: FLUSH_WINDOW_SECONDS,
-    maxHoldSeconds: MAX_HOLD_SECONDS,
     dedupTtlSeconds: DEDUP_TTL_SECONDS,
     log: fakeLog,
     now,
@@ -47,7 +42,7 @@ afterEach(() => {
 });
 
 describe("NotificationRouter", () => {
-  it("delivers urgent notifications immediately with the source prefix", async () => {
+  it("delivers urgent notifications immediately at the urgent tier with the source prefix", async () => {
     const { deliver, bus } = createSetup();
 
     bus.emit(NOTIFY_EVENT, { text: "server down", severity: "urgent", source: "monitor" });
@@ -55,12 +50,11 @@ describe("NotificationRouter", () => {
 
     expect(deliver).toHaveBeenCalledExactlyOnceWith({
       text: "--- Notification ---\nSource: monitor\nTime: 2026-06-12 10:00 UTC\n\nserver down",
-      gate: "immediate",
-      priority: 3,
+      tier: "urgent",
     });
   });
 
-  it("holds a non-urgent notification for the flush window, then delivers idle-gated", async () => {
+  it("holds a non-urgent notification for the flush window, then delivers at its tier", async () => {
     const { deliver, bus } = createSetup();
 
     bus.emit(NOTIFY_EVENT, {
@@ -77,9 +71,7 @@ describe("NotificationRouter", () => {
 
     expect(deliver).toHaveBeenCalledExactlyOnceWith({
       text: "--- Notification ---\nSource: ci\nTime: 2026-06-12 10:00 UTC\n\nBuild finished\n\nall green",
-      gate: "idle",
-      maxHoldSeconds: MAX_HOLD_SECONDS,
-      priority: 1,
+      tier: "low",
     });
   });
 
@@ -92,11 +84,9 @@ describe("NotificationRouter", () => {
 
     expect(deliver).toHaveBeenCalledTimes(1);
 
-    const { text, gate, maxHoldSeconds, priority } = deliver.mock.calls[0]?.[0] ?? {};
-    expect(gate).toBe("idle");
-    expect(maxHoldSeconds).toBe(MAX_HOLD_SECONDS);
-    // The digest inherits the highest severity among its items (warning here).
-    expect(priority).toBe(SEVERITY_PRIORITY.warning);
+    const { text, tier } = deliver.mock.calls[0]?.[0] ?? {};
+    // The digest inherits the highest tier among its items (warning → normal here).
+    expect(tier).toBe(SEVERITY_TIER.warning);
     expect(text).toContain("--- Notifications digest ---");
     expect(text).toContain("— Item 1 (info, source: ci) —\nbuild finished");
     expect(text).toContain("— Item 2 (warning, source: monitor) —\ndisk almost full");
@@ -110,12 +100,12 @@ describe("NotificationRouter", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(deliver).toHaveBeenCalledTimes(1);
-    expect(deliver.mock.calls[0]?.[0]).toMatchObject({ gate: "immediate" });
+    expect(deliver.mock.calls[0]?.[0]).toMatchObject({ tier: "urgent" });
 
     await vi.advanceTimersByTimeAsync(FLUSH_WINDOW_SECONDS * 1000);
 
     expect(deliver).toHaveBeenCalledTimes(2);
-    expect(deliver.mock.calls[1]?.[0]).toMatchObject({ gate: "idle" });
+    expect(deliver.mock.calls[1]?.[0]).toMatchObject({ tier: "low" });
     expect(deliver.mock.calls[1]?.[0].text).toContain("minor note");
   });
 
@@ -145,7 +135,7 @@ describe("NotificationRouter", () => {
     router.flushNow();
 
     expect(deliver).toHaveBeenCalledTimes(1);
-    expect(deliver.mock.calls[0]?.[0]).toMatchObject({ gate: "idle" });
+    expect(deliver.mock.calls[0]?.[0]).toMatchObject({ tier: "low" });
     expect(deliver.mock.calls[0]?.[0].text).toContain("build finished");
 
     // The window timer was cleared by flushNow — letting it elapse must not re-deliver.

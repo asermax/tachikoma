@@ -14,7 +14,7 @@ export default defineExtension({
         message.metadata.handled = true;
 
         await context.closeSession();
-        app.channels.deliver({ text: "🆕 Started a fresh session.", gate: "immediate" });
+        app.channels.deliver({ text: "🆕 Started a fresh session.", immediate: true });
         return;
       }
 
