@@ -1,5 +1,6 @@
 import type { Logger } from "../../log.ts";
 import { splitMessage } from "./chunking.ts";
+import { toTelegramMarkdown } from "./markdown.ts";
 
 // Telegram keeps a chat action visible for ~5 seconds, so refresh just before it expires.
 const TYPING_REFRESH_MS = 5000;
@@ -7,12 +8,12 @@ const TYPING_REFRESH_MS = 5000;
 const DELETE_RETRY_ATTEMPTS = 3;
 
 export interface SendMessageOptions {
-  parse_mode?: "Markdown";
+  parse_mode?: "MarkdownV2";
   disable_notification?: boolean;
 }
 
 export interface EditMessageOptions {
-  parse_mode?: "Markdown";
+  parse_mode?: "MarkdownV2";
 }
 
 /** Narrow grammY API surface the channel sends through — fakeable in tests. */
@@ -52,11 +53,27 @@ const errorDetail = (error: unknown): string => {
 export const isMarkdownParseError = (error: unknown): boolean =>
   /can't parse entities/i.test(errorDetail(error));
 
+/**
+ * MarkdownV2 escaping inflates length, so a chunk that fit as raw text can
+ * overflow once converted — Telegram then rejects it as too long. Treated like
+ * a parse rejection: resend the raw text, which is always within the limit.
+ */
+export const isMessageTooLongError = (error: unknown): boolean =>
+  /message is too long/i.test(errorDetail(error));
+
+/** Either failure mode of the converted MarkdownV2 send — both recover by resending raw. */
+const isMarkdownRenderError = (error: unknown): boolean =>
+  isMarkdownParseError(error) || isMessageTooLongError(error);
+
 /** Telegram rejects edits whose content matches the current message — benign. */
 export const isMessageNotModifiedError = (error: unknown): boolean =>
   /message is not modified/i.test(errorDetail(error));
 
-/** Try Markdown first; on a Telegram entity-parse rejection resend as plain text. */
+/**
+ * Send `text` (GitHub-flavored markdown) converted to MarkdownV2; on a Telegram
+ * render rejection resend the raw text as plain, so formatting is best-effort
+ * but the message is never lost.
+ */
 export const sendWithMarkdownFallback = async (
   api: Pick<SendApi, "sendMessage">,
   chatId: number,
@@ -66,10 +83,13 @@ export const sendWithMarkdownFallback = async (
   const base: SendMessageOptions = options.silent === true ? { disable_notification: true } : {};
 
   try {
-    const sent = await api.sendMessage(chatId, text, { ...base, parse_mode: "Markdown" });
+    const sent = await api.sendMessage(chatId, toTelegramMarkdown(text), {
+      ...base,
+      parse_mode: "MarkdownV2",
+    });
     return sent.message_id;
   } catch (error) {
-    if (!isMarkdownParseError(error)) throw error;
+    if (!isMarkdownRenderError(error)) throw error;
 
     const sent = await api.sendMessage(chatId, text, base);
     return sent.message_id;
@@ -77,9 +97,9 @@ export const sendWithMarkdownFallback = async (
 };
 
 /**
- * Edit a message trying Markdown first, falling back to plain text on a parse
- * rejection. "Message is not modified" rejections are swallowed — the visible
- * content already matches.
+ * Edit a message with `text` converted to MarkdownV2, falling back to the raw
+ * text on a render rejection. "Message is not modified" rejections are swallowed
+ * — the visible content already matches.
  */
 export const editWithMarkdownFallback = async (
   api: Pick<SendApi, "editMessageText">,
@@ -88,10 +108,12 @@ export const editWithMarkdownFallback = async (
   text: string,
 ): Promise<void> => {
   try {
-    await api.editMessageText(chatId, messageId, text, { parse_mode: "Markdown" });
+    await api.editMessageText(chatId, messageId, toTelegramMarkdown(text), {
+      parse_mode: "MarkdownV2",
+    });
   } catch (error) {
     if (isMessageNotModifiedError(error)) return;
-    if (!isMarkdownParseError(error)) throw error;
+    if (!isMarkdownRenderError(error)) throw error;
 
     try {
       await api.editMessageText(chatId, messageId, text);

@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toTelegramMarkdown } from "../../src/extensions/telegram/markdown.ts";
 import {
   deliverText,
   editWithMarkdownFallback,
   isMarkdownParseError,
   isMessageNotModifiedError,
+  isMessageTooLongError,
   notifyViaCopyDelete,
   sendChunked,
   sendWithMarkdownFallback,
@@ -28,6 +30,11 @@ const notModifiedError = () =>
     description: "Bad Request: message is not modified",
   });
 
+const tooLongError = () =>
+  Object.assign(new Error("400: Bad Request: message is too long"), {
+    description: "Bad Request: message is too long",
+  });
+
 describe("isMarkdownParseError", () => {
   it("recognizes Telegram entity-parse rejections", () => {
     expect(isMarkdownParseError(parseError())).toBe(true);
@@ -48,6 +55,16 @@ describe("isMarkdownParseError", () => {
   });
 });
 
+describe("isMessageTooLongError", () => {
+  it("recognizes too-long rejections", () => {
+    expect(isMessageTooLongError(tooLongError())).toBe(true);
+  });
+
+  it("rejects unrelated errors", () => {
+    expect(isMessageTooLongError(new Error("chat not found"))).toBe(false);
+  });
+});
+
 describe("isMessageNotModifiedError", () => {
   it("recognizes not-modified rejections", () => {
     expect(isMessageNotModifiedError(notModifiedError())).toBe(true);
@@ -59,13 +76,15 @@ describe("isMessageNotModifiedError", () => {
 });
 
 describe("editWithMarkdownFallback", () => {
-  it("edits with Markdown parse mode", async () => {
+  it("edits with the converted MarkdownV2 text", async () => {
     const editMessageText = vi.fn().mockResolvedValue(true);
 
-    await editWithMarkdownFallback({ editMessageText }, 42, 7, "*hi*");
+    await editWithMarkdownFallback({ editMessageText }, 42, 7, "**hi**");
 
     expect(editMessageText).toHaveBeenCalledTimes(1);
-    expect(editMessageText).toHaveBeenCalledWith(42, 7, "*hi*", { parse_mode: "Markdown" });
+    expect(editMessageText).toHaveBeenCalledWith(42, 7, toTelegramMarkdown("**hi**"), {
+      parse_mode: "MarkdownV2",
+    });
   });
 
   it("swallows a not-modified rejection without retrying as plain text", async () => {
@@ -179,14 +198,33 @@ describe("startTyping", () => {
 });
 
 describe("sendWithMarkdownFallback", () => {
-  it("sends with Markdown parse mode by default", async () => {
+  it("sends the converted MarkdownV2 text by default", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 7 });
 
-    const id = await sendWithMarkdownFallback({ sendMessage }, 42, "*hi*");
+    const id = await sendWithMarkdownFallback({ sendMessage }, 42, "**hi**");
 
     expect(id).toBe(7);
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(42, "*hi*", { parse_mode: "Markdown" });
+    expect(sendMessage).toHaveBeenCalledWith(42, toTelegramMarkdown("**hi**"), {
+      parse_mode: "MarkdownV2",
+    });
+  });
+
+  it("falls back to plain raw text when the converted send is too long", async () => {
+    const sendMessage = vi
+      .fn()
+      .mockImplementation(
+        async (_chatId: number, _text: string, other?: { parse_mode?: string }) => {
+          if (other?.parse_mode != null) throw tooLongError();
+          return { message_id: 9 };
+        },
+      );
+
+    const id = await sendWithMarkdownFallback({ sendMessage }, 42, "long raw text");
+
+    expect(id).toBe(9);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith(42, "long raw text", {});
   });
 
   it("falls back to plain text on a parse error", async () => {
@@ -233,13 +271,13 @@ describe("sendChunked", () => {
     const ids = await sendChunked({ sendMessage }, 42, `${first}\n\n${second}`, { silent: true });
 
     expect(ids).toEqual([1, 2]);
-    expect(sendMessage).toHaveBeenNthCalledWith(1, 42, first, {
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 42, toTelegramMarkdown(first), {
       disable_notification: true,
-      parse_mode: "Markdown",
+      parse_mode: "MarkdownV2",
     });
-    expect(sendMessage).toHaveBeenNthCalledWith(2, 42, second, {
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 42, toTelegramMarkdown(second), {
       disable_notification: true,
-      parse_mode: "Markdown",
+      parse_mode: "MarkdownV2",
     });
   });
 
@@ -342,9 +380,9 @@ describe("deliverText", () => {
 
     expect(id).toBe(101);
     expect(calls).toEqual(["send:n", "copy", "delete"]);
-    expect(api.sendMessage).toHaveBeenCalledWith(42, "notice", {
+    expect(api.sendMessage).toHaveBeenCalledWith(42, toTelegramMarkdown("notice"), {
       disable_notification: true,
-      parse_mode: "Markdown",
+      parse_mode: "MarkdownV2",
     });
   });
 
@@ -355,7 +393,9 @@ describe("deliverText", () => {
 
     expect(id).toBe(1);
     expect(calls).toEqual(["send:n"]);
-    expect(api.sendMessage).toHaveBeenCalledWith(42, "notice", { parse_mode: "Markdown" });
+    expect(api.sendMessage).toHaveBeenCalledWith(42, toTelegramMarkdown("notice"), {
+      parse_mode: "MarkdownV2",
+    });
   });
 
   it("returns null when there is nothing to send", async () => {

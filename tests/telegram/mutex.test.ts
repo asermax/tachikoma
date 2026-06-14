@@ -50,7 +50,7 @@ describe("delivery serialization", () => {
 
     const api = {
       sendMessage: vi.fn().mockImplementation(async (_chat: number, text: string) => {
-        calls.push(`send:${text}`);
+        calls.push(`send:${text.trim()}`);
         // Yield so an unserialized concurrent delivery would interleave here.
         await sleep(10);
         next += 1;

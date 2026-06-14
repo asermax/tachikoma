@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TELEGRAM_MAX_MESSAGE_LENGTH } from "../../src/extensions/telegram/chunking.ts";
+import { toTelegramMarkdown } from "../../src/extensions/telegram/markdown.ts";
 import { EDIT_THROTTLE_MS, StreamRenderer } from "../../src/extensions/telegram/streaming.ts";
 import type { Logger } from "../../src/log.ts";
 
@@ -66,7 +67,9 @@ describe("StreamRenderer", () => {
 
     // Completing the paragraph reveals everything up to the break.
     await renderer.appendText(" there.\n\nSecond");
-    expect(api.calls).toEqual([{ type: "send", text: "Hello there.", parseMode: "Markdown" }]);
+    expect(api.calls).toEqual([
+      { type: "send", text: toTelegramMarkdown("Hello there."), parseMode: "MarkdownV2" },
+    ]);
   });
 
   it("renders complete paragraphs and throttles subsequent edits", async () => {
@@ -74,7 +77,9 @@ describe("StreamRenderer", () => {
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
     await renderer.appendText("First.\n\n");
-    expect(api.calls).toEqual([{ type: "send", text: "First.", parseMode: "Markdown" }]);
+    expect(api.calls).toEqual([
+      { type: "send", text: toTelegramMarkdown("First."), parseMode: "MarkdownV2" },
+    ]);
 
     // Within the throttle window the new paragraph is buffered, not edited in.
     await renderer.appendText("Second.\n\n");
@@ -86,8 +91,8 @@ describe("StreamRenderer", () => {
     expect(api.calls[1]).toEqual({
       type: "edit",
       messageId: 1,
-      text: "First.\n\nSecond.\n\nThird.",
-      parseMode: "Markdown",
+      text: toTelegramMarkdown("First.\n\nSecond.\n\nThird."),
+      parseMode: "MarkdownV2",
     });
   });
 
@@ -101,8 +106,8 @@ describe("StreamRenderer", () => {
     await renderer.appendTool("grep", { pattern: "skippable" });
     expect(api.calls.at(-1)).toEqual({
       type: "send",
-      text: "Let me search.\n\n_🔧 Searching for 'skippable'_",
-      parseMode: "Markdown",
+      text: toTelegramMarkdown("Let me search.\n\n_🔧 Searching for 'skippable'_"),
+      parseMode: "MarkdownV2",
     });
 
     // Text after the tool bakes the summary marker, separated by blank lines.
@@ -111,8 +116,8 @@ describe("StreamRenderer", () => {
     expect(api.calls.at(-1)).toEqual({
       type: "edit",
       messageId: 1,
-      text: "Let me search.\n\n_🔧 Searching for `skippable`_\n\nFound it.",
-      parseMode: "Markdown",
+      text: toTelegramMarkdown("Let me search.\n\n_🔧 Searching for `skippable`_\n\nFound it."),
+      parseMode: "MarkdownV2",
     });
   });
 
@@ -122,7 +127,9 @@ describe("StreamRenderer", () => {
 
     await renderer.showTransient("Compacting…");
 
-    expect(api.calls).toEqual([{ type: "send", text: "_Compacting…_", parseMode: "Markdown" }]);
+    expect(api.calls).toEqual([
+      { type: "send", text: toTelegramMarkdown("_Compacting…_"), parseMode: "MarkdownV2" },
+    ]);
   });
 
   it("finalize bypasses the throttle and flushes the trailing paragraph", async () => {
@@ -136,8 +143,8 @@ describe("StreamRenderer", () => {
     expect(await renderer.finalize()).toBe(1);
     expect(api.calls.at(-1)).toEqual({
       type: "send",
-      text: "Hello world",
-      parseMode: "Markdown",
+      text: toTelegramMarkdown("Hello world"),
+      parseMode: "MarkdownV2",
     });
   });
 
@@ -152,8 +159,8 @@ describe("StreamRenderer", () => {
     expect(api.calls.at(-1)).toEqual({
       type: "edit",
       messageId: 1,
-      text: "Done.\n\n_🔧 Reading `config.ts`_",
-      parseMode: "Markdown",
+      text: toTelegramMarkdown("Done.\n\n_🔧 Reading `config.ts`_"),
+      parseMode: "MarkdownV2",
     });
   });
 
@@ -164,15 +171,17 @@ describe("StreamRenderer", () => {
     const second = "b".repeat(3000);
 
     await renderer.appendText(`${first}\n\n`);
-    expect(api.calls).toEqual([{ type: "send", text: first, parseMode: "Markdown" }]);
+    expect(api.calls).toEqual([
+      { type: "send", text: toTelegramMarkdown(first), parseMode: "MarkdownV2" },
+    ]);
 
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText(`${second}\n\n`);
 
     expect(api.calls).toEqual([
-      { type: "send", text: first, parseMode: "Markdown" },
-      { type: "edit", messageId: 1, text: first, parseMode: "Markdown" },
-      { type: "send", text: second, parseMode: "Markdown" },
+      { type: "send", text: toTelegramMarkdown(first), parseMode: "MarkdownV2" },
+      { type: "edit", messageId: 1, text: toTelegramMarkdown(first), parseMode: "MarkdownV2" },
+      { type: "send", text: toTelegramMarkdown(second), parseMode: "MarkdownV2" },
     ]);
   });
 
@@ -190,10 +199,14 @@ describe("StreamRenderer", () => {
     expect(api.calls).toEqual([
       {
         type: "send",
-        text: `start${text.slice(5, TELEGRAM_MAX_MESSAGE_LENGTH)}`,
-        parseMode: "Markdown",
+        text: toTelegramMarkdown(`start${text.slice(5, TELEGRAM_MAX_MESSAGE_LENGTH)}`),
+        parseMode: "MarkdownV2",
       },
-      { type: "send", text: text.slice(TELEGRAM_MAX_MESSAGE_LENGTH), parseMode: "Markdown" },
+      {
+        type: "send",
+        text: toTelegramMarkdown(text.slice(TELEGRAM_MAX_MESSAGE_LENGTH)),
+        parseMode: "MarkdownV2",
+      },
     ]);
   });
 
@@ -229,8 +242,8 @@ describe("StreamRenderer", () => {
     expect(api.calls.at(-2)).toEqual({ type: "delete", messageId: 1 });
     expect(api.calls.at(-1)).toEqual({
       type: "send",
-      text: "Hello\n\nworld\n\ntail",
-      parseMode: "Markdown",
+      text: toTelegramMarkdown("Hello\n\nworld\n\ntail"),
+      parseMode: "MarkdownV2",
     });
   });
 
@@ -259,7 +272,9 @@ describe("StreamRenderer", () => {
     // Render a streaming message, then make the final in-place edit reject so finalize
     // falls back to sending that chunk as a brand-new message.
     await renderer.appendText("Hello.\n\n");
-    expect(api.calls).toEqual([{ type: "send", text: "Hello.", parseMode: "Markdown" }]);
+    expect(api.calls).toEqual([
+      { type: "send", text: toTelegramMarkdown("Hello."), parseMode: "MarkdownV2" },
+    ]);
 
     api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
@@ -270,7 +285,11 @@ describe("StreamRenderer", () => {
       expect.anything(),
       "final edit failed — sending as a new message",
     );
-    expect(api.calls.at(-1)).toEqual({ type: "send", text: "Hello.", parseMode: "Markdown" });
+    expect(api.calls.at(-1)).toEqual({
+      type: "send",
+      text: toTelegramMarkdown("Hello."),
+      parseMode: "MarkdownV2",
+    });
     expect(lastId).toBe(2);
   });
 
@@ -284,7 +303,9 @@ describe("StreamRenderer", () => {
     await renderer.appendText("Now the answer.");
 
     expect(await renderer.finalize()).toBe(1);
-    expect(api.calls.at(-1)?.text).toBe("_🔧 Searching for `first`_\n\nNow the answer.");
+    expect(api.calls.at(-1)?.text).toBe(
+      toTelegramMarkdown("_🔧 Searching for `first`_\n\nNow the answer."),
+    );
   });
 
   it("does not double the newline when the buffer already ends with one", async () => {
@@ -297,7 +318,9 @@ describe("StreamRenderer", () => {
     await renderer.appendText("Done.");
 
     expect(await renderer.finalize()).toBe(1);
-    expect(api.calls.at(-1)?.text).toBe("Line one.\n\n_🔧 Reading `b.ts`_\n\nDone.");
+    expect(api.calls.at(-1)?.text).toBe(
+      toTelegramMarkdown("Line one.\n\n_🔧 Reading `b.ts`_\n\nDone."),
+    );
   });
 
   it("drops the live line when appending it would exceed the edit limit", async () => {
@@ -313,7 +336,7 @@ describe("StreamRenderer", () => {
     await renderer.showTransient("status that pushes past the limit");
 
     // The whole buffer (its trailing break included) renders; the transient is dropped.
-    expect(api.calls.at(-1)?.text).toBe(big);
+    expect(api.calls.at(-1)?.text).toBe(toTelegramMarkdown(big));
   });
 
   it("returns null from a broken finalize when no buffer text survives", async () => {

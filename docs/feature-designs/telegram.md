@@ -15,7 +15,7 @@ Tachikoma's production interface is a Telegram bot for a single user. The channe
 
 **Constraints:**
 - Telegram hard limits: 4096 UTF-16 characters per message, 20 MB bot file downloads, 64 bytes of `callback_data` per button, ~50 MB uploads
-- Telegram's Markdown parsing rejects whole messages on malformed entities — a send path that can never lose text is required
+- Telegram's MarkdownV2 parsing rejects whole messages on unescaped punctuation — the agent's GitHub-flavored markdown must be converted, and the send path must never lose text when conversion or rendering fails
 - `respond()` and `deliver()` can be invoked concurrently (immediate-gated deliveries arrive mid-exchange), but Telegram message sequences must not interleave
 - Everything ships as a `defineExtension` module per DES-001/DES-002; tools register through pi's `registerTool` inside `app.agent.use` factories
 
@@ -44,7 +44,8 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 | `src/extensions/telegram/inbound.ts` | Pure mappers from grammY `Message`/tap/reaction values to domain `InboundMessage`: `mapTextMessage`, `mapMediaMessage`, `mapButtonTap`, `mapReaction`, plus `replyQuote`/`replyTargetId` helpers | Button taps and reactions framed as explicit prose; replies carry `metadata.replyToMessageId` (string) and a truncated `Replied to:` quote; `mapReaction` diffs old/new emoji sets and returns `null` on no change |
 | `src/extensions/telegram/schema.ts` | `channel_messages` drizzle table (channel, message id, session id, direction, timestamp) plus the `ChannelMessageDirection` const map; re-exported from `src/db/schema.ts` | Unique index on `(channel, message_id)` so re-recording the same id re-points it via `onConflictDoUpdate`; index on `session_id`; message ids stored as text since they are opaque keys |
 | `src/extensions/telegram/chunking.ts` | `splitMessage`: paragraph > line > hard split within 4096 UTF-16 units | JS `string.length` is already UTF-16 code units — Telegram's actual constraint, no conversion layer needed; hard split backs off one unit at a low surrogate |
-| `src/extensions/telegram/sending.ts` | `sendWithMarkdownFallback`, `sendChunked`, `notifyViaCopyDelete`, `deliverText`, `startTyping`; narrow `SendApi` interface | Copy-first ordering keeps text safe (copy fails → original preserved; delete fails → duplicate accepted after 3 retries); typing refreshed every 5 s (Telegram expires chat actions at ~5 s) |
+| `src/extensions/telegram/sending.ts` | `sendWithMarkdownFallback`, `sendChunked`, `notifyViaCopyDelete`, `deliverText`, `startTyping`; narrow `SendApi` interface | Every send/edit converts the agent's markdown to MarkdownV2 (`markdown.ts`) and resends the raw text plain on a parse or too-long rejection (`isMarkdownRenderError`); copy-first ordering keeps text safe (copy fails → original preserved; delete fails → duplicate accepted after 3 retries); typing refreshed every 5 s (Telegram expires chat actions at ~5 s) |
+| `src/extensions/telegram/markdown.ts` | `toTelegramMarkdown`: wraps `telegramify-markdown`'s `convert(text, "escape")` | Telegram's MarkdownV2 chokes on the GitHub-flavored markdown the agent emits (headings, `**bold**`, unescaped `.`/`-`/`!`); the converter rewrites supported constructs and escapes the rest, mirroring the legacy Python channel |
 | `src/extensions/telegram/tool-labels.ts` | `formatToolActivity` (present-progressive live line), `formatToolName` (underscore-split + title-case, MCP server prefix stripped), and `summarizeToolActivities` (collapses a tool→text segment into one capitalized phrase) | Live label and baked summary use separate maps, keyed by pi's tool names (`read`, `grep`, `bash`, … and `delegate_to_agent`) with pi's arg shape (`path`/`pattern`/`command`) — not the legacy Claude-Code names; they differ in full path vs basename and full quotes vs inline-code; same-typed tools aggregate past 2 uses; >5 phrases fold into a trailing "more"; unmapped tools (including snake_case tachikoma tools) fall back to the humanized name |
 | `src/extensions/telegram/mutex.ts` | Promise-chain FIFO `Mutex` serializing all channel sends | Tail swallows rejections so a failed delivery never wedges the queue |
 | `src/extensions/telegram/media.ts` | `resolveMedia` priority table, `downloadMedia` with 20 MB pre-check, `generateMediaFilename`, `buildAttachment`, `ensureMediaDir` (create + 30-day prune) | Animation checked before document (Telegram sets both fields); video notes map onto the `video` domain kind; size check happens before any network call |
@@ -63,22 +64,23 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 **Consequences**:
 - Pro: Incremental feedback at paragraph granularity without mid-word churn
 - Pro: Tool activity persists in the final message (the baked summary) and consecutive text segments stay separated by blank lines
-- Pro: Markdown parse failures and edit errors degrade to a fresh plain `sendChunked` instead of breaking the exchange
+- Pro: MarkdownV2 render failures and edit errors degrade to a fresh plain `sendChunked` instead of breaking the exchange
 - Pro: Overflow is handled by finalizing full chunks in place and streaming only the tail, so the 4096 limit never aborts streaming
 - Con: More moving parts than a single send — paragraph gating, tool baking, throttle, overflow commit, and broken-state bookkeeping all live in `streaming.ts`
 - Con: A long single paragraph with no `\n\n` shows nothing until it closes or `finalize()` runs (the typing indicator covers liveness)
 
-### Markdown with plain-text fallback instead of an entity converter
+### MarkdownV2 via telegramify-markdown conversion with a plain-text fallback
 
-**Choice**: Send with legacy `parse_mode: "Markdown"`; if Telegram rejects with a "can't parse entities" error, resend the identical text with no parse mode (`isMarkdownParseError` matches on the error description).
-**Why**: An entity-conversion pipeline (telegramify-markdown style) is a large surface for a single-user channel. The Markdown-then-plain fallback applies to every send and edit (streaming flush, overflow commit, and `finalize()`), so a chunk that fails to parse mid-stream resends unformatted and the renderer keeps going — formatting is best-effort, text is never lost.
-**Alternatives Considered**: MarkdownV2 with escaping (strict, breaks easily on LLM output); a TS entity-conversion library; plain text always.
+**Choice**: Convert the agent's GitHub-flavored markdown to MarkdownV2 with `telegramify-markdown` (`toTelegramMarkdown` in `markdown.ts`) and send with `parse_mode: "MarkdownV2"`; if Telegram still rejects ("can't parse entities") or the escaped text overflows ("message is too long"), resend the *raw* text with no parse mode (`isMarkdownRenderError`). The convert-then-fallback applies to every send and edit (streaming flush, overflow commit, `finalize()`, and `deliver()`), so a chunk that fails mid-stream resends unformatted and the renderer keeps going — formatting is best-effort, text is never lost.
+**Why**: Telegram's native parsers don't understand GFM and reject whole messages on any unescaped `.`/`-`/`!`/`(`; the previous bare `parse_mode: "Markdown"` therefore fell back to plain text on most real responses, losing nearly all formatting. `telegramify-markdown` is the same library the legacy Python channel used — it rewrites the constructs Telegram supports (bold, italic, code, links, lists, tables) and escapes the rest. The JS port returns an escaped string (the Python one returned entities), which drops straight into the existing string-based chunking and fallback.
+**Alternatives Considered**: A bare `parse_mode: "MarkdownV2"` swap (worse — every unescaped punctuation mark breaks parsing); a hand-rolled GFM→MarkdownV2 escaper (owns every edge case); the entity-based pipeline the Python channel used (the JS lib only emits strings, so it would need a different/entity-producing dependency); plain text always.
 
 **Consequences**:
-- Pro: Two code paths, no escaping logic, no dependency
-- Pro: A malformed message degrades to unformatted text instead of an error
-- Con: Occasional messages render with raw markdown syntax
-- Con: Legacy Markdown supports fewer constructs than MarkdownV2 (no underline, spoilers)
+- Pro: The agent's markdown renders correctly (bold, italic, code, links, lists, tables) instead of mostly degrading to plain text
+- Pro: A message that still fails to render degrades to unformatted text instead of an error — text is never lost
+- Con: One third-party dependency (`telegramify-markdown`, on older remark internals)
+- Con: MarkdownV2 escaping inflates length, so a chunk near 4096 raw chars can overflow once converted and fall back to plain text for that chunk
+- Con: Splitting happens on the raw text before conversion, so a fenced code block straddling a chunk boundary loses its fence and that chunk falls back to plain
 
 ### Promise-chain mutex serializing all sends
 
@@ -140,11 +142,11 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 **When**: The user sends `/stop`
 **Then**: `handleStop` records the message as the last inbound, calls the injected `stop` callback (wired to the coordinator's exchange abort) instead of submitting a turn, and replies `⏹ Stopped.`; an abort failure is logged but the acknowledgement still sends.
 
-### Scenario: Markdown parse failure on a response chunk
+### Scenario: MarkdownV2 render failure on a response chunk
 
-**Given**: The agent's response contains unbalanced markdown
-**When**: `sendWithMarkdownFallback` sends the chunk and Telegram answers "can't parse entities"
-**Then**: The same text is resent without `parse_mode` and delivered unformatted; any non-parse error (e.g. "chat not found") propagates instead.
+**Given**: A chunk's converted MarkdownV2 fails to parse, or its escaping inflates it past 4096 characters
+**When**: `sendWithMarkdownFallback` sends the converted text and Telegram answers "can't parse entities" or "message is too long"
+**Then**: The raw text is resent without `parse_mode` and delivered unformatted (`isMarkdownRenderError`); any other error (e.g. "chat not found") propagates instead.
 
 ### Scenario: Delivery arrives while a response is rendering
 

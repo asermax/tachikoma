@@ -11,6 +11,7 @@ import {
   TelegramChannel,
   type TelegramChannelOptions,
 } from "../../src/extensions/telegram/channel.ts";
+import { toTelegramMarkdown } from "../../src/extensions/telegram/markdown.ts";
 import type { Logger } from "../../src/log.ts";
 
 const fakeLog = {
@@ -312,8 +313,12 @@ describe("respond streaming", () => {
 
     const messageCalls = calls.filter((call) => call.type !== "action");
     expect(messageCalls).toEqual([
-      { type: "send", text: "Hello.\n\n_🔧 Reading /a/b/notes.md_" },
-      { type: "edit", messageId: 1, text: "Hello.\n\n_🔧 Reading `notes.md`_\n\nDone." },
+      { type: "send", text: toTelegramMarkdown("Hello.\n\n_🔧 Reading /a/b/notes.md_") },
+      {
+        type: "edit",
+        messageId: 1,
+        text: toTelegramMarkdown("Hello.\n\n_🔧 Reading `notes.md`_\n\nDone."),
+      },
     ]);
     expect(channel.lastOutboundMessageId).toBe(1);
   });
@@ -362,14 +367,18 @@ describe("status", () => {
     await settle();
 
     expect(calls.filter((call) => call.type === "send")).toEqual([
-      { type: "send", text: "_Pondering…_" },
+      { type: "send", text: toTelegramMarkdown("_Pondering…_") },
     ]);
 
     push({ kind: "text", text: "Answer" });
     end();
     await responding;
 
-    expect(calls.at(-1)).toEqual({ type: "edit", messageId: 1, text: "Answer" });
+    expect(calls.at(-1)).toEqual({
+      type: "edit",
+      messageId: 1,
+      text: toTelegramMarkdown("Answer"),
+    });
   });
 });
 
@@ -383,9 +392,9 @@ describe("shutdownStatus", () => {
     await channel.shutdownStatus("Done");
 
     expect(calls).toEqual([
-      { type: "send", text: "_Wrapping up the conversation…_" },
-      { type: "edit", messageId: 1, text: "_Post-processing: memory…_" },
-      { type: "edit", messageId: 1, text: "_Done_" },
+      { type: "send", text: toTelegramMarkdown("_Wrapping up the conversation…_") },
+      { type: "edit", messageId: 1, text: toTelegramMarkdown("_Post-processing: memory…_") },
+      { type: "edit", messageId: 1, text: toTelegramMarkdown("_Done_") },
     ]);
   });
 });
@@ -901,7 +910,7 @@ describe("deliver", () => {
 
     await channel.deliver({ text: "scheduled reminder" });
 
-    expect(calls).toContainEqual({ type: "send", text: "scheduled reminder" });
+    expect(calls).toContainEqual({ type: "send", text: toTelegramMarkdown("scheduled reminder") });
     expect(channel.lastOutboundMessageId).toBe(1);
   });
 });
