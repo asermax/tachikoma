@@ -1,3 +1,11 @@
+# [3.4.0](https://github.com/asermax/tachikoma/compare/v3.3.0...v3.4.0) (2026-06-14)
+
+
+### Features
+
+* **telegram:** avoid redundant push notifications on streamed responses ([19837cd](https://github.com/asermax/tachikoma/commit/19837cde2370eab4d4644e942a7b4226c74e8591))
+* **telegram:** force a push notification for streamed responses ([22af526](https://github.com/asermax/tachikoma/commit/22af526189922ceb99ce4a4a3c9124283c0b73f9))
+
 # [3.3.0](https://github.com/asermax/tachikoma/compare/v3.2.0...v3.3.0) (2026-06-14)
 
 
