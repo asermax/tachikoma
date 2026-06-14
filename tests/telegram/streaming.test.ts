@@ -56,60 +56,63 @@ describe("StreamRenderer", () => {
     vi.useRealTimers();
   });
 
-  it("sends the first text immediately and throttles subsequent edits", async () => {
+  it("holds an in-progress paragraph until a paragraph boundary closes it", async () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
+    // No paragraph break yet — nothing renders during streaming.
     await renderer.appendText("Hello");
-    expect(api.calls).toEqual([{ type: "send", text: "Hello", parseMode: "Markdown" }]);
+    expect(api.calls).toEqual([]);
 
-    await renderer.appendText(" there");
+    // Completing the paragraph reveals everything up to the break.
+    await renderer.appendText(" there.\n\nSecond");
+    expect(api.calls).toEqual([{ type: "send", text: "Hello there.", parseMode: "Markdown" }]);
+  });
+
+  it("renders complete paragraphs and throttles subsequent edits", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.appendText("First.\n\n");
+    expect(api.calls).toEqual([{ type: "send", text: "First.", parseMode: "Markdown" }]);
+
+    // Within the throttle window the new paragraph is buffered, not edited in.
+    await renderer.appendText("Second.\n\n");
     expect(api.calls).toHaveLength(1);
 
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText(", world");
+    await renderer.appendText("Third.\n\n");
     expect(api.calls).toHaveLength(2);
     expect(api.calls[1]).toEqual({
       type: "edit",
       messageId: 1,
-      text: "Hello there, world",
+      text: "First.\n\nSecond.\n\nThird.",
       parseMode: "Markdown",
     });
   });
 
-  it("skips edits when the content has not changed", async () => {
+  it("bakes a tool marker between text segments and shows a live line while running", async () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    await renderer.appendText("Hello");
-    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-
-    await renderer.showTransient("⚙ read");
-    expect(api.calls).toHaveLength(2);
-
-    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.showTransient("⚙ read");
-    expect(api.calls).toHaveLength(2);
-  });
-
-  it("renders tool markers as italic transient lines replaced by later text", async () => {
-    const api = fakeApi();
-    const renderer = new StreamRenderer(api, 42, fakeLog);
-
-    await renderer.appendText("Working on it.");
-    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-
-    await renderer.showTransient("⚙ read");
-    expect(api.calls.at(-1)).toMatchObject({
-      type: "edit",
-      text: "Working on it.\n\n_⚙ read_",
+    // Settled text plus a live tool line renders the whole buffer beneath it,
+    // even without a trailing paragraph break.
+    await renderer.appendText("Let me search.");
+    await renderer.appendTool("Grep", { pattern: "skippable" });
+    expect(api.calls.at(-1)).toEqual({
+      type: "send",
+      text: "Let me search.\n\n_🔧 Searching for 'skippable'_",
+      parseMode: "Markdown",
     });
 
+    // Text after the tool bakes the summary marker, separated by blank lines.
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText(" Done.");
-    expect(api.calls.at(-1)).toMatchObject({
+    await renderer.appendText("Found it.\n\n");
+    expect(api.calls.at(-1)).toEqual({
       type: "edit",
-      text: "Working on it. Done.",
+      messageId: 1,
+      text: "Let me search.\n\n*🔧 Searching for `skippable`*\n\nFound it.",
+      parseMode: "Markdown",
     });
   });
 
@@ -117,23 +120,39 @@ describe("StreamRenderer", () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    await renderer.showTransient("⚙ bash");
+    await renderer.showTransient("Compacting…");
 
-    expect(api.calls).toEqual([{ type: "send", text: "_⚙ bash_", parseMode: "Markdown" }]);
+    expect(api.calls).toEqual([{ type: "send", text: "_Compacting…_", parseMode: "Markdown" }]);
   });
 
-  it("finalize bypasses the throttle and edits in the full remaining text", async () => {
+  it("finalize bypasses the throttle and flushes the trailing paragraph", async () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
     await renderer.appendText("Hello");
     await renderer.appendText(" world");
+    expect(api.calls).toEqual([]);
+
+    expect(await renderer.finalize()).toBe(1);
+    expect(api.calls.at(-1)).toEqual({
+      type: "send",
+      text: "Hello world",
+      parseMode: "Markdown",
+    });
+  });
+
+  it("bakes a pending tool summary at finalize when no trailing text follows", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.appendText("Done.");
+    await renderer.appendTool("Read", { file_path: "/tmp/notes/config.ts" });
 
     expect(await renderer.finalize()).toBe(1);
     expect(api.calls.at(-1)).toEqual({
       type: "edit",
       messageId: 1,
-      text: "Hello world",
+      text: "Done.\n\n*🔧 Reading `config.ts`*",
       parseMode: "Markdown",
     });
   });
@@ -144,25 +163,17 @@ describe("StreamRenderer", () => {
     const first = "a".repeat(3000);
     const second = "b".repeat(3000);
 
-    await renderer.appendText(first);
+    await renderer.appendText(`${first}\n\n`);
+    expect(api.calls).toEqual([{ type: "send", text: first, parseMode: "Markdown" }]);
+
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText(`\n\n${second}`);
+    await renderer.appendText(`${second}\n\n`);
 
     expect(api.calls).toEqual([
       { type: "send", text: first, parseMode: "Markdown" },
       { type: "edit", messageId: 1, text: first, parseMode: "Markdown" },
       { type: "send", text: second, parseMode: "Markdown" },
     ]);
-
-    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText(" and more");
-
-    expect(api.calls.at(-1)).toEqual({
-      type: "edit",
-      messageId: 2,
-      text: `${second} and more`,
-      parseMode: "Markdown",
-    });
   });
 
   it("chunks overflow at finalize when the throttle held the last flushes back", async () => {
@@ -173,11 +184,12 @@ describe("StreamRenderer", () => {
     await renderer.appendText("start");
     await renderer.appendText(text.slice(5));
 
+    // "start" alone never rendered (no paragraph break), so the first overflow
+    // chunk is sent fresh rather than edited into an existing message.
     expect(await renderer.finalize()).toBe(2);
-    expect(api.calls.slice(1)).toEqual([
+    expect(api.calls).toEqual([
       {
-        type: "edit",
-        messageId: 1,
+        type: "send",
         text: `start${text.slice(5, TELEGRAM_MAX_MESSAGE_LENGTH)}`,
         parseMode: "Markdown",
       },
@@ -190,12 +202,12 @@ describe("StreamRenderer", () => {
     api.editMessageText.mockRejectedValueOnce(notModifiedError());
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    await renderer.appendText("Hello");
+    await renderer.appendText("Hello\n\n");
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText(" again");
+    await renderer.appendText("again\n\n");
 
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("!");
+    await renderer.appendText("more\n\n");
 
     expect(api.calls.at(-1)).toMatchObject({ type: "edit", messageId: 1 });
   });
@@ -205,19 +217,19 @@ describe("StreamRenderer", () => {
     api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    await renderer.appendText("Hello");
+    await renderer.appendText("Hello\n\n");
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText(" world");
+    await renderer.appendText("world\n\n");
 
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("!");
+    await renderer.appendText("tail\n\n");
     expect(api.calls.filter((call) => call.type === "send")).toHaveLength(1);
 
     expect(await renderer.finalize()).toBe(2);
     expect(api.calls.at(-2)).toEqual({ type: "delete", messageId: 1 });
     expect(api.calls.at(-1)).toEqual({
       type: "send",
-      text: "Hello world!",
+      text: "Hello\n\nworld\n\ntail",
       parseMode: "Markdown",
     });
   });
@@ -226,7 +238,7 @@ describe("StreamRenderer", () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    await renderer.showTransient("⚙ read");
+    await renderer.showTransient("Compacting…");
 
     expect(await renderer.finalize()).toBeNull();
     expect(api.calls.at(-1)).toEqual({ type: "delete", messageId: 1 });

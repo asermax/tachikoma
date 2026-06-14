@@ -44,5 +44,13 @@ export interface Channel {
   /** Render a transient pipeline status line ("Gathering context…"). Optional. */
   status?(text: string): void;
 
+  /**
+   * Render shutdown-sequence progress on a dedicated, persistent message that
+   * survives the teardown (the normal `status` surface — a streaming renderer —
+   * is gone by then). Awaited by the coordinator so the update lands before the
+   * process exits. Optional; channels without it fall back to `status`.
+   */
+  shutdownStatus?(text: string): Promise<void>;
+
   stop(): Promise<void>;
 }

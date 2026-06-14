@@ -6,17 +6,21 @@ import {
   sendChunked,
   sendWithMarkdownFallback,
 } from "./sending.ts";
+import { formatToolActivity, summarizeToolActivities, type ToolActivity } from "./tool-labels.ts";
 
 export const EDIT_THROTTLE_MS = 1500;
 
 export type StreamApi = Pick<SendApi, "sendMessage" | "editMessageText" | "deleteMessage">;
 
 /**
- * Progressive renderer for one agent exchange: sends a Telegram message early
- * and edits it as text streams in, throttled and skipping no-op edits. Tool
- * activity and pipeline status show as a transient italic line that the next
- * text replaces. When the accumulated text outgrows Telegram's edit limit the
- * current message is finalized in place and streaming continues in a new one.
+ * Progressive renderer for one agent exchange. Text accumulates in a buffer and
+ * is rendered a complete paragraph at a time — pi streams token-level deltas, so
+ * gating on paragraph boundaries avoids the mid-word churn that editing on every
+ * delta would produce. A running tool shows as a live italic line below the text;
+ * when text resumes the tools that ran fold into a persistent `🔧 …` marker baked
+ * into the buffer, which both records the activity and supplies the blank line
+ * separating one text segment from the next. When the buffer outgrows Telegram's
+ * edit limit the full chunks are finalized in place and the tail keeps streaming.
  * Edit failures degrade to the plain final-send behavior.
  */
 export class StreamRenderer {
@@ -26,6 +30,7 @@ export class StreamRenderer {
 
   private buffer = "";
   private transient: string | null = null;
+  private pendingTools: ToolActivity[] = [];
   private messageId: number | null = null;
   private lastRendered = "";
   private lastEditAt = 0;
@@ -38,14 +43,25 @@ export class StreamRenderer {
   }
 
   async appendText(text: string): Promise<void> {
+    this.bakePendingTools();
     this.transient = null;
     this.buffer += text;
     await this.flush(false);
   }
 
-  /** Show a transient italic line (tool marker, status) below the streamed text. */
+  /**
+   * Record a running tool: tracked for the eventual baked summary and shown as a
+   * live italic line below the streamed text until the next text replaces it.
+   */
+  async appendTool(toolName: string, args: Record<string, unknown>): Promise<void> {
+    this.pendingTools.push({ toolName, args });
+    this.transient = `_🔧 ${formatToolActivity(toolName, args)}_`;
+    await this.flush(false);
+  }
+
+  /** Show a transient italic status line below the streamed text. */
   async showTransient(line: string): Promise<void> {
-    this.transient = line;
+    this.transient = `_${line}_`;
     await this.flush(false);
   }
 
@@ -55,18 +71,23 @@ export class StreamRenderer {
    * null when the exchange produced no text.
    */
   async finalize(): Promise<number | null> {
+    this.bakePendingTools();
     this.transient = null;
 
     if (this.broken) return this.finalizeBroken();
 
-    if (this.buffer.trim().length === 0) {
+    // The marker bakes a trailing blank line to separate it from the next text
+    // segment; at finalize there is none, so drop the dangling whitespace.
+    const text = this.buffer.trimEnd();
+
+    if (text.length === 0) {
       await this.deleteCurrentMessage();
       return null;
     }
 
     let lastId = this.messageId;
 
-    for (const [index, chunk] of splitMessage(this.buffer).entries()) {
+    for (const [index, chunk] of splitMessage(text).entries()) {
       if (index === 0 && this.messageId != null) {
         try {
           await editWithMarkdownFallback(this.api, this.chatId, this.messageId, chunk);
@@ -81,6 +102,23 @@ export class StreamRenderer {
     }
 
     return lastId;
+  }
+
+  /**
+   * Fold the tools seen since the last text into a persistent `🔧 …` marker,
+   * separated from the surrounding text by blank lines so each segment reads as
+   * its own paragraph. No-op when no tools are pending.
+   */
+  private bakePendingTools(): void {
+    if (this.pendingTools.length === 0) return;
+
+    const summary = summarizeToolActivities(this.pendingTools);
+    this.pendingTools = [];
+
+    if (this.buffer.length > 0 && !this.buffer.endsWith("\n")) this.buffer += "\n";
+
+    const prefix = this.buffer.length > 0 ? "\n" : "";
+    this.buffer += `${prefix}*🔧 ${summary}*\n\n`;
   }
 
   private async flush(force: boolean): Promise<void> {
@@ -132,15 +170,30 @@ export class StreamRenderer {
     this.lastRendered = "";
   }
 
+  /**
+   * The streaming-visible text. While a live line (tool/status) is showing the
+   * preceding text has settled, so the whole buffer renders beneath it. While
+   * text is actively streaming only complete paragraphs render — the in-progress
+   * trailing paragraph stays buffered until it closes or finalize() flushes it.
+   */
+  private streamableBuffer(): string {
+    if (this.transient != null) return this.buffer;
+
+    const lastBreak = this.buffer.lastIndexOf("\n\n");
+
+    return lastBreak === -1 ? "" : this.buffer.slice(0, lastBreak);
+  }
+
   private compose(): string {
-    if (this.transient == null) return this.buffer;
+    const text = this.streamableBuffer();
 
-    const marker = `_${this.transient}_`;
-    if (this.buffer.length === 0) return marker;
+    if (this.transient == null) return text;
 
-    const joined = `${this.buffer}\n\n${marker}`;
+    if (text.length === 0) return this.transient;
 
-    return joined.length <= TELEGRAM_MAX_MESSAGE_LENGTH ? joined : this.buffer;
+    const joined = `${text}\n\n${this.transient}`;
+
+    return joined.length <= TELEGRAM_MAX_MESSAGE_LENGTH ? joined : text;
   }
 
   /**
@@ -150,7 +203,7 @@ export class StreamRenderer {
   private async finalizeBroken(): Promise<number | null> {
     await this.deleteCurrentMessage();
 
-    const ids = await sendChunked(this.api, this.chatId, this.buffer);
+    const ids = await sendChunked(this.api, this.chatId, this.buffer.trimEnd());
 
     return ids.at(-1) ?? null;
   }

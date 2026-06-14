@@ -16,9 +16,13 @@ import {
 } from "./media.ts";
 import { Mutex } from "./mutex.ts";
 import type { ChannelMessageDirection } from "./schema.ts";
-import { deliverText, startTyping } from "./sending.ts";
+import {
+  deliverText,
+  editWithMarkdownFallback,
+  sendWithMarkdownFallback,
+  startTyping,
+} from "./sending.ts";
 import { StreamRenderer } from "./streaming.ts";
-import { formatToolActivity } from "./tool-labels.ts";
 
 /** Persists message id ↔ session mappings so a reply-to can be force-routed. */
 export interface ChannelMessageStore {
@@ -52,6 +56,7 @@ export class TelegramChannel implements Channel {
   private lastInboundId: number | null = null;
   private lastOutboundId: number | null = null;
   private activeRenderer: StreamRenderer | null = null;
+  private shutdownMessageId: number | null = null;
 
   constructor(bot: Bot, options: TelegramChannelOptions) {
     this.bot = bot;
@@ -192,7 +197,7 @@ export class TelegramChannel implements Channel {
               break;
 
             case "tool-start":
-              await renderer.showTransient(`🔧 ${formatToolActivity(event.toolName, event.args)}`);
+              await renderer.appendTool(event.toolName, event.args);
               break;
 
             case "status":
@@ -284,6 +289,38 @@ export class TelegramChannel implements Channel {
     void this.bot.api
       .sendChatAction(this.options.chatId, "typing")
       .catch((error) => this.log().debug({ err: error }, "status typing action failed"));
+  }
+
+  /**
+   * Render shutdown-sequence progress on one dedicated italic message, edited
+   * in place across calls. Runs under the mutex so it serializes with the final
+   * delivery flush, and is awaited by the coordinator so the update lands before
+   * the process exits. The last line ("Done") is intentionally left in the chat.
+   */
+  async shutdownStatus(text: string): Promise<void> {
+    const log = this.log();
+    const display = `_${text}_`;
+
+    await this.mutex.run(async () => {
+      try {
+        if (this.shutdownMessageId == null) {
+          this.shutdownMessageId = await sendWithMarkdownFallback(
+            this.bot.api,
+            this.options.chatId,
+            display,
+          );
+        } else {
+          await editWithMarkdownFallback(
+            this.bot.api,
+            this.options.chatId,
+            this.shutdownMessageId,
+            display,
+          );
+        }
+      } catch (error) {
+        log.warn({ err: error }, "shutdown status update failed");
+      }
+    });
   }
 
   async stop(): Promise<void> {

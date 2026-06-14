@@ -235,24 +235,29 @@ describe("/stop interception", () => {
 });
 
 describe("respond streaming", () => {
-  it("streams text into one message and finalizes it with the full content", async () => {
+  it("bakes a tool marker between text segments and finalizes the full content", async () => {
     const { channel, runtime, calls } = makeChannel();
     await channel.start(runtime);
 
     await channel.respond({
       message: textMessage("telegram", "hi"),
       events: stream([
-        { kind: "text", text: "Hello" },
-        { kind: "tool-start", toolCallId: "t1", toolName: "read", args: {} },
-        { kind: "text", text: " world" },
+        { kind: "text", text: "Hello." },
+        {
+          kind: "tool-start",
+          toolCallId: "t1",
+          toolName: "Read",
+          args: { file_path: "/a/b/notes.md" },
+        },
+        { kind: "text", text: "Done." },
         { kind: "result", stopReason: "done" },
       ]),
     });
 
     const messageCalls = calls.filter((call) => call.type !== "action");
     expect(messageCalls).toEqual([
-      { type: "send", text: "Hello" },
-      { type: "edit", messageId: 1, text: "Hello world" },
+      { type: "send", text: "Hello.\n\n_🔧 Reading /a/b/notes.md_" },
+      { type: "edit", messageId: 1, text: "Hello.\n\n*🔧 Reading `notes.md`*\n\nDone." },
     ]);
     expect(channel.lastOutboundMessageId).toBe(1);
   });
@@ -309,6 +314,23 @@ describe("status", () => {
     await responding;
 
     expect(calls.at(-1)).toEqual({ type: "edit", messageId: 1, text: "Answer" });
+  });
+});
+
+describe("shutdownStatus", () => {
+  it("sends a dedicated italic message and edits it in place across calls", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.shutdownStatus("Wrapping up the conversation…");
+    await channel.shutdownStatus("Post-processing: memory…");
+    await channel.shutdownStatus("Done");
+
+    expect(calls).toEqual([
+      { type: "send", text: "_Wrapping up the conversation…_" },
+      { type: "edit", messageId: 1, text: "_Post-processing: memory…_" },
+      { type: "edit", messageId: 1, text: "_Done_" },
+    ]);
   });
 });
 

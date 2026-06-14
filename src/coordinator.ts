@@ -107,9 +107,36 @@ export class Coordinator {
     this.events.emit("status", { text });
 
     try {
-      this.channel?.status?.(text);
+      // During teardown there is no streaming renderer to host the line, so
+      // route to the dedicated shutdown message instead (e.g. per-processor
+      // "Post-processing: …" progress shown as part of the shutdown sequence).
+      if (this.shuttingDown && this.channel?.shutdownStatus != null) {
+        void this.channel.shutdownStatus(text);
+      } else {
+        this.channel?.status?.(text);
+      }
     } catch (error) {
       this.log.debug({ err: error }, "channel status rendering failed");
+    }
+  }
+
+  /**
+   * Emit a shutdown-sequence line and await its delivery, so the message lands
+   * before the process exits. Falls back to the fire-and-forget `status`
+   * surface for channels without a dedicated shutdown message (e.g. the REPL).
+   */
+  private async emitShutdownStatus(text: string): Promise<void> {
+    this.log.debug({ status: text }, "shutdown status");
+    this.events.emit("status", { text });
+
+    try {
+      if (this.channel?.shutdownStatus != null) {
+        await this.channel.shutdownStatus(text);
+      } else {
+        this.channel?.status?.(text);
+      }
+    } catch (error) {
+      this.log.debug({ err: error }, "shutdown status rendering failed");
     }
   }
 
@@ -194,11 +221,13 @@ export class Coordinator {
 
       const announceShutdown = this.channel != null && this.active != null;
 
-      if (announceShutdown) this.status("Wrapping up the conversation…");
+      if (announceShutdown) await this.emitShutdownStatus("Wrapping up the conversation…");
 
+      // Per-processor progress emitted inside this call routes to the same
+      // shutdown message (see status() — shuttingDown is set above).
       await this.closeActiveSession();
 
-      if (announceShutdown) this.status("Done");
+      if (announceShutdown) await this.emitShutdownStatus("Done");
     }
   }
 
