@@ -4,13 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ContextProviderInput } from "../../src/extensions/api.ts";
-import {
-  createMemoryIndexProvider,
-  formatMemoryIndex,
-} from "../../src/extensions/memory/indexes.ts";
-
-const input = {} as ContextProviderInput;
+import { buildMemoryContext, formatMemoryIndex } from "../../src/extensions/memory/indexes.ts";
 
 let workspace: string;
 
@@ -45,14 +39,12 @@ describe("formatMemoryIndex", () => {
   });
 });
 
-describe("memory index provider", () => {
-  it("returns null when the memories directory does not exist", async () => {
-    const block = await createMemoryIndexProvider(workspace).provide(input);
-
-    expect(block).toBeNull();
+describe("buildMemoryContext", () => {
+  it("returns empty content when the memories directory does not exist", async () => {
+    expect(await buildMemoryContext(workspace)).toBe("");
   });
 
-  it("injects the layout instructions plus parsed indexes", async () => {
+  it("includes the layout instructions plus parsed indexes", async () => {
     await mkdir(join(workspace, "memories", "facts"), { recursive: true });
     await mkdir(join(workspace, "memories", "preferences"), { recursive: true });
     await writeFile(
@@ -66,24 +58,25 @@ describe("memory index provider", () => {
       "utf8",
     );
 
-    const block = await createMemoryIndexProvider(workspace).provide(input);
+    const content = await buildMemoryContext(workspace);
 
-    expect(block?.tag).toBe("memories");
-    expect(block?.content).toContain("memories/episodic/");
-    expect(block?.content).toContain("grep or read");
-    expect(block?.content).toContain("## Facts Index");
-    expect(block?.content).toContain("- [Work Info](./work-info.md): Job details");
+    expect(content).toContain("memories/episodic/");
+    expect(content).toContain("grep or read");
+    // The read-only / post-processing behavioral note.
+    expect(content).toContain("do not write to");
+    expect(content).toContain("## Facts Index");
+    expect(content).toContain("- [Work Info](./work-info.md): Job details");
     // Header-only preferences index has no entries, so its section is omitted.
-    expect(block?.content).not.toContain("## Preferences Index");
+    expect(content).not.toContain("## Preferences Index");
   });
 
-  it("still injects the layout instructions when no index files exist", async () => {
+  it("still includes the layout instructions when no index files exist", async () => {
     await mkdir(join(workspace, "memories"), { recursive: true });
 
-    const block = await createMemoryIndexProvider(workspace).provide(input);
+    const content = await buildMemoryContext(workspace);
 
-    expect(block?.content).toContain("## Memory");
-    expect(block?.content).not.toContain("## Facts Index");
-    expect(block?.content).not.toContain("## Preferences Index");
+    expect(content).toContain("## Memory");
+    expect(content).not.toContain("## Facts Index");
+    expect(content).not.toContain("## Preferences Index");
   });
 });

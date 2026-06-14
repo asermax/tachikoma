@@ -26,10 +26,10 @@ pi sessions are in-process JSONL trees stored on disk and forkable: `SessionMana
 
 ## Design Overview
 
-`src/extensions/memory/index.ts` only wires: a bootstrap hook for the layout, a context provider for index injection, one extraction processor per store, the core-context and transcript-archive processors, three store maintenance crons, a foundational-context maintenance cron, and a transcript-prune cron. Extraction and core-context take a narrow `Pick<AgentManager, "forkAndContinue">` dependency; the maintenance ticks take `Pick<SideRunner, "run">` (they have no conversation to fork). Tests fake those and assert on the arguments they receive.
+`src/extensions/memory/index.ts` only wires: a bootstrap hook for the layout, a `memories` context section for index injection (`app.agent.use({ contextProvider: () => buildMemoryContext(root), sessionScopes: ["main", "background"] })`), one extraction processor per store, the core-context and transcript-archive processors, three store maintenance crons, a foundational-context maintenance cron, and a transcript-prune cron. Extraction and core-context take a narrow `Pick<AgentManager, "forkAndContinue">` dependency; the maintenance ticks take `Pick<SideRunner, "run">` (they have no conversation to fork). Tests fake those and assert on the arguments they receive.
 
 ```
-message ──> memory-index provider ──> <context owner="memories"> layout + indexes
+session start ──> memories context section ──> <context owner="memories"> layout + indexes (once)
 session close ──> main:        memory-episodic | memory-facts | memory-preferences (parallel forks)
                   preFinalize: core-context (fork)
                   finalize:    transcript-archive | git-commit
@@ -48,7 +48,7 @@ Each extraction forks the just-ended pi session (`forkAndContinue`), composes th
 |-----------|----------------|---------------|
 | `src/extensions/memory/index.ts` | Wiring and config schema (`enabled`, `maintenance`) | Registers `createCoreContextProcessor` on behalf of the context extension (marked transitional); staggered maintenance schedules as config defaults |
 | `src/extensions/memory/layout.ts` | Store paths, `ensureMemoryLayout` (dirs + index seeding), `sweepEmptyMarkdown`, `fileExists` | Placeholder index entries for pre-existing files; sweep treats ≤64-byte whitespace-only files as empty |
-| `src/extensions/memory/indexes.ts` | `createMemoryIndexProvider`, `formatMemoryIndex` | Strict entry regex — malformed lines vanish; layout section always injected when `memories/` exists |
+| `src/extensions/memory/indexes.ts` | `buildMemoryContext`, `formatMemoryIndex` | Strict entry regex — malformed lines vanish; layout section (with the read-only/post-processing note) always included when `memories/` exists |
 | `src/extensions/memory/extraction.ts` | `createExtractionProcessor` per store; store base prompts (follow-up user-instruction shape); `storeInstruction`/`MEMORY_FILE_TOOLS`; the silent-background section | `main` phase; forks via `forkAndContinue` with the `MEMORY_FILE_TOOLS` allowlist; skip on missing transcript; sweep after every run |
 | `src/extensions/memory/prompts.ts` | Shared prompt sections: store purpose, classification examples, context dedup, workspace validation, index update, light index maintenance, scope | The scope section defines the empty-file deletion protocol |
 | `src/extensions/memory/archive.ts` | `createTranscriptArchiveProcessor` (`finalize`) writes archives; `pruneTranscripts` (nightly cron) deletes old ones | Names archive after the JSONL header session id; age-based prune by file mtime; both never throw |
@@ -85,7 +85,7 @@ Each extraction forks the just-ended pi session (`forkAndContinue`), composes th
 
 ### Static index injection instead of retrieval
 
-**Choice**: A context provider injects the memory layout description plus the parsed facts/preferences `MEMORY.md` indexes on every message; the agent greps/reads memory files on demand. No similarity search, no per-message retrieval call.
+**Choice**: A context section injects the memory layout description plus the parsed facts/preferences `MEMORY.md` indexes once per session; the agent greps/reads memory files on demand. No similarity search, no per-message retrieval call.
 **Why**: Indexes are small and always relevant; pushing file discovery to the agent's own tools avoids a retrieval subsystem entirely. Episodic files are date-organized and addressed by the layout description alone.
 **Alternatives Considered**:
 - Per-message LLM retrieval/selection: adds latency and a failure mode to every message for marginal gain at current store sizes

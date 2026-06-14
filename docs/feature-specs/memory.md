@@ -4,7 +4,7 @@
 
 ## Overview
 
-The `memory` extension (`src/extensions/memory/`) maintains long-term memory as git-versioned markdown under the workspace `memories/` directory, organized into three stores — episodic (date-stamped summaries), facts (topic-named reference information), preferences (topic-named subjective choices) — plus raw transcript archives. A static index of the store is injected into every message's context; extraction processors fold each closed conversation into the stores by forking the just-ended pi session (the same assistant continues, with the full conversation live in its history, tool-limited to file edits); nightly maintenance crons consolidate and prune each store, and a separate nightly job prunes transcript archives older than a configurable retention window.
+The `memory` extension (`src/extensions/memory/`) maintains long-term memory as git-versioned markdown under the workspace `memories/` directory, organized into three stores — episodic (date-stamped summaries), facts (topic-named reference information), preferences (topic-named subjective choices) — plus raw transcript archives. A static index of the store is injected once per session as a context section (main and background); extraction processors fold each closed conversation into the stores by forking the just-ended pi session (the same assistant continues, with the full conversation live in its history, tool-limited to file edits); nightly maintenance crons consolidate and prune each store, and a separate nightly job prunes transcript archives older than a configurable retention window.
 
 Memory agents have no delete tool: files to be removed are emptied by the agent and swept by the host afterwards. Facts and preferences each carry a `MEMORY.md` index mapping filenames to one-line descriptions, kept in sync at write time and rebuilt weekly. The extension's setup also hosts the registration of the `core-context` processor (see [foundational-context](./foundational-context.md)).
 
@@ -20,7 +20,7 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 |----|-------------|
 | R0 | The `init-memory-layout` bootstrap hook creates `memories/episodic/`, `memories/facts/`, `memories/preferences/`, and `memories/transcripts/` idempotently |
 | R1 | Bootstrap seeds `MEMORY.md` in facts and preferences: header-only when the directory is empty, placeholder entries (`Description pending update`) for pre-existing files, and leaves an existing index untouched |
-| R2 | A `memory-index` context provider injects a `memories`-tagged block on every message: a layout section describing the stores plus the parsed facts and preferences indexes; it returns null when `memories/` does not exist |
+| R2 | A `memories` context section (registered via `app.agent.use({ contextProvider, sessionScopes: ["main", "background"] })`, built by `buildMemoryContext`) is injected once per session in both main and background: a layout section describing the stores (including the read-only/post-processing note) plus the parsed facts and preferences indexes; it yields empty content (no injection) when `memories/` does not exist |
 | R3 | Index entries must match `[Name](./file.md): description`; malformed lines are skipped, and an index with no usable entries contributes no section |
 | R4 | One post-processor per store (`memory-episodic`, `memory-facts`, `memory-preferences`), all in the `main` phase, runs at session close |
 | R5 | Each extraction forks the just-ended pi session — `app.agent.forkAndContinue(piSessionFile, instruction, "processor", MEMORY_FILE_TOOLS)`, backed by `SessionManager.forkFrom` — so the extraction agent is the same assistant with the full conversation live in its history and the composed persona intact; the source transcript is never mutated |
@@ -59,7 +59,7 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 **Acceptance Criteria**:
 - Given facts and preferences indexes with entries, when a message is handled, then the injected block (tag `memories`) contains the layout section, a `## Facts Index` and/or `## Preferences Index` section with one bullet per entry, and on-demand reading instructions
 - Given a header-only index, when the provider runs, then that store contributes no index section while the layout section is still injected
-- Given no `memories/` directory, when the provider runs, then it returns null and contributes nothing
+- Given no `memories/` directory, when the section is built, then it yields empty content and contributes nothing
 - Given malformed index lines, when the index is formatted, then well-formed entries are kept and malformed ones are dropped silently
 
 ### Extraction at Session Close (R4–R8, R13, R14)

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Agent tools dispatch, inspect, read output from, and terminate OS-level shell commands that run detached from Tachikoma: each process runs in its own process group with stdout/stderr captured to per-process files, so it survives Tachikoma's exit, restart, or crash. Records persist in the shared SQLite database; a polling watcher detects exits and emits `"notify"` app events (see [notifications](./notifications.md)), and a startup bootstrap reconciles records orphaned while the host was down. Memory limits are applied through named `systemd-run` scopes when available; the named scope is also queried (via `systemctl --user show`) for live memory usage and to attribute exit-code-137 deaths to the OOM killer.
+Agent tools dispatch, inspect, read output from, and terminate OS-level shell commands that run detached from Tachikoma: each process runs in its own process group with stdout/stderr captured to per-process files, so it survives Tachikoma's exit, restart, or crash. Records persist in the shared SQLite database; a polling watcher detects exits and emits `"notify"` app events (see [notifications](./notifications.md)), and a startup bootstrap reconciles records orphaned while the host was down. Memory limits are applied through named `systemd-run` scopes when available; the named scope is also queried (via `systemctl --user show`) for live memory usage and to attribute exit-code-137 deaths to the OOM killer. The extension also contributes a usage context section (scope: main + background) describing when to spawn detached processes and the available tools.
 
 ## User Stories
 

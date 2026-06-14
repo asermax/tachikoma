@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 
 import { defineExtension } from "../api.ts";
-import { createProjectsContextProvider } from "./context-provider.ts";
+import { buildProjectsContext } from "./context-provider.ts";
 import { syncProjects } from "./hooks.ts";
 import { createProjectsProcessor } from "./processor.ts";
 import { createProjectsToolsFactory } from "./tools.ts";
@@ -33,8 +33,12 @@ export default defineExtension<ProjectsConfig>({
 
     app.bootstrap("sync-projects", () => syncProjects(workspaceRoot, app.log));
 
-    app.agent.provideContext(createProjectsContextProvider(workspaceRoot, app.log));
     app.agent.use(createProjectsToolsFactory({ workspaceRoot, log: app.log }), {
+      sessionScopes: ["main", "background"],
+    });
+    app.agent.use({
+      name: "projects",
+      contextProvider: () => buildProjectsContext(workspaceRoot, app.log),
       sessionScopes: ["main", "background"],
     });
 

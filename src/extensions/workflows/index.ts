@@ -9,6 +9,7 @@ import { validateWorkflowGraph } from "./composition.ts";
 import { findWorkflow, loadAllWorkflows } from "./loader.ts";
 import { WorkflowStateRepository } from "./repository.ts";
 import { registerWorkflowTools } from "./tools.ts";
+import { WORKFLOWS_USAGE } from "./usage.ts";
 
 interface WorkflowsConfig {
   enabled: boolean;
@@ -59,6 +60,8 @@ export default defineExtension<WorkflowsConfig>({
         log: app.log,
       });
     });
+
+    app.agent.use({ name: "workflows-usage", contextProvider: WORKFLOWS_USAGE });
 
     app.sessions.registerProcessor(
       createStaleWorkflowCleanup(repository, app.extensionConfig.staleHours),

@@ -6,6 +6,7 @@ import { initializeWorkspaceRepo } from "./hooks.ts";
 import { createGitProcessor } from "./processor.ts";
 import { createGitResolver } from "./resolve.ts";
 import { createGitToolsFactory } from "./tools.ts";
+import { GIT_USAGE } from "./usage.ts";
 
 interface GitConfig {
   enabled: boolean;
@@ -41,6 +42,12 @@ export default defineExtension<GitConfig>({
       sessionScopes: ["main", "background"],
     });
     app.agent.use(createGitGuardrailFactory(app.log), { sessionScopes: ["main", "background"] });
+
+    app.agent.use({
+      name: "git-usage",
+      contextProvider: GIT_USAGE,
+      sessionScopes: ["main", "background"],
+    });
 
     app.sessions.registerProcessor(
       createGitProcessor({ workspaceRoot, side: app.agent.side, resolver }),

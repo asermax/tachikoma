@@ -26,7 +26,7 @@ Git authentication (SSH keys, tokens) is the user's responsibility: the system a
 | R4 | `list_projects` tool reports each project's branch (or detached short commit) and uncommitted-change count |
 | R5 | Project tools are registered in every agent session via a pi extension factory (`app.agent.use`) |
 | R6 | On startup, the `sync-projects` bootstrap hook ensures `projects/` exists and syncs every registered submodule in parallel: init → default-branch checkout → `smartPull`, with one retry per submodule and per-submodule error isolation |
-| R7 | A context provider injects a `projects` block before every prompt: each project with its branch (or detached state) and dirty count; when none are registered, guidance pointing at `register_project` |
+| R7 | A `projects` context section (`app.agent.use({ contextProvider, sessionScopes: ["main", "background"] })`, built by `buildProjectsContext`) is injected once per session in both main and background: usage guidance plus a session-start snapshot of each project with its branch (or detached state) and dirty count; when none are registered, guidance pointing at `register_project` |
 | R8 | A `preFinalize` post-processor commits each dirty project with a generated descriptive message (deterministic dated fallback) and pushes via `smartPush`, in parallel with per-project error isolation |
 | R9 | The projects processor runs before the workspace commit (`finalize` phase) so submodule pointer updates land in the same workspace commit pass |
 | R10 | The extension can be disabled entirely via `[extensions.projects] enabled = false` |
@@ -56,13 +56,13 @@ Removal is complete — including the `.git/modules` clone — with a safety che
 
 ### Listing and Context Injection (R4, R5, R7)
 
-The same per-project state line backs the `list_projects` tool and the per-prompt context block, so the agent always knows which projects exist and whether they are dirty.
+The same per-project state line backs the `list_projects` tool and the `projects` context section, so the agent always knows which projects exist and whether they are dirty.
 
 **Acceptance Criteria**:
-- Given no projects are registered, when `list_projects` runs or the context provider fires, then both return "No projects registered. Use register_project to add one." — the block is always present so the agent knows the tools exist
+- Given no projects are registered, when `list_projects` runs, then it reports the empty state; when the `projects` context section is built, then it still emits the usage guidance noting nothing is registered — so the agent knows the tools exist
 - Given a registered project on `main` with one dirty file, when listed, then the line reads `- app: main — 1 uncommitted change`
 - Given a project in detached HEAD, when listed, then the location is the short commit hash, e.g. `abc1234 (detached)`
-- Given gathering state for one project fails, when the context provider runs, then that project is excluded from the block with a warning log; given listing submodules fails entirely, the provider degrades to the empty-state guidance
+- Given gathering state for one project fails, when the section is built, then that project is excluded from the snapshot with a warning log; given listing submodules fails entirely, the section degrades to usage guidance plus the empty-state note
 
 ### Startup Sync (R6)
 

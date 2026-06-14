@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { ContextProvider } from "../api.ts";
 import {
   fileExists,
   INDEXED_STORES,
@@ -27,8 +26,9 @@ The workspace keeps long-term memory as markdown files under \`memories/\`:
 - \`memories/episodic/\` — date-stamped conversation summaries (\`YYYY-MM-DD.md\`, plus weekly \`YYYY-WNN.md\` and monthly \`YYYY-MM.md\` rollups)
 - \`memories/facts/\` — stable reference information, one topic per file, indexed in \`MEMORY.md\`
 - \`memories/preferences/\` — the user's expressed preferences, one topic per file, indexed in \`MEMORY.md\`
+- \`memories/transcripts/\` — archived raw conversation transcripts
 
-None of these files are loaded automatically. When the conversation touches a topic that might be covered there, grep or read the relevant memory files on demand.`;
+None of these files are loaded automatically. When the conversation touches a topic that might be covered there, grep or read the relevant memory files on demand. You do not write to \`memories/\` directly — an automated post-processing pass maintains these files (creating, updating, and consolidating them) after each conversation ends.`;
 
 const capitalize = (value: string): string => value.charAt(0).toUpperCase() + value.slice(1);
 
@@ -56,31 +56,28 @@ export const formatMemoryIndex = (store: MemoryStore, rawContent: string): strin
 };
 
 /**
- * Static memory index injection: the workspace layout plus the parsed facts and
- * preferences MEMORY.md indexes, so the agent knows what exists and reads files
- * on demand instead of getting everything inlined.
+ * Static memory context: the workspace layout (and read-only/post-processing note) plus the
+ * parsed facts and preferences MEMORY.md indexes, so the agent knows what exists and reads
+ * files on demand instead of getting everything inlined. Returns "" when no memory store
+ * exists yet (no section injected).
  */
-export const createMemoryIndexProvider = (workspaceRoot: string): ContextProvider => ({
-  name: "memory-index",
+export const buildMemoryContext = async (workspaceRoot: string): Promise<string> => {
+  if (!(await fileExists(memoriesRoot(workspaceRoot)))) return "";
 
-  async provide() {
-    if (!(await fileExists(memoriesRoot(workspaceRoot)))) return null;
+  const sections = [LAYOUT_SECTION];
 
-    const sections = [LAYOUT_SECTION];
+  for (const store of INDEXED_STORES) {
+    let raw: string;
 
-    for (const store of INDEXED_STORES) {
-      let raw: string;
-
-      try {
-        raw = await readFile(join(storeDir(workspaceRoot, store), MEMORY_INDEX_FILENAME), "utf8");
-      } catch {
-        continue;
-      }
-
-      const formatted = formatMemoryIndex(store, raw);
-      if (formatted != null) sections.push(formatted);
+    try {
+      raw = await readFile(join(storeDir(workspaceRoot, store), MEMORY_INDEX_FILENAME), "utf8");
+    } catch {
+      continue;
     }
 
-    return { tag: "memories", content: sections.join("\n\n") };
-  },
-});
+    const formatted = formatMemoryIndex(store, raw);
+    if (formatted != null) sections.push(formatted);
+  }
+
+  return sections.join("\n\n");
+};

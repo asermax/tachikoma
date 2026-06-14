@@ -80,7 +80,6 @@ const makeSide = (
 const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) => {
   const deliver = vi.fn<(delivery: Delivery) => void>();
   const notify = vi.fn<(notification: TaskNotification) => void>();
-  const collectContext = vi.fn<ExecutorDeps["collectContext"]>().mockResolvedValue([]);
   const runPostProcessors = vi.fn<ExecutorDeps["runPostProcessors"]>().mockResolvedValue(undefined);
 
   const deps: ExecutorDeps = {
@@ -88,7 +87,6 @@ const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) =
     side,
     deliver,
     notify,
-    collectContext,
     runPostProcessors,
     maxIterations,
     maxConcurrent,
@@ -97,7 +95,7 @@ const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) =
     log: fakeLog,
   };
 
-  return { ...deps, deliver, notify, collectContext, runPostProcessors };
+  return { ...deps, deliver, notify, runPostProcessors };
 };
 
 const pendingInstance = (): TaskInstanceRecord =>
@@ -167,21 +165,18 @@ describe("executeBackgroundInstance", () => {
     );
   });
 
-  it("injects workspace context into the opening prompt and runs post-processors with the transcript", async () => {
+  it("opens with the task prompt and runs post-processors with the transcript", async () => {
     const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
     const side = makeSide(() => "report ready", classify, "/sessions/with-transcript.jsonl");
     const deps = makeDeps(side);
-    deps.collectContext.mockResolvedValue([{ tag: "memories", content: "MEM-INDEX" }]);
 
     const instance = pendingInstance();
     await executeBackgroundInstance(deps, instance);
 
-    // The collected context is prepended to the opening prompt in the live-session format.
+    // Workspace context now arrives via each extension's background-scoped context section
+    // (pi before_agent_start), not folded into the opening prompt — the prompt is just the task.
     const opening = side.session.prompt.mock.calls[0]?.[0] as string;
-    expect(deps.collectContext).toHaveBeenCalled();
-    expect(opening).toContain('<context owner="memories">');
-    expect(opening).toContain("MEM-INDEX");
-    expect(opening).toContain("summarize the inbox");
+    expect(opening).toBe("summarize the inbox");
 
     // The session file is persisted and fed to post-processing so memory extraction reads it.
     expect(repository.getInstance(instance.id)?.piSessionFile).toBe(

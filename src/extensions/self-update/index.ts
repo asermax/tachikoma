@@ -14,6 +14,7 @@ import { reconcileStartup } from "./startup.ts";
 import { SelfUpdateState } from "./state.ts";
 import { createRestartToolFactory, createUpgradeToolFactory } from "./tools.ts";
 import type { UpgradeDeps } from "./upgrade.ts";
+import { SELF_UPDATE_USAGE } from "./usage.ts";
 
 interface SelfUpdateConfig {
   enabled: boolean;
@@ -80,6 +81,8 @@ export default defineExtension<SelfUpdateConfig>({
 
     app.agent.use(createUpgradeToolFactory(upgradeDeps));
     app.agent.use(createRestartToolFactory(() => restarter));
+
+    app.agent.use({ name: "self-update-usage", contextProvider: SELF_UPDATE_USAGE });
 
     app.scheduler.cron("self-update-check", app.extensionConfig.checkCron, () =>
       runCheck({ registry, state, currentVersion, emit, log: app.log }),

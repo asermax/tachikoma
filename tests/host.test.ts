@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import type { SessionScope } from "../src/extensions/api.ts";
-import { factoryBindingTargets } from "../src/extensions/host.ts";
+import {
+  defineExtension,
+  type SessionScope,
+  type TachikomaExtension,
+} from "../src/extensions/api.ts";
+import { ExtensionHost, factoryBindingTargets, type HostServices } from "../src/extensions/host.ts";
+import { createRegistrations } from "../src/extensions/registrations.ts";
 
 describe("factoryBindingTargets", () => {
   it("binds the main session only when scopes are omitted (AC1)", () => {
@@ -41,5 +46,48 @@ describe("factoryBindingTargets", () => {
     expect(factoryBindingTargets({ sessionScopes: ["main", "unknown"] as SessionScope[] })).toEqual(
       { main: true, background: false },
     );
+  });
+});
+
+describe("agent.use context-section registration", () => {
+  it("routes a context section into main and/or background by its scope", async () => {
+    const regs = createRegistrations();
+    const log = Object.assign(
+      { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+      { child() {} },
+    );
+    log.child = () => log;
+
+    const services = {
+      config: { extensions: {} },
+      workspace: { dataDir: "/tmp", resolve: (p: string) => p },
+      log,
+      db: {},
+      events: {},
+      scheduler: {},
+      agent: { tiers: {} },
+      registry: {},
+      coordinator: {},
+      regs,
+    } as unknown as HostServices;
+
+    const ext = defineExtension({
+      name: "ctx-test",
+      setup(app) {
+        app.agent.use({
+          name: "both",
+          contextProvider: "B",
+          sessionScopes: ["main", "background"],
+        });
+        app.agent.use({ name: "main-only", contextProvider: "M" });
+        app.agent.use({ name: "bg-only", contextProvider: "G", sessionScopes: ["background"] });
+      },
+    });
+
+    await new ExtensionHost(services).load([ext] as TachikomaExtension<never>[]);
+
+    // "both" + "main-only" bind main; "both" + "bg-only" bind background.
+    expect(regs.piFactories).toHaveLength(2);
+    expect(regs.backgroundFactories).toHaveLength(2);
   });
 });

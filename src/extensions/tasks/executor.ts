@@ -5,14 +5,8 @@ import { type Static, Type } from "typebox";
 import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import { lastAssistantText, type SideRunner } from "../../agent/side-run.ts";
 import type { Delivery } from "../../channels/types.ts";
-import { textMessage } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
-import {
-  type ContextBlock,
-  type ContextProviderInput,
-  formatContextBlocks,
-  type PostProcessorContext,
-} from "../api.ts";
+import type { PostProcessorContext } from "../api.ts";
 import type { TaskRepository } from "./repository.ts";
 import type { TaskInstanceRecord } from "./schema.ts";
 
@@ -37,8 +31,6 @@ export interface ExecutorDeps {
   side: BackgroundSide;
   deliver: (delivery: Delivery) => void;
   notify: (notification: TaskNotification) => void;
-  /** Run the registered context providers, returning their blocks to inject into the task prompt. */
-  collectContext: (input: ContextProviderInput) => Promise<ContextBlock[]>;
   /** Run the registered post-processors after a task completes (workspace persistence). */
   runPostProcessors: (context: PostProcessorContext) => Promise<void>;
   maxIterations: number;
@@ -148,7 +140,6 @@ export const executeBackgroundInstance = async (
     side,
     deliver,
     notify,
-    collectContext,
     runPostProcessors,
     maxIterations,
     timezone,
@@ -194,16 +185,8 @@ export const executeBackgroundInstance = async (
   try {
     const system = buildSystemPrompt(now(), timezone);
 
-    // Inject the same workspace context the live session gets (memory indexes, projects, …) so the
-    // task knows what's available. Gathered once and folded into the opening prompt — the
-    // persistent session retains it across iterations, so later turns need no re-injection.
-    const contextBlocks = await collectContext({
-      message: textMessage("background-task", instance.prompt),
-      session: null,
-    });
-    const contextPreamble =
-      contextBlocks.length > 0 ? `${formatContextBlocks(contextBlocks)}\n\n` : "";
-
+    // Workspace context (memory, projects, …) is injected by each extension's background-scoped
+    // context section via pi's before_agent_start hook — no manual fold into the opening prompt.
     const notifyTool = defineTool({
       name: "notify_user",
       label: "Notify User",
@@ -269,8 +252,13 @@ export const executeBackgroundInstance = async (
       resuming && !legacyResume
         ? (instance.userResponse as string)
         : legacyResume && instance.question != null
-          ? `${contextPreamble}${buildResumePrompt(instance.prompt, instance.resumeContext ?? "", instance.question, instance.userResponse as string)}`
-          : `${contextPreamble}${instance.prompt}`;
+          ? buildResumePrompt(
+              instance.prompt,
+              instance.resumeContext ?? "",
+              instance.question,
+              instance.userResponse as string,
+            )
+          : instance.prompt;
 
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       await session.prompt(prompt);

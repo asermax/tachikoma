@@ -3,13 +3,10 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { ContextProviderInput } from "../../src/extensions/api.ts";
 import { runGit } from "../../src/extensions/git/git.ts";
-import { createProjectsContextProvider } from "../../src/extensions/projects/context-provider.ts";
+import { buildProjectsContext } from "../../src/extensions/projects/context-provider.ts";
 import { handleRegisterProject } from "../../src/extensions/projects/tools.ts";
 import { createProjectOrigin, createWorkspace, fakeLogger, makeTempDir } from "./helpers.ts";
-
-const input = {} as ContextProviderInput;
 
 let base: string;
 let workspace: string;
@@ -23,14 +20,13 @@ afterEach(async () => {
   await rm(base, { recursive: true, force: true });
 });
 
-describe("projects context provider", () => {
-  it("points at register_project when nothing is registered", async () => {
-    const block = await createProjectsContextProvider(workspace, fakeLogger()).provide(input);
+describe("buildProjectsContext", () => {
+  it("includes usage guidance and notes nothing registered", async () => {
+    const content = await buildProjectsContext(workspace, fakeLogger());
 
-    expect(block).toEqual({
-      tag: "projects",
-      content: "No projects registered. Use register_project to add one.",
-    });
+    expect(content).toContain("## Projects");
+    expect(content).toContain("register_project");
+    expect(content).toContain("No projects are currently registered.");
   });
 
   it("lists each project with its branch", async () => {
@@ -43,12 +39,10 @@ describe("projects context provider", () => {
       },
     );
 
-    const block = await createProjectsContextProvider(workspace, fakeLogger()).provide(input);
+    const content = await buildProjectsContext(workspace, fakeLogger());
 
-    expect(block?.tag).toBe("projects");
-    expect(block?.content).toContain("## Registered Projects");
-    expect(block?.content).toContain("- app: main");
-    expect(block?.content).not.toContain("uncommitted");
+    expect(content).toContain("## Registered Projects");
+    expect(content).toContain("- app: main");
   });
 
   it("includes the dirty file count and detached state", async () => {
@@ -66,8 +60,8 @@ describe("projects context provider", () => {
     await writeFile(join(projectPath, "two.txt"), "2\n", "utf8");
     await runGit(projectPath, ["checkout", "--detach", "HEAD"]);
 
-    const block = await createProjectsContextProvider(workspace, fakeLogger()).provide(input);
+    const content = await buildProjectsContext(workspace, fakeLogger());
 
-    expect(block?.content).toMatch(/- app: [0-9a-f]+ \(detached\) — 2 uncommitted changes/);
+    expect(content).toMatch(/- app: [0-9a-f]+ \(detached\) — 2 uncommitted changes/);
   });
 });

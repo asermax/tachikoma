@@ -5,7 +5,7 @@ import { createCoreContextProcessor } from "../context/processor.ts";
 import { commitAll } from "../git/commit.ts";
 import { createTranscriptArchiveProcessor, pruneTranscripts } from "./archive.ts";
 import { createExtractionProcessor } from "./extraction.ts";
-import { createMemoryIndexProvider } from "./indexes.ts";
+import { buildMemoryContext } from "./indexes.ts";
 import { ensureMemoryLayout, MEMORY_STORES } from "./layout.ts";
 import { runContextMaintenanceTick, runMaintenanceTick } from "./maintenance.ts";
 
@@ -54,7 +54,11 @@ export default defineExtension<MemoryConfig>({
 
     app.bootstrap("init-memory-layout", () => ensureMemoryLayout(workspaceRoot, app.log));
 
-    app.agent.provideContext(createMemoryIndexProvider(workspaceRoot));
+    app.agent.use({
+      name: "memories",
+      contextProvider: () => buildMemoryContext(workspaceRoot),
+      sessionScopes: ["main", "background"],
+    });
 
     // Each store registers its own processor; phase:"main" runs them via Promise.allSettled,
     // so the three run as three parallel forks of the just-ended conversation.

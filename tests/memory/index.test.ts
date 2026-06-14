@@ -23,7 +23,7 @@ const setup = async (extensionConfig: MemoryConfig): Promise<ReturnType<typeof v
     log: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
     workspace: { root: workspaceDir, dataDir: join(workspaceDir, ".tachikoma") },
     bootstrap: vi.fn(),
-    agent: { provideContext: vi.fn(), side: {} },
+    agent: { use: vi.fn(), side: {} },
     sessions: { registerProcessor: vi.fn() },
     scheduler: { cron },
   } as unknown as AppContext<MemoryConfig>);

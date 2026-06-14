@@ -2,7 +2,7 @@
 
 **Scope**: Project-wide
 **Date**: 2026-06-13
-**Last Updated**: 2026-06-13
+**Last Updated**: 2026-06-14
 
 ## Pattern
 
@@ -16,6 +16,16 @@ runs) — it does not author base-prompt text inline.
 
 A prompt that is **a discrete task handed to a side-run** (a classifier, extractor, summarizer, or
 one-shot writer) is *not* a base prompt and stays co-located with the feature that owns it.
+
+**Per-extension usage/context guidance** (how to use a subsystem — its tools, constraints, and
+when to reach for it) is likewise *not* a base prompt: it supplements the standing identity rather
+than replacing pi's base. Each extension **owns its own guidance text** (e.g. `src/extensions/<name>/usage.ts`)
+and injects it as a persisted context section through the DES-001 seam
+`app.agent.use({ name, contextProvider, sessionScopes })`. The shared helper that turns that text
+into a `before_agent_start` factory (`persistentContextSection`, `src/agent/system-prompt-section.ts`)
+lives in core, but the **text stays with the feature**. Scope each section to the sessions where the
+extension's tools actually exist (`["main", "background"]` vs main-only) — never describe a tool to
+an agent that cannot call it.
 
 The deciding predicate: *does this prompt stand in for pi's coding-agent identity for a whole
 execution context?* If yes → core `prompts.ts` + shared `OPERATIONAL_GUIDANCE`. If it is a

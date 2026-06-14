@@ -6,7 +6,7 @@
 
 Agent integration is the layer that embeds the pi agent SDK: `AgentManager` (`src/agent/manager.ts`) constructs `AgentSession`s with shared auth, model registry, and workspace wiring; `ModelTiers` (`src/agent/models.ts`) maps configured model references to pi registry entries by role; the adapter (`src/agent/adapter.ts`) converts pi session events into SDK-free domain `AgentEvent`s; and `SideRunner` (`src/agent/side-run.ts`) provides side-channel LLM work — one-shot completions, structured classification, and headless agent runs.
 
-Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `provideContext`, `collectContext`, `models`, `side` — see [DES-001](../design/DES-001-unified-extension-api.md)); the [conversation loop](conversation-loop.md) consumes it for the main session.
+Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `models`, `side` — see [DES-001](../design/DES-001-unified-extension-api.md)); the [conversation loop](conversation-loop.md) consumes it for the main session.
 
 ## User Stories
 
@@ -31,7 +31,7 @@ Extensions reach this layer only through `app.agent` (`use`, `systemPrompt`, `pr
 | R9 | `SideRunner.classify()` returns schema-validated structured output (default tier `classifier`): JSON-instructed prompt, tolerant JSON extraction, TypeBox validation, one retry on failure |
 | R10 | `SideRunner.run()` executes a headless agent run in an ephemeral bare session with an explicit pi tool allowlist (default none), returning the final assistant text and disposing the session; an `isolatePrompt` flag forwards to `open()` to fully isolate the system prompt (used by delegated subagents with self-contained prompts); a `backgroundExtensions` flag binds the background-factory subset and drops the hard tool allowlist (so the bound factory tools stay active), used by autonomous background task runs |
 | R10a | `AgentManager.forkAndContinue(sourceSessionFile, prompt, tier, tools?)` (exposed to extensions as `app.agent.forkAndContinue`) forks the source session on the **non-bare** path — so the fork keeps the composed persona and the agent's own tools, with the source conversation live in its history — then sends `prompt` as one follow-up user turn, runs to completion, and disposes; the optional `tools` allowlist hard-limits the fork's toolset (the SDK `tools` option is independent of the system prompt, so persona survives while tools are restricted). Used by memory extraction and the core-context processor |
-| R11a | `app.agent.collectContext(input)` runs the registered context providers and returns their non-null blocks (error-isolated), and `app.sessions.runPostProcessors(context)` runs the registered post-processors once in phase order (error-isolated); both let headless/background runs reuse the live-session context and post-processing pipelines |
+| R11a | `app.sessions.runPostProcessors(context)` runs the registered post-processors once in phase order (error-isolated), letting headless/background runs reuse the live-session post-processing pipeline. Context injection needs no equivalent collection call: extension context sections (`app.agent.use({ contextProvider, sessionScopes })`) reach background runs directly through their background-scoped pi factories' `before_agent_start` |
 
 ## Behaviors
 

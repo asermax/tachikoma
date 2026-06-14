@@ -26,7 +26,7 @@ The workspace is a single git repo holding memories, context, and configuration 
 
 ## Design Overview
 
-One extension (`src/extensions/projects/index.ts`) wires four pieces onto the app: a bootstrap hook (startup sync), a context provider (per-prompt state block), a pi extension factory (the three tools), and a `preFinalize` post-processor (commit + push). All git interrogation lives in `src/extensions/projects/git.ts`; there is no projects table — `listSubmodules` parses `git submodule status --recursive`, so `.gitmodules` and the submodule working trees are the single source of truth.
+One extension (`src/extensions/projects/index.ts`) wires four pieces onto the app: a bootstrap hook (startup sync), a `projects` context section (usage + session-start state snapshot, scoped main + background), a pi extension factory (the three tools), and a `preFinalize` post-processor (commit + push). All git interrogation lives in `src/extensions/projects/git.ts`; there is no projects table — `listSubmodules` parses `git submodule status --recursive`, so `.gitmodules` and the submodule working trees are the single source of truth.
 
 ## Components
 
@@ -34,10 +34,10 @@ One extension (`src/extensions/projects/index.ts`) wires four pieces onto the ap
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/projects/index.ts` | `defineExtension` wiring; honors `enabled` config flag | Registers hook, provider, tools factory, and processor; no logic of its own |
-| `src/extensions/projects/git.ts` | Submodule plumbing: list/init/add/remove, default-branch resolution, `ProjectState` + `describeProjectState` | One state-line format shared by the tool and the context provider; dirty count derived from porcelain output |
+| `src/extensions/projects/index.ts` | `defineExtension` wiring; honors `enabled` config flag | Registers hook, context section, tools factory, and processor; no logic of its own |
+| `src/extensions/projects/git.ts` | Submodule plumbing: list/init/add/remove, default-branch resolution, `ProjectState` + `describeProjectState` | One state-line format shared by the tool and the context section; dirty count derived from porcelain output |
 | `src/extensions/projects/hooks.ts` | `syncProjects` bootstrap: ensure `projects/`, init → checkout default branch → `smartPull` per submodule | `Promise.allSettled` parallelism; whole sequence retried once per submodule; failures logged, never abort startup; no dirty guard — init and checkout run unconditionally, and only `smartPull` returns `DIRTY_SKIPPED` for a dirty tree |
-| `src/extensions/projects/context-provider.ts` | `projects`-tagged context block before every prompt | Always returns a block (empty-state guidance), so the agent knows `register_project` exists; per-project failures excluded with a warning |
+| `src/extensions/projects/context-provider.ts` | `buildProjectsContext`: the `projects` section content (usage + session-start state snapshot) | Always returns the usage guidance (plus an empty-state note when nothing is registered), so the agent knows `register_project` exists; per-project failures excluded with a warning |
 | `src/extensions/projects/processor.ts` | `projects-commit` post-processor (`preFinalize`): commit + push each dirty project | `commitAll` with `Update <name> files (date)` fallback; push outcome checked against `PUSH_SUCCESS` — which excludes `NOTHING_TO_PUSH`, so an already-up-to-date push is logged as a "push failed" warning; parallel with per-project isolation |
 | `src/extensions/projects/tools.ts` | `register_project`, `deregister_project`, `list_projects` handlers and the pi factory | Handlers exported standalone; registration cleans up partial state on failure; deregistration guards dirty trees behind `force` |
 

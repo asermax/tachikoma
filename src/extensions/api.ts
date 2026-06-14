@@ -2,6 +2,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import type { ModelTier, ModelTiers } from "../agent/models.ts";
 import type { SideRunner } from "../agent/side-run.ts";
+import type { PersistentContextSectionOptions } from "../agent/system-prompt-section.ts";
 import type { Channel, Delivery } from "../channels/types.ts";
 import type { Config } from "../config/schema.ts";
 import type { SessionRecord } from "../db/core-schema.ts";
@@ -15,23 +16,6 @@ import type { Workspace } from "../workspace.ts";
 import type { ChannelMessageDirection } from "./telegram/schema.ts";
 
 // ---- pipeline contracts -----------------------------------------------------
-
-export interface ContextBlock {
-  /** Tag identifying the owner section, e.g. "memories", "projects". */
-  tag: string;
-  content: string;
-}
-
-export interface ContextProviderInput {
-  message: InboundMessage;
-  /** Null for headless/background runs that have no conversational session. */
-  session: SessionRecord | null;
-}
-
-export interface ContextProvider {
-  name: string;
-  provide(input: ContextProviderInput): Promise<ContextBlock | null>;
-}
 
 export interface ExchangeContext {
   session: SessionRecord;
@@ -73,12 +57,6 @@ export interface InboundContext {
   /** Resume a previously closed session and make it active. */
   resumeSession(session: SessionRecord): Promise<void>;
 }
-
-/** Render context blocks for prepending to a headless prompt, matching the live-session format. */
-export const formatContextBlocks = (blocks: ContextBlock[]): string =>
-  blocks
-    .map((block) => `<context owner="${block.tag}">\n${block.content}\n</context>`)
-    .join("\n\n");
 
 export type InboundMiddleware = (
   message: InboundMessage,
@@ -148,14 +126,23 @@ export interface UseFactoryOptions {
   sessionScopes?: SessionScope[];
 }
 
+/**
+ * Single-object form of `agent.use` for contributing a persisted, hidden context section
+ * (pi `before_agent_start`, once per session) instead of a raw factory. The owner tag/customType
+ * defaults to `"context"`.
+ */
+export interface ContextSectionRegistration extends UseFactoryOptions {
+  contextProvider: PersistentContextSectionOptions["provide"];
+  name?: string;
+}
+
 export interface AgentApi {
   /** Contribute a pi extension factory to every agent session the host creates. */
   use(factory: ExtensionFactory, options?: UseFactoryOptions): void;
+  /** Contribute a persisted context section, scoped to the given sessions. */
+  use(registration: ContextSectionRegistration): void;
   /** Contribute a section to the agent's system prompt (replaces pi's coding prompt). */
   systemPrompt(builder: () => string): void;
-  provideContext(provider: ContextProvider): void;
-  /** Run the registered context providers and return their non-null blocks (for headless runs). */
-  collectContext(input: ContextProviderInput): Promise<ContextBlock[]>;
   readonly models: ModelTiers;
   /** Side-channel LLM work: headless runs and structured classification. */
   readonly side: SideRunner;

@@ -2,12 +2,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import type { Channel } from "../channels/types.ts";
 import type { SessionRecord } from "../db/core-schema.ts";
-import type {
-  ContextProvider,
-  ExchangeProcessor,
-  InboundMiddleware,
-  PostProcessor,
-} from "./api.ts";
+import type { ExchangeProcessor, InboundMiddleware, PostProcessor } from "./api.ts";
 
 export interface BootstrapHook {
   name: string;
@@ -25,7 +20,6 @@ export interface Registrations {
    */
   backgroundFactories: ExtensionFactory[];
   systemPromptBuilders: (() => string)[];
-  contextProviders: ContextProvider[];
   exchangeProcessors: ExchangeProcessor[];
   postProcessors: PostProcessor[];
   inboundMiddleware: InboundMiddleware[];
@@ -39,7 +33,6 @@ export const createRegistrations = (): Registrations => ({
   piFactories: [],
   backgroundFactories: [],
   systemPromptBuilders: [],
-  contextProviders: [],
   exchangeProcessors: [],
   postProcessors: [],
   inboundMiddleware: [],

@@ -43,9 +43,9 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 ### System prompt override instead of context injection
 
 **Choice**: Register SOUL.md/USER.md through `app.agent.systemPrompt`, which feeds pi's `systemPromptOverride` (DES-001), rather than injecting them as per-message context blocks.
-**Why**: Identity is system-prompt material — it must frame every turn, not arrive as a tagged user-visible context message; replacing pi's coding prompt is also the only way to stop being a coding agent.
+**Why**: Identity is system-prompt material — it must frame every turn by replacing pi's coding prompt (the only way to stop being a coding agent), not arrive as an injected context message.
 **Alternatives Considered**:
-- `app.agent.provideContext`: per-message tagged blocks are designed for volatile context (memory indexes, project state), not standing identity
+- A persisted context section (`app.agent.use({ contextProvider, … })`): injected as a hidden message rather than replacing pi's base prompt — the right home for subsystem usage guidance and volatile state (memory indexes, project state), but not for standing identity
 - Writing into AGENTS.md: conflates personality and user knowledge with operational instructions, and loses the template/bootstrap story
 
 **Consequences**:

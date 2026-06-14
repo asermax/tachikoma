@@ -14,6 +14,7 @@ import {
 } from "./reconcile.ts";
 import { ProcessRepository } from "./repository.ts";
 import { createProcessToolsFactory } from "./tools.ts";
+import { DETACHED_PROCESSES_USAGE } from "./usage.ts";
 import { createWatcherTick } from "./watcher.ts";
 
 interface DetachedProcessesConfig {
@@ -74,6 +75,12 @@ export default defineExtension<DetachedProcessesConfig>({
       }),
       { sessionScopes: ["main", "background"] },
     );
+
+    app.agent.use({
+      name: "detached-processes-usage",
+      contextProvider: DETACHED_PROCESSES_USAGE,
+      sessionScopes: ["main", "background"],
+    });
 
     app.scheduler.every(
       "detached-watch",

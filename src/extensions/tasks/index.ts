@@ -9,6 +9,7 @@ import { TaskRepository } from "./repository.ts";
 import { deliverSessionTasks } from "./session-delivery.ts";
 import { failStuckRunningInstances } from "./stuck-running.ts";
 import { createTaskInteractiveToolsFactory, createTaskToolsFactory } from "./tools.ts";
+import { buildTasksUsage } from "./usage.ts";
 
 interface TasksConfig {
   timezone?: string;
@@ -68,7 +69,6 @@ export default defineExtension<TasksConfig>({
       deliver: (delivery) => app.channels.deliver(delivery),
       // User-facing output goes through deliver(); this signal is for other extensions.
       notify: (notification) => app.events.emit("tasks:instance-finished", notification),
-      collectContext: (input) => app.agent.collectContext(input),
       runPostProcessors: (context) => app.sessions.runPostProcessors(context),
       maxIterations: app.extensionConfig.backgroundMaxIterations,
       maxConcurrent: app.extensionConfig.backgroundMaxConcurrent,
@@ -78,6 +78,12 @@ export default defineExtension<TasksConfig>({
     });
 
     app.agent.use(createTaskToolsFactory({ repository, timezone, now }), {
+      sessionScopes: ["main", "background"],
+    });
+
+    app.agent.use({
+      name: "tasks-usage",
+      contextProvider: buildTasksUsage(timezone),
       sessionScopes: ["main", "background"],
     });
 

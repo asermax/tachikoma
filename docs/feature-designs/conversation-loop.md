@@ -27,18 +27,18 @@ pi's model is one in-process `AgentSession` per conversation, replaced wholesale
 
 ## Design Overview
 
-`Coordinator` (`src/coordinator.ts`) is a single serial loop for *new* exchanges: `submit()` pushes into an in-memory inbox and wakes the loop; `handle()` runs the full exchange — inbound middleware chain, `ensureSession`, parallel context gathering into `pendingContext`, `streamPrompt` consumed by `channel.respond()`, parallel exchange processors — with held deliveries flushed in `finally`. After the middleware chain, `handle()` short-circuits if a middleware set `message.metadata.handled === true` (the commands extension's fully-handled path), skipping session resolution, context, streaming, and processors. A message arriving *while an exchange is in flight* does not wait in line: `submit()` routes it into the live run via pi's `session.steer()` (unless it opts out with `/queue ` or `/new `, or is system-origin). Session close (boundary, idle, recovery, shutdown) funnels through `closeActiveSession()`, which disposes the pi session, stamps the registry row, and runs the phased post-processing pipeline. The coordinator owns no idle timer — idle close is a boundary-extension policy (`src/extensions/boundary/idle.ts`) that calls `closeActiveSessionIfIdle()`.
+`Coordinator` (`src/coordinator.ts`) is a single serial loop for *new* exchanges: `submit()` pushes into an in-memory inbox and wakes the loop; `handle()` runs the full exchange — inbound middleware chain, `ensureSession`, `streamPrompt` consumed by `channel.respond()`, parallel exchange processors — with held deliveries flushed in `finally`. After the middleware chain, `handle()` short-circuits if a middleware set `message.metadata.handled === true` (the commands extension's fully-handled path), skipping session resolution, streaming, and processors. A message arriving *while an exchange is in flight* does not wait in line: `submit()` routes it into the live run via pi's `session.steer()` (unless it opts out with `/queue ` or `/new `, or is system-origin). Session close (boundary, idle, recovery, shutdown) funnels through `closeActiveSession()`, which disposes the pi session, stamps the registry row, and runs the phased post-processing pipeline. The coordinator owns no idle timer — idle close is a boundary-extension policy (`src/extensions/boundary/idle.ts`) that calls `closeActiveSessionIfIdle()`.
 
 ```
 submit() ─ mid-exchange & not /queue & not /new & not system? ─→ session.steer(prompt)  (steers the live run)
          └ else → [inbox] → handle():
-  middleware (may close/resume; may set metadata.handled → short-circuit) → ensureSession → collectContext ─┐
+  middleware (may close/resume; may set metadata.handled → short-circuit) → ensureSession ─┐
                                                                   ▼
-  channel.respond(streamPrompt(session, prompt)) ← before_agent_start injects <context> blocks
+  channel.respond(streamPrompt(session, prompt))
   → exchange processors → flush held deliveries
 ```
 
-Context reaches the agent through a host-owned pi extension factory (`hostFactory()`, registered in `src/app.ts` alongside extension factories): on `before_agent_start` it drains `pendingContext` into one hidden `tachikoma-context` message.
+On session resume, bridging context (summaries of sessions closed since the resumed session's prior close) reaches the agent through a host-owned pi extension factory (`hostFactory()`, registered in `src/app.ts` alongside extension factories): on `before_agent_start` it drains `pendingContext` into one hidden `bridging-context` message. Extension-contributed context (memory, projects, subsystem usage) does not flow through the coordinator — each extension registers its own context section via `app.agent.use({ contextProvider, sessionScopes })`, injected directly by pi (see [DES-001](../design/DES-001-unified-extension-api.md)).
 
 ## Components
 

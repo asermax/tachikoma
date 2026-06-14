@@ -11,7 +11,7 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 ## User Stories
 
 - As a user, I want my messages handled in order against one continuous conversation so that context carries across exchanges within a topic
-- As an extension developer, I want pipeline hooks (inbound middleware, context providers, exchange processors, post-processors) so that features compose without touching core
+- As an extension developer, I want pipeline hooks (inbound middleware, exchange processors, post-processors) so that features compose without touching core
 - As an extension developer, I want background-originated output gated to conversation pauses so that proactive messages do not interleave with an active exchange
 - As the system, I want sessions tracked in the database so that post-processing and resumption survive restarts
 
@@ -25,7 +25,7 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R3 | Registered inbound middleware runs as a chain before session resolution, receiving the message, the active session record (or null), and `closeSession`/`resumeSession` controls |
 | R4 | When no session is active, the coordinator opens a pi `AgentSession` with all registered extension factories bound, creates a database record, emits `session:opened`, and runs session-open hooks with error isolation |
 | R5 | Session records persist channel, pi transcript path, summary, last exchange, created/closed/resumed timestamps, and per-processor post-processing state; the registry supports create, get, update, close, reopen, dangling lookup, and resumable listing within a time window |
-| R6 | Context providers run in parallel before each prompt with per-provider error isolation; non-null blocks are injected as a single hidden tagged message via pi's `before_agent_start` |
+| R6 | On session resume, the coordinator injects bridging context (summaries of sessions closed since the resumed session's prior close) as a single hidden `bridging-context` message via pi's `before_agent_start`. Extension-contributed context (memory, projects, subsystem usage) is not coordinator-gathered — each extension registers its own context section (`app.agent.use({ contextProvider, sessionScopes })`, see [DES-001](../design/DES-001-unified-extension-api.md)) injected directly through pi |
 | R7 | Each exchange streams domain `AgentEvent`s to the active channel's `respond()`; media attachments are rendered into the prompt as an `<attachments>` block |
 | R8 | Exchange processors run in parallel after every completed exchange with the session record, user text, and latest assistant text, error-isolated; the coordinator's cached session record is refreshed afterwards |
 | R9 | Closing a session disposes the pi session, stamps `closedAt`, emits `session:closed`, and runs post-processing |
@@ -86,15 +86,14 @@ One database row per conversation; the active pi session and its record travel t
 - Given a resumable record, when `resumeSession(record)` runs, then the current session is closed first, the record's `closedAt` is cleared with `lastResumedAt` set, and a new pi session opens from `piSessionFile` (`session:opened` with `resumed: true`)
 - Given a window in seconds, when `listResumable()` is queried, then only sessions closed after the cutoff are returned, newest first
 
-### Context Gathering and Injection (R6)
+### Bridging Context Injection (R6)
 
-Before each prompt, providers contribute tagged blocks that the host-owned pi extension injects as one hidden context message.
+The coordinator's host-owned pi extension injects only bridging context — there is no per-message provider gathering. Extension context is contributed by each extension's own context section (see [agent-integration](agent-integration.md) / [DES-001](../design/DES-001-unified-extension-api.md)).
 
 **Acceptance Criteria**:
-- Given registered context providers, when an exchange starts, then all run in parallel and a per-provider status line (`Gathering context: <name>…`) is emitted
-- Given a provider returns null, when blocks are collected, then it contributes nothing
-- Given a provider throws, when blocks are collected, then the failure is logged with the provider name and the remaining blocks are still injected
-- Given collected blocks, when pi fires `before_agent_start`, then they are joined as `<context owner="<tag>">…</context>` sections in a single non-displayed `tachikoma-context` message, and the pending buffer is cleared
+- Given a resumed session, when summaries exist for sessions that closed since its prior close, then they are buffered as a `bridging-context` block (oldest-first)
+- Given a buffered bridging block, when pi fires `before_agent_start`, then it is injected as a `<context owner="bridging-context">…</context>` section in a single non-displayed message and the pending buffer is cleared
+- Given no resume (or no intervening closed sessions), when an exchange starts, then no bridging message is injected
 
 ### Exchange Processors (R8)
 
@@ -146,5 +145,5 @@ Background-originated output (`app.channels.deliver`) is gated so it lands at co
 
 **Acceptance Criteria**:
 - Given any component calls `app.status(text)`, when it runs, then a `status` event with the text is emitted on the app event bus, debug-logged, and forwarded to the active channel's optional `status()` (a channel rendering failure is caught and debug-logged)
-- Given context providers or post-processors run, when each starts, then the coordinator emits a named status line for it
+- Given post-processors run, when each starts, then the coordinator emits a named status line for it
 - Given the loop is shutting down and the channel provides `shutdownStatus()`, when a status line is emitted, then it routes to that dedicated persistent message instead of the (now absent) streaming renderer; a channel without `shutdownStatus()` falls back to `status()`

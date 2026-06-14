@@ -8,7 +8,7 @@ import type { Channel, Delivery } from "./channels/types.ts";
 import type { SessionRecord } from "./db/core-schema.ts";
 import type { InboundMessage } from "./domain/message.ts";
 import type { EventBus } from "./events.ts";
-import type { ContextBlock, InboundContext, PostProcessingPhase } from "./extensions/api.ts";
+import type { InboundContext, PostProcessingPhase } from "./extensions/api.ts";
 import type { Registrations } from "./extensions/registrations.ts";
 import type { Logger } from "./log.ts";
 import type { SessionRegistry } from "./sessions/registry.ts";
@@ -24,7 +24,8 @@ export class Coordinator {
   private readonly inbox: InboundMessage[] = [];
   private wake: (() => void) | null = null;
   private active: ActiveSession | null = null;
-  private pendingContext: ContextBlock[] = [];
+  /** Bridging-context blocks injected once on the next agent run (session resume). */
+  private pendingContext: { tag: string; content: string }[] = [];
   private readonly heldDeliveries: Delivery[] = [];
   private exchanging = false;
   private shuttingDown = false;
@@ -331,8 +332,6 @@ export class Coordinator {
       if (message.metadata.handled === true) return;
 
       const active = await this.ensureSession(message.channel);
-      const blocks = await this.collectContext(message, active.record);
-      this.pendingContext.push(...blocks);
 
       const events = streamPrompt(active.session, renderPrompt(message));
       await this.channel?.respond({ message, events });
@@ -382,33 +381,6 @@ export class Coordinator {
     };
 
     await invoke(0);
-  }
-
-  private async collectContext(
-    message: InboundMessage,
-    session: SessionRecord,
-  ): Promise<ContextBlock[]> {
-    const results = await Promise.allSettled(
-      this.regs.contextProviders.map(async (provider) => {
-        this.status(`Gathering context: ${provider.name}…`);
-        return provider.provide({ message, session });
-      }),
-    );
-
-    const blocks: ContextBlock[] = [];
-
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        if (result.value != null) blocks.push(result.value);
-      } else {
-        this.log.error(
-          { provider: this.regs.contextProviders[index]?.name, err: result.reason },
-          "context provider failed",
-        );
-      }
-    });
-
-    return blocks;
   }
 
   private async runExchangeProcessors(

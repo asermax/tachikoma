@@ -1,5 +1,8 @@
+import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+
 import type { AgentManager } from "../agent/manager.ts";
 import { SideRunner } from "../agent/side-run.ts";
+import { persistentContextSection } from "../agent/system-prompt-section.ts";
 import { parseWithSchema } from "../config/parse.ts";
 import type { Config } from "../config/schema.ts";
 import type { Coordinator } from "../coordinator.ts";
@@ -12,9 +15,7 @@ import type { SessionRegistry } from "../sessions/registry.ts";
 import type { Workspace } from "../workspace.ts";
 import {
   type AppContext,
-  type ContextBlock,
-  type ContextProvider,
-  type ContextProviderInput,
+  type ContextSectionRegistration,
   type PostProcessingPhase,
   type PostProcessor,
   type PostProcessorContext,
@@ -25,29 +26,6 @@ import {
 import type { Registrations } from "./registrations.ts";
 
 const POST_PROCESSING_PHASE_ORDER: PostProcessingPhase[] = ["main", "preFinalize", "finalize"];
-
-/** Run context providers, dropping nulls and isolating failures (used for headless/background runs). */
-const collectContextBlocks = async (
-  providers: ContextProvider[],
-  input: ContextProviderInput,
-  log: Logger,
-): Promise<ContextBlock[]> => {
-  const results = await Promise.allSettled(providers.map((provider) => provider.provide(input)));
-
-  const blocks: ContextBlock[] = [];
-  results.forEach((result, index) => {
-    if (result.status === "fulfilled") {
-      if (result.value != null) blocks.push(result.value);
-    } else {
-      log.error(
-        { provider: providers[index]?.name, err: result.reason },
-        "context provider failed",
-      );
-    }
-  });
-
-  return blocks;
-};
 
 /** Run post-processors once in phase order, error-isolated (no per-session state tracking). */
 const runPostProcessorsOnce = async (
@@ -231,15 +209,26 @@ export class ExtensionHost {
       },
 
       agent: {
-        use: (factory, options) => {
-          const targets = factoryBindingTargets(options);
+        use: (
+          factoryOrRegistration: ExtensionFactory | ContextSectionRegistration,
+          options?: UseFactoryOptions,
+        ) => {
+          const [factory, scopes] =
+            typeof factoryOrRegistration === "function"
+              ? [factoryOrRegistration, options?.sessionScopes]
+              : [
+                  persistentContextSection(factoryOrRegistration.name ?? "context", {
+                    provide: factoryOrRegistration.contextProvider,
+                  }),
+                  factoryOrRegistration.sessionScopes,
+                ];
+
+          const targets = factoryBindingTargets({ sessionScopes: scopes });
 
           if (targets.main) services.regs.piFactories.push(factory);
           if (targets.background) services.regs.backgroundFactories.push(factory);
         },
         systemPrompt: (builder) => services.regs.systemPromptBuilders.push(builder),
-        provideContext: (provider) => services.regs.contextProviders.push(provider),
-        collectContext: (input) => collectContextBlocks(services.regs.contextProviders, input, log),
         models: services.agent.tiers,
         side: new SideRunner(services.agent, log),
         forkAndContinue: (sourceSessionFile, prompt, tier, tools) =>

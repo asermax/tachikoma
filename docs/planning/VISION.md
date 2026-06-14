@@ -110,7 +110,7 @@ Every feature ships as a Tachikoma extension in a single format:
 defineExtension({ name, config?, setup(app) })
 ```
 
-`setup` receives an `AppContext` exposing app-level hooks — scheduler, database, session lifecycle, channels, context provider registration, post-processing registration — and can contribute pi extension factories via `app.agent.use((pi) => ...)` for in-session behavior: tools (`pi.registerTool`), event hooks, and system prompt fragments.
+`setup` receives an `AppContext` exposing app-level hooks — scheduler, database, session lifecycle, channels, post-processing registration — and can contribute pi extension factories via `app.agent.use((pi) => ...)` for in-session behavior: tools (`pi.registerTool`), event hooks, persisted context sections (`app.agent.use({ contextProvider, sessionScopes })`), and system prompt fragments.
 
 First-party extensions, all in-repo: **context** (SOUL.md/USER.md/AGENTS.md), **memory**, **boundary** (topic-shift detection, rolling summaries, session resumption), **skills**, **workflows**, **tasks**, **projects**, **git** (workspace versioning), **telegram**, **repl**, **detached-processes**, **notifications**, **self-update** (in-app upgrade with rollback), and **external** (loading and installing out-of-tree extensions built on the same extension contract).
 
