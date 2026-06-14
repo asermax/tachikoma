@@ -19,7 +19,7 @@ A `notify_user` tool lets a background-task agent emit notifications through the
 | ID | Requirement |
 |----|-------------|
 | R0 | Subscribe to the `notify` app event; any extension (or core) can emit a notification payload: required `text`, optional `title`, `severity`, `source` |
-| R1 | Payload parsing is best-effort: payloads without a non-empty `text` string are quietly skipped (the event also carries non-notification signals, e.g. task status objects); missing or unknown severity downgrades to `info`; missing source becomes `unknown` |
+| R1 | Payload parsing is best-effort: payloads without a non-empty `text` string are quietly skipped (the event may carry non-notification signals from other producers); missing or unknown severity downgrades to `info`; missing source becomes `unknown` |
 | R2 | Three severities: `info`, `warning`, `urgent` |
 | R3 | Urgent notifications bypass the flush window and are queued immediately at the Urgent tier |
 | R4 | Non-urgent notifications accumulate over a flush window (`flushWindowSeconds`, default 30); the flush delivers one message at the tier of its highest-severity item (warning → Normal, info → Low) |

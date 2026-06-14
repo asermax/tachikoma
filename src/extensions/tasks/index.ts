@@ -2,6 +2,7 @@ import { Type } from "typebox";
 
 import { persistentContextSection } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
+import { NOTIFY_EVENT, SEVERITIES } from "../notifications/payload.ts";
 import { BackgroundRunner } from "./executor.ts";
 import { expireWaitingInstances } from "./expiration.ts";
 import { generateDueInstances } from "./generation.ts";
@@ -65,9 +66,8 @@ export default defineExtension<TasksConfig>({
     const runner = new BackgroundRunner({
       repository,
       side: app.agent.side,
-      deliver: (delivery) => app.channels.deliver(delivery),
-      // User-facing output goes through deliver(); this signal is for other extensions.
-      notify: (notification) => app.events.emit("tasks:instance-finished", notification),
+      // Background-task notices flow through the notifications router via the "notify" event.
+      emit: (event, payload) => app.events.emit(event, payload),
       runPostProcessors: (context) => app.sessions.runPostProcessors(context),
       maxIterations: app.extensionConfig.backgroundMaxIterations,
       maxConcurrent: app.extensionConfig.backgroundMaxConcurrent,
@@ -96,13 +96,11 @@ export default defineExtension<TasksConfig>({
         waitTimeoutSeconds: app.extensionConfig.waitTimeoutSeconds,
         now,
         log: app.log,
-        onExpired: (instance, reason) => {
-          app.channels.deliver({ text: `❌ Background task failed: ${reason}`, tier: "normal" });
-          app.events.emit("tasks:instance-finished", {
+        onExpired: (_instance, reason) => {
+          app.events.emit(NOTIFY_EVENT, {
+            text: `❌ ${reason}`,
+            severity: SEVERITIES.warning,
             source: "Background task",
-            instanceId: instance.id,
-            status: "failed",
-            message: reason,
           });
         },
       });
@@ -112,13 +110,11 @@ export default defineExtension<TasksConfig>({
         runningTimeoutSeconds: app.extensionConfig.runningTimeoutSeconds,
         now,
         log: app.log,
-        onStuck: (instance, reason) => {
-          app.channels.deliver({ text: `❌ Background task failed: ${reason}`, tier: "normal" });
-          app.events.emit("tasks:instance-finished", {
+        onStuck: (_instance, reason) => {
+          app.events.emit(NOTIFY_EVENT, {
+            text: `❌ ${reason}`,
+            severity: SEVERITIES.warning,
             source: "Background task",
-            instanceId: instance.id,
-            status: "failed",
-            message: reason,
           });
         },
       });

@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Delivery } from "../../src/channels/types.ts";
 import type { AppDatabase } from "../../src/db/index.ts";
+import { NOTIFY_EVENT, type NotifyPayload } from "../../src/extensions/notifications/payload.ts";
 import {
   BackgroundRunner,
   type BackgroundSide,
   type ExecutorDeps,
   executeBackgroundInstance,
-  type TaskNotification,
+  type NotifyEmitter,
 } from "../../src/extensions/tasks/executor.ts";
 import { TaskRepository } from "../../src/extensions/tasks/repository.ts";
 import type { TaskInstanceRecord } from "../../src/extensions/tasks/schema.ts";
@@ -78,15 +78,13 @@ const makeSide = (
 };
 
 const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) => {
-  const deliver = vi.fn<(delivery: Delivery) => void>();
-  const notify = vi.fn<(notification: TaskNotification) => void>();
+  const emit = vi.fn<NotifyEmitter>();
   const runPostProcessors = vi.fn<ExecutorDeps["runPostProcessors"]>().mockResolvedValue(undefined);
 
   const deps: ExecutorDeps = {
     repository,
     side,
-    deliver,
-    notify,
+    emit,
     runPostProcessors,
     maxIterations,
     maxConcurrent,
@@ -95,8 +93,13 @@ const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) =
     log: fakeLog,
   };
 
-  return { ...deps, deliver, notify, runPostProcessors };
+  return { ...deps, emit, runPostProcessors };
 };
+
+const notifyPayloads = (emit: ReturnType<typeof vi.fn>): NotifyPayload[] =>
+  emit.mock.calls
+    .filter(([event]) => event === NOTIFY_EVENT)
+    .map(([, payload]) => payload as NotifyPayload);
 
 const pendingInstance = (): TaskInstanceRecord =>
   repository.createInstance({
@@ -153,12 +156,9 @@ describe("executeBackgroundInstance", () => {
     expect(completed?.startedAt).toEqual(current);
     expect(side.session.dispose).toHaveBeenCalled();
 
-    // Successful completion no longer emits a programmatic notice — the agent self-reports
-    // via notify_user at its discretion. The internal status signal still fires.
-    expect(deps.deliver).not.toHaveBeenCalled();
-    expect(deps.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ instanceId: instance.id, status: "completed" }),
-    );
+    // Successful completion emits no programmatic notice — the agent self-reports via
+    // notify_user at its discretion, so the executor fires nothing on the "notify" event.
+    expect(deps.emit).not.toHaveBeenCalled();
   });
 
   it("opens with the task prompt and runs post-processors with the transcript", async () => {
@@ -198,10 +198,12 @@ describe("executeBackgroundInstance", () => {
     expect(failed?.result).toBe("Agent stuck: unrecoverable access error");
     expect(side.session.dispose).toHaveBeenCalled();
 
-    expect(deps.deliver).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("Task failed") }),
+    expect(notifyPayloads(deps.emit)).toContainEqual(
+      expect.objectContaining({
+        text: expect.stringContaining("Task failed"),
+        severity: "warning",
+      }),
     );
-    expect(deps.notify).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
   });
 
   it("fails after exhausting the iteration cap", async () => {
@@ -219,7 +221,9 @@ describe("executeBackgroundInstance", () => {
       "Max iterations (2) reached without completion",
     );
     expect(side.session.dispose).toHaveBeenCalled();
-    expect(deps.notify).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
+    expect(notifyPayloads(deps.emit)).toContainEqual(
+      expect.objectContaining({ severity: "warning" }),
+    );
   });
 
   it("treats an evaluator crash as continue", async () => {
@@ -260,14 +264,11 @@ describe("executeBackgroundInstance", () => {
     expect(waiting?.userResponse).toBeNull();
     expect(waiting?.piSessionFile).toBe("/sessions/bg-task.jsonl");
 
-    expect(deps.deliver).toHaveBeenCalledWith(
+    expect(notifyPayloads(deps.emit)).toContainEqual(
       expect.objectContaining({
-        tier: "urgent",
+        severity: "urgent",
         text: expect.stringContaining("Which inbox — work or personal?"),
       }),
-    );
-    expect(deps.notify).toHaveBeenCalledWith(
-      expect.objectContaining({ instanceId: instance.id, status: "waiting" }),
     );
   });
 
@@ -366,10 +367,7 @@ describe("executeBackgroundInstance", () => {
 
     await executeBackgroundInstance(deps, instance);
 
-    expect(deps.deliver).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("Inbox Triage") }),
-    );
-    expect(deps.notify).toHaveBeenCalledWith(
+    expect(notifyPayloads(deps.emit)).toContainEqual(
       expect.objectContaining({ source: "Background task: Inbox Triage" }),
     );
   });
@@ -404,7 +402,12 @@ describe("executeBackgroundInstance", () => {
     expect(failed?.status).toBe("failed");
     expect(failed?.result).toContain("session exploded");
     expect(side.session.dispose).toHaveBeenCalled();
-    expect(deps.deliver).toHaveBeenCalled();
+    expect(notifyPayloads(deps.emit)).toContainEqual(
+      expect.objectContaining({
+        severity: "warning",
+        source: expect.stringContaining("Background task"),
+      }),
+    );
   });
 });
 

@@ -15,11 +15,12 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 
 **Constraints:**
 - Producers must not depend on the notifications extension — emitting an app event must be enough (DES-001 `app.events`)
-- The `notify` event name is shared: the tasks extension emits machine-readable status payloads on it that must not reach the user as prose
+- The `notify` event name is shared across producers; parsing is best-effort so a payload that is not a notification (no `text`) is skipped rather than rendered
 - Tier ordering and per-tier idle/max-hold timing are coordinator concerns reachable only through `app.channels.deliver`
 
 **Interactions:**
-- Tasks extension ([tasks.md](tasks.md)): emits status payloads on `notify` (skipped by design) and delivers its own user-facing notices directly
+- Tasks extension ([tasks.md](tasks.md)): background-task notices (failures, the stuck/expired sweeps, the `ask_user` pause) emit a `NotifyPayload` on `notify` and flow through this router; successful completion stays silent (the task agent self-reports via `notify_user`)
+- Detached-processes and self-update extensions: also emit `NotifyPayload`s on `notify` (process exits, available updates)
 - Conversation loop / channels ([conversation-loop.md](../feature-specs/conversation-loop.md), [telegram.md](../feature-specs/telegram.md)): all deliveries flow through `app.channels.deliver` and are rendered by the active channel
 
 ## Design Overview
@@ -43,11 +44,11 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 ### Loose, duck-typed event contract
 
 **Choice**: The `notify` event accepts `unknown`; `parseNotifyPayload` requires only a non-empty `text` string and defaults everything else, returning null (quiet skip) otherwise.
-**Why**: Cross-extension signals stay best-effort — producers should not import notification types to emit, and the same event name carries non-notification status objects (tasks) that must not be rendered to the user. A throwing or strict parser would couple every producer to this extension's schema.
-**Alternatives Considered**: A typed event payload enforced at emit time; separate event names for user notifications vs status signals.
+**Why**: Cross-extension signals stay best-effort — producers should not import notification types to emit, and a producer that puts a non-notification object on the event (no `text`) should be skipped rather than crash the router. A throwing or strict parser would couple every producer to this extension's schema.
+**Alternatives Considered**: A typed event payload enforced at emit time; separate event names per producer.
 **Consequences**:
 - Pro: Zero coupling for producers; malformed payloads degrade to debug logs, never crashes
-- Pro: The tasks status payloads coexist on the same event without double delivery
+- Pro: A producer can share the event without risking a half-formed payload reaching the user as prose
 - Con: Typos in `text`/`severity` fail silently (downgrade or skip) rather than loudly
 
 ### Two-stage delivery: router batches, coordinator queues
@@ -113,11 +114,11 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **When**: The router handles the second emit
 **Then**: The repeat is suppressed before routing and logged at info — only the first notice is delivered. After the window elapses, an identical notice is delivered again.
 
-### Scenario: tasks status payload on the shared event
+### Scenario: a background task fails
 
-**Given**: The tasks extension emits `{ source, instanceId, status, message }` on `notify`
+**Given**: A background-task run fails (evaluator `error`, max iterations, a thrown error, or a stuck/expired sweep), so the tasks extension emits `{ text: "❌ …", severity: "warning", source: "Background task: …" }` on `notify`
 **When**: The router handles it
-**Then**: Parsing returns null (no `text` field) and the payload is skipped with a debug log — the user-facing notice for that outcome was already delivered by the tasks extension itself.
+**Then**: It accumulates over the flush window and goes out at the Normal tier (`warning`), formatted with the source/time header like any other notice — the tasks extension no longer formats or delivers it itself. A successful run emits nothing.
 
 ## Notes
 

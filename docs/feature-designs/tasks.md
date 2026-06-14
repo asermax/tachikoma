@@ -20,13 +20,13 @@ pi deliberately provides no scheduling, idle gating, or buffered delivery — th
 - Tests fake `SideRunner` and the delivery function with `Pick<>` types (DES-002), so all logic modules take their dependencies as narrow parameters
 
 **Interactions:**
-- Channel delivery (`conversation-loop.md` / [telegram.md](../feature-specs/telegram.md)): all user-facing output goes through `app.channels.deliver`
-- Notifications extension: task status payloads ride the tasks extension's own `tasks:instance-finished` app event (not the `notify` event, which notifications/detached-processes own) and are deliberately not user notifications; user-facing output goes through `app.channels.deliver` (see [notifications.md](notifications.md))
+- Channel delivery (`conversation-loop.md` / [telegram.md](../feature-specs/telegram.md)): session-task instances are injected as agent turns through `app.channels.deliver`
+- Notifications extension: background-task notices (failures, the stuck/expired sweeps, the `ask_user` pause) emit a `NotifyPayload` on the shared `notify` app event, so they flow through the notifications router's batching, dedup, severity→tier mapping, and idle gating like every other producer (see [notifications.md](notifications.md)). The tasks extension imports the notify contract (`NOTIFY_EVENT`/`NotifyPayload`/`SEVERITIES`) from `../notifications/payload.ts` and carries no notice event of its own
 - Agent manager: `app.agent.side.openBackgroundSession` (a persistent pi session bound with the background factories + custom tools, prompted repeatedly across the loop) and `app.agent.side.classify` (structured classification) power background execution
 
 ## Design Overview
 
-`src/extensions/tasks/index.ts` wires one `tasks-tick` job (`app.scheduler.every`, 60 s) that runs five pure passes in order: `generateDueInstances` (definitions → pending instances), `expireWaitingInstances` (waiting timeout sweep), `failStuckRunningInstances` (running timeout sweep), `deliverSessionTasks` (pending session instances → Normal-tier channel delivery), and `BackgroundRunner.tick()` (pending background instances → detached evaluator-loop executions). A second, slower `tasks-one-shot-cleanup` job (`app.scheduler.every`, 3600 s) runs `cleanupExpiredOneShots` (retention pruning). Each pass is a standalone module taking its dependencies (`repository`, `deliver`, `side`, `now`, `log`) as parameters; `index.ts` contains no logic beyond wiring and the crash-recovery bootstrap hook.
+`src/extensions/tasks/index.ts` wires one `tasks-tick` job (`app.scheduler.every`, 60 s) that runs five pure passes in order: `generateDueInstances` (definitions → pending instances), `expireWaitingInstances` (waiting timeout sweep), `failStuckRunningInstances` (running timeout sweep), `deliverSessionTasks` (pending session instances → Normal-tier channel delivery), and `BackgroundRunner.tick()` (pending background instances → detached evaluator-loop executions). A second, slower `tasks-one-shot-cleanup` job (`app.scheduler.every`, 3600 s) runs `cleanupExpiredOneShots` (retention pruning). Each pass is a standalone module taking its dependencies (`repository`, `deliver` for session delivery, `emit` for background notices, `side`, `now`, `log`) as parameters; `index.ts` contains no logic beyond wiring and the crash-recovery bootstrap hook.
 
 ```
 tasks-tick (60s)
@@ -35,7 +35,7 @@ tasks-tick (60s)
   ├─ stuck-running.ts running > runningTimeout ──→ failed (+ notice, frees slot)
   ├─ session-delivery.ts  pending session ──→ channels.deliver(Normal) ──→ completed
   └─ executor.ts      answered waiting + pending background ──→ side.run ⇄ side.classify loop (detached)
-                        ask_user tool ──→ waiting (+ question delivered)
+                        ask_user tool ──→ waiting (+ urgent question on notify event)
 
 tasks-one-shot-cleanup (3600s)
   └─ one-shot-cleanup.ts  aged auto-disabled one-shots (all instances terminal) ──→ deleted
@@ -56,8 +56,8 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 | `src/extensions/tasks/generation.ts` | One generation pass | Anchor = `lastFiredAt`, else current hour start minus 1 s; advances past `since` instead of skipping the definition |
 | `src/extensions/tasks/session-delivery.ts` | One session-delivery pass | Marks the instance `completed` at handoff; rolls back to `pending` if the handoff throws |
 | `src/extensions/tasks/executor.ts` | Background evaluator loop + `BackgroundRunner` dispatcher | One persistent `side.openBackgroundSession(...)` opened per execution (resumed from `piSessionFile` when present) — binds the curated background factories with no hard tool allowlist so their tools stay active; the session file is recorded immediately, the opening prompt is just the task (workspace context arrives via the background-scoped extension context sections' `before_agent_start`, not a manual fold), and each continuation is a short nudge carrying only the evaluator observation (the session retains its own history); on completion the session is disposed and `runPostProcessors` runs with the session's transcript path; the in-run `ask_user` custom tool signals a pause the loop turns into a `waiting` transition (persisting `piSessionFile`) before disposing the session; a resumed instance prompts only the user's reply (legacy instances with no session file fall back to a resume-prompt replay); a `try/finally` guarantees disposal on every exit path; in-flight map prevents double dispatch and caps concurrency at `backgroundMaxConcurrent` |
-| `src/extensions/tasks/expiration.ts` | Waiting-instance timeout sweep | Threshold on `updatedAt`; `onExpired` callback lets `index.ts` own user notice + event emission; now has a live producer (`ask_user`) |
-| `src/extensions/tasks/stuck-running.ts` | Stuck-running timeout sweep | Mirrors `expiration.ts`: fails `running` instances past `runningTimeoutSeconds`, freeing their concurrency slot; `onStuck` callback lets `index.ts` own user notice + event emission |
+| `src/extensions/tasks/expiration.ts` | Waiting-instance timeout sweep | Threshold on `updatedAt`; `onExpired` callback lets `index.ts` emit the `warning`-severity notice on the `notify` event; now has a live producer (`ask_user`) |
+| `src/extensions/tasks/stuck-running.ts` | Stuck-running timeout sweep | Mirrors `expiration.ts`: fails `running` instances past `runningTimeoutSeconds`, freeing their concurrency slot; `onStuck` callback lets `index.ts` emit the `warning`-severity notice on the `notify` event |
 | `src/extensions/tasks/one-shot-cleanup.ts` | One-shot retention pruning | Thin wrapper over `pruneExpiredOneShotDefinitions`; runs on the slower cleanup job since retention is low-churn |
 | `src/extensions/tasks/tools.ts` | Agent-facing tools | Pure handlers over `ToolDeps`; the pi factory only wraps them in `registerTool` calls; `run_task_now` creates a pending instance and returns — dispatch is the existing tick path, not a direct executor call; `respond_to_task` stores a reply on a `waiting` instance and lets the dispatch pass resume it |
 
@@ -121,7 +121,7 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 ### Interactive await/respond resumes the persistent session (legacy excerpt-replay fallback)
 
-**Choice**: A background run pauses by calling the in-run `ask_user` custom tool. The tool records the question in a closure flag and returns a "stop and wait" message; after the prompt returns, the executor — seeing the flag set — transitions the instance to `waiting`, persisting `piSessionFile` (alongside the question and the run's final text as `resumeContext`), disposes the session, queues the question to the user (Urgent tier, instance ID in the text), emits a `waiting` status payload, then returns without consulting the evaluator. The main-session `respond_to_task` tool stores the trimmed reply as `userResponse`; `BackgroundRunner.tick` dispatches `getResumableInstances` (answered `waiting`) ahead of `getPendingInstances`, and `executeBackgroundInstance` reopens the recorded `piSessionFile` and prompts only the user's reply — the resumed session has full continuity. A legacy instance with no `piSessionFile` (predating persistent sessions) falls back to a fresh session prompted with a resume prompt replaying `resumeContext` + question + reply. Resume bookkeeping is cleared on completion.
+**Choice**: A background run pauses by calling the in-run `ask_user` custom tool. The tool records the question in a closure flag and returns a "stop and wait" message; after the prompt returns, the executor — seeing the flag set — transitions the instance to `waiting`, persisting `piSessionFile` (alongside the question and the run's final text as `resumeContext`), disposes the session, emits the question as an `urgent`-severity notice on the `notify` event (instance ID in the text; the router queues it at the Urgent tier), then returns without consulting the evaluator. The main-session `respond_to_task` tool stores the trimmed reply as `userResponse`; `BackgroundRunner.tick` dispatches `getResumableInstances` (answered `waiting`) ahead of `getPendingInstances`, and `executeBackgroundInstance` reopens the recorded `piSessionFile` and prompts only the user's reply — the resumed session has full continuity. A legacy instance with no `piSessionFile` (predating persistent sessions) falls back to a fresh session prompted with a resume prompt replaying `resumeContext` + question + reply. Resume bookkeeping is cleared on completion.
 **Why**: With a persistent pi session per instance (decision above), the paused run already has a session file on disk — `SessionManager.open(sessionFile)` is exactly how the main conversation resumes, so re-entering the paused agent with full tool/file continuity is the same plumbing rather than a prompt-replay approximation. The legacy fallback keeps instances created before this change safe: their `piSessionFile` is null, so they still resume via the old excerpt replay. Keeping the pause signal in a closure flag (rather than a thrown sentinel) lets the agent's final turn text serve as the legacy progress excerpt for free, and keeps every DB write in the executor where the rest of the lifecycle transitions live.
 **Alternatives Considered**: Continuing to resume purely by prompt replay even with a persistent session (discards the available continuity for no gain); routing the reply as a plain inbound message (nothing would re-associate it with the paused instance).
 **Consequences**:
@@ -150,14 +150,14 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 - Con: Worst-case latency before an on-demand instance starts is one tick interval (60 s); it is not run synchronously
 - Con: Name resolution matches the first exact-name row — duplicate names are resolved arbitrarily (IDs disambiguate)
 
-### Status payloads and user notices travel separately
+### Background-task notices flow through the notifications pipeline
 
-**Choice**: Failure (and the maintenance sweeps) emit two things: a Normal-tier failure notice via `app.channels.deliver`, and a structured `{ source, instanceId, status, message }` payload on the tasks extension's own `tasks:instance-finished` app event (the `notify` event is owned by notifications/detached-processes; tasks never emit to it). **Successful completion emits only the status payload** — no programmatic user notice, since the running agent can surface results itself via `notify_user` per the task prompt (R11/R15 in the spec). Cross-extension consumers subscribe to `tasks:instance-finished`; the payload is not a user notification.
-**Why**: A failure happens when no agent turn is producing output, so it must be raised programmatically; a success has a live agent that can decide whether the result is worth surfacing. The bus payload is a machine-readable signal for future consumers (e.g. task-aware context providers) without coupling tasks to the notifications format.
+**Choice**: Failure (evaluator `error`, max iterations, thrown errors), the maintenance sweeps (expired waiting, stuck running), and the `ask_user` pause emit a `NotifyPayload` (`text`, `severity`, `source`) on the shared `notify` app event — the same event the notifications router consumes — rather than calling `app.channels.deliver` directly. Failures and the sweeps use `warning` severity (the router maps `warning` → the Normal delivery tier); the `ask_user` pause uses `urgent` (queued at the Urgent tier with the shortest wait). The `source` is `Background task` (or `Background task: <definition name>` once a definition is known). The emitter is threaded into `BackgroundRunner`/`ExecutorDeps` as an `emit(event, payload)` dependency (`index.ts` wires it to `app.events.emit`), mirroring how `deliver` was threaded. **Successful completion emits nothing** — the running agent surfaces results itself via `notify_user` per the task prompt (R11 in the spec). There is no `tasks:instance-finished` event; it had no consumer.
+**Why**: A failure or pause happens when no agent turn is producing output, so it must be raised programmatically; routing it through `notify` rather than a bespoke `deliver` gives background notices the router's batching, dedup (re-emit/retry storms collapse), severity→tier mapping, and idle gating for free, and keeps tasks from re-implementing notice formatting. A success has a live agent that can decide whether the result is worth surfacing, so the executor stays silent there. The notify contract is imported from `../notifications/payload.ts` (an extension→extension import of the contract, consistent with self-update and acceptable per DES-001).
 **Consequences**:
 - Pro: No duplicate/forced success notice; the agent controls result surfacing per the task's intent
-- Pro: Failures (agent-less) still reach the user; bus consumers get typed-ish data, not prose
-- Con: A completed task whose agent chooses not to notify finishes silently (intentional); the failure path's two emission points must stay in sync
+- Pro: Failures, sweeps, and pauses share one delivery pipeline with every other producer — consistent formatting, dedup, and tiering
+- Con: A completed task whose agent chooses not to notify finishes silently (intentional); the several notice emission points must keep their `source`/`severity` consistent
 
 ## System Behavior
 
@@ -177,7 +177,7 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 **Given**: A pending background instance
 **When**: The runner dispatches it; iteration 1 returns mid-workflow text (`continue`), iteration 2 announces completion (`complete`)
-**Then**: A single persistent session was opened once and prompted twice; iteration 2's prompt was a short nudge carrying only the evaluator observation (no excerpt replay); the instance ends `completed` with the evaluator reason as result, the session is disposed and post-processing runs with its transcript path, no programmatic result notice is delivered (the agent may have surfaced results via `notify_user`), and a `completed` status payload is emitted.
+**Then**: A single persistent session was opened once and prompted twice; iteration 2's prompt was a short nudge carrying only the evaluator observation (no excerpt replay); the instance ends `completed` with the evaluator reason as result, the session is disposed and post-processing runs with its transcript path, and no notice is emitted (the agent may have surfaced results via `notify_user`).
 
 ### Scenario: more pending background instances than the concurrency cap
 
@@ -189,19 +189,19 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 
 **Given**: A running background instance that calls `ask_user("Which inbox — work or personal?")`
 **When**: The run returns, then the user later answers via `respond_to_task`
-**Then**: On the pause, the instance becomes `waiting` with `piSessionFile` persisted (plus the question and a progress excerpt), the session is disposed, the question is queued at the Urgent tier (text carries the instance ID) and a `waiting` status payload is emitted; the evaluator is not consulted and the slot frees. `respond_to_task` stores the trimmed reply as `userResponse`, leaving the instance `waiting`. The next background dispatch pass picks the instance up ahead of pending work, reopens the recorded pi session, prompts only the user's reply (full continuity), and the evaluator loop continues to completion — clearing `question`/`resumeContext`. (A legacy instance with no session file instead replays the excerpt + question + reply into a fresh session.)
+**Then**: On the pause, the instance becomes `waiting` with `piSessionFile` persisted (plus the question and a progress excerpt), the session is disposed, the question is emitted as an `urgent`-severity notice on the `notify` event (text carries the instance ID; the router queues it at the Urgent tier); the evaluator is not consulted and the slot frees. `respond_to_task` stores the trimmed reply as `userResponse`, leaving the instance `waiting`. The next background dispatch pass picks the instance up ahead of pending work, reopens the recorded pi session, prompts only the user's reply (full continuity), and the evaluator loop continues to completion — clearing `question`/`resumeContext`. (A legacy instance with no session file instead replays the excerpt + question + reply into a fresh session.)
 
 ### Scenario: a background question is never answered
 
 **Given**: A `waiting` instance produced by `ask_user` whose `updatedAt` is older than `waitTimeoutSeconds`
 **When**: The expiration pass runs
-**Then**: It is marked `failed` with the timeout reason and a failure notice is delivered — the same sweep that was previously dormant, now driven by a real producer.
+**Then**: It is marked `failed` with the timeout reason and a `warning`-severity failure notice is emitted on the `notify` event — the same sweep that was previously dormant, now driven by a real producer.
 
 ### Scenario: a background run wedges in `running`
 
 **Given**: A `running` instance whose `startedAt` is older than `runningTimeoutSeconds` (its detached executor died or stalled and never reached a terminal state)
 **When**: The stuck-running sweep runs in the tick
-**Then**: It is marked `failed` with an "exceeded running timeout" reason, a failure notice and a `tasks:instance-finished` payload are delivered, and the slot it held is freed for other background work. (Distinct from crash recovery, which fails *all* `running` rows at startup; this sweep catches stalls within a live process.)
+**Then**: It is marked `failed` with an "exceeded running timeout" reason, a `warning`-severity failure notice is emitted on the `notify` event, and the slot it held is freed for other background work. (Distinct from crash recovery, which fails *all* `running` rows at startup; this sweep catches stalls within a live process.)
 
 ### Scenario: a spent one-shot ages past retention
 

@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Delivery } from "../../src/channels/types.ts";
 import type { AppDatabase } from "../../src/db/index.ts";
 import {
   type BackgroundSide,
@@ -96,8 +95,7 @@ describe("expireWaitingInstances", () => {
     const deps: ExecutorDeps = {
       repository,
       side,
-      deliver: vi.fn<(delivery: Delivery) => void>(),
-      notify: vi.fn(),
+      emit: vi.fn(),
       runPostProcessors: vi.fn<ExecutorDeps["runPostProcessors"]>().mockResolvedValue(undefined),
       maxIterations: 10,
       maxConcurrent: 3,

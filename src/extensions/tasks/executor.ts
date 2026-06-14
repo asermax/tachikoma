@@ -4,9 +4,9 @@ import { type Static, Type } from "typebox";
 
 import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import { lastAssistantText, type SideRunner } from "../../agent/side-run.ts";
-import type { Delivery } from "../../channels/types.ts";
 import type { Logger } from "../../log.ts";
 import type { PostProcessorContext } from "../api.ts";
+import { NOTIFY_EVENT, type NotifyPayload, SEVERITIES } from "../notifications/payload.ts";
 import type { TaskRepository } from "./repository.ts";
 import type { TaskInstanceRecord } from "./schema.ts";
 
@@ -17,20 +17,15 @@ export const TaskEvaluationSchema = Type.Object({
 
 export type TaskEvaluation = Static<typeof TaskEvaluationSchema>;
 
-export interface TaskNotification {
-  source: string;
-  instanceId: string;
-  status: "completed" | "failed" | "waiting";
-  message: string;
-}
+export type NotifyEmitter = (event: string, payload: NotifyPayload) => void;
 
 export type BackgroundSide = Pick<SideRunner, "classify" | "openBackgroundSession">;
 
 export interface ExecutorDeps {
   repository: TaskRepository;
   side: BackgroundSide;
-  deliver: (delivery: Delivery) => void;
-  notify: (notification: TaskNotification) => void;
+  /** Emit a `"notify"` event so background-task notices flow through the notifications router. */
+  emit: NotifyEmitter;
   /** Run the registered post-processors after a task completes (workspace persistence). */
   runPostProcessors: (context: PostProcessorContext) => Promise<void>;
   maxIterations: number;
@@ -135,17 +130,7 @@ export const executeBackgroundInstance = async (
   deps: ExecutorDeps,
   instance: TaskInstanceRecord,
 ): Promise<void> => {
-  const {
-    repository,
-    side,
-    deliver,
-    notify,
-    runPostProcessors,
-    maxIterations,
-    timezone,
-    now,
-    log,
-  } = deps;
+  const { repository, side, emit, runPostProcessors, maxIterations, timezone, now, log } = deps;
 
   const definition =
     instance.definitionId != null ? repository.getDefinition(instance.definitionId) : null;
@@ -160,8 +145,11 @@ export const executeBackgroundInstance = async (
       completedAt: now(),
       result: reason,
     });
-    deliver({ text: `❌ ${source} — ${noticeMessage}`, tier: "normal" });
-    notify({ source, instanceId: instance.id, status: "failed", message: noticeMessage });
+    emit(NOTIFY_EVENT, {
+      text: `❌ ${noticeMessage}`,
+      severity: SEVERITIES.warning,
+      source,
+    });
     log.warn({ instanceId: instance.id, reason }, "background task failed");
   };
 
@@ -255,15 +243,10 @@ export const executeBackgroundInstance = async (
           piSessionFile: transcriptPath,
         });
 
-        deliver({
-          text: `❓ ${source} needs your input (instance ${instance.id}):\n\n${pendingQuestion}`,
-          tier: "urgent",
-        });
-        notify({
+        emit(NOTIFY_EVENT, {
+          text: `❓ Needs your input (instance ${instance.id}):\n\n${pendingQuestion}`,
+          severity: SEVERITIES.urgent,
           source,
-          instanceId: instance.id,
-          status: "waiting",
-          message: pendingQuestion,
         });
 
         log.info({ instanceId: instance.id }, "background task paused awaiting user input");
@@ -291,13 +274,7 @@ export const executeBackgroundInstance = async (
         session = null;
         await runPostProcessors({ session: null, transcriptPath, log });
         // No programmatic success notice: the agent surfaces results via notify_user at
-        // its own discretion (per the task prompt). The internal signal still fires.
-        notify({
-          source,
-          instanceId: instance.id,
-          status: "completed",
-          message: evaluation.reason,
-        });
+        // its own discretion (per the task prompt).
         log.info({ instanceId: instance.id }, "background task completed");
         return;
       }
