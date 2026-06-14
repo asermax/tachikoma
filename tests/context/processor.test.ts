@@ -4,59 +4,37 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SideRunner } from "../../src/agent/side-run.ts";
+import type { AgentManager } from "../../src/agent/manager.ts";
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import {
   cleanPendingSignals,
   createCoreContextProcessor,
+  type Forker,
   PENDING_SIGNALS_FILENAME,
   parsePendingSignals,
 } from "../../src/extensions/context/processor.ts";
 import { localIsoDate } from "../../src/extensions/memory/dates.ts";
+import { MEMORY_FILE_TOOLS } from "../../src/extensions/memory/extraction.ts";
 import type { Logger } from "../../src/log.ts";
 
 const fakeLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
 const session = { id: 1 } as SessionRecord;
 
-type Runner = Pick<SideRunner, "run">;
-
-const fakeRunner = () => {
-  const run = vi.fn().mockResolvedValue({ text: "done" });
-  const side: Runner = { run };
-  return { side, run };
-};
-
-const writeTranscript = async (path: string): Promise<void> => {
-  const lines = [
-    { type: "session", version: 3, id: "sess-1", cwd: "/w" },
-    {
-      type: "message",
-      id: "1",
-      parentId: null,
-      message: { role: "user", content: "please keep answers shorter", timestamp: 1 },
-    },
-    {
-      type: "message",
-      id: "2",
-      parentId: "1",
-      message: { role: "assistant", content: [{ type: "text", text: "Got it." }] },
-    },
-  ];
-
-  await writeFile(path, lines.map((entry) => JSON.stringify(entry)).join("\n"), "utf8");
+const fakeForker = () => {
+  const forkAndContinue: AgentManager["forkAndContinue"] = vi.fn().mockResolvedValue(undefined);
+  const agent: Forker = { forkAndContinue };
+  return { agent, forkAndContinue: forkAndContinue as ReturnType<typeof vi.fn> };
 };
 
 let workspace: string;
 let dataDir: string;
-let transcriptPath: string;
+const transcriptPath = "/sessions/sess-1.jsonl";
 
 beforeEach(async () => {
   workspace = await mkdtemp(join(tmpdir(), "tachi-context-"));
   dataDir = join(workspace, ".tachikoma");
   await mkdir(dataDir, { recursive: true });
-  transcriptPath = join(workspace, "session.jsonl");
-  await writeTranscript(transcriptPath);
 });
 
 afterEach(async () => {
@@ -64,27 +42,33 @@ afterEach(async () => {
 });
 
 describe("core context processor", () => {
-  it("runs a headless update targeting the root context files", async () => {
-    const { side, run } = fakeRunner();
-    const processor = createCoreContextProcessor({ side, workspaceRoot: workspace, dataDir });
+  it("forks the just-ended conversation with a follow-up instruction targeting the context files", async () => {
+    const { agent, forkAndContinue } = fakeForker();
+    const processor = createCoreContextProcessor({ agent, workspaceRoot: workspace, dataDir });
 
     expect(processor.name).toBe("core-context");
     expect(processor.phase).toBe("preFinalize");
 
     await processor.process({ session, transcriptPath, log: fakeLog });
 
-    expect(run).toHaveBeenCalledTimes(1);
-    const options = run.mock.calls[0]?.[0];
-    expect(options.tier).toBe("processor");
-    expect(options.tools).toEqual(["read", "grep", "find", "ls", "edit", "write"]);
-    expect(options.system).toContain(`${workspace}/SOUL.md`);
-    expect(options.system).toContain(`${workspace}/USER.md`);
-    expect(options.system).toContain(`${workspace}/AGENTS.md`);
-    expect(options.system).toContain("No pending signals at this time.");
-    expect(options.prompt).toContain("user: please keep answers shorter");
+    expect(forkAndContinue).toHaveBeenCalledTimes(1);
+    const [source, instruction, tier, tools] = forkAndContinue.mock.calls[0] ?? [];
+    // Forks from the session's own transcript — never replays it as text.
+    expect(source).toBe(transcriptPath);
+    expect(tier).toBe("processor");
+    // Hard-limited to file tools even though the fork reuses the live session.
+    expect(tools).toEqual(MEMORY_FILE_TOOLS);
+    // The instruction is a follow-up user turn to the same assistant, not a persona reset.
+    expect(instruction).toContain("We just finished the conversation above");
+    expect(instruction).not.toContain("<conversation>");
+    expect(instruction).toContain(`${workspace}/SOUL.md`);
+    expect(instruction).toContain(`${workspace}/USER.md`);
+    expect(instruction).toContain(`${workspace}/AGENTS.md`);
+    expect(instruction).toContain("No pending signals at this time.");
+    expect(instruction).toContain("SILENT background context-maintenance step");
   });
 
-  it("injects the pending signals snapshot into the system prompt", async () => {
+  it("injects the pending signals snapshot into the instruction", async () => {
     const recent = localIsoDate();
     await writeFile(
       join(dataDir, PENDING_SIGNALS_FILENAME),
@@ -92,16 +76,16 @@ describe("core context processor", () => {
       "utf8",
     );
 
-    const { side, run } = fakeRunner();
-    await createCoreContextProcessor({ side, workspaceRoot: workspace, dataDir }).process({
+    const { agent, forkAndContinue } = fakeForker();
+    await createCoreContextProcessor({ agent, workspaceRoot: workspace, dataDir }).process({
       session,
       transcriptPath,
       log: fakeLog,
     });
 
-    const system = run.mock.calls[0]?.[0].system;
-    expect(system).toContain(`S1: **${recent}**: User seemed to prefer shorter responses`);
-    expect(system).toContain(join(dataDir, PENDING_SIGNALS_FILENAME));
+    const instruction = forkAndContinue.mock.calls[0]?.[1];
+    expect(instruction).toContain(`S1: **${recent}**: User seemed to prefer shorter responses`);
+    expect(instruction).toContain(join(dataDir, PENDING_SIGNALS_FILENAME));
   });
 
   it("expires old pending signals before reading the snapshot", async () => {
@@ -113,38 +97,36 @@ describe("core context processor", () => {
       "utf8",
     );
 
-    const { side, run } = fakeRunner();
-    await createCoreContextProcessor({ side, workspaceRoot: workspace, dataDir }).process({
+    const { agent, forkAndContinue } = fakeForker();
+    await createCoreContextProcessor({ agent, workspaceRoot: workspace, dataDir }).process({
       session,
       transcriptPath,
       log: fakeLog,
     });
 
-    const system = run.mock.calls[0]?.[0].system;
-    expect(system).toContain("fresh signal");
-    expect(system).not.toContain("ancient signal");
+    const instruction = forkAndContinue.mock.calls[0]?.[1];
+    expect(instruction).toContain("fresh signal");
+    expect(instruction).not.toContain("ancient signal");
     expect(await readFile(signalsFile, "utf8")).not.toContain("ancient signal");
   });
 
-  it("logs which context files the side run created, updated, or deleted", async () => {
+  it("logs which context files the forked agent created, updated, or deleted", async () => {
     await writeFile(join(workspace, "USER.md"), "existing user info\n", "utf8");
 
-    const run = vi.fn().mockImplementation(async () => {
+    const forkAndContinue = vi.fn().mockImplementation(async () => {
       await new Promise((resolve) => setTimeout(resolve, 10));
       await writeFile(join(workspace, "AGENTS.md"), "new operational guidance\n", "utf8");
       await writeFile(join(workspace, "USER.md"), "updated user info\n", "utf8");
-      return { text: "done" };
     });
-    const side: Runner = { run };
 
     const info = vi.fn();
     const log = { debug: vi.fn(), info, warn: vi.fn() } as unknown as Logger;
 
-    await createCoreContextProcessor({ side, workspaceRoot: workspace, dataDir }).process({
-      session,
-      transcriptPath,
-      log,
-    });
+    await createCoreContextProcessor({
+      agent: { forkAndContinue },
+      workspaceRoot: workspace,
+      dataDir,
+    }).process({ session, transcriptPath, log });
 
     expect(info).toHaveBeenCalledWith({ file: "AGENTS.md" }, "context file created");
     expect(info).toHaveBeenCalledWith({ file: "USER.md" }, "context file updated");
@@ -152,15 +134,15 @@ describe("core context processor", () => {
   });
 
   it("skips when there is no transcript", async () => {
-    const { side, run } = fakeRunner();
+    const { agent, forkAndContinue } = fakeForker();
 
-    await createCoreContextProcessor({ side, workspaceRoot: workspace, dataDir }).process({
+    await createCoreContextProcessor({ agent, workspaceRoot: workspace, dataDir }).process({
       session,
       transcriptPath: null,
       log: fakeLog,
     });
 
-    expect(run).not.toHaveBeenCalled();
+    expect(forkAndContinue).not.toHaveBeenCalled();
   });
 });
 

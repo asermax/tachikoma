@@ -1,3 +1,4 @@
+import type { AgentManager } from "../../agent/manager.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
 import type { PostProcessor } from "../api.ts";
 import { localIsoDate } from "./dates.ts";
@@ -10,19 +11,21 @@ import {
   scopeSection,
   WORKSPACE_VALIDATION_SECTION,
 } from "./prompts.ts";
-import { loadConversation } from "./transcript.ts";
 
 export const MEMORY_FILE_TOOLS = ["read", "grep", "find", "ls", "edit", "write"];
 
+/** Still used by the nightly maintenance ticks, which run bare headless side-runs. */
 export type Runner = Pick<SideRunner, "run">;
 
+/** The slice of AgentManager memory extraction needs: fork the just-ended conversation. */
+export type Forker = Pick<AgentManager, "forkAndContinue">;
+
 export interface ExtractionDeps {
-  side: Runner;
+  agent: Forker;
   workspaceRoot: string;
-  maxTranscriptChars: number;
 }
 
-const EPISODIC_BASE_PROMPT = `You are a memory extraction agent. Your task is to analyze the conversation that just ended and create or update the episodic memory file for today.
+const EPISODIC_BASE_PROMPT = `We just finished the conversation above. Using what you already know from it, create or update the episodic memory file for today.
 
 Today's date is {date}.
 
@@ -51,7 +54,7 @@ Today's date is {date}.
 
 Remember: These memories help the assistant maintain context across sessions. Focus on what would be useful to remember, not a transcript of what happened.`;
 
-const FACTS_BASE_PROMPT = `You are a memory extraction agent. Your task is to analyze the conversation and extract or update factual information that would be useful to remember for future conversations.
+const FACTS_BASE_PROMPT = `We just finished the conversation above. Using what you already know from it, extract or update factual information that would be useful to remember for future conversations.
 
 ## Instructions
 
@@ -115,7 +118,7 @@ const FACTS_BASE_PROMPT = `You are a memory extraction agent. Your task is to an
 
 Remember: These memories help the assistant maintain context across sessions. Focus on accurate, stable reference information — not activity logs or documents.`;
 
-const PREFERENCES_BASE_PROMPT = `You are a memory extraction agent. Your task is to analyze the conversation and extract or update the user's expressed preferences.
+const PREFERENCES_BASE_PROMPT = `We just finished the conversation above. Using what you already know from it, extract or update the user's expressed preferences.
 
 ## Instructions
 
@@ -188,8 +191,23 @@ const PREFERENCES_BASE_PROMPT = `You are a memory extraction agent. Your task is
 
 Remember: These memories help the assistant tailor its approach to the user's preferences. Focus on genuine, stated choices — not facts, specs, or instructions.`;
 
-const STORE_PROMPTS: Record<MemoryStore, string> = {
-  episodic: [EPISODIC_BASE_PROMPT, scopeSection("episodic")].join("\n\n"),
+// Extraction runs as a silent follow-up turn on a fork of the just-ended conversation. The
+// forked agent still has its full tool set and persona, so it must be told this is background
+// file maintenance — no chat reply, no messaging/notification/task tools.
+const SILENT_BACKGROUND_SECTION = (store: MemoryStore): string => `## Background Maintenance Step
+
+This is a SILENT background memory-maintenance step, not part of the conversation. Do NOT send any
+user-facing message, ask any question, or produce a chat reply, and do NOT use any messaging,
+notification, or task-management tools. Only read files in the workspace and create or modify files
+under \`$WORKSPACE/memories/${store}/\`. When you are done, simply stop — your only output is the
+file changes.`;
+
+const STORE_INSTRUCTIONS: Record<MemoryStore, string> = {
+  episodic: [
+    EPISODIC_BASE_PROMPT,
+    scopeSection("episodic"),
+    SILENT_BACKGROUND_SECTION("episodic"),
+  ].join("\n\n"),
   facts: [
     FACTS_BASE_PROMPT,
     CLASSIFICATION_EXAMPLES_SECTION,
@@ -198,6 +216,7 @@ const STORE_PROMPTS: Record<MemoryStore, string> = {
     WORKSPACE_VALIDATION_SECTION,
     INDEX_UPDATE_SECTION,
     scopeSection("facts"),
+    SILENT_BACKGROUND_SECTION("facts"),
   ].join("\n\n"),
   preferences: [
     PREFERENCES_BASE_PROMPT,
@@ -207,22 +226,25 @@ const STORE_PROMPTS: Record<MemoryStore, string> = {
     WORKSPACE_VALIDATION_SECTION,
     INDEX_UPDATE_SECTION,
     scopeSection("preferences"),
+    SILENT_BACKGROUND_SECTION("preferences"),
   ].join("\n\n"),
 };
 
-export const extractionSystemPrompt = (store: MemoryStore, workspaceRoot: string): string =>
-  STORE_PROMPTS[store].replaceAll("$WORKSPACE", workspaceRoot).replaceAll("{date}", localIsoDate());
-
-export const conversationPrompt = (conversation: string): string =>
-  `The following conversation with the user just ended:\n\n<conversation>\n${conversation}\n</conversation>\n\nFollow your instructions and update the memory files accordingly.`;
+/** The follow-up user instruction handed to the forked conversation for one memory store. */
+export const storeInstruction = (store: MemoryStore, workspaceRoot: string): string =>
+  STORE_INSTRUCTIONS[store]
+    .replaceAll("$WORKSPACE", workspaceRoot)
+    .replaceAll("{date}", localIsoDate());
 
 /**
- * Session-close extraction: re-reads the session transcript and runs a headless
- * agent with file tools to fold the conversation into one memory store.
+ * Session-close extraction: forks the just-ended pi session (full history + persona live) and
+ * hands the same assistant a single follow-up user instruction to fold the conversation into one
+ * memory store. The source transcript is never mutated. Registered once per store, so the three
+ * stores run as three parallel forks under the coordinator's phase:"main" Promise.allSettled.
  */
 export const createExtractionProcessor = (
   store: MemoryStore,
-  { side, workspaceRoot, maxTranscriptChars }: ExtractionDeps,
+  { agent, workspaceRoot }: ExtractionDeps,
 ): PostProcessor => ({
   name: `memory-${store}`,
   phase: "main",
@@ -233,19 +255,14 @@ export const createExtractionProcessor = (
       return;
     }
 
-    const conversation = await loadConversation(transcriptPath, maxTranscriptChars);
-
-    if (conversation === "") {
-      log.debug({ store }, "empty conversation — skipping memory extraction");
-      return;
-    }
-
-    await side.run({
-      tools: MEMORY_FILE_TOOLS,
-      system: extractionSystemPrompt(store, workspaceRoot),
-      prompt: conversationPrompt(conversation),
-      tier: "processor",
-    });
+    // Hard-limit the fork to file tools — belt-and-suspenders with SILENT_BACKGROUND_SECTION, so
+    // the extraction agent cannot message the user or fire tasks even though it reuses the session.
+    await agent.forkAndContinue(
+      transcriptPath,
+      storeInstruction(store, workspaceRoot),
+      "processor",
+      MEMORY_FILE_TOOLS,
+    );
 
     await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);
   },

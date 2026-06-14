@@ -1,18 +1,16 @@
 import { readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { SideRunner } from "../../agent/side-run.ts";
+import type { AgentManager } from "../../agent/manager.ts";
 import type { Logger } from "../../log.ts";
 import type { PostProcessor } from "../api.ts";
 import { localIsoDate } from "../memory/dates.ts";
-import { loadConversation } from "../memory/transcript.ts";
+import { MEMORY_FILE_TOOLS } from "../memory/extraction.ts";
 
 export const PENDING_SIGNALS_FILENAME = "pending-signals.md";
 
 const PENDING_SIGNALS_HEADER = "# Pending Signals\n\n";
 const ENTRY_PATTERN = /^- \*\*(\d{4}-\d{2}-\d{2})\*\*:\s*(.+)$/gm;
-
-const FILE_TOOLS = ["read", "grep", "find", "ls", "edit", "write"];
 
 export interface PendingSignal {
   date: string;
@@ -88,7 +86,7 @@ const formatPendingSignalsSection = (snapshot: PendingSignal[]): string => {
     .join("\n");
 };
 
-const SYSTEM_TEMPLATE = `You are a context file update agent. Your task is to analyze the completed conversation and update the foundational context files when appropriate.
+const INSTRUCTION_TEMPLATE = `We just finished the conversation above. Using what you already know from it, update your foundational context files when appropriate.
 
 Today's date is {date}.
 
@@ -225,7 +223,16 @@ You can read files anywhere in the workspace (needed for validation). Only modif
 
 ## Remember
 
-These files shape the assistant's identity and behavior across all sessions. Updates should be deliberate and evidence-based. When in doubt, stage the signal for future recurrence detection rather than making premature changes.`;
+These files shape the assistant's identity and behavior across all sessions. Updates should be deliberate and evidence-based. When in doubt, stage the signal for future recurrence detection rather than making premature changes.
+
+## Background Maintenance Step
+
+This is a SILENT background context-maintenance step, not part of the conversation. Do NOT send any
+user-facing message, ask any question, or produce a chat reply, and do NOT use any messaging,
+notification, or task-management tools. Only read files in the workspace and modify the foundational
+context files (\`$WORKSPACE/SOUL.md\`, \`$WORKSPACE/USER.md\`, \`$WORKSPACE/AGENTS.md\`) and the
+pending signals file at \`$SIGNALS_FILE\`. When you are done, simply stop — your only output is the
+file changes.`;
 
 const CONTEXT_FILENAMES = ["SOUL.md", "USER.md", "AGENTS.md"] as const;
 
@@ -263,24 +270,30 @@ const logContextChanges = (
   }
 };
 
+/** The slice of AgentManager core-context needs: fork the just-ended conversation. */
+export type Forker = Pick<AgentManager, "forkAndContinue">;
+
 export interface CoreContextDeps {
-  side: Pick<SideRunner, "run">;
+  agent: Forker;
   workspaceRoot: string;
   /** Internal data directory holding the pending signals file (never committed). */
   dataDir: string;
-  maxTranscriptChars?: number;
 }
 
 /**
  * Conservative updates to the foundational context files (SOUL.md, USER.md,
  * AGENTS.md at the workspace root) after each session, with a file-based
  * pending-signals list for recurrence detection of ambiguous signals.
+ *
+ * Forks the just-ended pi session (full history + persona live) and hands the same assistant a
+ * single follow-up user instruction, hard-limited to file tools. The source transcript is never
+ * mutated. The pending-signals list is prepared host-side before the fork and injected into the
+ * instruction; the agent manages it as plain file edits on $SIGNALS_FILE (no MCP tools).
  */
 export const createCoreContextProcessor = ({
-  side,
+  agent,
   workspaceRoot,
   dataDir,
-  maxTranscriptChars = 24000,
 }: CoreContextDeps): PostProcessor => ({
   name: "core-context",
   phase: "preFinalize",
@@ -291,19 +304,12 @@ export const createCoreContextProcessor = ({
       return;
     }
 
-    const conversation = await loadConversation(transcriptPath, maxTranscriptChars);
-
-    if (conversation === "") {
-      log.debug("empty conversation — skipping core context update");
-      return;
-    }
-
     await cleanPendingSignals(dataDir, log);
 
     const signalsFile = join(dataDir, PENDING_SIGNALS_FILENAME);
     const snapshot = await readPendingSignals(signalsFile);
 
-    const system = SYSTEM_TEMPLATE.replaceAll(
+    const instruction = INSTRUCTION_TEMPLATE.replaceAll(
       "{pending_signals_section}",
       formatPendingSignalsSection(snapshot),
     )
@@ -311,11 +317,9 @@ export const createCoreContextProcessor = ({
       .replaceAll("$WORKSPACE", workspaceRoot)
       .replaceAll("$SIGNALS_FILE", signalsFile);
 
-    const prompt = `The following conversation with the user just ended:\n\n<conversation>\n${conversation}\n</conversation>\n\nFollow your instructions and update the context files accordingly.`;
-
     const before = await snapshotMtimes(workspaceRoot);
 
-    await side.run({ tools: FILE_TOOLS, system, prompt, tier: "processor" });
+    await agent.forkAndContinue(transcriptPath, instruction, "processor", MEMORY_FILE_TOOLS);
 
     logContextChanges(before, await snapshotMtimes(workspaceRoot), log);
   },

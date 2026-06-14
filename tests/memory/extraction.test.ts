@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import {
   createExtractionProcessor,
+  type Forker,
   MEMORY_FILE_TOOLS,
-  type Runner,
+  storeInstruction,
 } from "../../src/extensions/memory/extraction.ts";
 import type { Logger } from "../../src/log.ts";
 
@@ -16,39 +17,17 @@ const fakeLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as L
 
 const session = { id: 1 } as SessionRecord;
 
-const fakeRunner = () => {
-  const run = vi.fn().mockResolvedValue({ text: "done" });
-  const side: Runner = { run };
-  return { side, run };
-};
-
-const writeTranscript = async (path: string): Promise<void> => {
-  const lines = [
-    { type: "session", version: 3, id: "sess-1", timestamp: "2026-06-12T10:00:00Z", cwd: "/w" },
-    {
-      type: "message",
-      id: "1",
-      parentId: null,
-      message: { role: "user", content: "I moved to Berlin last month", timestamp: 1 },
-    },
-    {
-      type: "message",
-      id: "2",
-      parentId: "1",
-      message: { role: "assistant", content: [{ type: "text", text: "Noted — congrats!" }] },
-    },
-  ];
-
-  await writeFile(path, lines.map((entry) => JSON.stringify(entry)).join("\n"), "utf8");
+const fakeForker = () => {
+  const forkAndContinue = vi.fn().mockResolvedValue(undefined);
+  const agent: Forker = { forkAndContinue };
+  return { agent, forkAndContinue };
 };
 
 let workspace: string;
-let transcriptPath: string;
+const transcriptPath = "/sessions/sess-1.jsonl";
 
 beforeEach(async () => {
   workspace = await mkdtemp(join(tmpdir(), "tachi-memory-"));
-  transcriptPath = join(workspace, "session.jsonl");
-  await writeTranscript(transcriptPath);
 });
 
 afterEach(async () => {
@@ -56,32 +35,31 @@ afterEach(async () => {
 });
 
 describe("memory extraction processors", () => {
-  it("runs a headless extraction over the rendered conversation", async () => {
-    const { side, run } = fakeRunner();
-    const processor = createExtractionProcessor("facts", {
-      side,
-      workspaceRoot: workspace,
-      maxTranscriptChars: 10_000,
-    });
+  it("forks the just-ended conversation and continues it with one follow-up instruction", async () => {
+    const { agent, forkAndContinue } = fakeForker();
+    const processor = createExtractionProcessor("facts", { agent, workspaceRoot: workspace });
 
     expect(processor.name).toBe("memory-facts");
     expect(processor.phase).toBe("main");
 
     await processor.process({ session, transcriptPath, log: fakeLog });
 
-    expect(run).toHaveBeenCalledTimes(1);
-    const options = run.mock.calls[0]?.[0];
-    expect(options.tools).toEqual(MEMORY_FILE_TOOLS);
-    expect(options.tier).toBe("processor");
-    expect(options.system).toContain(join(workspace, "memories", "facts"));
-    expect(options.system).toContain("memory extraction agent");
-    expect(options.prompt).toContain("user: I moved to Berlin last month");
-    expect(options.prompt).toContain("assistant: Noted — congrats!");
+    expect(forkAndContinue).toHaveBeenCalledTimes(1);
+    const [source, prompt, tier, tools] = forkAndContinue.mock.calls[0] ?? [];
+    // Forks from the session's own transcript — never replays it as text.
+    expect(source).toBe(transcriptPath);
+    expect(tier).toBe("processor");
+    // Hard-limited to file tools even though the fork reuses the live session.
+    expect(tools).toEqual(MEMORY_FILE_TOOLS);
+    // The prompt is a follow-up user instruction to the same assistant, not a persona reset.
+    expect(prompt).toContain("We just finished the conversation above");
+    expect(prompt).not.toContain("<conversation>");
+    expect(prompt).toContain(join(workspace, "memories", "facts"));
   });
 
-  it("targets the store directory of each store", async () => {
-    const { side, run } = fakeRunner();
-    const deps = { side, workspaceRoot: workspace, maxTranscriptChars: 10_000 };
+  it("targets the store directory and store-specific instruction for each store", async () => {
+    const { agent, forkAndContinue } = fakeForker();
+    const deps = { agent, workspaceRoot: workspace };
 
     await createExtractionProcessor("preferences", deps).process({
       session,
@@ -94,52 +72,44 @@ describe("memory extraction processors", () => {
       log: fakeLog,
     });
 
-    expect(run.mock.calls[0]?.[0].system).toContain(join(workspace, "memories", "preferences"));
-    expect(run.mock.calls[1]?.[0].system).toContain(join(workspace, "memories", "episodic"));
-    expect(run.mock.calls[1]?.[0].system).toContain("Today's date is");
+    expect(forkAndContinue.mock.calls[0]?.[1]).toContain(
+      join(workspace, "memories", "preferences"),
+    );
+    expect(forkAndContinue.mock.calls[1]?.[1]).toContain(join(workspace, "memories", "episodic"));
+    expect(forkAndContinue.mock.calls[1]?.[1]).toContain("Today's date is");
+  });
+
+  it("instructs the fork to run as a silent background step", () => {
+    const instruction = storeInstruction("facts", workspace);
+
+    expect(instruction).toContain("SILENT background memory-maintenance step");
+    expect(instruction).toContain("Do NOT");
   });
 
   it("skips when there is no transcript", async () => {
-    const { side, run } = fakeRunner();
+    const { agent, forkAndContinue } = fakeForker();
 
-    await createExtractionProcessor("facts", {
-      side,
-      workspaceRoot: workspace,
-      maxTranscriptChars: 10_000,
-    }).process({ session, transcriptPath: null, log: fakeLog });
+    await createExtractionProcessor("facts", { agent, workspaceRoot: workspace }).process({
+      session,
+      transcriptPath: null,
+      log: fakeLog,
+    });
 
-    expect(run).not.toHaveBeenCalled();
+    expect(forkAndContinue).not.toHaveBeenCalled();
   });
 
-  it("skips when the transcript renders to an empty conversation", async () => {
-    const headerOnly = join(workspace, "empty.jsonl");
-    await writeFile(headerOnly, JSON.stringify({ type: "session", id: "s" }), "utf8");
-
-    const { side, run } = fakeRunner();
-
-    await createExtractionProcessor("facts", {
-      side,
-      workspaceRoot: workspace,
-      maxTranscriptChars: 10_000,
-    }).process({ session, transcriptPath: headerOnly, log: fakeLog });
-
-    expect(run).not.toHaveBeenCalled();
-  });
-
-  it("sweeps files the extraction agent emptied", async () => {
+  it("sweeps files the forked agent emptied", async () => {
     const factsDir = join(workspace, "memories", "facts");
     await mkdir(factsDir, { recursive: true });
     await writeFile(join(factsDir, "kept.md"), "still useful", "utf8");
 
-    const run = vi.fn().mockImplementation(async () => {
+    const forkAndContinue = vi.fn().mockImplementation(async () => {
       await writeFile(join(factsDir, "merged-away.md"), "", "utf8");
-      return { text: "done" };
     });
 
     await createExtractionProcessor("facts", {
-      side: { run },
+      agent: { forkAndContinue },
       workspaceRoot: workspace,
-      maxTranscriptChars: 10_000,
     }).process({ session, transcriptPath, log: fakeLog });
 
     expect((await readdir(factsDir)).sort()).toEqual(["kept.md"]);

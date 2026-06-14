@@ -11,8 +11,6 @@ import { runContextMaintenanceTick, runMaintenanceTick } from "./maintenance.ts"
 
 export const MemoryConfigSchema = Type.Object({
   enabled: Type.Boolean({ default: true }),
-  /** Cap on the rendered conversation injected into extraction prompts (tail-priority). */
-  maxTranscriptChars: Type.Number({ default: 24000 }),
   maintenance: Type.Object(
     {
       enabled: Type.Boolean({ default: true }),
@@ -58,11 +56,9 @@ export default defineExtension<MemoryConfig>({
 
     app.agent.provideContext(createMemoryIndexProvider(workspaceRoot));
 
-    const extraction = {
-      side: app.agent.side,
-      workspaceRoot,
-      maxTranscriptChars: app.extensionConfig.maxTranscriptChars,
-    };
+    // Each store registers its own processor; phase:"main" runs them via Promise.allSettled,
+    // so the three run as three parallel forks of the just-ended conversation.
+    const extraction = { agent: app.agent, workspaceRoot };
 
     for (const store of MEMORY_STORES) {
       app.sessions.registerProcessor(createExtractionProcessor(store, extraction));
@@ -72,10 +68,9 @@ export default defineExtension<MemoryConfig>({
     // processor wiring this registration belongs in context/index.ts.
     app.sessions.registerProcessor(
       createCoreContextProcessor({
-        side: app.agent.side,
+        agent: app.agent,
         workspaceRoot,
         dataDir: app.workspace.dataDir,
-        maxTranscriptChars: app.extensionConfig.maxTranscriptChars,
       }),
     );
 
