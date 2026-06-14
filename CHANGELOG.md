@@ -1,3 +1,15 @@
+# [3.3.0](https://github.com/asermax/tachikoma/compare/v3.2.0...v3.3.0) (2026-06-14)
+
+
+### Bug Fixes
+
+* **telegram:** escape backticks in inline-code tool labels ([e75d9c7](https://github.com/asermax/tachikoma/commit/e75d9c7a4affb4a2eca24e297978b05b304c6aea))
+
+
+### Features
+
+* **telegram:** prefer Bash description over command in live label ([f10b457](https://github.com/asermax/tachikoma/commit/f10b4577a472cca5214f5084a80d3210860e5675))
+
 # [3.2.0](https://github.com/asermax/tachikoma/compare/v3.1.2...v3.2.0) (2026-06-14)
 
 
