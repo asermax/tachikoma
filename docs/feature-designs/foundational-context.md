@@ -20,7 +20,7 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 
 **Interactions:**
 - The core base prompt (identity + guidance + workspace root) is installed as the `systemPromptOverride` per session open by `AgentManager` (see [agent-integration](./agent-integration.md)); SOUL/USER are appended on top via `provideContext`
-- The `core-context` processor runs in the post-processing pipeline owned by the coordinator (see [conversation-loop](./conversation-loop.md)) and is currently registered by the memory extension (see [memory](./memory.md))
+- The `core-context` processor runs in the post-processing pipeline owned by the coordinator (see [conversation-loop](./conversation-loop.md)) and is registered by the context extension's own setup
 - The periodic cleanup of these same three files (`runContextMaintenanceTick`, `memory-context-maintenance` cron) lives in the memory extension's maintenance module, not here — it complements the per-session updater by consolidating and pruning across the whole file rather than reacting to one conversation (see [memory](./memory.md))
 - Workspace internals (`dataDir`) come from the core shell (see [core-shell](./core-shell.md))
 - Context file changes are committed by the finalize-phase git processor (see [git-workspace](./git-workspace.md))
@@ -35,8 +35,8 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/context/index.ts` | Extension wiring: `load-context-files` bootstrap hook, `readOrCreate` with templates, two `provideContext` factories (SOUL, USER) that re-read from disk per session (`fresh()` with cached fallback) and append to the system prompt | Only ENOENT triggers template creation — other read errors abort startup; per-session `readFileSync` so processor edits apply next session; AGENTS.md deliberately untouched (pi native discovery); the core base prompt lives in core and is installed by `AgentManager`, not here ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
-| `src/extensions/context/processor.ts` | `createCoreContextProcessor` (`core-context`, `preFinalize`); pending-signals parse/serialize/clean; the full update policy as `INSTRUCTION_TEMPLATE` (follow-up user-instruction shape, with a silent-background directive) | Forks via `forkAndContinue` with the `MEMORY_FILE_TOOLS` allowlist; reuses `localIsoDate` from the memory extension; signals live in `dataDir`, outside user-visible workspace content |
+| `src/extensions/context/index.ts` | Extension wiring: registers its own `core-context` post-processor, `load-context-files` bootstrap hook, `readOrCreate` with templates, two `provideContext` factories (SOUL, USER) that re-read from disk per session (`fresh()` with cached fallback) and append to the system prompt | Owns the `core-context` registration directly (no longer in memory); only ENOENT triggers template creation — other read errors abort startup; per-session `readFileSync` so processor edits apply next session; AGENTS.md deliberately untouched (pi native discovery); the core base prompt lives in core and is installed by `AgentManager`, not here ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
+| `src/extensions/context/processor.ts` | `createCoreContextProcessor` (`core-context`, `preFinalize`); pending-signals parse/serialize/clean; the full update policy as `INSTRUCTION_TEMPLATE` (follow-up user-instruction shape, with a silent-background directive) | Forks via `forkAndContinue` with the neutral `FILE_EDIT_TOOLS` allowlist (`src/agent/file-tools.ts`); uses the neutral `localIsoDate` util (`src/util/dates.ts`) — no longer imports from the memory extension; signals live in `dataDir`, outside user-visible workspace content |
 
 ## Key Decisions
 
@@ -68,17 +68,17 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 - Pro: host-side expiry is a pure function over the file, tested in isolation (`cleanPendingSignals`)
 - Con: no all-or-nothing batch removal semantics — a sloppy edit can corrupt entries (unparseable content is detected and logged, not repaired)
 
-### preFinalize phase, registered by the memory extension
+### preFinalize phase, registered by the context extension
 
-**Choice**: The processor runs in the `preFinalize` phase and is registered in `src/extensions/memory/index.ts` next to the extraction processors.
-**Why**: Phase ordering guarantees context updates land after memory extraction (`main`) and before the git commit (`finalize`), so every closed session commits consistent context files. Registration lives in memory for now because the processor shares its dependency surface with extraction (the `forkAndContinue` primitive and `MEMORY_FILE_TOOLS`) — the code marks this as transitional until the context extension grows its own processor wiring.
+**Choice**: The processor runs in the `preFinalize` phase and is registered in the context extension's own `setup` (`src/extensions/context/index.ts`).
+**Why**: Phase ordering guarantees context updates land after memory extraction (`main`) and before the git commit (`finalize`), so every closed session commits consistent context files — and because the pipeline orders by phase, that ordering holds no matter which extension registers each processor. Owning the registration in context keeps the feature self-contained and removes the former circular import (memory importing the context processor, the context processor importing back into memory for `localIsoDate`/`MEMORY_FILE_TOOLS`). The two helpers it needed moved to neutral homes — `localIsoDate` to `src/util/dates.ts` and the file-tool allowlist (renamed `FILE_EDIT_TOOLS`) to `src/agent/file-tools.ts` — so neither extension imports from the other.
 **Alternatives Considered**:
 - `main` phase: would race with extraction processors that read AGENTS.md for deduplication
-- Registering in `context/index.ts` today: forces a premature shared-wiring story for the fork primitive and the tool allowlist
+- Leaving the registration in `memory/index.ts`: kept a cross-extension import in both directions and tied core-context updates to the memory extension's enabled state
 
 **Consequences**:
-- Pro: deterministic ordering relative to extraction and the workspace commit
-- Con: the context feature is split across two extensions' wiring; disabling the memory extension also silently disables core context updates
+- Pro: deterministic ordering relative to extraction and the workspace commit, preserved purely by phase
+- Pro: the context feature is self-contained; no import cycle between the memory and context extensions; core-context updates no longer depend on the memory extension being enabled
 
 ## System Behavior
 

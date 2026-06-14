@@ -1,8 +1,9 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import { FILE_EDIT_TOOLS } from "../../agent/file-tools.ts";
 import type { Logger } from "../../log.ts";
-import { MEMORY_FILE_TOOLS, type Runner } from "./extraction.ts";
+import type { Runner } from "./extraction.ts";
 import {
   fileExists,
   MEMORY_STORES,
@@ -527,7 +528,7 @@ export const runContextMaintenanceTick = async (
   deps.log.info("context maintenance tick started");
 
   await deps.side.run({
-    tools: MEMORY_FILE_TOOLS,
+    tools: FILE_EDIT_TOOLS,
     system: await contextMaintenanceSystemPrompt(deps.workspaceRoot),
     prompt: "Perform the context file cleanup pass now, following your instructions.",
     tier: "processor",
@@ -546,7 +547,7 @@ export const runMaintenanceTick = async (
   deps.log.info({ store }, "memory maintenance tick started");
 
   await deps.side.run({
-    tools: MEMORY_FILE_TOOLS,
+    tools: FILE_EDIT_TOOLS,
     system: await maintenanceSystemPrompt(store, deps),
     prompt: "Perform the maintenance pass now, following your instructions.",
     tier: "processor",

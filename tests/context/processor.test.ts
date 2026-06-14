@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import { FILE_EDIT_TOOLS } from "../../src/agent/file-tools.ts";
 import type { AgentManager } from "../../src/agent/manager.ts";
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import {
@@ -13,9 +13,8 @@ import {
   PENDING_SIGNALS_FILENAME,
   parsePendingSignals,
 } from "../../src/extensions/context/processor.ts";
-import { localIsoDate } from "../../src/extensions/memory/dates.ts";
-import { MEMORY_FILE_TOOLS } from "../../src/extensions/memory/extraction.ts";
 import type { Logger } from "../../src/log.ts";
+import { localIsoDate } from "../../src/util/dates.ts";
 
 const fakeLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
@@ -57,7 +56,7 @@ describe("core context processor", () => {
     expect(source).toBe(transcriptPath);
     expect(tier).toBe("processor");
     // Hard-limited to file tools even though the fork reuses the live session.
-    expect(tools).toEqual(MEMORY_FILE_TOOLS);
+    expect(tools).toEqual(FILE_EDIT_TOOLS);
     // The instruction is a follow-up user turn to the same assistant, not a persona reset.
     expect(instruction).toContain("We just finished the conversation above");
     expect(instruction).not.toContain("<conversation>");

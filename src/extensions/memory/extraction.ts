@@ -1,7 +1,8 @@
+import { FILE_EDIT_TOOLS } from "../../agent/file-tools.ts";
 import type { AgentManager } from "../../agent/manager.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
+import { localIsoDate } from "../../util/dates.ts";
 import type { PostProcessor } from "../api.ts";
-import { localIsoDate } from "./dates.ts";
 import { type MemoryStore, storeDir, sweepEmptyMarkdown } from "./layout.ts";
 import {
   CLASSIFICATION_EXAMPLES_SECTION,
@@ -11,8 +12,6 @@ import {
   scopeSection,
   WORKSPACE_VALIDATION_SECTION,
 } from "./prompts.ts";
-
-export const MEMORY_FILE_TOOLS = ["read", "grep", "find", "ls", "edit", "write"];
 
 /** Still used by the nightly maintenance ticks, which run bare headless side-runs. */
 export type Runner = Pick<SideRunner, "run">;
@@ -261,7 +260,7 @@ export const createExtractionProcessor = (
       transcriptPath,
       storeInstruction(store, workspaceRoot),
       "processor",
-      MEMORY_FILE_TOOLS,
+      FILE_EDIT_TOOLS,
     );
 
     await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);

@@ -3,6 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
+import { createCoreContextProcessor } from "./processor.ts";
 
 const SOUL_TEMPLATE = `# Soul
 
@@ -41,6 +42,17 @@ export default defineExtension({
   name: "context",
 
   async setup(app) {
+    // Updates SOUL/USER/AGENTS from the just-ended conversation. Runs in phase:"preFinalize"
+    // (set by the processor) so it lands after the parallel memory-store extractions and before
+    // the finalize phase commits the workspace.
+    app.sessions.registerProcessor(
+      createCoreContextProcessor({
+        agent: app.agent,
+        workspaceRoot: app.workspace.root,
+        dataDir: app.workspace.dataDir,
+      }),
+    );
+
     let soul = "";
     let user = "";
 

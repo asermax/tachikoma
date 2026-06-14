@@ -1,11 +1,11 @@
 import { readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { FILE_EDIT_TOOLS } from "../../agent/file-tools.ts";
 import type { AgentManager } from "../../agent/manager.ts";
 import type { Logger } from "../../log.ts";
+import { localIsoDate } from "../../util/dates.ts";
 import type { PostProcessor } from "../api.ts";
-import { localIsoDate } from "../memory/dates.ts";
-import { MEMORY_FILE_TOOLS } from "../memory/extraction.ts";
 
 export const PENDING_SIGNALS_FILENAME = "pending-signals.md";
 
@@ -326,7 +326,7 @@ export const createCoreContextProcessor = ({
 
     const before = await snapshotMtimes(workspaceRoot);
 
-    await agent.forkAndContinue(transcriptPath, instruction, "processor", MEMORY_FILE_TOOLS);
+    await agent.forkAndContinue(transcriptPath, instruction, "processor", FILE_EDIT_TOOLS);
 
     logContextChanges(before, await snapshotMtimes(workspaceRoot), log);
   },

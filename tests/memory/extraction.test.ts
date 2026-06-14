@@ -4,11 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { FILE_EDIT_TOOLS } from "../../src/agent/file-tools.ts";
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import {
   createExtractionProcessor,
   type Forker,
-  MEMORY_FILE_TOOLS,
   storeInstruction,
 } from "../../src/extensions/memory/extraction.ts";
 import type { Logger } from "../../src/log.ts";
@@ -50,7 +50,7 @@ describe("memory extraction processors", () => {
     expect(source).toBe(transcriptPath);
     expect(tier).toBe("processor");
     // Hard-limited to file tools even though the fork reuses the live session.
-    expect(tools).toEqual(MEMORY_FILE_TOOLS);
+    expect(tools).toEqual(FILE_EDIT_TOOLS);
     // The prompt is a follow-up user instruction to the same assistant, not a persona reset.
     expect(prompt).toContain("We just finished the conversation above");
     expect(prompt).not.toContain("<conversation>");

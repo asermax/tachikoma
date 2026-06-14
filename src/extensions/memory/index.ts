@@ -2,7 +2,6 @@ import { type Static, Type } from "typebox";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
-import { createCoreContextProcessor } from "../context/processor.ts";
 import { createTranscriptArchiveProcessor, pruneTranscripts } from "./archive.ts";
 import { createExtractionProcessor } from "./extraction.ts";
 import { buildMemoryContext } from "./indexes.ts";
@@ -66,16 +65,6 @@ export default defineExtension<MemoryConfig>({
     for (const store of MEMORY_STORES) {
       app.sessions.registerProcessor(createExtractionProcessor(store, extraction));
     }
-
-    // Registered here for now — once the context extension grows its own
-    // processor wiring this registration belongs in context/index.ts.
-    app.sessions.registerProcessor(
-      createCoreContextProcessor({
-        agent: app.agent,
-        workspaceRoot,
-        dataDir: app.workspace.dataDir,
-      }),
-    );
 
     app.sessions.registerProcessor(createTranscriptArchiveProcessor(workspaceRoot));
 

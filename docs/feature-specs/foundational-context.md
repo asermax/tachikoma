@@ -6,7 +6,7 @@
 
 The `context` extension (`src/extensions/context/`) supplies the agent's identity from workspace-root files: SOUL.md (personality) and USER.md (durable user knowledge) are **appended to the system prompt** through `provideContext`, layered on top of the core-owned main-session base prompt (`buildMainSystemPrompt` — identity + shared guidance + workspace root, installed by `AgentManager`, see [DES-005](../design/DES-005-base-prompt-ownership.md)). AGENTS.md is discovered natively by pi from the workspace root and needs no handling in the extension.
 
-A companion `core-context` post-processor (`src/extensions/context/processor.ts`, currently registered by the [memory](./memory.md) extension) analyzes each closed conversation and conservatively updates the three files, staging ambiguous signals in a pending-signals file so recurring patterns can be promoted later. Separately, a periodic foundational-context maintenance tick owned by the [memory](./memory.md) extension (`memory-context-maintenance`) does a cleanup-only whole-file pass over the three files, pruning staleness and bloat without adding new content.
+A companion `core-context` post-processor (`src/extensions/context/processor.ts`, registered by the context extension's own setup) analyzes each closed conversation and conservatively updates the three files, staging ambiguous signals in a pending-signals file so recurring patterns can be promoted later. Separately, a periodic foundational-context maintenance tick owned by the [memory](./memory.md) extension (`memory-context-maintenance`) does a cleanup-only whole-file pass over the three files, pruning staleness and bloat without adding new content.
 
 ## User Stories
 
@@ -21,13 +21,13 @@ A companion `core-context` post-processor (`src/extensions/context/processor.ts`
 | R1 | The core base prompt (`buildMainSystemPrompt`, [DES-005](../design/DES-005-base-prompt-ownership.md)) — identity + shared operational/interactive guidance + a workspace-root line — is installed by `AgentManager` as pi's `systemPromptOverride`, replacing pi's default coding prompt; the interactive guidance covers working hygiene, caution with irreversible/outward-facing actions, and awareness that focused sub-tasks can be delegated via `delegate_to_agent`. SOUL.md and USER.md are appended to that system prompt by the `context` extension via `app.agent.use(provideContext(...))` (system-prompt mode, no `customType`) |
 | R2 | SOUL.md/USER.md are re-read from disk on each new session (a fresh `provideContext` factory per session; the bootstrap-time contents are only a fallback when a read fails), computed once per session and re-applied on every `before_agent_start`, so edits — including the processor's own — take effect on the next session without a restart |
 | R3 | AGENTS.md is not composed by the extension — pi discovers it natively from the workspace root when a session opens |
-| R4 | A `core-context` post-processor (`preFinalize` phase) forks the just-ended pi session (`app.agent.forkAndContinue(piSessionFile, instruction, "processor", MEMORY_FILE_TOOLS)`) so the same assistant — full conversation live in its history, persona intact — updates SOUL.md, USER.md, and AGENTS.md; the source transcript is never mutated |
+| R4 | A `core-context` post-processor (`preFinalize` phase) forks the just-ended pi session (`app.agent.forkAndContinue(piSessionFile, instruction, "processor", FILE_EDIT_TOOLS)`, where `FILE_EDIT_TOOLS` is the neutral file-tool allowlist in `src/agent/file-tools.ts`) so the same assistant — full conversation live in its history, persona intact — updates SOUL.md, USER.md, and AGENTS.md; the source transcript is never mutated |
 | R5 | The processor skips (no fork) when the session has no transcript (`piSessionFile` is null) |
 | R6 | Ambiguous signals are staged in `{dataDir}/pending-signals.md` as dated markdown entries (`- **YYYY-MM-DD**: text`); the current entries are injected into the processor's follow-up instruction as a numbered snapshot (S1..Sn) |
 | R7 | Pending signals older than 30 days are cleared before each run; the file is deleted when every entry has expired or when only the header remains (a normal end-state); genuine non-header content with no parseable entries is left alone with a warning |
 | R8 | The update policy is prompt-encoded and conservative: clear evidence updates files directly, ambiguous signals are staged, semantically recurring staged signals are promoted and removed, corrections are extracted as positive instructions, stale content is pruned, and size limits are enforced (USER.md ~120 lines, AGENTS.md ~400 lines) |
 | R9 | The fork is hard-limited to file tools (`read`, `grep`, `find`, `ls`, `edit`, `write`) on the `processor` tier — the allowlist also filters out the conversation's messaging/notification/task tools — and a silent-background directive instructs it to modify only the three context files and the pending signals file, verifying workspace claims before writing them; it may read anywhere in the workspace |
-| R10 | The processor registration lives in the memory extension's setup — `[extensions.memory] enabled = false` also disables core context updates |
+| R10 | The processor registration lives in the context extension's own setup — it is independent of the memory extension's enabled state |
 | R11 | A periodic foundational-context maintenance tick (cleanup-only) reviews the three files for staleness, redundancy, overlap, and size on a staggered cron; it adds no new content, is especially conservative for SOUL.md, and is owned by the memory extension's maintenance wiring — see [memory](./memory.md) R20a for the full contract |
 
 ## Behaviors
@@ -50,8 +50,8 @@ The extension's bootstrap hook (`load-context-files`) reads or creates the two f
 **Acceptance Criteria**:
 - Given a closed session with a transcript, when the processor runs, then a single fork is issued (`forkAndContinue`) on the `processor` tier with the file-tool allowlist and a follow-up instruction naming the absolute paths of SOUL.md, USER.md, and AGENTS.md — the conversation is already live in the fork's history, not replayed in the prompt
 - Given a session without a transcript (`piSessionFile` is null), when the processor runs, then no fork is issued
-- Given the processor is registered with phase `preFinalize`, when post-processing runs, then it executes after the `main`-phase memory extraction and before the `finalize` phase (see [memory](./memory.md))
-- Given `[extensions.memory] enabled = false`, when extensions load, then the processor is never registered
+- Given the processor is registered with phase `preFinalize`, when post-processing runs, then it executes after the `main`-phase memory extraction and before the `finalize` phase (see [memory](./memory.md)); the relative ordering holds regardless of which extension registers each processor, because the pipeline orders by phase
+- Given the context extension loads, when extensions load, then the processor is registered by context's own setup, independent of `[extensions.memory]`
 
 ### Pending Signals Lifecycle (R6, R7, R8)
 
