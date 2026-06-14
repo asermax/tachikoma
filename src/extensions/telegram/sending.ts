@@ -5,8 +5,6 @@ import { toTelegramMarkdown } from "./markdown.ts";
 // Telegram keeps a chat action visible for ~5 seconds, so refresh just before it expires.
 const TYPING_REFRESH_MS = 5000;
 
-const DELETE_RETRY_ATTEMPTS = 3;
-
 export interface SendMessageOptions {
   parse_mode?: "MarkdownV2";
   disable_notification?: boolean;
@@ -24,11 +22,6 @@ export interface SendApi {
     other?: SendMessageOptions,
   ): Promise<{ message_id: number }>;
   sendChatAction(chatId: number, action: "typing"): Promise<unknown>;
-  copyMessage(
-    chatId: number,
-    fromChatId: number,
-    messageId: number,
-  ): Promise<{ message_id: number }>;
   deleteMessage(chatId: number, messageId: number): Promise<unknown>;
   editMessageText(
     chatId: number,
@@ -123,78 +116,48 @@ export const editWithMarkdownFallback = async (
   }
 };
 
-/** Send text as one or more messages, split at Telegram's length limit. */
+/**
+ * Send text as one or more messages, split at Telegram's length limit. With
+ * `notifyOnlyLast`, every chunk but the last is sent silently so the delivery
+ * fires exactly one push notification — on the final chunk.
+ */
 export const sendChunked = async (
   api: Pick<SendApi, "sendMessage">,
   chatId: number,
   text: string,
-  options: { silent?: boolean } = {},
+  options: { silent?: boolean; notifyOnlyLast?: boolean } = {},
 ): Promise<number[]> => {
   if (text.trim().length === 0) return [];
 
+  const chunks = splitMessage(text);
   const ids: number[] = [];
 
-  for (const chunk of splitMessage(text)) {
-    ids.push(await sendWithMarkdownFallback(api, chatId, chunk, options));
+  for (const [index, chunk] of chunks.entries()) {
+    const silent =
+      options.notifyOnlyLast === true ? index < chunks.length - 1 : options.silent === true;
+
+    ids.push(await sendWithMarkdownFallback(api, chatId, chunk, { silent }));
   }
 
   return ids;
 };
 
 /**
- * Copy+delete a silently-sent message so the copy fires a push notification.
- * Copy-first ordering keeps the
- * text safe: on copy failure the original is preserved and no delete runs; on
- * delete failure the duplicate is accepted after retries.
+ * Background-delivery flow: a chunked send that, when push notifications are on,
+ * silences every chunk but the last so the user gets exactly one push — on the
+ * final chunk. Editing never notifies and Telegram has no notify-in-place API,
+ * so a fresh loud send is the only way to fire a push; sending the last chunk
+ * loud does that directly, with a stable message id and no extra round-trips.
  */
-export const notifyViaCopyDelete = async (
-  api: Pick<SendApi, "copyMessage" | "deleteMessage">,
-  chatId: number,
-  messageId: number,
-  log: Logger,
-  retryDelayMs = 500,
-): Promise<number | null> => {
-  let copied: { message_id: number };
-
-  try {
-    copied = await api.copyMessage(chatId, chatId, messageId);
-  } catch (error) {
-    log.warn({ err: error, messageId }, "copy for push notification failed — keeping original");
-    return null;
-  }
-
-  for (let attempt = 0; attempt < DELETE_RETRY_ATTEMPTS; attempt += 1) {
-    try {
-      await api.deleteMessage(chatId, messageId);
-      return copied.message_id;
-    } catch (error) {
-      if (attempt < DELETE_RETRY_ATTEMPTS - 1) {
-        await sleep(retryDelayMs);
-      } else {
-        log.warn({ err: error, messageId }, "delete after copy failed — duplicate left visible");
-      }
-    }
-  }
-
-  return copied.message_id;
-};
-
-/** Full background-delivery flow: silent chunked send, then copy+delete to fire the push. */
 export const deliverText = async (
-  api: SendApi,
+  api: Pick<SendApi, "sendMessage">,
   chatId: number,
   text: string,
   pushNotifications: boolean,
-  log: Logger,
-  retryDelayMs = 500,
 ): Promise<number | null> => {
-  const ids = await sendChunked(api, chatId, text, { silent: pushNotifications });
-  const lastId = ids.at(-1);
+  const ids = await sendChunked(api, chatId, text, { notifyOnlyLast: pushNotifications });
 
-  if (lastId == null) return null;
-  if (!pushNotifications) return lastId;
-
-  return (await notifyViaCopyDelete(api, chatId, lastId, log, retryDelayMs)) ?? lastId;
+  return ids.at(-1) ?? null;
 };
 
 /** Show a typing indicator until the returned stop function is called. */
@@ -215,5 +178,3 @@ export const startTyping = (
 
   return () => clearInterval(timer);
 };
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

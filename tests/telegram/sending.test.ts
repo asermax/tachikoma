@@ -6,7 +6,6 @@ import {
   isMarkdownParseError,
   isMessageNotModifiedError,
   isMessageTooLongError,
-  notifyViaCopyDelete,
   sendChunked,
   sendWithMarkdownFallback,
   startTyping,
@@ -287,63 +286,28 @@ describe("sendChunked", () => {
     expect(await sendChunked({ sendMessage }, 42, "  \n ")).toEqual([]);
     expect(sendMessage).not.toHaveBeenCalled();
   });
-});
 
-describe("notifyViaCopyDelete", () => {
-  it("copies first, then deletes the original", async () => {
-    const calls: string[] = [];
-    const api = {
-      copyMessage: vi.fn().mockImplementation(async () => {
-        calls.push("copy");
-        return { message_id: 20 };
-      }),
-      deleteMessage: vi.fn().mockImplementation(async () => {
-        calls.push("delete");
-        return true;
-      }),
-    };
+  it("silences every chunk but the last when notifyOnlyLast is set", async () => {
+    let next = 0;
+    const sendMessage = vi.fn().mockImplementation(async () => {
+      next += 1;
+      return { message_id: next };
+    });
+    const first = "a".repeat(3000);
+    const second = "b".repeat(3000);
 
-    const id = await notifyViaCopyDelete(api, 42, 10, fakeLog, 0);
+    const ids = await sendChunked({ sendMessage }, 42, `${first}\n\n${second}`, {
+      notifyOnlyLast: true,
+    });
 
-    expect(id).toBe(20);
-    expect(calls).toEqual(["copy", "delete"]);
-    expect(api.copyMessage).toHaveBeenCalledWith(42, 42, 10);
-    expect(api.deleteMessage).toHaveBeenCalledWith(42, 10);
-  });
-
-  it("skips the delete when the copy fails", async () => {
-    const api = {
-      copyMessage: vi.fn().mockRejectedValue(new Error("copy failed")),
-      deleteMessage: vi.fn(),
-    };
-
-    expect(await notifyViaCopyDelete(api, 42, 10, fakeLog, 0)).toBeNull();
-    expect(api.deleteMessage).not.toHaveBeenCalled();
-  });
-
-  it("retries the delete and accepts the duplicate after exhausting attempts", async () => {
-    const api = {
-      copyMessage: vi.fn().mockResolvedValue({ message_id: 20 }),
-      deleteMessage: vi.fn().mockRejectedValue(new Error("delete failed")),
-    };
-
-    expect(await notifyViaCopyDelete(api, 42, 10, fakeLog, 0)).toBe(20);
-    expect(api.deleteMessage).toHaveBeenCalledTimes(3);
-  });
-
-  it("returns the copy id when a retry eventually deletes the original", async () => {
-    let attempts = 0;
-    const api = {
-      copyMessage: vi.fn().mockResolvedValue({ message_id: 20 }),
-      deleteMessage: vi.fn().mockImplementation(async () => {
-        attempts += 1;
-        if (attempts === 1) throw new Error("delete failed");
-        return true;
-      }),
-    };
-
-    expect(await notifyViaCopyDelete(api, 42, 10, fakeLog, 0)).toBe(20);
-    expect(api.deleteMessage).toHaveBeenCalledTimes(2);
+    expect(ids).toEqual([1, 2]);
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 42, toTelegramMarkdown(first), {
+      disable_notification: true,
+      parse_mode: "MarkdownV2",
+    });
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 42, toTelegramMarkdown(second), {
+      parse_mode: "MarkdownV2",
+    });
   });
 });
 
@@ -361,35 +325,33 @@ describe("deliverText", () => {
           return { message_id: next };
         }),
         sendChatAction: vi.fn(),
-        copyMessage: vi.fn().mockImplementation(async () => {
-          calls.push("copy");
-          return { message_id: 100 + next };
-        }),
-        deleteMessage: vi.fn().mockImplementation(async () => {
-          calls.push("delete");
-          return true;
-        }),
+        deleteMessage: vi.fn(),
       },
     };
   };
 
-  it("sends silently and fires the push via copy+delete", async () => {
+  it("fires one push on the last chunk, silencing the rest", async () => {
     const { api, calls } = fakeApi();
+    const first = "a".repeat(3000);
+    const second = "b".repeat(3000);
 
-    const id = await deliverText(api, 42, "notice", true, fakeLog, 0);
+    const id = await deliverText(api, 42, `${first}\n\n${second}`, true);
 
-    expect(id).toBe(101);
-    expect(calls).toEqual(["send:n", "copy", "delete"]);
-    expect(api.sendMessage).toHaveBeenCalledWith(42, toTelegramMarkdown("notice"), {
+    expect(id).toBe(2);
+    expect(calls).toEqual(["send:a", "send:b"]);
+    expect(api.sendMessage).toHaveBeenNthCalledWith(1, 42, toTelegramMarkdown(first), {
       disable_notification: true,
+      parse_mode: "MarkdownV2",
+    });
+    expect(api.sendMessage).toHaveBeenNthCalledWith(2, 42, toTelegramMarkdown(second), {
       parse_mode: "MarkdownV2",
     });
   });
 
-  it("sends audibly without copy+delete when push notifications are off", async () => {
+  it("sends audibly when push notifications are off", async () => {
     const { api, calls } = fakeApi();
 
-    const id = await deliverText(api, 42, "notice", false, fakeLog, 0);
+    const id = await deliverText(api, 42, "notice", false);
 
     expect(id).toBe(1);
     expect(calls).toEqual(["send:n"]);
@@ -401,17 +363,7 @@ describe("deliverText", () => {
   it("returns null when there is nothing to send", async () => {
     const { api } = fakeApi();
 
-    expect(await deliverText(api, 42, "   ", true, fakeLog, 0)).toBeNull();
+    expect(await deliverText(api, 42, "   ", true)).toBeNull();
     expect(api.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it("falls back to the original id when the copy+delete push fails", async () => {
-    const { api } = fakeApi();
-    api.copyMessage.mockRejectedValue(new Error("copy failed"));
-
-    const id = await deliverText(api, 42, "notice", true, fakeLog, 0);
-
-    expect(id).toBe(1);
-    expect(api.deleteMessage).not.toHaveBeenCalled();
   });
 });

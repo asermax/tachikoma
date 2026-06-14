@@ -44,7 +44,7 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 | `src/extensions/telegram/inbound.ts` | Pure mappers from grammY `Message`/tap/reaction values to domain `InboundMessage`: `mapTextMessage`, `mapMediaMessage`, `mapButtonTap`, `mapReaction`, plus `replyQuote`/`replyTargetId` helpers | Button taps and reactions framed as explicit prose; replies carry `metadata.replyToMessageId` (string) and a truncated `Replied to:` quote; `mapReaction` diffs old/new emoji sets and returns `null` on no change |
 | `src/extensions/telegram/schema.ts` | `channel_messages` drizzle table (channel, message id, session id, direction, timestamp) plus the `ChannelMessageDirection` const map; re-exported from `src/db/schema.ts` | Unique index on `(channel, message_id)` so re-recording the same id re-points it via `onConflictDoUpdate`; index on `session_id`; message ids stored as text since they are opaque keys |
 | `src/extensions/telegram/chunking.ts` | `splitMessage`: paragraph > line > hard split within 4096 UTF-16 units | JS `string.length` is already UTF-16 code units — Telegram's actual constraint, no conversion layer needed; hard split backs off one unit at a low surrogate |
-| `src/extensions/telegram/sending.ts` | `sendWithMarkdownFallback`, `sendChunked`, `notifyViaCopyDelete`, `deliverText`, `startTyping`; narrow `SendApi` interface | Every send/edit converts the agent's markdown to MarkdownV2 (`markdown.ts`) and resends the raw text plain on a parse or too-long rejection (`isMarkdownRenderError`); copy-first ordering keeps text safe (copy fails → original preserved; delete fails → duplicate accepted after 3 retries); typing refreshed every 5 s (Telegram expires chat actions at ~5 s) |
+| `src/extensions/telegram/sending.ts` | `sendWithMarkdownFallback`, `sendChunked`, `deliverText`, `startTyping`; narrow `SendApi` interface | Every send/edit converts the agent's markdown to MarkdownV2 (`markdown.ts`) and resends the raw text plain on a parse or too-long rejection (`isMarkdownRenderError`); `deliverText` silences all but the last chunk under `notifyOnlyLast` so a delivery fires exactly one push (Telegram edits never notify and there is no notify-in-place API, so a fresh loud send is the only way to push); typing refreshed every 5 s (Telegram expires chat actions at ~5 s) |
 | `src/extensions/telegram/markdown.ts` | `toTelegramMarkdown`: wraps `telegramify-markdown`'s `convert(text, "escape")` | Telegram's MarkdownV2 chokes on the GitHub-flavored markdown the agent emits (headings, `**bold**`, unescaped `.`/`-`/`!`); the converter rewrites supported constructs and escapes the rest, mirroring the legacy Python channel |
 | `src/extensions/telegram/tool-labels.ts` | `formatToolActivity` (present-progressive live line), `formatToolName` (underscore-split + title-case, MCP server prefix stripped), and `summarizeToolActivities` (collapses a tool→text segment into one capitalized phrase) | Live label and baked summary use separate maps, keyed by pi's tool names (`read`, `grep`, `bash`, … and `delegate_to_agent`) with pi's arg shape (`path`/`pattern`/`command`) — not the legacy Claude-Code names; they differ in full path vs basename and full quotes vs inline-code; same-typed tools aggregate past 2 uses; >5 phrases fold into a trailing "more"; unmapped tools (including snake_case tachikoma tools) fall back to the humanized name |
 | `src/extensions/telegram/mutex.ts` | Promise-chain FIFO `Mutex` serializing all channel sends | Tail swallows rejections so a failed delivery never wedges the queue |
@@ -85,7 +85,7 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 ### Promise-chain mutex serializing all sends
 
 **Choice**: A 19-line `Mutex` (`run()` chains onto a tail promise) wraps both `respond()` and `deliver()`.
-**Why**: Immediate-gated deliveries can arrive while an exchange is rendering. Without serialization, the chunked send of a response and the silent-send/copy/delete sequence of a delivery would interleave in the chat. `tests/telegram/mutex.test.ts` proves two concurrent `deliverText` calls never interleave their API calls.
+**Why**: Immediate-gated deliveries can arrive while an exchange is rendering. Without serialization, the chunked send of a response and the chunked send of a delivery would interleave in the chat. `tests/telegram/mutex.test.ts` proves two concurrent `deliverText` calls never interleave their API calls.
 **Alternatives Considered**: async-mutex dependency; queueing deliveries inside the channel; relying on the coordinator's delivery queue alone (insufficient — `immediate: true` command acks and the shutdown digest still call `channel.deliver()` directly, racing an in-flight render).
 
 **Consequences**:
@@ -152,7 +152,7 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 
 **Given**: `respond()` holds the mutex draining an event stream
 **When**: The coordinator calls `deliver()` with an immediate-gated notification
-**Then**: `deliver()` queues behind the in-flight `respond()`; its silent send + copy+delete runs only after the response chunks are fully sent.
+**Then**: `deliver()` queues behind the in-flight `respond()`; its chunked send (silent until the last, audible final chunk) runs only after the response chunks are fully sent.
 
 ### Scenario: Voice message ingestion
 
@@ -176,7 +176,7 @@ Rendering is progressive: `respond()` drives a per-exchange `StreamRenderer` (`s
 
 **Given**: `pushNotifications` is enabled and a task summary spans two chunks
 **When**: `deliverText` runs
-**Then**: Both chunks send silently, the last one is copied (firing exactly one push) and the original deleted; if the copy fails the original silent message stands, and if the delete keeps failing after 3 retries the duplicate is accepted and logged.
+**Then**: The first chunk sends silently and the last sends audibly (`disable_notification` omitted), so the delivery fires exactly one push — on the final chunk. With `pushNotifications` disabled every chunk sends audibly.
 
 ## Notes
 

@@ -71,10 +71,6 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
       calls.push({ type: "action" });
       return true;
     }),
-    copyMessage: vi.fn(async () => {
-      next += 1;
-      return { message_id: next };
-    }),
     setMyCommands: vi.fn(async () => true),
     getFile: vi.fn(async () => ({ file_path: "documents/file.bin" })),
     editMessageReplyMarkup: vi.fn(async () => true),

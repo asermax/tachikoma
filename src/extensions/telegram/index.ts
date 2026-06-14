@@ -17,7 +17,7 @@ const TelegramConfigSchema = Type.Object({
   allowMedia: Type.Boolean({ default: true, description: "Accept inbound media attachments" }),
   pushNotifications: Type.Boolean({
     default: true,
-    description: "Fire push notifications for background deliveries via copy+delete",
+    description: "Fire one push notification per background delivery (on its last chunk)",
   }),
   extraFileRoots: Type.Array(Type.String(), {
     default: [],

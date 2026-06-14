@@ -2,14 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { Mutex } from "../../src/extensions/telegram/mutex.ts";
 import { deliverText } from "../../src/extensions/telegram/sending.ts";
-import type { Logger } from "../../src/log.ts";
-
-const fakeLog = {
-  debug: vi.fn(),
-  info: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn(),
-} as unknown as Logger;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -57,28 +49,14 @@ describe("delivery serialization", () => {
         return { message_id: next };
       }),
       sendChatAction: vi.fn(),
-      copyMessage: vi.fn().mockImplementation(async (_chat: number, _from: number, id: number) => {
-        calls.push(`copy:${id}`);
-        return { message_id: 100 + id };
-      }),
-      deleteMessage: vi.fn().mockImplementation(async (_chat: number, id: number) => {
-        calls.push(`delete:${id}`);
-        return true;
-      }),
+      deleteMessage: vi.fn(),
     };
 
     await Promise.all([
-      mutex.run(() => deliverText(api, 42, "first", true, fakeLog, 0)),
-      mutex.run(() => deliverText(api, 42, "second", true, fakeLog, 0)),
+      mutex.run(() => deliverText(api, 42, "first", true)),
+      mutex.run(() => deliverText(api, 42, "second", true)),
     ]);
 
-    expect(calls).toEqual([
-      "send:first",
-      "copy:1",
-      "delete:1",
-      "send:second",
-      "copy:2",
-      "delete:2",
-    ]);
+    expect(calls).toEqual(["send:first", "send:second"]);
   });
 });

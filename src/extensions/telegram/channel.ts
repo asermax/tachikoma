@@ -260,15 +260,12 @@ export class TelegramChannel implements Channel {
   }
 
   async deliver(delivery: Delivery): Promise<void> {
-    const log = this.log();
-
     await this.mutex.run(async () => {
       const lastId = await deliverText(
         this.bot.api,
         this.options.chatId,
         delivery.text,
         this.options.pushNotifications,
-        log,
       );
 
       if (lastId != null) this.lastOutboundId = lastId;

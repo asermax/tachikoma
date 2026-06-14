@@ -32,7 +32,7 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | R8 | Inbound media (photo, voice, audio, document, sticker, video, video note, animation) is resolved with per-kind metadata, size-checked against Telegram's 20 MB bot download limit, downloaded to the media directory under a unique filename, and submitted as a `MediaAttachment` with the caption as message text — gated by the `allowMedia` config flag |
 | R9 | A bootstrap hook creates the media directory (`{dataDir}/media`) and prunes files older than 30 days |
 | R10 | Media failures (file too large, download error) send an explanatory notice to the chat and leave the conversation usable |
-| R11 | `deliver()` sends background text chunked; when `pushNotifications` is enabled, all chunks are sent silently and the last message is copy+deleted so exactly one push notification fires; copy failure preserves the original, delete failure is retried 3 times before accepting the duplicate |
+| R11 | `deliver()` sends background text chunked; when `pushNotifications` is enabled, every chunk but the last is sent silently and the last is sent audibly so exactly one push notification fires (on the final chunk); when disabled, all chunks use default notification behavior |
 | R12 | Each agent session registers five tools: `send_telegram_file`, `react_to_message`, `pin_message`, `unpin_message`, `send_message_with_buttons`; failures throw from `execute` |
 | R13 | `send_telegram_file` resolves workspace-relative paths, requires an existing regular file under an allowed root (workspace, system temp dir, configured `extraFileRoots`), names the allowed roots on rejection, and auto-detects photo/audio/video/document from the extension |
 | R14 | `pin_message` pins the channel's last outbound message audibly (the pin delivers the push notification); `react_to_message` defaults to the user's last inbound message; both fail when no target message exists |
@@ -117,10 +117,8 @@ The channel renders each exchange progressively under the mutex: a `StreamRender
 ### Background Deliveries and Push Notifications (R11)
 
 **Acceptance Criteria**:
-- Given `pushNotifications` is `true`, when `deliver()` runs, then all chunks are sent with `disable_notification: true`, the last message is copied (firing one push) and the original deleted
-- Given the copy fails, when notifying, then no delete is attempted and the original silent message is preserved
-- Given the delete fails, when retried, then up to 3 attempts run with 500 ms backoff and the duplicate is accepted after exhaustion
-- Given `pushNotifications` is `false`, when `deliver()` runs, then chunks are sent with default notification behavior and no copy+delete occurs
+- Given `pushNotifications` is `true`, when `deliver()` runs, then every chunk but the last is sent with `disable_notification: true` and the last is sent audibly, so exactly one push fires (on the final chunk)
+- Given `pushNotifications` is `false`, when `deliver()` runs, then all chunks are sent with default notification behavior
 
 ### Agent Tools (R12, R13, R14, R15)
 
