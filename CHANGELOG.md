@@ -1,3 +1,10 @@
+# [3.5.0](https://github.com/asermax/tachikoma/compare/v3.4.0...v3.5.0) (2026-06-14)
+
+
+### Features
+
+* **telegram:** flatten GFM tables to bullets before MarkdownV2 conversion ([1ef3d0e](https://github.com/asermax/tachikoma/commit/1ef3d0ef2d94d2ec433dc59702ec41d3c30b9a22))
+
 # [3.4.0](https://github.com/asermax/tachikoma/compare/v3.3.0...v3.4.0) (2026-06-14)
 
 
