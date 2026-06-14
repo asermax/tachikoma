@@ -4,6 +4,8 @@ import { parseArgs } from "node:util";
 import { runApp } from "./app.ts";
 
 const { values } = parseArgs({
+  // Tolerate a stray positional (e.g. the legacy `run` subcommand) instead of crashing.
+  allowPositionals: true,
   options: {
     channel: { type: "string", short: "c" },
     config: { type: "string" },
