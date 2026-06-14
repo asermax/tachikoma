@@ -309,33 +309,35 @@ export class TelegramChannel implements Channel {
   }
 
   /**
+   * Send `_${text}_` as a dedicated message, or edit the existing one in place —
+   * the shared create-then-edit core of the preparation lead-in and shutdown
+   * progress. Returns the message id to keep tracking (a new id on first send,
+   * the same id on edit).
+   */
+  private async upsertDedicatedMessage(
+    messageId: number | null,
+    text: string,
+  ): Promise<number | null> {
+    const display = `_${text}_`;
+    if (messageId == null) {
+      return sendWithMarkdownFallback(this.bot.api, this.options.chatId, display);
+    }
+    await editWithMarkdownFallback(this.bot.api, this.options.chatId, messageId, display);
+    return messageId;
+  }
+
+  /**
    * Surface a preparation status line on a single provisional message, created on
    * the first call and edited in place thereafter. Serialized through the send
    * mutex so it orders cleanly behind any in-flight send; respond() reclaims it as
    * the streaming message, so the lead-in never lingers across a normal exchange.
    */
   private async showLeadIn(text: string): Promise<void> {
-    const log = this.log();
-    const display = `_${text}_`;
-
     await this.mutex.run(async () => {
       try {
-        if (this.leadInMessageId == null) {
-          this.leadInMessageId = await sendWithMarkdownFallback(
-            this.bot.api,
-            this.options.chatId,
-            display,
-          );
-        } else {
-          await editWithMarkdownFallback(
-            this.bot.api,
-            this.options.chatId,
-            this.leadInMessageId,
-            display,
-          );
-        }
+        this.leadInMessageId = await this.upsertDedicatedMessage(this.leadInMessageId, text);
       } catch (error) {
-        log.debug({ err: error }, "lead-in status failed");
+        this.log().debug({ err: error }, "lead-in status failed");
       }
     });
   }
@@ -347,27 +349,11 @@ export class TelegramChannel implements Channel {
    * the process exits. The last line ("Done") is intentionally left in the chat.
    */
   async shutdownStatus(text: string): Promise<void> {
-    const log = this.log();
-    const display = `_${text}_`;
-
     await this.mutex.run(async () => {
       try {
-        if (this.shutdownMessageId == null) {
-          this.shutdownMessageId = await sendWithMarkdownFallback(
-            this.bot.api,
-            this.options.chatId,
-            display,
-          );
-        } else {
-          await editWithMarkdownFallback(
-            this.bot.api,
-            this.options.chatId,
-            this.shutdownMessageId,
-            display,
-          );
-        }
+        this.shutdownMessageId = await this.upsertDedicatedMessage(this.shutdownMessageId, text);
       } catch (error) {
-        log.warn({ err: error }, "shutdown status update failed");
+        this.log().warn({ err: error }, "shutdown status update failed");
       }
     });
   }
