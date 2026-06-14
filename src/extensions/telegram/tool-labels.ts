@@ -24,6 +24,16 @@ const basename = (path: string): string => path.split("/").filter(Boolean).at(-1
 const code = (value: string): string =>
   value.includes("`") ? `\`\` ${value} \`\`` : `\`${value}\``;
 
+/** Max length for a delegation `description` shown in tool-activity labels. */
+const DELEGATE_DESC_MAX = 60;
+
+/** The delegation `description` arg, truncated for display, or `null` when empty/missing. */
+const delegateDescription = (args: ToolArgs): string | null => {
+  const desc = asString(args.description, "");
+  if (desc === "") return null;
+  return desc.length > DELEGATE_DESC_MAX ? `${desc.slice(0, DELEGATE_DESC_MAX)}...` : desc;
+};
+
 // Present-progressive live-activity labels keyed by pi's tool name. Each entry
 // maps a tool's args to a friendly line shown while the tool runs. pi's built-in
 // tools are lowercase (`read`, `grep`, …) and take a `path`/`pattern`/`command`
@@ -37,8 +47,11 @@ const TOOL_DISPLAY: Record<string, (args: ToolArgs) => string> = {
   edit: (args) => `Editing ${asString(args.path)}`,
   write: (args) => `Writing ${asString(args.path)}`,
   ls: (args) => `Listing ${asString(args.path)}`,
-  delegate_to_agent: (args) =>
-    typeof args.agent === "string" ? `Delegating to ${args.agent}` : "Delegating to an agent",
+  delegate_to_agent: (args) => {
+    const agent = typeof args.agent === "string" ? args.agent : "an agent";
+    const desc = delegateDescription(args);
+    return `Delegating to ${agent}${desc != null ? `: ${desc}` : ""}`;
+  },
 };
 
 /**
@@ -97,8 +110,11 @@ const TOOL_SUMMARY: Record<string, (args: ToolArgs) => string> = {
     typeof args.path === "string" ? `editing ${code(basename(args.path))}` : "editing a file",
   write: (args) =>
     typeof args.path === "string" ? `writing ${code(basename(args.path))}` : "writing a file",
-  delegate_to_agent: (args) =>
-    typeof args.agent === "string" ? `delegating to ${args.agent}` : "delegating to an agent",
+  delegate_to_agent: (args) => {
+    const agent = typeof args.agent === "string" ? args.agent : "an agent";
+    const desc = delegateDescription(args);
+    return `delegating to ${agent}${desc != null ? `: ${desc}` : ""}`;
+  },
 };
 
 // Aggregated phrasing for a tool used more than twice in one segment.

@@ -24,6 +24,10 @@ const DelegateParams = Type.Object({
     description:
       "Complete, self-contained task description — the agent has no access to this conversation",
   }),
+  description: Type.String({
+    description:
+      "Short label for this delegation, shown in tool-activity displays; not sent to the agent",
+  }),
 });
 
 const renderAgentList = (agents: SkillAgent[]): string =>
@@ -57,6 +61,7 @@ export const createDelegateTool = ({
     "delegate_to_agent: hand a focused task to a general-purpose or skill-bundled agent",
   promptGuidelines: [
     "Use delegate_to_agent to offload focused, context-heavy work (e.g. exploring files) to the general-purpose agent, or when a skill ships an agent suited to the task; pass a complete, self-contained task description.",
+    "Pass a short `description` labeling the delegation (a few words, e.g. find all tool-labels references) so tool activity shows what it is for; the description is display-only and is not forwarded to the agent.",
   ],
 
   parameters: DelegateParams,

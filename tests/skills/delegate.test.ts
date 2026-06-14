@@ -53,7 +53,7 @@ describe("delegate_to_agent tool", () => {
 
     const result = await tool.execute(
       "call-1",
-      { agent: "research/scout", task: "find sources on topic X" },
+      { agent: "research/scout", task: "find sources on topic X", description: "find sources" },
       undefined,
       undefined,
       fakeCtx,
@@ -75,7 +75,7 @@ describe("delegate_to_agent tool", () => {
 
     await tool.execute(
       "call-model",
-      { agent: "research/analyst", task: "analyze X" },
+      { agent: "research/analyst", task: "analyze X", description: "analyze topic" },
       undefined,
       undefined,
       fakeCtx,
@@ -92,7 +92,7 @@ describe("delegate_to_agent tool", () => {
 
     await tool.execute(
       "call-2",
-      { agent: "research/writer", task: "summarize" },
+      { agent: "research/writer", task: "summarize", description: "summarize" },
       undefined,
       undefined,
       fakeCtx,
@@ -108,7 +108,13 @@ describe("delegate_to_agent tool", () => {
     const tool = makeTool({ run });
 
     await expect(
-      tool.execute("call-3", { agent: "nope", task: "anything" }, undefined, undefined, fakeCtx),
+      tool.execute(
+        "call-3",
+        { agent: "nope", task: "anything", description: "anything" },
+        undefined,
+        undefined,
+        fakeCtx,
+      ),
     ).rejects.toThrow(/Unknown agent "nope"[\s\S]*research\/scout/);
     expect(run).not.toHaveBeenCalled();
   });
@@ -120,13 +126,34 @@ describe("delegate_to_agent tool", () => {
 
     const result = await tool.execute(
       "call-4",
-      { agent: "research/scout", task: "dump everything" },
+      { agent: "research/scout", task: "dump everything", description: "dump everything" },
       undefined,
       undefined,
       fakeCtx,
     );
 
     expect((result.content[0] as { text: string }).text).toContain("[output truncated]");
+  });
+
+  it("does not forward the description to the delegated run (display-only)", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "done" });
+    const tool = makeTool({ run });
+
+    await tool.execute(
+      "call-desc",
+      { agent: "research/scout", task: "find sources on X", description: "scout sources" },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    expect(run).toHaveBeenCalledWith({
+      system: "You are a scout.",
+      tools: ["read", "grep"],
+      prompt: "find sources on X",
+      isolatePrompt: true,
+    });
+    expect(run.mock.calls[0]?.[0]).not.toHaveProperty("description");
   });
 });
 
@@ -158,7 +185,11 @@ describe("delegate_to_agent with the built-in general-purpose agent", () => {
 
     await tool.execute(
       "call-gp",
-      { agent: "general-purpose", task: "find the config loader" },
+      {
+        agent: "general-purpose",
+        task: "find the config loader",
+        description: "find config loader",
+      },
       undefined,
       undefined,
       fakeCtx,

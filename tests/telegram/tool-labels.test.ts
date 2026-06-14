@@ -34,6 +34,30 @@ describe("formatToolActivity", () => {
     expect(formatToolActivity("bash", { command: "ls -la" })).toBe("Running: ls -la");
   });
 
+  it("appends a truncated description to the delegate live label", () => {
+    expect(
+      formatToolActivity("delegate_to_agent", {
+        agent: "general-purpose",
+        description: "find refs",
+      }),
+    ).toBe("Delegating to general-purpose: find refs");
+
+    const long = "x".repeat(80);
+    expect(
+      formatToolActivity("delegate_to_agent", { agent: "general-purpose", description: long }),
+    ).toBe(`Delegating to general-purpose: ${"x".repeat(60)}...`);
+
+    // An empty description falls back to the agent-only label.
+    expect(
+      formatToolActivity("delegate_to_agent", { agent: "general-purpose", description: "" }),
+    ).toBe("Delegating to general-purpose");
+
+    // A missing agent still surfaces the description.
+    expect(formatToolActivity("delegate_to_agent", { description: "explore" })).toBe(
+      "Delegating to an agent: explore",
+    );
+  });
+
   it("falls back to the humanized name for unknown tools", () => {
     expect(formatToolActivity("run_task_now", {})).toBe("Run Task Now");
     expect(formatToolActivity("mcp__projects__list_projects", {})).toBe("List Projects");
@@ -94,6 +118,31 @@ describe("summarizeToolActivities", () => {
     expect(
       summarizeToolActivities([{ toolName: "delegate_to_agent", args: { agent: "explorer" } }]),
     ).toBe("Delegating to explorer");
+  });
+
+  it("appends a truncated description to the delegate summary", () => {
+    expect(
+      summarizeToolActivities([
+        {
+          toolName: "delegate_to_agent",
+          args: { agent: "general-purpose", description: "find refs" },
+        },
+      ]),
+    ).toBe("Delegating to general-purpose: find refs");
+
+    const long = "x".repeat(80);
+    expect(
+      summarizeToolActivities([
+        { toolName: "delegate_to_agent", args: { agent: "general-purpose", description: long } },
+      ]),
+    ).toBe(`Delegating to general-purpose: ${"x".repeat(60)}...`);
+
+    // An empty description falls back to the agent-only summary.
+    expect(
+      summarizeToolActivities([
+        { toolName: "delegate_to_agent", args: { agent: "general-purpose", description: "" } },
+      ]),
+    ).toBe("Delegating to general-purpose");
   });
 
   it("prefers a Bash description over the command and lowercases its first letter", () => {
