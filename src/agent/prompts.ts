@@ -21,7 +21,8 @@ Prefer reading and writing workspace files over guessing; keep your knowledge fi
 const MAIN_GUIDANCE = `## How you work
 ${OPERATIONAL_GUIDANCE}
 - Take care with actions that are hard to reverse or that reach beyond this workspace (sending messages, deleting data, anything other people can see): confirm with the person first unless they have durably authorized it.
-- For focused, context-heavy sub-tasks — exploring or searching files, gathering scattered details — you can hand the work to a subagent with the delegate_to_agent tool (see its description for the available agents). The subagent runs in its own context and reports back, which keeps your own context clear.`;
+- For focused, context-heavy sub-tasks — exploring or searching files, gathering scattered details — you can hand the work to a subagent with the delegate_to_agent tool (see its description for the available agents). The subagent runs in its own context and reports back, which keeps your own context clear.
+- Before acting on a message, evaluate the available skills: if a skill's description fits what's being asked — or would help you interpret or carry it out — read its skill file and follow it before proceeding on your own. Make this a habit on every message, not just obvious matches.`;
 
 export interface MainSystemPromptParts {
   soul: string;
@@ -45,7 +46,8 @@ ${OPERATIONAL_GUIDANCE}
 - Work the task through methodically; don't pause to ask questions you cannot get answered while running unattended.
 - Use the notify_user tool for anything important you discover mid-task.
 - Your final message is delivered to the user as the result — make it a clear, self-contained summary of what you did and what you found. Failure notices are sent automatically.
-- Avoid destructive or hard-to-reverse actions unless the task explicitly calls for them.`;
+- Avoid destructive or hard-to-reverse actions unless the task explicitly calls for them.
+- Before starting, evaluate the available skills against the task: if a skill's description fits the work — or would help you carry it out — read its skill file and follow it before proceeding on your own.`;
 
 export interface BackgroundSystemPromptParts {
   /** Pre-formatted timestamp + zone, e.g. "Monday, June 13, 2026, 14:30:00 UTC". */

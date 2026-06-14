@@ -55,6 +55,15 @@ describe("role system prompts", () => {
     expect(prompt).toContain("scheduled task");
   });
 
+  it("tells main and background to proactively evaluate skills, but not the skill-less subagent", () => {
+    const main = buildMainSystemPrompt({ soul: "SOUL", user: "USER", workspaceRoot: "/ws" });
+    const background = buildBackgroundSystemPrompt({ dateHeader: "Monday UTC" });
+
+    expect(main).toContain("evaluate the available skills");
+    expect(background).toContain("evaluate the available skills");
+    expect(SUBAGENT_SYSTEM_PROMPT).not.toContain("evaluate the available skills");
+  });
+
   it("frames the subagent as a read-only worker whose final message is the result (AC1)", () => {
     expect(SUBAGENT_SYSTEM_PROMPT).toContain("final message IS the result");
     expect(SUBAGENT_SYSTEM_PROMPT).toContain("read-only");
