@@ -75,6 +75,33 @@ describe("handleScrubWorkspace", () => {
 
     expect(message).toMatch(/never-existed\.txt/);
   });
+
+  it("throws when the named project does not exist", async () => {
+    await expect(
+      handleScrubWorkspace(deps, { paths: ["secret.txt"], project: "nope" }),
+    ).rejects.toThrow(/Project 'nope' not found/);
+  });
+
+  it("rejects an empty project name rather than resolving to projects/", async () => {
+    await expect(
+      handleScrubWorkspace(deps, { paths: ["secret.txt"], project: "" }),
+    ).rejects.toThrow(/'project' cannot be empty/);
+  });
+
+  it("targets the project repo, not the workspace, when a project is named", async () => {
+    const projectRepo = join(workspace, "projects", "myproj");
+    await mkdir(projectRepo, { recursive: true });
+    await initRepo(projectRepo);
+    await commitFile(projectRepo, "proj.txt", "proj\n", "Project seed");
+
+    // `seed.txt` lives in the workspace history but not the project's; resolving
+    // to the project repo must report it as absent from history (PATHS_NOT_FOUND),
+    // which proves the project — not the workspace — was the scrub target.
+    const message = await handleScrubWorkspace(deps, { paths: ["seed.txt"], project: "myproj" });
+
+    expect(message).toMatch(/seed\.txt/);
+    expect(message).toMatch(/not found in git history/);
+  });
 });
 
 describe("handleListRecentCommits", () => {
