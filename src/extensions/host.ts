@@ -16,41 +16,12 @@ import type { SessionRegistry } from "../sessions/registry.ts";
 import type { Workspace } from "../workspace.ts";
 import {
   type AppContext,
-  type PostProcessingPhase,
-  type PostProcessor,
-  type PostProcessorContext,
   SESSION_SCOPES,
   type TachikomaExtension,
   type UseFactoryOptions,
 } from "./api.ts";
+import { runPhasedPostProcessors } from "./post-processing.ts";
 import type { Registrations } from "./registrations.ts";
-
-const POST_PROCESSING_PHASE_ORDER: PostProcessingPhase[] = ["main", "preFinalize", "finalize"];
-
-/** Run post-processors once in phase order, error-isolated (no per-session state tracking). */
-const runPostProcessorsOnce = async (
-  processors: PostProcessor[],
-  context: PostProcessorContext,
-): Promise<void> => {
-  for (const phase of POST_PROCESSING_PHASE_ORDER) {
-    const phaseProcessors = processors.filter((processor) => (processor.phase ?? "main") === phase);
-
-    const results = await Promise.allSettled(
-      phaseProcessors.map((processor) =>
-        processor.process({ ...context, log: context.log.child({ processor: processor.name }) }),
-      ),
-    );
-
-    results.forEach((result, index) => {
-      if (result.status === "rejected") {
-        context.log.error(
-          { processor: phaseProcessors[index]?.name, err: result.reason },
-          "post-processor failed",
-        );
-      }
-    });
-  }
-};
 
 /**
  * Resolve which session contexts a factory binds into from its `use` options. Pure so the
@@ -196,7 +167,11 @@ export class ExtensionHost {
         onExchange: (processor) => services.regs.exchangeProcessors.push(processor),
         registerProcessor: (processor) => services.regs.postProcessors.push(processor),
         runPostProcessors: (context) =>
-          runPostProcessorsOnce(services.regs.postProcessors, context),
+          runPhasedPostProcessors({
+            processors: services.regs.postProcessors,
+            context,
+            log: context.log,
+          }),
       },
 
       channels: {

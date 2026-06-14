@@ -96,7 +96,7 @@ On session resume, bridging context (summaries of sessions closed since the resu
 
 ### Per-processor completion state on the session row
 
-**Choice**: `runPostProcessing` records `completed`/`failed` per processor in the record's `postProcessingState` JSON column and skips already-completed processors on re-entry.
+**Choice**: `runPostProcessing` drives the shared phase iterator (`runPhasedPostProcessors` in `src/extensions/post-processing.ts`) with state-tracking callbacks: it records `completed`/`failed` per processor in the record's `postProcessingState` JSON column (via `onProcessorSettled`) and skips already-completed processors on re-entry (via `shouldSkip`).
 **Why**: Dangling recovery re-runs post-processing for sessions closed by a crash; without per-processor state, every recovery would re-extract memories, re-commit, etc. State on the row makes the pipeline idempotent at processor granularity.
 **Alternatives Considered**:
 - A single `processedAt` timestamp: all-or-nothing, so one failing processor forces rerunning all of them
@@ -106,7 +106,7 @@ On session resume, bridging context (summaries of sessions closed since the resu
 - Pro: crash-safe, retry-friendly; failed processors retry on the next run while completed ones do not
 - Con: a processor renamed between runs is treated as never-run
 
-Headless/background runs that have no per-session close lifecycle reach the same processors through `app.sessions.runPostProcessors(context)` (`SessionsApi.runPostProcessors` → `runPostProcessorsOnce` in `src/extensions/host.ts`), which runs every registered processor once in phase order, error-isolated, with **no** per-processor completion-state tracking — there is no session row to record state on. Transcript-dependent processors no-op when `context.transcriptPath` is null.
+Headless/background runs that have no per-session close lifecycle reach the same processors through `app.sessions.runPostProcessors(context)`, which calls the same shared `runPhasedPostProcessors` iterator but omits the state-tracking callbacks — every registered processor runs once in phase order, error-isolated, with **no** per-processor completion-state tracking, since there is no session row to record state on. The phase order itself is a single source of truth (`POST_PROCESSING_PHASE_ORDER`, derived from `POST_PROCESSING_PHASES` in `src/extensions/api.ts`). Transcript-dependent processors no-op when `context.transcriptPath` is null.
 
 ### Tiered priority queue, delivered as an agent turn
 

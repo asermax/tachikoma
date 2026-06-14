@@ -11,7 +11,8 @@ import type { Channel, Delivery } from "./channels/types.ts";
 import type { SessionRecord } from "./db/core-schema.ts";
 import type { InboundMessage } from "./domain/message.ts";
 import type { EventBus } from "./events.ts";
-import type { InboundContext, PostProcessingPhase } from "./extensions/api.ts";
+import type { InboundContext } from "./extensions/api.ts";
+import { runPhasedPostProcessors } from "./extensions/post-processing.ts";
 import type { Registrations } from "./extensions/registrations.ts";
 import type { Logger } from "./log.ts";
 import type { SessionRegistry } from "./sessions/registry.ts";
@@ -20,8 +21,6 @@ interface ActiveSession {
   record: SessionRecord;
   session: AgentSession;
 }
-
-const PHASE_ORDER: PostProcessingPhase[] = ["main", "preFinalize", "finalize"];
 
 export class Coordinator {
   private readonly inbox: InboundMessage[] = [];
@@ -425,38 +424,20 @@ export class Coordinator {
       ...(record.postProcessingState ?? {}),
     };
 
-    for (const phase of PHASE_ORDER) {
-      const processors = this.regs.postProcessors.filter(
-        (processor) =>
-          (processor.phase ?? "main") === phase && state[processor.name] !== "completed",
-      );
-      if (processors.length === 0) continue;
-
-      const results = await Promise.allSettled(
-        processors.map((processor) => {
-          this.status(`Post-processing: ${processor.name}…`);
-          return processor.process({
-            session: record,
-            transcriptPath: record.piSessionFile,
-            log: this.log.child({ processor: processor.name }),
-          });
-        }),
-      );
-
-      results.forEach((result, index) => {
-        const processor = processors[index];
-        if (processor == null) return;
-
+    await runPhasedPostProcessors({
+      processors: this.regs.postProcessors,
+      context: {
+        session: record,
+        transcriptPath: record.piSessionFile,
+        log: this.log,
+      },
+      log: this.log,
+      shouldSkip: (processor) => state[processor.name] === "completed",
+      onProcessorStart: (processor) => this.status(`Post-processing: ${processor.name}…`),
+      onProcessorSettled: (processor, result) => {
         state[processor.name] = result.status === "fulfilled" ? "completed" : "failed";
-
-        if (result.status === "rejected") {
-          this.log.error(
-            { processor: processor.name, err: result.reason },
-            "post-processor failed",
-          );
-        }
-      });
-    }
+      },
+    });
 
     this.registry.update(record.id, { postProcessingState: state });
     this.events.emit("session:post-processed", { sessionId: record.id, state });
