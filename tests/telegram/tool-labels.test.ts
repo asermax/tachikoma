@@ -26,6 +26,14 @@ describe("formatToolActivity", () => {
     expect(formatToolActivity("delegate_to_agent", {})).toBe("Delegating to an agent");
   });
 
+  it("prefers the Bash description over the command in the live label", () => {
+    expect(
+      formatToolActivity("bash", { description: "Run the test suite", command: "npm test" }),
+    ).toBe("Run the test suite");
+    // Missing description still falls back to the command, as before.
+    expect(formatToolActivity("bash", { command: "ls -la" })).toBe("Running: ls -la");
+  });
+
   it("falls back to the humanized name for unknown tools", () => {
     expect(formatToolActivity("run_task_now", {})).toBe("Run Task Now");
     expect(formatToolActivity("mcp__projects__list_projects", {})).toBe("List Projects");
@@ -107,6 +115,17 @@ describe("summarizeToolActivities", () => {
 
   it("falls back to a generic Bash phrase when neither description nor command is set", () => {
     expect(summarizeToolActivities([{ toolName: "bash", args: {} }])).toBe("Running a command");
+  });
+
+  it("escapes backticks in the inline-code wrapper (CommonMark 6.1 double-backtick)", () => {
+    // Bash command containing a backtick — single backticks would collide.
+    expect(
+      summarizeToolActivities([{ toolName: "bash", args: { command: "echo `whoami`" } }]),
+    ).toBe("Running: `` echo `whoami` ``");
+    // The same handling applies to other inline-code summaries (e.g. a pattern).
+    expect(summarizeToolActivities([{ toolName: "grep", args: { pattern: "a`b" } }])).toBe(
+      "Searching for `` a`b ``",
+    );
   });
 
   it("summarizes unknown tools by their humanized name", () => {

@@ -6,13 +6,23 @@ export interface ToolActivity {
   args: ToolArgs;
 }
 
+/** True for a non-empty string — the shared "has a usable value" predicate. */
+const nonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
+
 const asString = (value: unknown, fallback = "..."): string =>
-  typeof value === "string" && value.length > 0 ? value : fallback;
+  nonEmptyString(value) ? value : fallback;
 
 const basename = (path: string): string => path.split("/").filter(Boolean).at(-1) ?? path;
 
-/** Wrap a value in Telegram inline-code markdown for visual grouping. */
-const code = (value: string): string => `\`${value}\``;
+/**
+ * Wrap a value in Telegram inline-code markdown for visual grouping. When the
+ * content itself contains a backtick, single backticks would collide and break
+ * the span, so we switch to a double-backtick span with space padding per
+ * CommonMark 6.1 (mirrors the legacy `code_wrap`).
+ */
+const code = (value: string): string =>
+  value.includes("`") ? `\`\` ${value} \`\`` : `\`${value}\``;
 
 // Present-progressive live-activity labels keyed by pi's tool name. Each entry
 // maps a tool's args to a friendly line shown while the tool runs. pi's built-in
@@ -22,7 +32,8 @@ const TOOL_DISPLAY: Record<string, (args: ToolArgs) => string> = {
   read: (args) => `Reading ${asString(args.path)}`,
   grep: (args) => `Searching for '${asString(args.pattern)}'`,
   find: (args) => `Finding files: ${asString(args.pattern)}`,
-  bash: (args) => `Running: ${asString(args.command)}`,
+  bash: (args) =>
+    nonEmptyString(args.description) ? args.description : `Running: ${asString(args.command)}`,
   edit: (args) => `Editing ${asString(args.path)}`,
   write: (args) => `Writing ${asString(args.path)}`,
   ls: (args) => `Listing ${asString(args.path)}`,
@@ -57,12 +68,12 @@ export const formatToolActivity = (toolName: string, args: ToolArgs): string => 
 };
 
 const bashSummary = (args: ToolArgs): string => {
-  if (typeof args.description === "string" && args.description.length > 0) {
+  if (nonEmptyString(args.description)) {
     const desc = args.description;
     return desc.charAt(0).toLowerCase() + desc.slice(1);
   }
 
-  if (typeof args.command === "string" && args.command.length > 0) {
+  if (nonEmptyString(args.command)) {
     const cmd = args.command.length > 40 ? `${args.command.slice(0, 40)}...` : args.command;
     return `running: ${code(cmd)}`;
   }
