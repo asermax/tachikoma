@@ -23,7 +23,7 @@ const fakeLog = {
 } as unknown as Logger;
 
 interface ApiCall {
-  type: "send" | "edit" | "delete" | "action";
+  type: "send" | "edit" | "delete" | "copy" | "action";
   messageId?: number;
   text?: string;
 }
@@ -56,6 +56,11 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
   const api = {
     sendMessage: vi.fn(async (_chat: number, text: string) => {
       calls.push({ type: "send", text });
+      next += 1;
+      return { message_id: next };
+    }),
+    copyMessage: vi.fn(async (_chat: number, _fromChat: number, messageId: number) => {
+      calls.push({ type: "copy", messageId });
       next += 1;
       return { message_id: next };
     }),
@@ -336,6 +341,76 @@ describe("respond streaming", () => {
 
     end();
     await responding;
+  });
+});
+
+describe("respond push notification", () => {
+  it("copy-deletes the finalized message to fire one push when pushNotifications is on", async () => {
+    const { channel, runtime, calls } = makeChannel({ pushNotifications: true });
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    // The streamed message (id 1) is finalized, then copied (id 2) and deleted,
+    // so the fresh copy fires the push the in-place edit never could.
+    expect(calls).toContainEqual({ type: "copy", messageId: 1 });
+    expect(calls).toContainEqual({ type: "delete", messageId: 1 });
+    expect(channel.lastOutboundMessageId).toBe(2);
+  });
+
+  it("does not copy-delete when pushNotifications is off", async () => {
+    const { channel, runtime, calls } = makeChannel({ pushNotifications: false });
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(calls.filter((call) => call.type === "copy")).toEqual([]);
+    expect(channel.lastOutboundMessageId).toBe(1);
+  });
+
+  it("records the copied outbound id against the receiving session", async () => {
+    const { channel, runtime, recorded } = makeChannel({ pushNotifications: true });
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: inboundWith("hi", 7),
+      events: stream([
+        { kind: "text", text: "Hello" },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(recorded).toContainEqual({ messageId: "2", sessionId: 100, direction: "outgoing" });
+  });
+
+  it("keeps the streamed message when the copy fails", async () => {
+    const { channel, runtime, api, calls } = makeChannel({ pushNotifications: true });
+    await channel.start(runtime);
+    api.copyMessage.mockRejectedValue(new Error("copy not allowed"));
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    // Copy failed: no delete, the streamed message (id 1) stands, no push.
+    expect(calls.filter((call) => call.type === "delete")).toEqual([]);
+    expect(channel.lastOutboundMessageId).toBe(1);
   });
 });
 

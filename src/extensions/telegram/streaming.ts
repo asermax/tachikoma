@@ -35,17 +35,29 @@ export class StreamRenderer {
   private lastRendered = "";
   private lastEditAt = 0;
   private broken = false;
+  private readonly silent: boolean;
 
   /**
    * @param seedMessageId An existing message id to edit in place instead of
    * sending a fresh one — used to reclaim the preparation lead-in so the streamed
    * response replaces it (or deletes it, via finalize, when the exchange has no text).
+   * @param silent Send every message silently (`disable_notification`). Used while
+   * push notifications are on so the streamed work-in-progress and any overflow
+   * chunks never fire partial pushes — the single push is forced on completion by
+   * copying the finalized message (see `forceNotification`), never by these sends.
    */
-  constructor(api: StreamApi, chatId: number, log: Logger, seedMessageId: number | null = null) {
+  constructor(
+    api: StreamApi,
+    chatId: number,
+    log: Logger,
+    seedMessageId: number | null = null,
+    silent = false,
+  ) {
     this.api = api;
     this.chatId = chatId;
     this.log = log;
     this.messageId = seedMessageId;
+    this.silent = silent;
   }
 
   async appendText(text: string): Promise<void> {
@@ -104,7 +116,9 @@ export class StreamRenderer {
         }
       }
 
-      lastId = await sendWithMarkdownFallback(this.api, this.chatId, chunk);
+      lastId = await sendWithMarkdownFallback(this.api, this.chatId, chunk, {
+        silent: this.silent,
+      });
     }
 
     return lastId;
@@ -140,7 +154,9 @@ export class StreamRenderer {
       if (display.length === 0 || display === this.lastRendered) return;
 
       if (this.messageId == null) {
-        this.messageId = await sendWithMarkdownFallback(this.api, this.chatId, display);
+        this.messageId = await sendWithMarkdownFallback(this.api, this.chatId, display, {
+          silent: this.silent,
+        });
       } else {
         await editWithMarkdownFallback(this.api, this.chatId, this.messageId, display);
       }
@@ -169,7 +185,7 @@ export class StreamRenderer {
         await editWithMarkdownFallback(this.api, this.chatId, this.messageId, chunk);
         this.messageId = null;
       } else {
-        await sendWithMarkdownFallback(this.api, this.chatId, chunk);
+        await sendWithMarkdownFallback(this.api, this.chatId, chunk, { silent: this.silent });
       }
     }
 
@@ -209,7 +225,9 @@ export class StreamRenderer {
   private async finalizeBroken(): Promise<number | null> {
     await this.deleteCurrentMessage();
 
-    const ids = await sendChunked(this.api, this.chatId, this.buffer.trimEnd());
+    const ids = await sendChunked(this.api, this.chatId, this.buffer.trimEnd(), {
+      silent: this.silent,
+    });
 
     return ids.at(-1) ?? null;
   }

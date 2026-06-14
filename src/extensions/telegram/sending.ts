@@ -21,6 +21,11 @@ export interface SendApi {
     text: string,
     other?: SendMessageOptions,
   ): Promise<{ message_id: number }>;
+  copyMessage(
+    chatId: number,
+    fromChatId: number,
+    messageId: number,
+  ): Promise<{ message_id: number }>;
   sendChatAction(chatId: number, action: "typing"): Promise<unknown>;
   deleteMessage(chatId: number, messageId: number): Promise<unknown>;
   editMessageText(
@@ -158,6 +163,24 @@ export const deliverText = async (
   const ids = await sendChunked(api, chatId, text, { notifyOnlyLast: pushNotifications });
 
   return ids.at(-1) ?? null;
+};
+
+/**
+ * Force a push notification for an already-delivered message — the streaming
+ * renderer edits its message in place as text arrives, and Telegram edits never
+ * notify (there is no notify-in-place API). Copying the message within the same
+ * chat creates a fresh message that notifies; deleting the original leaves a
+ * single loud message in its place. The delete is best-effort: a failure leaves a
+ * silent duplicate rather than throwing the delivery away.
+ */
+export const forceNotification = async (
+  api: Pick<SendApi, "copyMessage" | "deleteMessage">,
+  chatId: number,
+  messageId: number,
+): Promise<number> => {
+  const copied = await api.copyMessage(chatId, chatId, messageId);
+  await api.deleteMessage(chatId, messageId).catch(() => {});
+  return copied.message_id;
 };
 
 /** Show a typing indicator until the returned stop function is called. */

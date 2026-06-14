@@ -19,6 +19,7 @@ import type { ChannelMessageDirection } from "./schema.ts";
 import {
   deliverText,
   editWithMarkdownFallback,
+  forceNotification,
   sendWithMarkdownFallback,
   startTyping,
 } from "./sending.ts";
@@ -197,7 +198,13 @@ export class TelegramChannel implements Channel {
       this.leadInMessageId = null;
 
       const stopTyping = startTyping(this.bot.api, this.options.chatId, log);
-      const renderer = new StreamRenderer(this.bot.api, this.options.chatId, log, seedMessageId);
+      const renderer = new StreamRenderer(
+        this.bot.api,
+        this.options.chatId,
+        log,
+        seedMessageId,
+        this.options.pushNotifications,
+      );
       this.activeRenderer = renderer;
 
       try {
@@ -242,7 +249,26 @@ export class TelegramChannel implements Channel {
       }
 
       const finalized = await renderer.finalize();
-      if (finalized != null) this.lastOutboundId = finalized;
+
+      // Telegram edits never notify, so a streamed response — edited in place as
+      // it arrives — never fires a push. When push notifications are on, force one
+      // on completion by copying the finalized message (a fresh send that notifies)
+      // and deleting the streamed original; the copy's id is what later reply
+      // routing records. A failure leaves the streamed message in place (delivered,
+      // just without a push) rather than losing it.
+      let outboundId = finalized;
+      if (this.options.pushNotifications && finalized != null) {
+        try {
+          outboundId = await forceNotification(this.bot.api, this.options.chatId, finalized);
+        } catch (error) {
+          log.debug(
+            { err: error },
+            "push notification copy-delete failed; delivered without a push",
+          );
+        }
+      }
+
+      if (outboundId != null) this.lastOutboundId = outboundId;
 
       // Routing has settled by now: map both the user's message and the bot's
       // reply to the receiving session so a future reply-to can resolve them.
@@ -253,7 +279,7 @@ export class TelegramChannel implements Channel {
           this.recordMessage(String(inboundId), sessionId, "incoming");
         }
 
-        if (finalized != null) this.recordMessage(String(finalized), sessionId, "outgoing");
+        if (outboundId != null) this.recordMessage(String(outboundId), sessionId, "outgoing");
       }
     });
   }
@@ -320,7 +346,13 @@ export class TelegramChannel implements Channel {
   ): Promise<number | null> {
     const display = `_${text}_`;
     if (messageId == null) {
-      return sendWithMarkdownFallback(this.bot.api, this.options.chatId, display);
+      // Silent under push notifications: this serves the preparation lead-in (later
+      // reclaimed into the streamed response, which forces its own push on
+      // completion) and shutdown status (informational, no push wanted). With push
+      // notifications off, default notification behavior applies.
+      return sendWithMarkdownFallback(this.bot.api, this.options.chatId, display, {
+        silent: this.options.pushNotifications,
+      });
     }
     await editWithMarkdownFallback(this.bot.api, this.options.chatId, messageId, display);
     return messageId;

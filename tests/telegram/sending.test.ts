@@ -3,6 +3,7 @@ import { toTelegramMarkdown } from "../../src/extensions/telegram/markdown.ts";
 import {
   deliverText,
   editWithMarkdownFallback,
+  forceNotification,
   isMarkdownParseError,
   isMessageNotModifiedError,
   isMessageTooLongError,
@@ -365,5 +366,37 @@ describe("deliverText", () => {
 
     expect(await deliverText(api, 42, "   ", true)).toBeNull();
     expect(api.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("forceNotification", () => {
+  it("copies the message within the same chat and deletes the original", async () => {
+    const copyMessage = vi.fn().mockResolvedValue({ message_id: 9 });
+    const deleteMessage = vi.fn().mockResolvedValue(true);
+
+    const id = await forceNotification({ copyMessage, deleteMessage }, 42, 7);
+
+    expect(id).toBe(9);
+    expect(copyMessage).toHaveBeenCalledWith(42, 42, 7);
+    expect(deleteMessage).toHaveBeenCalledWith(42, 7);
+  });
+
+  it("returns the copy id even when the original delete fails", async () => {
+    const copyMessage = vi.fn().mockResolvedValue({ message_id: 9 });
+    const deleteMessage = vi.fn().mockRejectedValue(new Error("already gone"));
+
+    const id = await forceNotification({ copyMessage, deleteMessage }, 42, 7);
+
+    expect(id).toBe(9);
+  });
+
+  it("propagates a copy failure without deleting (leaves the original in place)", async () => {
+    const copyMessage = vi.fn().mockRejectedValue(new Error("chat not found"));
+    const deleteMessage = vi.fn();
+
+    await expect(forceNotification({ copyMessage, deleteMessage }, 42, 7)).rejects.toThrow(
+      "chat not found",
+    );
+    expect(deleteMessage).not.toHaveBeenCalled();
   });
 });
