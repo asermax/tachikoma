@@ -13,6 +13,7 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 - As a user, I want to talk to Tachikoma from any Telegram client so that I am not tied to a terminal
 - As a user, I want to send photos, voice messages, and documents so that the agent can work with my non-text content
 - As a user, I want background notifications to arrive as a single push alert so that I am notified without being spammed per chunk
+- As a user, I want a push notification when a response I've stepped away from finishes, so I know to come back — without a flicker on every quick reply while I'm still watching
 - As a user, I want to answer the agent's structured prompts by tapping a button so that yes/no and multiple-choice answers do not require typing
 - As a user, I want to react to a message with an emoji and have the agent see it so that I can give quick feedback without typing
 - As a user, I want to reply to one of the agent's earlier messages and have my new message picked up by that conversation so that I can resume an older topic without re-explaining it
@@ -32,7 +33,7 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | R8 | Inbound media (photo, voice, audio, document, sticker, video, video note, animation) is resolved with per-kind metadata, size-checked against Telegram's 20 MB bot download limit, downloaded to the media directory under a unique filename, and submitted as a `MediaAttachment` with the caption as message text — gated by the `allowMedia` config flag |
 | R9 | A bootstrap hook creates the media directory (`{dataDir}/media`) and prunes files older than 30 days |
 | R10 | Media failures (file too large, download error) send an explanatory notice to the chat and leave the conversation usable |
-| R11 | `deliver()` sends background text chunked; when `pushNotifications` is enabled, every chunk but the last is sent silently and the last is sent audibly so exactly one push notification fires (on the final chunk); when disabled, all chunks use default notification behavior |
+| R11 | `deliver()` sends its text chunked (immediate command acks such as the `/new` acknowledgement, and the shutdown digest); when `pushNotifications` is enabled, every chunk but the last is sent silently and the last is sent audibly so exactly one push notification fires (on the final chunk); when disabled, all chunks use default notification behavior. Background deliveries that become agent turns push via `respond()` (R24), not `deliver()` |
 | R12 | Each agent session registers five tools: `send_telegram_file`, `react_to_message`, `pin_message`, `unpin_message`, `send_message_with_buttons`; failures throw from `execute` |
 | R13 | `send_telegram_file` resolves workspace-relative paths, requires an existing regular file under an allowed root (workspace, system temp dir, configured `extraFileRoots`), names the allowed roots on rejection, and auto-detects photo/audio/video/document from the extension |
 | R14 | `pin_message` pins the channel's last outbound message audibly (the pin delivers the push notification); `react_to_message` defaults to the user's last inbound message; both fail when no target message exists |
@@ -45,6 +46,7 @@ The channel contract it implements (`start`/`respond`/`deliver`/`stop`) and the 
 | R21 | A reply to a message that carries text quotes a truncated form of that text as a `Replied to:` prefix on the turn so the agent sees what was replied to |
 | R22 | `shutdownStatus(text)` renders shutdown-sequence progress on a single dedicated message: the first call sends it as an italic `_<text>_` message, subsequent calls edit that message in place; it is serialized through the send mutex and the final line is left visible in the chat. The coordinator calls it during teardown (see [conversation-loop](conversation-loop.md) R15/R17) because the streaming renderer that hosts normal `status()` lines no longer exists |
 | R23 | On receipt of a submitted inbound text or media message (excluding `/stop`, which aborts), the channel fires a one-shot `typing` chat action immediately in its message handler — ahead of `runtime.submit()` (text) or the media download — so an indicator is visible before the coordinator's preparation work (inbox drain, inbound middleware, session open) runs, bridging the gap until `respond()`'s typing refresh loop takes over. During preparation (the window before streaming starts), `status()` lines surface on a single provisional lead-in message: the first creates it, subsequent lines edit it in place, and the typing indicator is refreshed alongside. When the response streams, `respond()` reclaims that message as the streaming message so the response text replaces it in place; if the exchange yields no text, the lead-in is deleted. Messages steered into or queued behind a live exchange skip preparation, so no lead-in is shown for them |
+| R24 | Because Telegram edits never notify, `respond()` forces a push on completion of a streamed response: when `pushNotifications` is on and the streamed exchange lasted at least `pushNotificationMinSeconds` (default 10), it copies the finalized message within the same chat (a fresh send that notifies) and deletes the streamed original, so exactly one push fires on the final message. Under `pushNotifications` the streamed work-in-progress, the lead-in, and any overflow chunks are sent silently so the copy is the only push. The push is skipped for quick turns under the threshold (the user is assumed still watching — no flicker) and when a notifying tool (`send_telegram_file`, `pin_message`, `send_message_with_buttons`) already delivered a push during the turn. For a multi-message response only the final chunk is copied; reply routing records the copied message id (the streamed id when the push is skipped). A copy-API failure leaves the streamed message in place (delivered without a push) rather than losing it |
 
 ## Behaviors
 
@@ -132,6 +134,19 @@ The channel gives immediate feedback the moment a message arrives and keeps a vi
 **Acceptance Criteria**:
 - Given `pushNotifications` is `true`, when `deliver()` runs, then every chunk but the last is sent with `disable_notification: true` and the last is sent audibly, so exactly one push fires (on the final chunk)
 - Given `pushNotifications` is `false`, when `deliver()` runs, then all chunks are sent with default notification behavior
+
+### Response Completion Push (R24)
+
+A streamed response is built by sending a message and editing it in place as text arrives; Telegram edits never notify, so on their own these never fire a push. `respond()` therefore forces one push on completion — but only when the turn ran long enough that the user likely stepped away, and only when no tool already pushed — so quick back-and-forth doesn't flicker while the user is still watching.
+
+**Acceptance Criteria**:
+- Given `pushNotifications` is `true` and a streamed exchange lasting at least `pushNotificationMinSeconds`, when `respond()` finalizes, then the finalized (last) message is copied within the same chat and the streamed original deleted, so exactly one push fires on the copy; reply routing records the copied message id and `lastOutboundId` points at it
+- Given a streamed exchange lasting less than `pushNotificationMinSeconds`, when `respond()` finalizes, then no copy or delete occurs and the streamed message stands in place (no flicker, no push)
+- Given a turn in which a notifying tool (`send_telegram_file`, `pin_message`, or `send_message_with_buttons`) ran, when `respond()` finalizes, then no copy or delete occurs — the tool already delivered a notifying message
+- Given a multi-chunk streamed response that pushes, then only the final chunk is copied and deleted; earlier chunks are left untouched
+- Given `pushNotifications` is `true`, while a response streams, then the work-in-progress message, the preparation lead-in, and any overflow chunks are all sent with `disable_notification: true`, so the completion copy is the only push
+- Given `pushNotifications` is `false`, when `respond()` runs, then it streams with default notification behavior and never copy-deletes
+- Given the copy API call fails on completion, then the streamed message is left in place (delivered, without a push) and no delete is attempted; the streamed message id is recorded
 
 ### Agent Tools (R12, R13, R14, R15)
 
