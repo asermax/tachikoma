@@ -1,9 +1,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import { runGit, runGitCapture } from "../../src/extensions/git/git.ts";
 import { isFilterRepoAvailable, SCRUB_RESULT, scrubPaths } from "../../src/extensions/git/scrub.ts";
+import { runGit, runGitCapture } from "../../src/git/git.ts";
 import { commitFile, fakeLogger, initRepo, makeTempDir, setupRemotePair } from "./helpers.ts";
 
 let base: string;

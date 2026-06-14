@@ -1,9 +1,18 @@
 import { access, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
-import type { Logger } from "../../log.ts";
+import type { Logger } from "../log.ts";
 import { hasUncommittedChanges, runGit, runGitCapture } from "./git.ts";
-import type { RebaseResolver } from "./resolve.ts";
+
+/**
+ * Makes a single attempt to advance a rebase that is already in progress in
+ * `cwd` — reading conflicted files, resolving them, and running
+ * `git rebase --continue`. Whether the rebase actually completed is decided by
+ * the caller (the divergence-recovery flow below), which owns the attempt bound
+ * and the clean-state abort fallback, so this never needs to report success
+ * itself. The git extension supplies an agent-backed implementation.
+ */
+export type RebaseResolver = (cwd: string, remoteBranch: string, log: Logger) => Promise<void>;
 
 export const DIVERGENCE_STATUS = {
   upToDate: "UP_TO_DATE",

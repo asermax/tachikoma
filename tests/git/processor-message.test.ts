@@ -9,7 +9,7 @@ import { commitFile, fakeLogger, initRepo, makeTempDir } from "./helpers.ts";
 
 const commitAll = vi.hoisted(() => vi.fn());
 
-vi.mock("../../src/extensions/git/commit.ts", () => ({ commitAll }));
+vi.mock("../../src/git/commit.ts", () => ({ commitAll }));
 
 const { createGitProcessor } = await import("../../src/extensions/git/processor.ts");
 

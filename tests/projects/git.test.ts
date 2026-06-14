@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { GitResult } from "../../src/extensions/git/git.ts";
+import type { GitResult } from "../../src/git/git.ts";
 
 const runGitCapture = vi.fn();
 
-vi.mock("../../src/extensions/git/git.ts", () => ({
+vi.mock("../../src/git/git.ts", () => ({
   runGit: vi.fn(),
   runGitCapture: (...args: unknown[]) => runGitCapture(...args),
 }));

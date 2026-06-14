@@ -8,6 +8,8 @@ import type { Coordinator } from "../coordinator.ts";
 import type { AppDatabase } from "../db/index.ts";
 import { KeyValueState } from "../db/state.ts";
 import type { EventBus } from "../events.ts";
+import { commitAll } from "../git/commit.ts";
+import { smartPull, smartPush } from "../git/sync.ts";
 import { componentLogger, type Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
 import type { SessionRegistry } from "../sessions/registry.ts";
@@ -221,6 +223,14 @@ export class ExtensionHost {
 
       inbound: {
         use: (middleware) => services.regs.inboundMiddleware.push(middleware),
+      },
+
+      git: {
+        commitAll: ({ log: callLog, ...options }) => commitAll({ ...options, log: callLog ?? log }),
+        smartPush: (cwd, remote, branch, options) =>
+          smartPush(cwd, remote, branch, options?.log ?? log, options?.resolver),
+        smartPull: (cwd, remote, branch, options) =>
+          smartPull(cwd, remote, branch, options?.log ?? log, options?.resolver),
       },
 
       bootstrap: (name, hook) =>

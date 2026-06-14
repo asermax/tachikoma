@@ -1,7 +1,7 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import { runGit, runGitCapture } from "../git/git.ts";
+import { runGit, runGitCapture } from "../../git/git.ts";
 
 /** List all registered submodule paths (e.g. ["projects/my-app"]) from git state. */
 export const listSubmodules = async (workspaceRoot: string): Promise<string[]> => {

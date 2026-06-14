@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { PostProcessorContext } from "../../src/extensions/api.ts";
-import type { Completer } from "../../src/extensions/git/commit.ts";
-import { runGit } from "../../src/extensions/git/git.ts";
 import { createGitProcessor } from "../../src/extensions/git/processor.ts";
+import type { Completer } from "../../src/git/commit.ts";
+import { runGit } from "../../src/git/git.ts";
 import { commitFile, fakeLogger, headOf, initRepo, lastSubject, makeTempDir } from "./helpers.ts";
 
 const ctxLog = (): PostProcessorContext["log"] => fakeLogger();

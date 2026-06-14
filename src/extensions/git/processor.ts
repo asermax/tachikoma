@@ -1,8 +1,7 @@
+import { type Completer, commitAll } from "../../git/commit.ts";
+import { hasRemote, hasUncommittedChanges } from "../../git/git.ts";
+import { PUSH_RESULT, PUSH_SUCCESS, type RebaseResolver, smartPush } from "../../git/sync.ts";
 import type { PostProcessor } from "../api.ts";
-import { type Completer, commitAll } from "./commit.ts";
-import { hasRemote, hasUncommittedChanges } from "./git.ts";
-import type { RebaseResolver } from "./resolve.ts";
-import { PUSH_RESULT, PUSH_SUCCESS, smartPush } from "./sync.ts";
 
 export interface GitProcessorDeps {
   workspaceRoot: string;

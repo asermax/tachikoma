@@ -2,10 +2,15 @@ import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Logger } from "../../log.ts";
-import { smartPull } from "../git/sync.ts";
+import type { GitApi } from "../api.ts";
 import { checkoutBranch, initSubmodule, listSubmodules, resolveDefaultBranch } from "./git.ts";
 
-const syncSubmodule = async (workspaceRoot: string, path: string, log: Logger): Promise<void> => {
+const syncSubmodule = async (
+  workspaceRoot: string,
+  git: GitApi,
+  path: string,
+  log: Logger,
+): Promise<void> => {
   const repoPath = join(workspaceRoot, path);
 
   await initSubmodule(workspaceRoot, path);
@@ -13,20 +18,21 @@ const syncSubmodule = async (workspaceRoot: string, path: string, log: Logger): 
   const defaultBranch = await resolveDefaultBranch(repoPath);
   await checkoutBranch(repoPath, defaultBranch);
 
-  const result = await smartPull(repoPath, "origin", defaultBranch, log);
+  const result = await git.smartPull(repoPath, "origin", defaultBranch, { log });
   log.info({ path, result }, "submodule synced");
 };
 
 const syncSubmoduleWithRetry = async (
   workspaceRoot: string,
+  git: GitApi,
   path: string,
   log: Logger,
 ): Promise<void> => {
   try {
-    await syncSubmodule(workspaceRoot, path, log);
+    await syncSubmodule(workspaceRoot, git, path, log);
   } catch (error) {
     log.debug({ path, err: error }, "submodule sync failed — retrying");
-    await syncSubmodule(workspaceRoot, path, log);
+    await syncSubmodule(workspaceRoot, git, path, log);
   }
 };
 
@@ -35,7 +41,11 @@ const syncSubmoduleWithRetry = async (
  * sync every registered submodule (init → default branch checkout → pull) in
  * parallel with per-submodule error isolation and one retry each.
  */
-export const syncProjects = async (workspaceRoot: string, log: Logger): Promise<void> => {
+export const syncProjects = async (
+  workspaceRoot: string,
+  git: GitApi,
+  log: Logger,
+): Promise<void> => {
   await mkdir(join(workspaceRoot, "projects"), { recursive: true });
 
   const submodulePaths = await listSubmodules(workspaceRoot);
@@ -48,7 +58,7 @@ export const syncProjects = async (workspaceRoot: string, log: Logger): Promise<
   log.info({ count: submodulePaths.length, paths: submodulePaths }, "syncing submodules");
 
   const results = await Promise.allSettled(
-    submodulePaths.map((path) => syncSubmoduleWithRetry(workspaceRoot, path, log)),
+    submodulePaths.map((path) => syncSubmoduleWithRetry(workspaceRoot, git, path, log)),
   );
 
   for (const [index, result] of results.entries()) {

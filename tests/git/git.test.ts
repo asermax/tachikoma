@@ -4,12 +4,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  hasRemote,
-  hasUncommittedChanges,
-  runGit,
-  runGitCapture,
-} from "../../src/extensions/git/git.ts";
+import { hasRemote, hasUncommittedChanges, runGit, runGitCapture } from "../../src/git/git.ts";
 import { initRepo, makeTempDir } from "./helpers.ts";
 
 vi.mock("node:child_process", async (importOriginal) => {

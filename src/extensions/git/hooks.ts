@@ -1,10 +1,9 @@
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { hasRemote, runGit } from "../../git/git.ts";
+import { type RebaseResolver, SYNC_RESULT, smartPull } from "../../git/sync.ts";
 import type { Logger } from "../../log.ts";
-import { hasRemote, runGit } from "./git.ts";
-import type { RebaseResolver } from "./resolve.ts";
-import { SYNC_RESULT, smartPull } from "./sync.ts";
 
 export const COMMITTER_NAME = "Tachikoma";
 export const COMMITTER_EMAIL = "tachikoma@local";

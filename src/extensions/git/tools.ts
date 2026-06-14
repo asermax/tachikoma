@@ -1,9 +1,9 @@
 import { type ExtensionFactory, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+import { type Completer, commitAll } from "../../git/commit.ts";
+import { runGitCapture } from "../../git/git.ts";
 import type { Logger } from "../../log.ts";
-import { type Completer, commitAll } from "./commit.ts";
-import { runGitCapture } from "./git.ts";
 import { workspaceFallbackMessage } from "./processor.ts";
 import { scrubPaths } from "./scrub.ts";
 

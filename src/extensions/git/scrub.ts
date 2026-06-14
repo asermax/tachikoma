@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { hasRemote, hasUncommittedChanges, runGit, runGitCapture } from "../../git/git.ts";
 import type { Logger } from "../../log.ts";
-import { hasRemote, hasUncommittedChanges, runGit, runGitCapture } from "./git.ts";
 
 const execFileAsync = promisify(execFile);
 

@@ -6,12 +6,13 @@ import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-codi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseWithSchema } from "../../src/config/parse.ts";
-import type { AppContext } from "../../src/extensions/api.ts";
-import { runGit } from "../../src/extensions/git/git.ts";
+import type { AppContext, GitApi } from "../../src/extensions/api.ts";
 import memory, {
   type MemoryConfig,
   MemoryConfigSchema,
 } from "../../src/extensions/memory/index.ts";
+import { commitAll } from "../../src/git/commit.ts";
+import { runGit } from "../../src/git/git.ts";
 import { commitFile, initRepo } from "../git/helpers.ts";
 
 const config = (overrides: unknown = {}): MemoryConfig =>
@@ -55,6 +56,13 @@ const setupWith = (
     useFactory = factory;
   });
 
+  const git = {
+    commitAll: ({ log: callLog, ...options }: Parameters<GitApi["commitAll"]>[0]) =>
+      commitAll({ ...options, log: callLog ?? (log as never) }),
+    smartPush: vi.fn(),
+    smartPull: vi.fn(),
+  } as unknown as GitApi;
+
   memory.setup({
     extensionConfig,
     log,
@@ -63,6 +71,7 @@ const setupWith = (
     agent: { use, side },
     sessions: { registerProcessor: vi.fn() },
     scheduler: { cron },
+    git,
   } as unknown as AppContext<MemoryConfig>);
 
   return { cron, cronCalls, useFactory, log, run: side.run as ReturnType<typeof vi.fn> };

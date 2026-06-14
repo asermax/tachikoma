@@ -1,14 +1,15 @@
 import { join } from "node:path";
 
+import type { Completer } from "../../git/commit.ts";
+import { PUSH_SUCCESS } from "../../git/sync.ts";
 import type { Logger } from "../../log.ts";
-import type { PostProcessor } from "../api.ts";
-import { type Completer, commitAll } from "../git/commit.ts";
-import { PUSH_SUCCESS, smartPush } from "../git/sync.ts";
+import type { GitApi, PostProcessor } from "../api.ts";
 import { isDirty, listSubmodules } from "./git.ts";
 
 export interface ProjectsProcessorDeps {
   workspaceRoot: string;
   side: Completer;
+  git: GitApi;
 }
 
 export const projectFallbackMessage = (name: string, now = new Date()): string =>
@@ -16,6 +17,7 @@ export const projectFallbackMessage = (name: string, now = new Date()): string =
 
 const commitAndPush = async (
   workspaceRoot: string,
+  git: GitApi,
   side: Completer,
   path: string,
   log: Logger,
@@ -23,7 +25,7 @@ const commitAndPush = async (
   const repoPath = join(workspaceRoot, path);
   const name = path.split("/").at(-1) ?? path;
 
-  const message = await commitAll({
+  const message = await git.commitAll({
     cwd: repoPath,
     side,
     fallbackMessage: projectFallbackMessage(name),
@@ -32,7 +34,7 @@ const commitAndPush = async (
 
   if (message != null) log.info({ path, message }, "committed project changes");
 
-  const result = await smartPush(repoPath, "origin", "HEAD", log);
+  const result = await git.smartPush(repoPath, "origin", "HEAD", { log });
 
   if (PUSH_SUCCESS.has(result)) {
     log.info({ path, result }, "pushed project changes");
@@ -49,6 +51,7 @@ const commitAndPush = async (
 export const createProjectsProcessor = ({
   workspaceRoot,
   side,
+  git,
 }: ProjectsProcessorDeps): PostProcessor => ({
   name: "projects-commit",
   phase: "preFinalize",
@@ -85,7 +88,7 @@ export const createProjectsProcessor = ({
     log.info({ paths: dirtyPaths }, "processing dirty submodules");
 
     const results = await Promise.allSettled(
-      dirtyPaths.map((path) => commitAndPush(workspaceRoot, side, path, log)),
+      dirtyPaths.map((path) => commitAndPush(workspaceRoot, git, side, path, log)),
     );
 
     for (const [index, result] of results.entries()) {

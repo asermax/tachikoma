@@ -2,7 +2,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { runGit } from "../../src/extensions/git/git.ts";
+import { runGit } from "../../src/git/git.ts";
 import { commitFile, initRepo } from "../git/helpers.ts";
 
 export { commitFile, configureIdentity, fakeLogger, headOf, lastSubject } from "../git/helpers.ts";

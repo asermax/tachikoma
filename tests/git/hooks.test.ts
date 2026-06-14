@@ -2,10 +2,9 @@ import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { runGit } from "../../src/extensions/git/git.ts";
 import { initializeWorkspaceRepo } from "../../src/extensions/git/hooks.ts";
-import { smartPull } from "../../src/extensions/git/sync.ts";
+import { runGit } from "../../src/git/git.ts";
+import { smartPull } from "../../src/git/sync.ts";
 import {
   commitFile,
   configureIdentity,
@@ -15,8 +14,8 @@ import {
   makeTempDir,
 } from "./helpers.ts";
 
-vi.mock("../../src/extensions/git/sync.ts", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../src/extensions/git/sync.ts")>();
+vi.mock("../../src/git/sync.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/git/sync.ts")>();
 
   return { ...actual, smartPull: vi.fn(actual.smartPull) };
 });

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fakeLogger } from "./helpers.ts";
 
 vi.mock("node:child_process", () => ({ execFile: vi.fn() }));
-vi.mock("../../src/extensions/git/git.ts", () => ({
+vi.mock("../../src/git/git.ts", () => ({
   runGit: vi.fn(),
   runGitCapture: vi.fn(),
   hasUncommittedChanges: vi.fn(),
@@ -11,13 +11,8 @@ vi.mock("../../src/extensions/git/git.ts", () => ({
 }));
 
 import { execFile } from "node:child_process";
-import {
-  hasRemote,
-  hasUncommittedChanges,
-  runGit,
-  runGitCapture,
-} from "../../src/extensions/git/git.ts";
 import { isFilterRepoAvailable, SCRUB_RESULT, scrubPaths } from "../../src/extensions/git/scrub.ts";
+import { hasRemote, hasUncommittedChanges, runGit, runGitCapture } from "../../src/git/git.ts";
 
 const log = fakeLogger();
 const repo = "/fake/repo";

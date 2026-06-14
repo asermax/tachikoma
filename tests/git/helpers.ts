@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { vi } from "vitest";
 
-import { runGit } from "../../src/extensions/git/git.ts";
+import { runGit } from "../../src/git/git.ts";
 import type { Logger } from "../../src/log.ts";
 
 export const fakeLogger = (): Logger =>

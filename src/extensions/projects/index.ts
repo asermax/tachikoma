@@ -32,7 +32,7 @@ export default defineExtension<ProjectsConfig>({
 
     const workspaceRoot = app.workspace.root;
 
-    app.bootstrap("sync-projects", () => syncProjects(workspaceRoot, app.log));
+    app.bootstrap("sync-projects", () => syncProjects(workspaceRoot, app.git, app.log));
 
     app.agent.use(createProjectsToolsFactory({ workspaceRoot, log: app.log }), {
       sessionScopes: ["main", "background"],
@@ -45,7 +45,7 @@ export default defineExtension<ProjectsConfig>({
     );
 
     app.sessions.registerProcessor(
-      createProjectsProcessor({ workspaceRoot, side: app.agent.side }),
+      createProjectsProcessor({ workspaceRoot, side: app.agent.side, git: app.git }),
     );
   },
 });

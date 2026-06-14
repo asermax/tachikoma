@@ -1,5 +1,5 @@
-import type { SideRunner } from "../../agent/side-run.ts";
-import type { Logger } from "../../log.ts";
+import type { SideRunner } from "../agent/side-run.ts";
+import type { Logger } from "../log.ts";
 import { runGit, runGitCapture } from "./git.ts";
 
 export type Completer = Pick<SideRunner, "complete">;

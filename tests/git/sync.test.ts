@@ -3,15 +3,15 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runGit, runGitCapture } from "../../src/extensions/git/git.ts";
-import type { RebaseResolver } from "../../src/extensions/git/resolve.ts";
+import { runGit, runGitCapture } from "../../src/git/git.ts";
 import {
   PUSH_RESULT,
   PUSH_SUCCESS,
+  type RebaseResolver,
   SYNC_RESULT,
   smartPull,
   smartPush,
-} from "../../src/extensions/git/sync.ts";
+} from "../../src/git/sync.ts";
 import {
   commitFile,
   configureIdentity,

@@ -3,12 +3,8 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  type Completer,
-  commitAll,
-  generateCommitMessage,
-} from "../../src/extensions/git/commit.ts";
-import { runGit } from "../../src/extensions/git/git.ts";
+import { type Completer, commitAll, generateCommitMessage } from "../../src/git/commit.ts";
+import { runGit } from "../../src/git/git.ts";
 import { commitFile, fakeLogger, initRepo, lastSubject, makeTempDir } from "./helpers.ts";
 
 const completerReturning = (message: string): Completer => ({

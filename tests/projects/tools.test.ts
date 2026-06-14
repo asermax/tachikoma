@@ -2,8 +2,6 @@ import { access, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import { runGit } from "../../src/extensions/git/git.ts";
 import { currentBranch, listSubmodules } from "../../src/extensions/projects/git.ts";
 import {
   handleDeregisterProject,
@@ -11,6 +9,7 @@ import {
   handleRegisterProject,
   type ProjectToolDeps,
 } from "../../src/extensions/projects/tools.ts";
+import { runGit } from "../../src/git/git.ts";
 import { createProjectOrigin, createWorkspace, fakeLogger, makeTempDir } from "./helpers.ts";
 
 let base: string;

@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +16,7 @@ import {
 } from "../src/extensions/api.ts";
 import { ExtensionHost, factoryBindingTargets, type HostServices } from "../src/extensions/host.ts";
 import { createRegistrations } from "../src/extensions/registrations.ts";
+import { initRepo } from "./git/helpers.ts";
 
 type MockLog = {
   warn: ReturnType<typeof vi.fn>;
@@ -406,6 +411,25 @@ describe("ExtensionHost context API delegation", () => {
 
     await app.agent.forkAndContinue("/sess.jsonl", "go", "fast");
     expect(forkAndContinue).toHaveBeenCalledWith("/sess.jsonl", "go", "fast", undefined);
+  });
+
+  it("delegates the git API to the core helpers over a real repo", async () => {
+    const base = await mkdtemp(join(tmpdir(), "tachi-host-git-"));
+
+    try {
+      await initRepo(base);
+
+      const services = createServices();
+      const app = await captureApp(services);
+
+      expect(typeof app.git.smartPush).toBe("function");
+      expect(typeof app.git.smartPull).toBe("function");
+
+      // A clean tree has nothing to commit — proves the call reaches the core helper.
+      await expect(app.git.commitAll({ cwd: base, fallbackMessage: "noop" })).resolves.toBeNull();
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
   });
 
   it("registers inbound middleware, status, shutdown and bootstrap hooks", async () => {

@@ -3,22 +3,11 @@ import { isAbsolute, resolve } from "node:path";
 
 import { type ToolDefinition, truncateTail } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-
 import type { SideRunner } from "../../agent/side-run.ts";
-import type { Logger } from "../../log.ts";
-import { runGitCapture } from "./git.ts";
+import { runGitCapture } from "../../git/git.ts";
+import type { RebaseResolver } from "../../git/sync.ts";
 
 export type AgentRunner = Pick<SideRunner, "run">;
-
-/**
- * Makes a single attempt to advance a rebase that is already in progress in
- * `cwd` — reading conflicted files, resolving them, and running
- * `git rebase --continue`. Whether the rebase actually completed is decided by
- * the caller from filesystem state (`sync.ts`), which also owns the attempt
- * bound and the clean-state abort fallback, so this never needs to report
- * success itself.
- */
-export type RebaseResolver = (cwd: string, remoteBranch: string, log: Logger) => Promise<void>;
 
 const CONFLICT_SYSTEM_PROMPT = `You resolve git rebase conflicts for an automated workspace-versioning agent.
 

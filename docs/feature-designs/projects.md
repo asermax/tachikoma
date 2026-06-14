@@ -20,7 +20,7 @@ The workspace is a single git repo holding memories, context, and configuration 
 - Project repos must end up on a real branch — `git submodule` checkouts default to detached HEAD, which would strand later commits
 
 **Interactions:**
-- Reuses the git extension's primitives directly: `runGit`/`runGitCapture`, `commitAll`, `smartPull`/`smartPush` (see [git-workspace.md](git-workspace.md))
+- Reuses the core git module (`src/git/`), not the git extension: high-level `commitAll`/`smartPull`/`smartPush` through the `app.git` service, and low-level `runGit`/`runGitCapture` imported from `src/git/git.ts` directly (see [git-workspace.md](git-workspace.md) and [DES-001](../design/DES-001-unified-extension-api.md))
 - Post-processing phase ordering: `projects-commit` (`preFinalize`) must finish before `git-commit` (`finalize`) so pointer bumps are captured ([conversation-loop.md](conversation-loop.md) covers session close)
 - Context provider and post-processor run through the DES-001 pipelines with host-level error isolation
 
@@ -68,13 +68,14 @@ One extension (`src/extensions/projects/index.ts`) wires four pieces onto the ap
 - Pro: Projects always sit on a real branch the session-close push can target
 - Con: `git remote show` adds a network round-trip on first registration
 
-### Direct reuse of the git extension's modules
+### Reuse the core git module via `app.git`
 
-**Choice**: Import `commitAll`, `smartPull`, `smartPush`, and the `runGit` helpers straight from `src/extensions/git/` instead of widening `AppContext` with a git service.
-**Why**: These are pure functions over a `cwd` — the same divergence handling and message generation must behave identically for the workspace and for every project, and a host service would only add indirection. DES-001 reserves AppContext for genuinely cross-cutting services.
+**Choice**: Consume the high-level git operations (`commitAll`, `smartPull`, `smartPush`) through the `app.git` service, and import the low-level `runGit`/`runGitCapture` helpers from the core module `src/git/git.ts` directly. Neither path touches `src/extensions/git/`.
+**Why**: The git primitives are pure functions over a `cwd` — the same divergence handling and message generation must behave identically for the workspace and for every project. They were extracted out of the git extension into a neutral core module so consumers no longer depend on another extension; the high-level ops are surfaced through `app.git` (DES-001) because they are genuinely cross-cutting, while the thin subprocess helpers stay plain importable utilities.
 **Consequences**:
 - Pro: One implementation of sync/commit semantics; fixes apply everywhere
-- Con: Compile-time coupling — projects assumes the git extension's modules exist even if the git extension is disabled by config (the modules are still importable; only registration is skipped)
+- Pro: No extension→extension coupling — projects works the same whether or not the git extension is registered
+- Con: AppContext gains a service surface (`app.git`) that must be kept in lock-step with the core module's high-level functions
 
 ### Tool handlers split from the pi factory
 

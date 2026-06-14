@@ -3,10 +3,13 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { runGit } from "../../src/extensions/git/git.ts";
+import type { GitApi } from "../../src/extensions/api.ts";
 import { currentBranch } from "../../src/extensions/projects/git.ts";
 import { syncProjects } from "../../src/extensions/projects/hooks.ts";
 import { handleRegisterProject } from "../../src/extensions/projects/tools.ts";
+import { commitAll } from "../../src/git/commit.ts";
+import { runGit } from "../../src/git/git.ts";
+import { smartPull, smartPush } from "../../src/git/sync.ts";
 import {
   commitFile,
   configureIdentity,
@@ -18,6 +21,14 @@ import {
 } from "./helpers.ts";
 
 const log = fakeLogger();
+
+const git: GitApi = {
+  commitAll: (options) => commitAll({ ...options, log: options.log ?? log }),
+  smartPush: (cwd, remote, branch, options) =>
+    smartPush(cwd, remote, branch, options?.log ?? log, options?.resolver),
+  smartPull: (cwd, remote, branch, options) =>
+    smartPull(cwd, remote, branch, options?.log ?? log, options?.resolver),
+};
 
 let base: string;
 let workspace: string;
@@ -33,7 +44,7 @@ afterEach(async () => {
 
 describe("syncProjects", () => {
   it("creates the projects directory and returns quietly with no submodules", async () => {
-    await syncProjects(workspace, log);
+    await syncProjects(workspace, git, log);
 
     await expect(access(join(workspace, "projects"))).resolves.toBeUndefined();
   });
@@ -47,7 +58,7 @@ describe("syncProjects", () => {
     await runGit(base, ["clone", workspace, clone]);
     await configureIdentity(clone);
 
-    await syncProjects(clone, log);
+    await syncProjects(clone, git, log);
 
     const clonedProject = join(clone, "projects", "app");
     await expect(access(join(clonedProject, "README.md"))).resolves.toBeUndefined();
@@ -64,7 +75,7 @@ describe("syncProjects", () => {
     await commitFile(seeder, "update.txt", "fresh\n", "Remote update");
     await runGit(seeder, ["push", "origin", "main"]);
 
-    await syncProjects(workspace, log);
+    await syncProjects(workspace, git, log);
 
     const projectPath = join(workspace, "projects", "app");
     await expect(access(join(projectPath, "update.txt"))).resolves.toBeUndefined();

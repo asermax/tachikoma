@@ -2,8 +2,6 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import { runGit } from "../../src/extensions/git/git.ts";
 import {
   createGitToolsFactory,
   type GitToolDeps,
@@ -12,6 +10,7 @@ import {
   handleQueryGitStatus,
   handleScrubWorkspace,
 } from "../../src/extensions/git/tools.ts";
+import { runGit } from "../../src/git/git.ts";
 import { commitFile, fakeLogger, initRepo, lastSubject, makeTempDir } from "./helpers.ts";
 
 let workspace: string;

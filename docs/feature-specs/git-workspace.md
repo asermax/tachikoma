@@ -6,7 +6,7 @@
 
 Automatic git version tracking for the workspace. A bootstrap hook initializes the workspace as a git repo with a fixed committer identity and syncs it with its `origin` remote when one is configured. When a session closes, a finalize-phase post-processor stages everything, commits with a descriptive message generated from the staged diffstat, and pushes using divergence detection with rebase-based recovery (and an agent-assisted conflict-resolution step that falls back to aborting) instead of a bare push. Agent tools expose status, history, on-demand commits, and a destructive history scrub during conversations. A tool-call guardrail blocks the agent from running destructive git commands through its bash tool, steering it to the dedicated tools instead. The extension also contributes a usage context section (scope: main + background) describing the automatic commit-on-close, the safe git surface, and the dedicated tools.
 
-The sync primitives (`smartPull`/`smartPush`) are shared with the [projects](projects.md) extension, which applies the same semantics to each registered project repo.
+The git primitives (`commitAll`, `smartPull`/`smartPush`, and the low-level `runGit` helpers) live in a neutral core module `src/git/`, not in this extension. The high-level operations are exposed to every extension through the `app.git` service, so the [projects](projects.md) and [memory](memory.md) extensions apply the same semantics to their repos without importing the git extension. This extension consumes the same core module internally and owns everything git-*workspace*-specific: the bootstrap init/sync, the agent tools, the bash guardrail, the scrub flow, and the commit post-processor.
 
 ## User Stories
 
@@ -64,7 +64,7 @@ After post-processing has written its outputs (memory extraction and friends —
 
 ### Divergence Handling (R8, R9, R10, R15)
 
-`smartPush` and `smartPull` (`src/extensions/git/sync.ts`) replace bare `git push`/`git pull` with explicit state machines returning result enums instead of throwing.
+`smartPush` and `smartPull` (`src/git/sync.ts`, exposed via `app.git`) replace bare `git push`/`git pull` with explicit state machines returning result enums instead of throwing.
 
 **Acceptance Criteria**:
 - Given local and remote match, when pushing, then the result is `NOTHING_TO_PUSH`; when pulling, `UP_TO_DATE`

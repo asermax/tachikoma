@@ -5,15 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { PostProcessorContext } from "../../src/extensions/api.ts";
-import type { Completer } from "../../src/extensions/git/commit.ts";
-import { runGit } from "../../src/extensions/git/git.ts";
-import { PUSH_RESULT } from "../../src/extensions/git/sync.ts";
+import type { Completer } from "../../src/git/commit.ts";
+import { runGit } from "../../src/git/git.ts";
+import { PUSH_RESULT } from "../../src/git/sync.ts";
 import { commitFile, fakeLogger, initRepo, makeTempDir } from "./helpers.ts";
 
 const smartPush = vi.hoisted(() => vi.fn());
 
-vi.mock("../../src/extensions/git/sync.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../../src/extensions/git/sync.ts")>()),
+vi.mock("../../src/git/sync.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/git/sync.ts")>()),
   smartPush,
 }));
 

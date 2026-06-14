@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { GitApi } from "../../src/extensions/api.ts";
 import { fakeLogger } from "./helpers.ts";
 
 const listSubmodules = vi.fn();
@@ -13,10 +14,6 @@ vi.mock("node:fs/promises", () => ({
   mkdir: (...args: unknown[]) => mkdir(...args),
 }));
 
-vi.mock("../../src/extensions/git/sync.ts", () => ({
-  smartPull: (...args: unknown[]) => smartPull(...args),
-}));
-
 vi.mock("../../src/extensions/projects/git.ts", () => ({
   listSubmodules: (...args: unknown[]) => listSubmodules(...args),
   initSubmodule: (...args: unknown[]) => initSubmodule(...args),
@@ -25,6 +22,12 @@ vi.mock("../../src/extensions/projects/git.ts", () => ({
 }));
 
 const { syncProjects } = await import("../../src/extensions/projects/hooks.ts");
+
+const git = {
+  commitAll: vi.fn(),
+  smartPush: vi.fn(),
+  smartPull: (...args: unknown[]) => smartPull(...args),
+} as unknown as GitApi;
 
 beforeEach(() => {
   listSubmodules.mockReset();
@@ -40,7 +43,7 @@ describe("syncProjects retry behavior", () => {
     const log = fakeLogger();
     listSubmodules.mockResolvedValue([]);
 
-    await syncProjects("/ws", log);
+    await syncProjects("/ws", git, log);
 
     expect(initSubmodule).not.toHaveBeenCalled();
     expect(log.debug).toHaveBeenCalledWith("no submodules found — skipping sync");
@@ -51,7 +54,7 @@ describe("syncProjects retry behavior", () => {
     listSubmodules.mockResolvedValue(["projects/app"]);
     initSubmodule.mockRejectedValueOnce(new Error("init flaked")).mockResolvedValue(undefined);
 
-    await syncProjects("/ws", log);
+    await syncProjects("/ws", git, log);
 
     expect(initSubmodule).toHaveBeenCalledTimes(2);
     expect(log.debug).toHaveBeenCalledWith(
@@ -66,7 +69,7 @@ describe("syncProjects retry behavior", () => {
     listSubmodules.mockResolvedValue(["projects/app"]);
     initSubmodule.mockRejectedValue(new Error("init dead"));
 
-    await syncProjects("/ws", log);
+    await syncProjects("/ws", git, log);
 
     expect(initSubmodule).toHaveBeenCalledTimes(2);
     expect(log.warn).toHaveBeenCalledWith(

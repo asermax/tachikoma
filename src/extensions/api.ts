@@ -9,6 +9,8 @@ import type { AppDatabase } from "../db/index.ts";
 import type { KeyValueState } from "../db/state.ts";
 import type { InboundMessage } from "../domain/message.ts";
 import type { EventBus } from "../events.ts";
+import type { CommitAllOptions } from "../git/commit.ts";
+import type { PushResult, RebaseResolver, SyncResult } from "../git/sync.ts";
 import type { Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
 import type { Workspace } from "../workspace.ts";
@@ -154,6 +156,37 @@ export interface InboundApi {
   use(middleware: InboundMiddleware): void;
 }
 
+/**
+ * High-level git operations over the core git helpers (`src/git/`), exposed as a
+ * neutral service so extensions consume them through `app` instead of importing
+ * the git extension. The git extension itself owns workspace versioning, the
+ * agent-facing tools, the bash guardrail, and the commit post-processor; those
+ * remain its responsibility and are not part of this surface.
+ */
+export interface GitApi {
+  /**
+   * Stage everything in `cwd` and commit with a message — generated from the
+   * staged diffstat when a `side` completer is supplied, or the explicit
+   * `message`. Returns the commit message, or null when there was nothing to
+   * commit. `log` defaults to the extension's logger when omitted.
+   */
+  commitAll(options: Omit<CommitAllOptions, "log"> & { log?: Logger }): Promise<string | null>;
+  /** Push local commits with divergence recovery (fetch → detect → push or rebase-then-push). */
+  smartPush(
+    cwd: string,
+    remote: string,
+    branch: string,
+    options?: { log?: Logger; resolver?: RebaseResolver },
+  ): Promise<PushResult>;
+  /** Pull remote changes with divergence recovery (skip when dirty, fast-forward or rebase). */
+  smartPull(
+    cwd: string,
+    remote: string,
+    branch: string,
+    options?: { log?: Logger; resolver?: RebaseResolver },
+  ): Promise<SyncResult>;
+}
+
 export interface AppContext<C = unknown> {
   readonly config: Config;
   readonly extensionConfig: C;
@@ -167,6 +200,7 @@ export interface AppContext<C = unknown> {
   readonly channels: ChannelsApi;
   readonly agent: AgentApi;
   readonly inbound: InboundApi;
+  readonly git: GitApi;
 
   bootstrap(name: string, hook: () => void | Promise<void>): void;
   /**

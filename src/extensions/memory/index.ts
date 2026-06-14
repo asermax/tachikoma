@@ -3,7 +3,6 @@ import { type Static, Type } from "typebox";
 import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { createCoreContextProcessor } from "../context/processor.ts";
-import { commitAll } from "../git/commit.ts";
 import { createTranscriptArchiveProcessor, pruneTranscripts } from "./archive.ts";
 import { createExtractionProcessor } from "./extraction.ts";
 import { buildMemoryContext } from "./indexes.ts";
@@ -85,11 +84,10 @@ export default defineExtension<MemoryConfig>({
     if (maintenance.enabled) {
       const commitChanges = async (message: string): Promise<void> => {
         try {
-          const committed = await commitAll({
+          const committed = await app.git.commitAll({
             cwd: workspaceRoot,
             message,
             fallbackMessage: message,
-            log: app.log,
           });
 
           if (committed != null) app.log.info({ message }, "committed memory maintenance changes");
