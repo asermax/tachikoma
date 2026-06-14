@@ -41,6 +41,10 @@ const delegateLabel = (args: ToolArgs, verb: string): string => {
   return `${verb} to ${agent}${desc != null ? `: ${desc}` : ""}`;
 };
 
+/** Truncate a value to `max` chars, appending an ellipsis when it overflows. */
+const truncate = (value: string, max = 40): string =>
+  value.length > max ? `${value.slice(0, max)}...` : value;
+
 // Present-progressive live-activity labels keyed by pi's tool name. Each entry
 // maps a tool's args to a friendly line shown while the tool runs. pi's built-in
 // tools are lowercase (`read`, `grep`, …) and take a `path`/`pattern`/`command`
@@ -50,7 +54,9 @@ const TOOL_DISPLAY: Record<string, (args: ToolArgs) => string> = {
   grep: (args) => `Searching for '${asString(args.pattern)}'`,
   find: (args) => `Finding files: ${asString(args.pattern)}`,
   bash: (args) =>
-    nonEmptyString(args.description) ? args.description : `Running: ${asString(args.command)}`,
+    nonEmptyString(args.description)
+      ? args.description
+      : `Running: ${truncate(asString(args.command))}`,
   edit: (args) => `Editing ${asString(args.path)}`,
   write: (args) => `Writing ${asString(args.path)}`,
   ls: (args) => `Listing ${asString(args.path)}`,
@@ -90,8 +96,7 @@ const bashSummary = (args: ToolArgs): string => {
   }
 
   if (nonEmptyString(args.command)) {
-    const cmd = args.command.length > 40 ? `${args.command.slice(0, 40)}...` : args.command;
-    return `running: ${code(cmd)}`;
+    return `running: ${code(truncate(args.command))}`;
   }
 
   return "running a command";

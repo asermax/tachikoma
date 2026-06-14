@@ -58,6 +58,17 @@ describe("formatToolActivity", () => {
     );
   });
 
+  it("truncates a long Bash command in the live label", () => {
+    expect(formatToolActivity("bash", { command: "a".repeat(50) })).toBe(
+      `Running: ${"a".repeat(40)}...`,
+    );
+  });
+
+  it("shows a long Bash description verbatim in the live label (no truncation)", () => {
+    const long = "a".repeat(50);
+    expect(formatToolActivity("bash", { description: long, command: "ls" })).toBe(long);
+  });
+
   it("falls back to the humanized name for unknown tools", () => {
     expect(formatToolActivity("run_task_now", {})).toBe("Run Task Now");
     expect(formatToolActivity("mcp__projects__list_projects", {})).toBe("List Projects");
@@ -151,6 +162,13 @@ describe("summarizeToolActivities", () => {
     ).toBe("Run the tests");
   });
 
+  it("shows a long Bash description verbatim in the baked summary (no truncation)", () => {
+    // bashSummary lowercases the first letter; the outer pass recapitalizes it.
+    expect(
+      summarizeToolActivities([{ toolName: "bash", args: { description: "x".repeat(50) } }]),
+    ).toBe(`X${"x".repeat(49)}`);
+  });
+
   it("uses the Bash command when no description is present, truncating long ones", () => {
     expect(summarizeToolActivities([{ toolName: "bash", args: { command: "ls -la" } }])).toBe(
       "Running: `ls -la`",
@@ -158,6 +176,16 @@ describe("summarizeToolActivities", () => {
 
     const long = "a".repeat(50);
     expect(summarizeToolActivities([{ toolName: "bash", args: { command: long } }])).toBe(
+      `Running: \`${"a".repeat(40)}...\``,
+    );
+  });
+
+  it("truncates a Bash command at the 40-char boundary in the baked summary", () => {
+    // Exactly 40 chars renders verbatim; 41 truncates to 40 + "...".
+    expect(summarizeToolActivities([{ toolName: "bash", args: { command: "a".repeat(40) } }])).toBe(
+      `Running: \`${"a".repeat(40)}\``,
+    );
+    expect(summarizeToolActivities([{ toolName: "bash", args: { command: "a".repeat(41) } }])).toBe(
       `Running: \`${"a".repeat(40)}...\``,
     );
   });
@@ -174,6 +202,14 @@ describe("summarizeToolActivities", () => {
     // The same handling applies to other inline-code summaries (e.g. a pattern).
     expect(summarizeToolActivities([{ toolName: "grep", args: { pattern: "a`b" } }])).toBe(
       "Searching for `` a`b ``",
+    );
+  });
+
+  it("escapes backticks in a truncated long command (truncation precedes the code() wrap)", () => {
+    // 54-char command with a backtick inside the first 40 chars.
+    const cmd = `echo \`whoami\` ${"a".repeat(40)}`;
+    expect(summarizeToolActivities([{ toolName: "bash", args: { command: cmd } }])).toBe(
+      `Running: \`\` echo \`whoami\` ${"a".repeat(26)}... \`\``,
     );
   });
 
