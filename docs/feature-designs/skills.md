@@ -37,7 +37,7 @@ Five small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 | `src/extensions/skills/builtins.ts` | `BUILTIN_AGENTS`: agents shipped with Tachikoma rather than bundled in a skill | The `general-purpose` agent uses a bare name (no `<skill>/` namespace, so it cannot collide with discovered agents), `tools: null` (delegate's default read-only set), `model: null` (default tier), and the core-owned `SUBAGENT_SYSTEM_PROMPT` ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
 | `src/extensions/skills/reload.ts` | `registerReload`: the `/reload` command (calls `ctx.reload()`) and the `reload_resources` tool that queues `/reload` as a follow-up | Reload must run in command context, so the tool re-injects `/reload` via `pi.sendUserMessage(..., { deliverAs: "followUp" })` rather than reloading inline |
 | `src/extensions/skills/agents.ts` | `discoverSkillAgents`: scan skills root for `agents/*.md`, parse frontmatter via pi's `parseFrontmatter` | Synchronous fs reads (small trees, called at session creation and tool execution); per-file error isolation — one bad definition never blocks the rest; names namespaced `<skill>/<agent>`; optional `model` parsed as a non-empty string (validated against the registry only at delegation time) — a non-string value warns and falls back to `null` rather than dropping the agent |
-| `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; `tools` accepts YAML list or comma-separated string (matches pi's subagent example); a declared `model` is threaded into `side.run` to pin the delegated run's model; every run passes `isolatePrompt: true` so no delegated agent inherits pi's append / project context files / skills catalog |
+| `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; `tools` accepts YAML list or comma-separated string (matches pi's subagent example); a declared `model` is threaded into `side.run` to pin the delegated run's model; every run passes `isolatePrompt: true` so no delegated agent inherits pi's append / project context files / skills catalog; a required display-only `description` param labels each delegation for tool-activity displays and is never forwarded to the run |
 
 ## Key Decisions
 
@@ -80,7 +80,7 @@ Five small modules. `index.ts` wires: a bootstrap hook ensures the workspace ski
 
 ### One `delegate_to_agent` tool instead of a tool per agent
 
-**Choice**: A single tool taking `agent` and `task` parameters, listing available agents in its description.
+**Choice**: A single tool taking `agent`, `task`, and a display-only `description` parameter, listing available agents in its description.
 **Why**: Mirrors pi's subagent example pattern; keeps the tool surface stable while the agent set changes, and a wrong `agent` value fails with a self-correcting error that lists valid names.
 **Consequences**:
 - Pro: tool registration is independent of how many agents exist

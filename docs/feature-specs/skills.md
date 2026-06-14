@@ -24,6 +24,7 @@ Skills give the agent packaged expertise: Agent Skills-format directories from b
 | R4 | Agent frontmatter: `description` is required (missing means the file is skipped with a warning); `name` defaults to the file stem; `tools` accepts a YAML list or a comma-separated string; `model` is an optional `provider/model-id[:thinkingLevel]` reference (a non-string value is warned and ignored, leaving the agent on the default tier); the markdown body is the agent's system prompt |
 | R5 | A `delegate_to_agent` tool is registered in every agent session while the skills extension is enabled (a built-in agent always exists); it runs the named agent headlessly with its own system prompt and tool set — with the prompt fully isolated via `isolatePrompt` (pi's append, project context files, and skills catalog suppressed) — and returns the agent's final answer as the tool result (tail-truncated, with a truncation marker) |
 | R5a | A built-in `general-purpose` agent (bare name, no `<skill>/` namespace) is always available for delegation and is composed ahead of the discovered skill agents; it is a read-only worker (default tool set) for exploring/searching files and gathering information, with a self-contained worker system prompt owned in core ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
+| R5b | `delegate_to_agent` requires a `description` parameter — a short label for the delegation surfaced in tool-activity displays; it is display-only (required by the schema, but rendering degrades gracefully to the agent-only label when empty) and is never forwarded to the delegated run, which sees only the `task` |
 | R6 | Agents that declare no tools run with the default read-only set: `read`, `grep`, `find`, `ls` |
 | R6a | An agent that declares a `model` runs its headless delegation on that model; an agent without one runs on the side-runner's default tier |
 | R7 | Invalid agent files are logged and skipped; a missing skills root or agents directory yields empty discovery, never an error |
@@ -57,7 +58,7 @@ The session factory answers pi's `resources_discover` event with the workspace s
 - Given an agent file without a `description`, when discovery runs, then the file is skipped with a warning and other agents still load
 - Given a skill without an `agents/` directory, or a missing skills root, when discovery runs, then an empty list is returned
 
-### Delegation (R5, R5a, R6, R6a)
+### Delegation (R5, R5a, R5b, R6, R6a)
 
 The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists the available agents (the built-in `general-purpose` agent first, then discovered skill agents) in its description and runs the chosen agent in a fully isolated headless session via `app.agent.side.run` (`isolatePrompt: true`), passing the agent's declared `model` when set.
 
@@ -68,6 +69,7 @@ The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists the ava
 - Given an agent that declares a `model`, when delegated to, then the headless run is pinned to that model; an agent without a `model` runs on the side-runner's default tier
 - Given an unknown agent name, when the tool executes, then it throws an error listing the available agents (including `general-purpose`); no run is attempted
 - Given no skill agents exist, when a session is created and the skills extension is enabled, then `delegate_to_agent` is still registered and lists the built-in `general-purpose` agent; when the extension is disabled, no `delegate_to_agent` tool is registered
+- Given a delegation call that includes a `description`, when the tool executes, then tool-activity displays surface the `description` alongside the agent, while the delegated run receives only the `task` as the prompt (the run options contain no `description`)
 
 ## Notes
 
