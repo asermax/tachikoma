@@ -1,3 +1,10 @@
+# [3.2.0](https://github.com/asermax/tachikoma/compare/v3.1.2...v3.2.0) (2026-06-14)
+
+
+### Features
+
+* **telegram:** surface preparation status via a reclaimed lead-in message ([3c9f6d8](https://github.com/asermax/tachikoma/commit/3c9f6d81ff33fc47fde68d5b2c61f8897f710ab7))
+
 ## [3.1.2](https://github.com/asermax/tachikoma/compare/v3.1.1...v3.1.2) (2026-06-14)
 
 
