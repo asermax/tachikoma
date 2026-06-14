@@ -12,6 +12,10 @@ const FENCE_PATTERN = /^\s*(```|~~~)/;
  * inline formatting (bold, italic, code) survives.
  */
 export const flattenTables = (text: string): string => {
+  // No pipe means no possible GFM table; skip the line scan entirely. This is the
+  // common case (most messages have no table) and flattenTables runs on every send.
+  if (!text.includes("|")) return text;
+
   const lines = text.split("\n");
   const result: string[] = [];
   let inFence = false;
@@ -20,7 +24,7 @@ export const flattenTables = (text: string): string => {
   while (i < lines.length) {
     const line = lines[i] ?? "";
 
-    if (FENCE_PATTERN.test(line.trim())) {
+    if (FENCE_PATTERN.test(line)) {
       inFence = !inFence;
       result.push(line);
       i += 1;
@@ -54,13 +58,14 @@ export const flattenTables = (text: string): string => {
   return result.join("\n");
 };
 
+/** Strip a single leading/trailing border pipe from a table row. */
+const stripBorders = (line: string): string => line.replace(/^\|/, "").replace(/\|$/, "");
+
 /** A GFM table separator row: pipe-joined cells of dashes (with optional alignment colons). */
-const isTableSeparator = (line: string): boolean => {
-  const trimmed = line.trim();
-  if (!trimmed.includes("|")) return false;
-  const inner = trimmed.replace(/^\|/, "").replace(/\|$/, "");
-  return inner.split("|").every((cell) => /^:?-+:?$/.test(cell.trim()));
-};
+const isTableSeparator = (line: string): boolean =>
+  stripBorders(line.trim())
+    .split("|")
+    .every((cell) => /^:?-+:?$/.test(cell.trim()));
 
 /** A non-empty line containing a pipe that is not itself a separator. */
 const isTableRow = (line: string): boolean => {
@@ -71,10 +76,7 @@ const isTableRow = (line: string): boolean => {
 
 /** Split a table row into trimmed cells, ignoring a single border pipe at each end. */
 const parseCells = (line: string): string[] =>
-  line
-    .trim()
-    .replace(/^\|/, "")
-    .replace(/\|$/, "")
+  stripBorders(line.trim())
     .split("|")
     .map((cell) => cell.trim());
 
@@ -87,7 +89,7 @@ const renderRows = (rows: string[][]): string =>
   rows
     .map((cells) => {
       if (cells.length <= 1) return `- ${cells[0] ?? ""}`;
-      const first = (cells[0] ?? "").trim();
+      const first = cells[0] ?? "";
       const rest = cells.slice(1).join(" · ");
       return first.length > 0 ? `- **${first}**: ${rest}` : `- ${rest}`;
     })
