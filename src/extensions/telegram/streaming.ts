@@ -116,9 +116,7 @@ export class StreamRenderer {
         }
       }
 
-      lastId = await sendWithMarkdownFallback(this.api, this.chatId, chunk, {
-        silent: this.silent,
-      });
+      lastId = await this.sendText(chunk);
     }
 
     return lastId;
@@ -154,9 +152,7 @@ export class StreamRenderer {
       if (display.length === 0 || display === this.lastRendered) return;
 
       if (this.messageId == null) {
-        this.messageId = await sendWithMarkdownFallback(this.api, this.chatId, display, {
-          silent: this.silent,
-        });
+        this.messageId = await this.sendText(display);
       } else {
         await editWithMarkdownFallback(this.api, this.chatId, this.messageId, display);
       }
@@ -185,7 +181,7 @@ export class StreamRenderer {
         await editWithMarkdownFallback(this.api, this.chatId, this.messageId, chunk);
         this.messageId = null;
       } else {
-        await sendWithMarkdownFallback(this.api, this.chatId, chunk, { silent: this.silent });
+        await this.sendText(chunk);
       }
     }
 
@@ -216,6 +212,15 @@ export class StreamRenderer {
     const joined = `${text}\n\n${this.transient}`;
 
     return joined.length <= TELEGRAM_MAX_MESSAGE_LENGTH ? joined : text;
+  }
+
+  /**
+   * Send fresh text as a new message, honoring the renderer's `silent` setting so
+   * streamed work-in-progress and overflow never fire partial pushes. Centralized
+   * so every fresh send from the renderer shares that contract.
+   */
+  private async sendText(text: string): Promise<number> {
+    return sendWithMarkdownFallback(this.api, this.chatId, text, { silent: this.silent });
   }
 
   /**
