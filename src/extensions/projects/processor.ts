@@ -15,6 +15,28 @@ export interface ProjectsProcessorDeps {
 export const projectFallbackMessage = (name: string, now = new Date()): string =>
   `Update ${name} files (${now.toISOString().slice(0, 10)})`;
 
+/**
+ * Push a project's commits to `origin` and log the outcome. Shared by the dirty
+ * pass (after committing) and the clean-ahead pass (push only), so the
+ * `smartPush` + result-classification tail lives in one place.
+ */
+const pushAndReport = async (
+  git: GitApi,
+  repoPath: string,
+  path: string,
+  log: Logger,
+  successMessage: string,
+  failureMessage: string,
+): Promise<void> => {
+  const result = await git.smartPush(repoPath, "origin", "HEAD", { log });
+
+  if (PUSH_SUCCESS.has(result)) {
+    log.info({ path, result }, successMessage);
+  } else {
+    log.warn({ path, result }, failureMessage);
+  }
+};
+
 const commitAndPush = async (
   workspaceRoot: string,
   git: GitApi,
@@ -34,19 +56,19 @@ const commitAndPush = async (
 
   if (message != null) log.info({ path, message }, "committed project changes");
 
-  const result = await git.smartPush(repoPath, "origin", "HEAD", { log });
-
-  if (PUSH_SUCCESS.has(result)) {
-    log.info({ path, result }, "pushed project changes");
-  } else {
-    log.warn({ path, result }, "push failed — changes remain committed locally");
-  }
+  await pushAndReport(
+    git,
+    repoPath,
+    path,
+    log,
+    "pushed project changes",
+    "push failed — changes remain committed locally",
+  );
 };
 
 /**
  * Push (no commit) a project already ahead of its remote — a background task or
- * earlier exchange may have committed without pushing. Mirrors the push half of
- * `commitAndPush` for clean-but-ahead submodules.
+ * earlier exchange may have committed without pushing.
  */
 const pushProject = async (
   workspaceRoot: string,
@@ -54,14 +76,14 @@ const pushProject = async (
   path: string,
   log: Logger,
 ): Promise<void> => {
-  const repoPath = join(workspaceRoot, path);
-  const result = await git.smartPush(repoPath, "origin", "HEAD", { log });
-
-  if (PUSH_SUCCESS.has(result)) {
-    log.info({ path, result }, "pushed ahead project changes");
-  } else {
-    log.warn({ path, result }, "push failed — ahead commits remain local");
-  }
+  await pushAndReport(
+    git,
+    join(workspaceRoot, path),
+    path,
+    log,
+    "pushed ahead project changes",
+    "push failed — ahead commits remain local",
+  );
 };
 
 /**
