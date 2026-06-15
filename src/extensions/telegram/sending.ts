@@ -76,6 +76,33 @@ export const isMessageNotModifiedError = (error: unknown): boolean =>
   /message is not modified/i.test(errorDetail(error));
 
 /**
+ * Send a converted entity payload via `send`; on a Telegram render rejection
+ * resend the payload's text plain (no entities), so formatting is best-effort
+ * but the message is never lost. With `parse_mode` omitted, Telegram treats the
+ * text as literal — ordinary punctuation (`.`, `-`, `!`) can't trigger a parse
+ * failure, so the fallback is rare. `send` is bound by each caller to its own API
+ * surface and options (the channel's `SendApi` + `disable_notification`, or a
+ * tool's `ToolApi` + `reply_markup`), so the convert-then-fallback policy lives
+ * in one place without coupling the two. `send` gets `other` plus `entities` on
+ * the converted attempt and `other` alone on the raw fallback.
+ */
+export const sendEntitiesOrFallback = async <O>(
+  send: (text: string, other: O) => Promise<{ message_id: number }>,
+  payload: TelegramPayload,
+  other: O,
+): Promise<number> => {
+  try {
+    const sent = await send(payload.text, { ...other, entities: payload.entities } as O);
+    return sent.message_id;
+  } catch (error) {
+    if (!isRenderError(error)) throw error;
+
+    const sent = await send(payload.text, other);
+    return sent.message_id;
+  }
+};
+
+/**
  * Send a converted entity payload; on a Telegram render rejection resend the text
  * plain (no entities), so formatting is best-effort but the message is never lost.
  * With `parse_mode` omitted, Telegram treats the text as literal — ordinary
@@ -88,19 +115,11 @@ export const sendWithFallback = async (
   options: { silent?: boolean } = {},
 ): Promise<number> => {
   const base: SendMessageOptions = options.silent === true ? { disable_notification: true } : {};
-
-  try {
-    const sent = await api.sendMessage(chatId, payload.text, {
-      ...base,
-      entities: payload.entities,
-    });
-    return sent.message_id;
-  } catch (error) {
-    if (!isRenderError(error)) throw error;
-
-    const sent = await api.sendMessage(chatId, payload.text, base);
-    return sent.message_id;
-  }
+  return sendEntitiesOrFallback(
+    (text, other) => api.sendMessage(chatId, text, other),
+    payload,
+    base,
+  );
 };
 
 /**
