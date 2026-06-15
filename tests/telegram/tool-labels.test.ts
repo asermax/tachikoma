@@ -108,6 +108,7 @@ describe("summarizeToolActivities", () => {
     expect(summarizeToolActivities([{ toolName: "find", args: {} }])).toBe("Finding files");
     expect(summarizeToolActivities([{ toolName: "edit", args: {} }])).toBe("Editing a file");
     expect(summarizeToolActivities([{ toolName: "write", args: {} }])).toBe("Writing a file");
+    expect(summarizeToolActivities([{ toolName: "ls", args: {} }])).toBe("Listing a directory");
     expect(summarizeToolActivities([{ toolName: "delegate_to_agent", args: {} }])).toBe(
       "Delegating to an agent",
     );
@@ -125,6 +126,9 @@ describe("summarizeToolActivities", () => {
     );
     expect(summarizeToolActivities([{ toolName: "write", args: { path: "/x/z.ts" } }])).toBe(
       "Writing `z.ts`",
+    );
+    expect(summarizeToolActivities([{ toolName: "ls", args: { path: "/x/dir" } }])).toBe(
+      "Listing `dir`",
     );
     expect(
       summarizeToolActivities([{ toolName: "delegate_to_agent", args: { agent: "explorer" } }]),
@@ -244,6 +248,7 @@ describe("summarizeToolActivities", () => {
     expect(summarizeToolActivities(triple("bash"))).toBe("Running 3 commands");
     expect(summarizeToolActivities(triple("edit"))).toBe("Editing 3 files");
     expect(summarizeToolActivities(triple("write"))).toBe("Writing 3 files");
+    expect(summarizeToolActivities(triple("ls"))).toBe("Listing 3 directories");
     expect(summarizeToolActivities(triple("delegate_to_agent"))).toBe("Delegating to 3 agents");
   });
 

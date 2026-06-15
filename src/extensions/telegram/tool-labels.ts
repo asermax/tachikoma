@@ -121,6 +121,8 @@ const TOOL_SUMMARY: Record<string, (args: ToolArgs) => string> = {
     typeof args.path === "string" ? `editing ${code(basename(args.path))}` : "editing a file",
   write: (args) =>
     typeof args.path === "string" ? `writing ${code(basename(args.path))}` : "writing a file",
+  ls: (args) =>
+    typeof args.path === "string" ? `listing ${code(basename(args.path))}` : "listing a directory",
   delegate_to_agent: (args) => delegateLabel(args, "delegating"),
 };
 
@@ -132,6 +134,7 @@ const TOOL_AGGREGATE: Record<string, (count: number) => string> = {
   bash: (count) => `running ${count} commands`,
   edit: (count) => `editing ${count} files`,
   write: (count) => `writing ${count} files`,
+  ls: (count) => `listing ${count} directories`,
   delegate_to_agent: (count) => `delegating to ${count} agents`,
 };
 
