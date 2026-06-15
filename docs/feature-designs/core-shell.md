@@ -31,7 +31,7 @@ Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the 
 1. `loadConfig` — parse TOML (smol-toml), generate the commented default on first run, validate with TypeBox
 2. `createRootLogger` — pino to stderr, pretty or JSON per `logging.pretty`
 3. `Workspace.ensure()` — create the `{workspace}/.tachikoma/pi/sessions` chain
-4. `adaptConfig` (legacy config translation — its result is `Object.assign`-ed into `config` in place so translated values flow through the rest of the wiring), then `adaptWorkspace` (legacy workspace migration) — both from `src/migration/`
+4. `adaptConfig` (legacy config translation — its result is `Object.assign`-ed into `config` in place so translated values flow through the rest of the wiring), then `applyConfigEnv` (write the `[env]` section to `process.env`, after `adaptConfig` so legacy-translated values are included and before any runtime service or pi session reads the environment), then `adaptWorkspace` (legacy workspace migration) — the migrations from `src/migration/`
 5. `createDatabase` + `runMigrations` — better-sqlite3 with WAL/foreign-keys pragmas, drizzle migrations from `drizzle/`
 6. `adaptWorkspaceData` — legacy data migration, after the schema exists (`src/migration/`)
 7. `EventBus`, `Scheduler`, `createRegistrations()` — passive services
@@ -55,6 +55,7 @@ Shutdown is the reverse tail: the abort signal wakes the coordinator loop, whose
 | `src/config/schema.ts` | `ConfigSchema` (TypeBox) with nested-object defaults | `Type.Object(..., { default: {} })` per section so missing sections still get field defaults; model refs are `provider/model-id` strings |
 | `src/config/parse.ts` | `parseWithSchema`: `Clone` → `Default` → `Convert` → `Assert`, aggregating `Errors()` into one `ConfigError` | Shared by app config and per-extension config — one validation behavior everywhere |
 | `src/config/load.ts` | Resolve path (`XDG_CONFIG_HOME` aware), write `DEFAULT_CONFIG_TEMPLATE` on ENOENT, parse | The template itself is parsed on first run, guaranteeing template values equal built-in defaults |
+| `src/config/env.ts` | `applyConfigEnv`: write the `[env]` map onto `process.env`, overwriting existing vars; logs the applied keys only | Process env is the app-wide carrier — pi sessions, spawned tools, and detached processes all inherit it, so config env is set once at startup rather than threaded through services |
 | `src/log.ts` | `createRootLogger` (pino), `componentLogger` child binding `component` | Always stderr (fd 2) so REPL output on stdout stays clean |
 | `src/db/index.ts` | `createDatabase` (better-sqlite3 + drizzle, WAL, foreign keys), `runMigrations` | Migrations folder resolved relative to the source tree (`import.meta.dirname`) |
 | `src/db/core-schema.ts` | Core tables: `sessions`, `app_state` | `post_processing_state` is a JSON column mapping processor name → completed/failed |

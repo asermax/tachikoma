@@ -44,6 +44,13 @@ resumeWindowSeconds = 86400
 # when unset. An unrecognized zone fails config validation.
 # timezone = "America/Argentina/Buenos_Aires"
 
+[env]
+# Environment variables applied to process.env at startup, available app-wide and
+# to anything inheriting the process environment (pi sessions, spawned tools,
+# detached processes). Config-defined values overwrite existing same-named vars.
+# GH_TOKEN = "..."
+# TZ = "America/Argentina/Buenos_Aires"
+
 # Per-extension settings live under [extensions.<name>], for example:
 #
 # [extensions.boundary]

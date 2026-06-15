@@ -35,6 +35,7 @@ The core shell is everything that runs before and around conversations: configur
 | R14 | Bootstrap hooks registered via `app.bootstrap(name, hook)` run after all extension setups complete, sequentially in registration order, named `<extension>:<name>`; a failing first-party hook aborts startup (propagates), while a failing external (third-party) hook is isolated — caught, logged as a warning, and skipped so startup continues |
 | R15 | The channel is selected by the `--channel` flag or `channels.default`; an unknown channel name fails startup with a message listing available channels |
 | R16 | On SIGINT/SIGTERM the main loop exits, the active session closes (running post-processing), the channel stops, and the scheduler stops all jobs |
+| R17 | The `[env]` config section (a `string → string` map) is applied to `process.env` at startup, before any runtime service or pi session is constructed, so the variables are visible app-wide and to anything that inherits the process environment (sessions, spawned tools, detached processes); config-defined values overwrite existing same-named variables |
 
 ## Behaviors
 
@@ -45,7 +46,7 @@ The core shell is everything that runs before and around conversations: configur
 **Acceptance Criteria**:
 - Given no config file exists at the resolved path, when the app starts, then the directory is created, the commented default template is written, the parsed config equals the built-in defaults, and the generation is logged
 - Given a config file that only sets `agent.main`, when loaded, then that value applies, other roles stay unset (falling back along the tier chain at resolution time), and every other value falls back to its default (e.g. `channels.default = "repl"`)
-- Given sections are missing entirely, when loaded, then defaults apply: `workspace.path = "~/tachikoma"`, all `agent` roles unset (model selection defers to pi: settings `defaultProvider`/`defaultModel`, else the first credentialed model), `logging.level = "info"`, `logging.pretty = true`, `channels.default = "repl"`, `sessions.resumeWindowSeconds = 86400`, `scheduler.timezone` unset, `extensions = {}`
+- Given sections are missing entirely, when loaded, then defaults apply: `workspace.path = "~/tachikoma"`, all `agent` roles unset (model selection defers to pi: settings `defaultProvider`/`defaultModel`, else the first credentialed model), `logging.level = "info"`, `logging.pretty = true`, `channels.default = "repl"`, `sessions.resumeWindowSeconds = 86400`, `scheduler.timezone` unset, `env = {}`, `extensions = {}`
 - Given a value of the wrong type (e.g. `resumeWindowSeconds = "soon"`), when loaded, then a `ConfigError` is thrown listing each offending path with its validation message
 - Given `XDG_CONFIG_HOME` is set, when the default path resolves, then it is `$XDG_CONFIG_HOME/tachikoma/config.toml`; otherwise `~/.config/tachikoma/config.toml`
 - Given an extension declaring a `configSchema`, when the host builds its context, then `app.extensionConfig` is the `[extensions.<name>]` section parsed against that schema with defaults applied (errors labeled `extensions.<name>`); without a schema, the raw section (or `{}` when absent) passes through
@@ -104,11 +105,12 @@ The core shell is everything that runs before and around conversations: configur
 - Given a first-party bootstrap hook throws, when startup runs, then the error propagates and the process exits non-zero
 - Given an external (third-party) bootstrap hook throws, when `host.bootstrap()` runs, then the error is caught and logged as a warning, that hook is skipped, and startup continues
 
-### Startup and Shutdown (R15, R16)
+### Startup and Shutdown (R15, R16, R17)
 
 **Acceptance Criteria**:
 - Given `tachikoma --channel telegram`, when the app starts, then the `telegram` channel is used regardless of `channels.default`
 - Given an unknown channel name, when startup resolves the channel, then it fails with an error listing the available channel names
-- Given startup completes, when the order is observed, then it is: config → logging → workspace.ensure → `adaptConfig` (legacy config translation, applied in place) → `adaptWorkspace` (legacy workspace migration) → database + migrations → `adaptWorkspaceData` (legacy data migration) → extension host load → bootstrap hooks → dangling-session recovery → channel start → coordinator main loop. The three `adapt*` steps are best-effort legacy migrations from `src/migration/` (see [migration](migration.md))
+- Given startup completes, when the order is observed, then it is: config → logging → workspace.ensure → `adaptConfig` (legacy config translation, applied in place) → apply `[env]` to `process.env` → `adaptWorkspace` (legacy workspace migration) → database + migrations → `adaptWorkspaceData` (legacy data migration) → extension host load → bootstrap hooks → dangling-session recovery → channel start → coordinator main loop. The three `adapt*` steps are best-effort legacy migrations from `src/migration/` (see [migration](migration.md))
+- Given a non-empty `[env]` section, when the app starts, then each entry is written to `process.env` (overwriting any existing same-named variable) before runtime services or pi sessions are built, and the applied keys are logged (values are not); an empty section applies nothing
 - Given sessions were left open by a previous run, when the app starts, then they are closed and their post-processing runs before the channel starts
 - Given SIGINT or SIGTERM, when received, then the coordinator loop exits, the active session is closed (post-processing runs), the channel stops, and the scheduler stops all jobs

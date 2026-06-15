@@ -61,6 +61,12 @@ export const ConfigSchema = Type.Object({
     { default: {} },
   ),
 
+  // Environment variables applied to process.env at startup, before any runtime
+  // service or pi session is constructed — so they are visible app-wide and to
+  // anything that inherits the process environment (sessions, spawned tools,
+  // detached processes). Config-defined values overwrite existing same-named vars.
+  env: Type.Record(Type.String(), Type.String(), { default: {} }),
+
   // Per-extension sections, validated by each extension's own configSchema.
   extensions: Type.Record(Type.String(), Type.Unknown(), { default: {} }),
 });

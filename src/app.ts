@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { AgentManager } from "./agent/manager.ts";
+import { applyConfigEnv } from "./config/env.ts";
 import { loadConfig } from "./config/load.ts";
 import { Coordinator } from "./coordinator.ts";
 import { createDatabase, runMigrations } from "./db/index.ts";
@@ -46,6 +47,10 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
   // config is shared by reference with everything constructed below; assign in
   // place so the translated values flow through without re-wiring runApp.
   if (adapted != null) Object.assign(config, adapted);
+
+  // Apply config-defined env vars before any runtime service or pi session is built,
+  // so they are visible app-wide and to anything inheriting the process environment.
+  applyConfigEnv(config.env, log);
 
   await adaptWorkspace(workspace, migrationLog);
 
