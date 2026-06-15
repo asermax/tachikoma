@@ -73,25 +73,6 @@ describe("ShutdownController", () => {
     expect(abort.signal.aborted).toBe(true);
   });
 
-  it("respects a custom forceExitMs window", () => {
-    const abort = new AbortController();
-    const exit = vi.fn();
-    const controller = new ShutdownController({
-      abort,
-      log: createFakeLog(),
-      exit,
-      forceExitMs: 5_000,
-    });
-
-    controller.trigger("uncaughtException");
-
-    vi.advanceTimersByTime(4_999);
-    expect(exit).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1);
-    expect(exit).toHaveBeenCalledWith(1);
-  });
-
   it("force-exits immediately on a second trigger and clears the armed timer (AC2)", () => {
     const abort = new AbortController();
     const exit = vi.fn();

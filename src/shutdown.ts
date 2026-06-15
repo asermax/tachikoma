@@ -19,8 +19,6 @@ export interface ShutdownDeps {
   /** The controller whose signal drives the coordinator loop's graceful drain. */
   abort: AbortController;
   log: Logger;
-  /** Override the force-exit window (defaults to SHUTDOWN_FORCE_EXIT_MS). */
-  forceExitMs?: number;
   /**
    * Override the exit primitive so tests do not terminate vitest. Defaults to `process.exit`.
    * Only the timeout/second-signal backstop and a repeated trigger call this; the normal
@@ -79,7 +77,7 @@ export class ShutdownController {
       this.timer = setTimeout(() => {
         this.deps.log.warn({ cause }, "drain timed out — force exit");
         this.exit(1);
-      }, this.deps.forceExitMs ?? SHUTDOWN_FORCE_EXIT_MS);
+      }, SHUTDOWN_FORCE_EXIT_MS);
       this.timer.unref();
     }
   }
