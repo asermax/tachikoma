@@ -1,3 +1,10 @@
+# [3.9.0](https://github.com/asermax/tachikoma/compare/v3.8.0...v3.9.0) (2026-06-15)
+
+
+### Features
+
+* **git:** scrub a project's history, not just the workspace ([3e33449](https://github.com/asermax/tachikoma/commit/3e3344982a336320748e8dbec419e3c7cf8aa47a))
+
 # [3.8.0](https://github.com/asermax/tachikoma/compare/v3.7.0...v3.8.0) (2026-06-15)
 
 
