@@ -2,18 +2,20 @@ import { stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { InputFile } from "grammy";
-import type { InlineKeyboardMarkup, ReactionTypeEmoji } from "grammy/types";
+import type { InlineKeyboardMarkup, MessageEntity, ReactionTypeEmoji } from "grammy/types";
 import { type Static, Type } from "typebox";
 
 import { buildInlineKeyboard, validateButtons } from "./buttons.ts";
 import type { ChannelMessageStore } from "./channel.ts";
+import { toTelegramEntities } from "./entities.ts";
+import { sendEntitiesOrFallback } from "./sending.ts";
 
 /** Narrow grammY API surface the tools call — fakeable in tests. */
 export interface ToolApi {
   sendMessage(
     chatId: number,
     text: string,
-    other?: { reply_markup?: InlineKeyboardMarkup },
+    other?: { reply_markup?: InlineKeyboardMarkup; entities?: MessageEntity[] },
   ): Promise<{ message_id: number }>;
   sendPhoto(
     chatId: number,
@@ -235,9 +237,17 @@ export const handleSendMessageWithButtons = async (
 ): Promise<string> => {
   validateButtons(params.buttons);
 
-  const sent = await deps.api.sendMessage(deps.chatId, params.prompt, {
-    reply_markup: buildInlineKeyboard(params.buttons, params.singleUse ?? true),
-  });
+  // Convert the prompt to a Telegram entity payload so agent markdown in the
+  // prompt renders, reusing the channel's convert-then-fallback policy (raw text
+  // on a render rejection) — best-effort formatting, the message is never lost.
+  // Bound to the tool's own ToolApi (not the channel's SendApi) via the send
+  // callable, so the inline keyboard rides along in `other` on both attempts.
+  const reply_markup = buildInlineKeyboard(params.buttons, params.singleUse ?? true);
+  const messageId = await sendEntitiesOrFallback(
+    (text, other) => deps.api.sendMessage(deps.chatId, text, other),
+    toTelegramEntities(params.prompt),
+    { reply_markup },
+  );
 
   // Map the prompt to the current session so a reply (or tap) routes back to
   // the session that asked the question, mirroring regular outbound recording.
@@ -245,10 +255,10 @@ export const handleSendMessageWithButtons = async (
   // recover the question it answers.
   const sessionId = deps.currentSessionId();
   if (sessionId != null) {
-    deps.store.record(String(sent.message_id), sessionId, "outgoing", params.prompt);
+    deps.store.record(String(messageId), sessionId, "outgoing", params.prompt);
   }
 
-  return `Buttons sent (message_id: ${sent.message_id})`;
+  return `Buttons sent (message_id: ${messageId})`;
 };
 
 // ---- registration -----------------------------------------------------------------

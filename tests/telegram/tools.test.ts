@@ -9,6 +9,7 @@ import {
   unpackCallbackData,
   validateButtons,
 } from "../../src/extensions/telegram/buttons.ts";
+import { toTelegramEntities } from "../../src/extensions/telegram/entities.ts";
 import {
   detectMediaType,
   handlePinMessage,
@@ -232,7 +233,8 @@ describe("handleSendMessageWithButtons", () => {
     });
 
     expect(result).toBe("Buttons sent (message_id: 11)");
-    expect(api.sendMessage).toHaveBeenCalledWith(42, "Proceed?", {
+    const promptPayload = toTelegramEntities("Proceed?");
+    expect(api.sendMessage).toHaveBeenCalledWith(42, promptPayload.text, {
       reply_markup: {
         inline_keyboard: [
           [
@@ -242,6 +244,7 @@ describe("handleSendMessageWithButtons", () => {
           [{ text: "Cancel", callback_data: "btn1:cancel" }],
         ],
       },
+      entities: promptPayload.entities,
     });
   });
 
@@ -254,8 +257,50 @@ describe("handleSendMessageWithButtons", () => {
       singleUse: false,
     });
 
-    expect(api.sendMessage).toHaveBeenCalledWith(42, "Pick", {
+    const pickPayload = toTelegramEntities("Pick");
+    expect(api.sendMessage).toHaveBeenCalledWith(42, pickPayload.text, {
       reply_markup: { inline_keyboard: [[{ text: "A", callback_data: "btnN:a" }]] },
+      entities: pickPayload.entities,
+    });
+  });
+
+  it("renders markdown in the prompt as MessageEntities", async () => {
+    const api = fakeApi();
+    const payload = toTelegramEntities("**Are you sure?**");
+
+    await handleSendMessageWithButtons(buttonDeps(api), {
+      prompt: "**Are you sure?**",
+      buttons: [[{ label: "Yes", value: "yes" }]],
+    });
+
+    expect(payload.entities.some((e) => e.type === "bold")).toBe(true);
+    expect(api.sendMessage).toHaveBeenCalledWith(42, payload.text, {
+      reply_markup: { inline_keyboard: [[{ text: "Yes", callback_data: "btn1:yes" }]] },
+      entities: payload.entities,
+    });
+  });
+
+  it("resends the raw prompt with the keyboard on a render rejection", async () => {
+    const parseErr = Object.assign(new Error("can't parse entities"), {
+      description: "Bad Request: can't parse entities",
+    });
+    const api = fakeApi();
+    api.sendMessage.mockImplementation(async (...args: unknown[]) => {
+      const other = args.at(-1) as { entities?: unknown[] } | undefined;
+      if (other?.entities?.length) throw parseErr;
+      return { message_id: 11 };
+    });
+    const payload = toTelegramEntities("**bold**");
+
+    const result = await handleSendMessageWithButtons(buttonDeps(api), {
+      prompt: "**bold**",
+      buttons: [[{ label: "Yes", value: "yes" }]],
+    });
+
+    expect(result).toBe("Buttons sent (message_id: 11)");
+    expect(api.sendMessage).toHaveBeenCalledTimes(2);
+    expect(api.sendMessage).toHaveBeenLastCalledWith(42, payload.text, {
+      reply_markup: { inline_keyboard: [[{ text: "Yes", callback_data: "btn1:yes" }]] },
     });
   });
 
