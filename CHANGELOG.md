@@ -1,3 +1,10 @@
+# [3.10.0](https://github.com/asermax/tachikoma/compare/v3.9.0...v3.10.0) (2026-06-15)
+
+
+### Features
+
+* **git:** push workspace and ahead projects from commit_workspace ([d36ca19](https://github.com/asermax/tachikoma/commit/d36ca194c787095da8a9544cc6b7dd7acbfafead))
+
 # [3.9.0](https://github.com/asermax/tachikoma/compare/v3.8.0...v3.9.0) (2026-06-15)
 
 
