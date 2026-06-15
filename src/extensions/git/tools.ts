@@ -1,11 +1,17 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-
 import { type ExtensionFactory, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
 import { type Completer, commitAll } from "../../git/commit.ts";
-import { runGitCapture } from "../../git/git.ts";
+import { hasRemote, listSubmodules, runGitCapture } from "../../git/git.ts";
+import {
+  PUSH_RESULT,
+  PUSH_SUCCESS,
+  type PushResult,
+  type RebaseResolver,
+  smartPush,
+} from "../../git/sync.ts";
 import type { Logger } from "../../log.ts";
 import { workspaceFallbackMessage } from "./processor.ts";
 import { SCRUB_RESULT, scrubPaths } from "./scrub.ts";
@@ -14,6 +20,7 @@ export interface GitToolDeps {
   workspaceRoot: string;
   side: Completer;
   log: Logger;
+  resolver?: RebaseResolver;
 }
 
 export const QueryGitStatusParams = Type.Object({});
@@ -28,6 +35,12 @@ export const CommitWorkspaceParams = Type.Object({
   message: Type.Optional(
     Type.String({
       description: "Commit message to use; when omitted, a message is generated from the changes",
+    }),
+  ),
+  push: Type.Optional(
+    Type.Boolean({
+      description:
+        "Push to origin after committing — the workspace and any project submodules with commits ahead of their remote (even when the working tree is clean). Default true; set false to commit only.",
     }),
   ),
 });
@@ -91,8 +104,87 @@ export const handleListRecentCommits = async (
   return `Recent commits:\n${content}`;
 };
 
+/** Map a `smartPush` outcome to a one-line, human-readable summary (null = omit). */
+const describePush = (label: string, result: PushResult): string | null => {
+  if (PUSH_SUCCESS.has(result)) return `Pushed ${label} to origin.`;
+  if (result === PUSH_RESULT.nothingToPush) return null;
+
+  const capital = label.charAt(0).toUpperCase() + label.slice(1);
+
+  return `${capital} push failed — changes remain committed locally.`;
+};
+
+/**
+ * Push a single repo to `origin` (when one is configured) via `smartPush`, with
+ * agent-assisted conflict resolution when a resolver is wired. Returns a summary
+ * line, or null when there is no remote or nothing to push. Never throws — a
+ * failed push surfaces as a line and leaves the commits local.
+ */
+const pushRepo = async (
+  cwd: string,
+  label: string,
+  resolver: RebaseResolver | undefined,
+  log: Logger,
+): Promise<string | null> => {
+  if (!(await hasRemote(cwd, "origin"))) return null;
+
+  try {
+    const result = await smartPush(cwd, "origin", "HEAD", log, resolver);
+
+    if (PUSH_SUCCESS.has(result)) {
+      log.info({ path: cwd, result }, `commit_workspace pushed ${label}`);
+    } else if (result !== PUSH_RESULT.nothingToPush) {
+      log.warn({ path: cwd, result }, `commit_workspace push failed for ${label}`);
+    }
+
+    return describePush(label, result);
+  } catch (error) {
+    // `smartPush`/`hasRemote` never throw by contract; this guards the
+    // impossible case so a repo is never silently dropped — surface it as the
+    // same failure line an enum failure would produce.
+    log.warn({ path: cwd, err: error }, `commit_workspace push errored for ${label}`);
+    return describePush(label, PUSH_RESULT.pushFailed);
+  }
+};
+
+/**
+ * Push the workspace repo, then every registered project submodule, to its
+ * `origin`. Submodules are pushed in `listSubmodules` order; a rejected
+ * submodule is logged and skipped so one failure can't abort the rest.
+ */
+const pushWorkspaceAndSubmodules = async (
+  workspaceRoot: string,
+  resolver: RebaseResolver | undefined,
+  log: Logger,
+): Promise<string[]> => {
+  const lines: string[] = [];
+
+  const workspaceLine = await pushRepo(workspaceRoot, "workspace", resolver, log);
+
+  if (workspaceLine != null) lines.push(workspaceLine);
+
+  const submodulePaths = await listSubmodules(workspaceRoot);
+  const results = await Promise.allSettled(
+    submodulePaths.map(async (path) => {
+      const name = path.split("/").at(-1) ?? path;
+
+      return pushRepo(join(workspaceRoot, path), `project '${name}'`, resolver, log);
+    }),
+  );
+
+  for (const [index, result] of results.entries()) {
+    if (result.status === "fulfilled") {
+      if (result.value != null) lines.push(result.value);
+    } else {
+      log.warn({ path: submodulePaths[index], err: result.reason }, "failed to push submodule");
+    }
+  }
+
+  return lines;
+};
+
 export const handleCommitWorkspace = async (
-  { workspaceRoot, side, log }: GitToolDeps,
+  { workspaceRoot, side, log, resolver }: GitToolDeps,
   args: Static<typeof CommitWorkspaceParams>,
 ): Promise<string> => {
   const message = await commitAll({
@@ -103,9 +195,22 @@ export const handleCommitWorkspace = async (
     log,
   });
 
-  if (message == null) return "Nothing to commit — the working tree is clean.";
+  const lines: string[] = [];
 
-  return `Committed workspace changes: ${message}`;
+  if (message != null) {
+    lines.push(`Committed workspace changes: ${message}`);
+  } else {
+    lines.push("Nothing to commit — the working tree is clean.");
+  }
+
+  // Push even when nothing was committed: a clean tree can still be ahead of its
+  // remote (commits made earlier, a prior push that failed) — that's the case
+  // this tool exists to handle.
+  if (args.push ?? true) {
+    lines.push(...(await pushWorkspaceAndSubmodules(workspaceRoot, resolver, log)));
+  }
+
+  return lines.join("\n");
 };
 
 export const handleScrubWorkspace = async (
@@ -183,10 +288,10 @@ export const createGitToolsFactory =
       name: "commit_workspace",
       label: "Commit Workspace",
       description:
-        "Stage and commit all pending workspace changes in a single commit. A descriptive message is generated from the changes unless one is provided. Changes are also committed automatically at session end — use this only when an immediate commit matters.",
-      promptSnippet: "Commit pending workspace changes on demand",
+        "Stage and commit all pending workspace changes in a single commit, then push the workspace and any project submodules to their origin remotes (pushing any commits already ahead of the remote, even when the working tree is clean). A descriptive message is generated from the changes unless one is provided. Pass push=false to commit without pushing. Changes are also committed and pushed automatically at session end — use this only when an immediate commit or push matters.",
+      promptSnippet: "Commit and push workspace (and project) changes on demand",
       promptGuidelines: [
-        "Use commit_workspace when the user explicitly asks to save or commit workspace changes now.",
+        "Use commit_workspace when the user explicitly asks to save, commit, or push (workspace or project) changes now rather than waiting for session end.",
       ],
       parameters: CommitWorkspaceParams,
       async execute(_toolCallId, params) {

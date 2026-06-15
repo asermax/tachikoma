@@ -39,9 +39,10 @@ export default defineExtension<GitConfig>({
       initializeWorkspaceRepo(workspaceRoot, app.log, resolver),
     );
 
-    app.agent.use(createGitToolsFactory({ workspaceRoot, side: app.agent.side, log: app.log }), {
-      sessionScopes: ["main", "background"],
-    });
+    app.agent.use(
+      createGitToolsFactory({ workspaceRoot, side: app.agent.side, log: app.log, resolver }),
+      { sessionScopes: ["main", "background"] },
+    );
     app.agent.use(createGitGuardrailFactory(app.log), { sessionScopes: ["main", "background"] });
 
     app.agent.use(provideContext(GIT_USAGE, "git-usage"), {
