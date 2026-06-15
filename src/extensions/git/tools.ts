@@ -139,48 +139,43 @@ const pushRepo = async (
 
     return describePush(label, result);
   } catch (error) {
-    // `smartPush`/`hasRemote` never throw by contract; this guards the
-    // impossible case so a repo is never silently dropped — surface it as the
-    // same failure line an enum failure would produce.
+    // `smartPush`/`hasRemote` never throw by contract; this catch guarantees
+    // `pushRepo` resolves rather than rejects, so the parallel batch in
+    // `pushWorkspaceAndSubmodules` can use `Promise.all` and one bad repo can't
+    // abort its siblings. Surface the impossible throw as the same failure line
+    // an enum failure would produce.
     log.warn({ path: cwd, err: error }, `commit_workspace push errored for ${label}`);
     return describePush(label, PUSH_RESULT.pushFailed);
   }
 };
 
 /**
- * Push the workspace repo, then every registered project submodule, to its
- * `origin`. Submodules are pushed in `listSubmodules` order; a rejected
- * submodule is logged and skipped so one failure can't abort the rest.
+ * Push the workspace repo and every registered project submodule to its
+ * `origin`. All repos push in parallel — the submodule pointer is committed
+ * before this runs, so they're independent — and `pushRepo` never rejects, so a
+ * failing repo can't abort its siblings. Lines come back in workspace-then-
+ * `listSubmodules` order; a repo with no remote or nothing to push yields none.
  */
 const pushWorkspaceAndSubmodules = async (
   workspaceRoot: string,
   resolver: RebaseResolver | undefined,
   log: Logger,
 ): Promise<string[]> => {
-  const lines: string[] = [];
-
-  const workspaceLine = await pushRepo(workspaceRoot, "workspace", resolver, log);
-
-  if (workspaceLine != null) lines.push(workspaceLine);
-
   const submodulePaths = await listSubmodules(workspaceRoot);
-  const results = await Promise.allSettled(
-    submodulePaths.map(async (path) => {
-      const name = path.split("/").at(-1) ?? path;
 
-      return pushRepo(join(workspaceRoot, path), `project '${name}'`, resolver, log);
-    }),
+  const targets = [
+    { cwd: workspaceRoot, label: "workspace" },
+    ...submodulePaths.map((path) => ({
+      cwd: join(workspaceRoot, path),
+      label: `project '${path.split("/").at(-1) ?? path}'`,
+    })),
+  ];
+
+  const results = await Promise.all(
+    targets.map(({ cwd, label }) => pushRepo(cwd, label, resolver, log)),
   );
 
-  for (const [index, result] of results.entries()) {
-    if (result.status === "fulfilled") {
-      if (result.value != null) lines.push(result.value);
-    } else {
-      log.warn({ path: submodulePaths[index], err: result.reason }, "failed to push submodule");
-    }
-  }
-
-  return lines;
+  return results.filter((line): line is string => line != null);
 };
 
 export const handleCommitWorkspace = async (
