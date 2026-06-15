@@ -1,11 +1,11 @@
 import { Type } from "typebox";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
+import { createGitResolver } from "../../git/resolve.ts";
 import { defineExtension } from "../api.ts";
 import { createGitGuardrailFactory } from "./guardrail.ts";
 import { initializeWorkspaceRepo } from "./hooks.ts";
 import { createGitProcessor } from "./processor.ts";
-import { createGitResolver } from "./resolve.ts";
 import { createGitToolsFactory } from "./tools.ts";
 import { GIT_USAGE } from "./usage.ts";
 

@@ -3,9 +3,9 @@ import { isAbsolute, resolve } from "node:path";
 
 import { type ToolDefinition, truncateTail } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { SideRunner } from "../../agent/side-run.ts";
-import { runGitCapture } from "../../git/git.ts";
-import type { RebaseResolver } from "../../git/sync.ts";
+import type { SideRunner } from "../agent/side-run.ts";
+import { runGitCapture } from "./git.ts";
+import type { RebaseResolver } from "./sync.ts";
 
 export type AgentRunner = Pick<SideRunner, "run">;
 

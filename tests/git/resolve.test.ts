@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { HeadlessRunResult } from "../../src/agent/side-run.ts";
-import { createGitResolver } from "../../src/extensions/git/resolve.ts";
+import { createGitResolver } from "../../src/git/resolve.ts";
 import { commitFile, fakeLogger, initRepo, makeTempDir } from "./helpers.ts";
 
 const log = fakeLogger();
