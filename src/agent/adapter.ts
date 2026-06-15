@@ -50,6 +50,9 @@ const collectUsage = (messages: AgentEndEvent["messages"]): ResultUsage => {
 
 const mapSessionEvent = (event: SessionEvent): AgentEvent | null => {
   switch (event.type) {
+    case "agent_start":
+      return { kind: "agent_start" };
+
     case "message_update": {
       const update = event.assistantMessageEvent;
 

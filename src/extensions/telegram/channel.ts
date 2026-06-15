@@ -3,6 +3,7 @@ import { type Bot, GrammyError, HttpError } from "grammy";
 import type { Message } from "grammy/types";
 
 import type { Channel, ChannelRuntime, Delivery, Exchange } from "../../channels/types.ts";
+import type { AgentEvent } from "../../domain/agent-events.ts";
 import type { InboundMessage } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
 import { unpackCallbackData } from "./buttons.ts";
@@ -201,69 +202,131 @@ export class TelegramChannel implements Channel {
   async respond({ message, events }: Exchange): Promise<void> {
     const log = this.log();
 
-    await this.mutex.run(async () => {
-      // Reclaim the preparation lead-in (if any) as the streaming message so the
-      // response text replaces it in place instead of opening a second message.
-      const seedMessageId = this.leadInMessageId;
-      this.leadInMessageId = null;
+    // The mutex is held only for the seed handoff and finalize — not for the entire
+    // streaming loop. This keeps the lock free during before_agent_start so that
+    // preparation-phase status calls (e.g. skill detection) can send their lead-in
+    // messages without queueing behind respond(). The first event is agent_start,
+    // emitted by pi after all before_agent_start handlers have settled, so the
+    // lead-in is guaranteed to have arrived by the time we claim it.
+    const startedAt = Date.now();
+    let notifyingToolUsed = false;
 
-      const stopTyping = startTyping(this.bot.api, this.options.chatId, log);
-      const renderer = new StreamRenderer(
-        this.bot.api,
-        this.options.chatId,
-        log,
-        seedMessageId,
-        this.options.pushNotifications,
-      );
-      this.activeRenderer = renderer;
-      const startedAt = Date.now();
-      let notifyingToolUsed = false;
+    // Initialize the renderer on first event (agent_start), under a brief mutex hold.
+    // Returns null if no events arrive (e.g. aborted before agent_start).
+    const initResult = await this.initStreamingRenderer(events);
+    if (initResult == null) return;
 
-      try {
-        for await (const event of events) {
-          switch (event.kind) {
-            case "text":
-              await renderer.appendText(event.text);
-              break;
+    const { renderer, remainingEvents, stopTyping } = initResult;
+    this.activeRenderer = renderer;
 
-            case "tool-start":
-              // Tools that already push (file/pin/buttons) make a completion push
-              // redundant — skip the copy-delete so the user isn't double-notified.
-              if (NOTIFYING_TOOLS.has(event.toolName)) notifyingToolUsed = true;
-              await renderer.appendTool(event.toolName, event.args);
-              break;
+    try {
+      for await (const event of remainingEvents) {
+        switch (event.kind) {
+          case "text":
+            await renderer.appendText(event.text);
+            break;
 
-            case "status":
-              await renderer.showTransient(event.text);
-              break;
+          case "tool-start":
+            // Tools that already push (file/pin/buttons) make a completion push
+            // redundant — skip the copy-delete so the user isn't double-notified.
+            if (NOTIFYING_TOOLS.has(event.toolName)) notifyingToolUsed = true;
+            await renderer.appendTool(event.toolName, event.args);
+            break;
 
-            case "error":
-              await this.sendErrorNotice(event.message, event.recoverable, log);
-              break;
+          case "status":
+            await renderer.showTransient(event.text);
+            break;
 
-            case "result":
-              if (event.result != null) {
-                log.info(
-                  {
-                    sessionId: event.sessionId,
-                    costUsd: event.result.costUsd,
-                    tokens: event.result.usage.totalTokens,
-                  },
-                  "exchange complete",
-                );
-              }
-              break;
+          case "error":
+            await this.sendErrorNotice(event.message, event.recoverable, log);
+            break;
 
-            default:
-              break;
-          }
+          case "result":
+            if (event.result != null) {
+              log.info(
+                {
+                  sessionId: event.sessionId,
+                  costUsd: event.result.costUsd,
+                  tokens: event.result.usage.totalTokens,
+                },
+                "exchange complete",
+              );
+            }
+            break;
+
+          default:
+            break;
         }
-      } finally {
-        this.activeRenderer = null;
-        stopTyping();
+      }
+    } finally {
+      this.activeRenderer = null;
+      stopTyping();
+    }
+
+    const outboundId = await this.finalizeResponse(renderer, startedAt, notifyingToolUsed, log);
+
+    // Routing has settled by now: map both the user's message and the bot's
+    // reply to the receiving session so a future reply-to can resolve them.
+    const sessionId = this.options.currentSessionId();
+    if (sessionId != null) {
+      const inboundId = message.metadata.messageId;
+      if (typeof inboundId === "number") {
+        this.recordMessage(String(inboundId), sessionId, "incoming");
       }
 
-      const finalized = await renderer.finalize();
+      if (outboundId != null) this.recordMessage(String(outboundId), sessionId, "outgoing");
+    }
+  }
+
+  /**
+   * Consume the first event from the stream and use it to initialize the streaming
+   * renderer under a brief mutex hold. Returns null if no events arrive (e.g.
+   * aborted before agent_start). The lead-in message (if any) is claimed as the
+   * renderer's seed so the streamed response edits it in place.
+   */
+  private async initStreamingRenderer(events: AsyncIterable<AgentEvent>): Promise<{
+    renderer: StreamRenderer;
+    remainingEvents: AsyncIterable<AgentEvent>;
+    stopTyping: () => void;
+  } | null> {
+    const iterator = events[Symbol.asyncIterator]();
+    const first = await iterator.next();
+    if (first.done) return null;
+
+    // Re-wrap the remaining events as a new iterable.
+    const remaining: AsyncIterable<AgentEvent> = {
+      [Symbol.asyncIterator]: () => iterator,
+    };
+
+    const log = this.log();
+    const seedMessageId = this.leadInMessageId;
+    this.leadInMessageId = null;
+    const stopTyping = startTyping(this.bot.api, this.options.chatId, log);
+    const renderer = new StreamRenderer(
+      this.bot.api,
+      this.options.chatId,
+      log,
+      seedMessageId,
+      this.options.pushNotifications,
+    );
+
+    // The mutex serializes with any in-flight showLeadIn that may still be
+    // delivering the lead-in message to Telegram.
+    await this.mutex.run(async () => {
+      this.activeRenderer = renderer;
+    });
+
+    return { renderer, remainingEvents: remaining, stopTyping };
+  }
+
+  private async finalizeResponse(
+    renderer: StreamRenderer,
+    startedAt: number,
+    notifyingToolUsed: boolean,
+    log: Logger,
+  ): Promise<number | null> {
+    return this.mutex.run(async () => {
+      const id = await renderer.finalize();
 
       // Telegram edits never notify, so a streamed response — edited in place as
       // it arrives — never fires a push. Force one on completion by copying the
@@ -277,13 +340,13 @@ export class TelegramChannel implements Channel {
       const shouldPush =
         this.options.pushNotifications &&
         !notifyingToolUsed &&
-        finalized != null &&
+        id != null &&
         elapsedSeconds >= this.options.pushNotificationMinSeconds;
 
-      let outboundId = finalized;
-      if (shouldPush && finalized != null) {
+      let outboundId = id;
+      if (shouldPush && id != null) {
         try {
-          outboundId = await forceNotification(this.bot.api, this.options.chatId, finalized);
+          outboundId = await forceNotification(this.bot.api, this.options.chatId, id);
         } catch (error) {
           log.debug(
             { err: error },
@@ -294,17 +357,7 @@ export class TelegramChannel implements Channel {
 
       if (outboundId != null) this.lastOutboundId = outboundId;
 
-      // Routing has settled by now: map both the user's message and the bot's
-      // reply to the receiving session so a future reply-to can resolve them.
-      const sessionId = this.options.currentSessionId();
-      if (sessionId != null) {
-        const inboundId = message.metadata.messageId;
-        if (typeof inboundId === "number") {
-          this.recordMessage(String(inboundId), sessionId, "incoming");
-        }
-
-        if (outboundId != null) this.recordMessage(String(outboundId), sessionId, "outgoing");
-      }
+      return outboundId;
     });
   }
 

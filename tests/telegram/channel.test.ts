@@ -207,11 +207,14 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
 };
 
 async function* stream(events: AgentEvent[]): AsyncGenerator<AgentEvent> {
+  // agent_start is always the first event — it signals that before_agent_start
+  // handlers have settled and the renderer should be initialized.
+  yield { kind: "agent_start" };
   for (const event of events) yield event;
 }
 
 const pushableStream = () => {
-  const queue: AgentEvent[] = [];
+  const queue: AgentEvent[] = [{ kind: "agent_start" }];
   let closed = false;
   let notify: (() => void) | null = null;
 

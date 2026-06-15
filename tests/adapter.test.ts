@@ -213,7 +213,7 @@ describe("streamPrompt", () => {
 
   it("drops unrecognized session events", async () => {
     const session = fakeSession(async (emit) => {
-      emit({ type: "agent_start" });
+      emit({ type: "queue_update" });
     });
 
     const events = await collect(streamPrompt(session, "hi"));

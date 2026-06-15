@@ -18,6 +18,7 @@ export interface ResultUsage {
 }
 
 export type AgentEvent =
+  | { kind: "agent_start" }
   | { kind: "text"; text: string }
   | { kind: "thinking"; text: string }
   | { kind: "tool-start"; toolCallId: string; toolName: string; args: Record<string, unknown> }
