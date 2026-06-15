@@ -56,11 +56,12 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
       mappings.set(messageId, sessionId);
     }),
     findSessionId: vi.fn((messageId: string) => mappings.get(messageId) ?? null),
-    findMessageText: vi.fn((messageId: string) => prompts.get(messageId) ?? null),
-    findLatestMessageId: vi.fn(
-      (sessionId: number) =>
-        recorded.filter((r) => r.sessionId === sessionId).at(-1)?.messageId ?? null,
-    ),
+    findMessage: vi.fn((messageId: string) => {
+      const sessionId = mappings.get(messageId);
+      if (sessionId == null) return null;
+      const latest = recorded.filter((r) => r.sessionId === sessionId).at(-1)?.messageId ?? null;
+      return { sessionId, text: prompts.get(messageId) ?? null, isLatest: latest === messageId };
+    }),
   };
 
   const api = {

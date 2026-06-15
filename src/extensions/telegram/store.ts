@@ -56,26 +56,34 @@ export class TelegramMessageStore implements ChannelMessageStore {
     );
   }
 
-  /** The stored text of an outgoing message (e.g. a button prompt), if any. */
-  findMessageText(messageId: string): string | null {
-    return (
-      this.db
-        .select({ text: channelMessages.text })
-        .from(channelMessages)
-        .where(
-          and(eq(channelMessages.channel, CHANNEL_NAME), eq(channelMessages.messageId, messageId)),
-        )
-        .get()?.text ?? null
-    );
+  /**
+   * Resolves a recorded message to its owning session, stored text, and whether
+   * it is that session's most recent recorded message. Returns null for an
+   * unrecorded id. Centralizes the "is this reference to the live-latest message
+   * or an older one worth adding context for" decision (replies, reactions,
+   * button taps) so callers don't re-derive it from findSessionId + a latest scan.
+   */
+  findMessage(
+    messageId: string,
+  ): { sessionId: number; text: string | null; isLatest: boolean } | null {
+    const row = this.db
+      .select({ sessionId: channelMessages.sessionId, text: channelMessages.text })
+      .from(channelMessages)
+      .where(
+        and(eq(channelMessages.channel, CHANNEL_NAME), eq(channelMessages.messageId, messageId)),
+      )
+      .get();
+    if (row == null) return null;
+
+    return {
+      sessionId: row.sessionId,
+      text: row.text,
+      isLatest: this.latestMessageId(row.sessionId) === messageId,
+    };
   }
 
-  /**
-   * The most recently recorded message id for a session (any direction), by
-   * created_at then row id. Used to tell whether an inbound references the
-   * session's latest message (already live in the agent's context) or an older
-   * one worth prepending context for.
-   */
-  findLatestMessageId(sessionId: number): string | null {
+  /** The most recently recorded message id for a session, by created_at then row id. */
+  private latestMessageId(sessionId: number): string | null {
     return (
       this.db
         .select({ messageId: channelMessages.messageId })

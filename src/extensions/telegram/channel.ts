@@ -42,10 +42,15 @@ export interface ChannelMessageStore {
     text?: string,
   ): void;
   findSessionId(messageId: string): number | null;
-  /** The stored text of an outgoing message (e.g. a button prompt), if any. */
-  findMessageText(messageId: string): string | null;
-  /** The most recently recorded message id for a session, or null if none. */
-  findLatestMessageId(sessionId: number): string | null;
+  /**
+   * Resolves a recorded message to its owning session, stored text, and whether
+   * it is that session's most recent recorded message (null when unrecorded).
+   * Used to decide whether an inbound reply/reaction/button-tap references the
+   * live-latest message (no context needed) or an older one (context prepended).
+   */
+  findMessage(
+    messageId: string,
+  ): { sessionId: number; text: string | null; isLatest: boolean } | null;
 }
 
 export interface TelegramChannelOptions {
@@ -148,11 +153,9 @@ export class TelegramChannel implements Channel {
 
       // Prepend the prompt only for an older button message; a tap on the
       // session's latest message is already live in the agent's context.
-      const messageIdStr = messageId != null ? String(messageId) : null;
-      const prompt =
-        messageIdStr != null && !this.isLatestMessage(messageIdStr)
-          ? this.options.store.findMessageText(messageIdStr)
-          : null;
+      const reference =
+        messageId != null ? this.options.store.findMessage(String(messageId)) : null;
+      const prompt = reference != null && !reference.isLatest ? reference.text : null;
 
       runtime.submit(mapButtonTap(unpacked.value, messageId, { prompt }));
     });
@@ -172,13 +175,12 @@ export class TelegramChannel implements Channel {
       // Prepend the owning session's last exchange only when the reaction targets
       // an older message; a reaction to the latest is already live in the agent's
       // context. An unrecorded target falls back to the active session's exchange.
-      const recordedSessionId = this.options.store.findSessionId(messageId);
-      const isLatest =
-        recordedSessionId != null &&
-        this.options.store.findLatestMessageId(recordedSessionId) === messageId;
-      const owningSessionId = recordedSessionId ?? this.options.currentSessionId();
+      const reference = this.options.store.findMessage(messageId);
+      const owningSessionId = reference?.sessionId ?? this.options.currentSessionId();
       const lastExchange =
-        isLatest || owningSessionId == null ? null : this.options.lastExchangeOf(owningSessionId);
+        (reference?.isLatest ?? false) || owningSessionId == null
+          ? null
+          : this.options.lastExchangeOf(owningSessionId);
 
       const inbound = mapReaction(event, { lastExchange });
       if (inbound == null) return;
@@ -239,26 +241,15 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * Whether a referenced message is its owning session's most recent recorded
-   * message. Context (reply quotes, reaction last-exchange, button prompts) is
-   * only prepended for older messages; the latest is already live in the agent's
-   * context. An unrecorded message resolves to false (treated as older — add
-   * context) so a stale or foreign reference still gets context.
-   */
-  private isLatestMessage(messageId: string): boolean {
-    const sessionId = this.options.store.findSessionId(messageId);
-    if (sessionId == null) return false;
-    return this.options.store.findLatestMessageId(sessionId) === messageId;
-  }
-
-  /**
    * Whether to suppress the reply quote: only when the reply targets its
    * session's latest message (already live in the agent's context). Routing is
    * unaffected — `routeReply` still stamps `resumeSessionId` from the target.
+   * An unrecorded target resolves to false (treated as older — quote it) so a
+   * stale or foreign reference still gets context.
    */
   private shouldSkipQuote(message: Pick<Message, "reply_to_message">): boolean {
     const target = replyTargetId(message);
-    return target != null && this.isLatestMessage(target);
+    return target != null && (this.options.store.findMessage(target)?.isLatest ?? false);
   }
 
   async respond({ message, events }: Exchange): Promise<void> {
