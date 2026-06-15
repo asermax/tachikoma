@@ -1,3 +1,15 @@
+# [3.16.0](https://github.com/asermax/tachikoma/compare/v3.15.0...v3.16.0) (2026-06-15)
+
+
+### Bug Fixes
+
+* **coordinator:** update quarantine test for recoverUnprocessedSessions rename ([e4352e3](https://github.com/asermax/tachikoma/commit/e4352e3e18710e7aacac4f19658cac6fcc728d27))
+
+
+### Features
+
+* **shutdown:** drain post-processing on uncaught errors before exit ([914a595](https://github.com/asermax/tachikoma/commit/914a595133f54192dca4967bbbc624cbc4fa55be))
+
 # [3.15.0](https://github.com/asermax/tachikoma/compare/v3.14.0...v3.15.0) (2026-06-15)
 
 
