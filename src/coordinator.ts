@@ -346,21 +346,18 @@ export class Coordinator {
       const active = await this.ensureSession(message.channel);
       const wasErrored = active.record.error;
 
-      // The channel consumes the stream; we observe it in flight to detect a terminal encoding
-      // error (the adapter yields `error` only when `session.prompt()` rejects). An encoding
-      // failure leaves the transcript/output un-encodable, so the session is quarantined.
+      // Observe the stream in flight for a terminal encoding error — an encoding failure leaves the
+      // transcript un-encodable, so the session is quarantined below.
       const events = tapEncodingErrors(streamPrompt(active.session, renderPrompt(message)), () => {
         encodingError = true;
       });
       await this.channel?.respond({ message, events });
 
       if (encodingError) {
-        this.registry.markErrored(active.record.id);
-        this.log.warn({ sessionId: active.record.id }, "session quarantined — encoding failure");
-        const refreshed = this.registry.get(active.record.id);
-        if (refreshed != null && this.active?.record.id === refreshed.id) {
-          this.active = { ...this.active, record: refreshed };
-        }
+        // Sync the quarantined record into the active session so the next exchange sees wasErrored.
+        const refreshed = this.registry.markErrored(active.record.id);
+        this.log.warn({ sessionId: refreshed.id }, "session quarantined — encoding failure");
+        this.syncActiveRecord(refreshed);
       }
 
       // A quarantined session's derived state (rolling summary, last exchange) is not maintained —
@@ -416,6 +413,13 @@ export class Coordinator {
     await invoke(0);
   }
 
+  /** Propagate a freshly-read record into the cached active session, if it is still the active one. */
+  private syncActiveRecord(refreshed: SessionRecord): void {
+    if (this.active?.record.id === refreshed.id) {
+      this.active = { ...this.active, record: refreshed };
+    }
+  }
+
   private async runExchangeProcessors(
     active: ActiveSession,
     message: InboundMessage,
@@ -443,9 +447,7 @@ export class Coordinator {
 
     // Refresh the cached record — processors typically update summary/lastExchange.
     const refreshed = this.registry.get(active.record.id);
-    if (refreshed != null && this.active?.record.id === refreshed.id) {
-      this.active = { ...this.active, record: refreshed };
-    }
+    if (refreshed != null) this.syncActiveRecord(refreshed);
   }
 
   private async runPostProcessing(record: SessionRecord): Promise<void> {
@@ -559,11 +561,9 @@ export class Coordinator {
 }
 
 /**
- * Forward an exchange's event stream unchanged while watching for a terminal encoding error.
- * The adapter yields an `error` event only when `session.prompt()` rejects; an `encoding` kind
- * means the transcript/output is un-encodable, so the caller quarantines the session. This is a
- * single-consumer passthrough (not a tee): the channel still sees every event, the coordinator
- * just observes the error kind in flight.
+ * Pass-through for an exchange's event stream that flags when it ends in a terminal encoding
+ * error. The channel still consumes every event unchanged; this only observes the error kind in
+ * flight (single-consumer passthrough, not a tee).
  */
 const tapEncodingErrors = (
   events: AsyncIterable<AgentEvent>,
