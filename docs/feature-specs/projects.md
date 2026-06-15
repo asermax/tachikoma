@@ -4,7 +4,7 @@
 
 ## Overview
 
-External code repositories managed as git submodules under `projects/` in the workspace. The agent registers, lists, and deregisters projects mid-conversation through pi tools; registered projects are synchronized on startup, their git state is injected before every prompt, and dirty projects are committed and pushed automatically when a session closes — just before the workspace commit, so submodule pointer updates land in the same pass (see [git-workspace.md](git-workspace.md)).
+External code repositories managed as git submodules under `projects/` in the workspace. The agent registers, lists, and deregisters projects mid-conversation through pi tools; registered projects are synchronized on startup, their git state is injected before every prompt, and dirty projects are committed and pushed automatically when a session closes — just before the workspace commit, so submodule pointer updates land in the same pass (see [git-workspace.md](git-workspace.md)). A project's git history can also be purged via the `scrub` tool's optional `project` parameter (see [git-workspace.md](git-workspace.md)).
 
 Git authentication (SSH keys, tokens) is the user's responsibility: the system assumes credentials are configured externally and surfaces failures as tool errors or warning logs.
 
