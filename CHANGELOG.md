@@ -1,3 +1,10 @@
+# [3.15.0](https://github.com/asermax/tachikoma/compare/v3.14.0...v3.15.0) (2026-06-15)
+
+
+### Features
+
+* **sessions:** quarantine sessions that hit encoding errors ([09e2724](https://github.com/asermax/tachikoma/commit/09e2724b18984fb8d38dddb800082131504bfea5))
+
 # [3.14.0](https://github.com/asermax/tachikoma/compare/v3.13.0...v3.14.0) (2026-06-15)
 
 
