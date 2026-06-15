@@ -1,3 +1,11 @@
+# [3.7.0](https://github.com/asermax/tachikoma/compare/v3.6.0...v3.7.0) (2026-06-15)
+
+
+### Features
+
+* **agent:** expose isForking() to scope per-turn work out of forks ([dff3740](https://github.com/asermax/tachikoma/commit/dff3740c9a642214c332336dba87872a4ad5fd34))
+* **skills:** proactively recommend relevant skills per turn ([4b84491](https://github.com/asermax/tachikoma/commit/4b844912c2a16ca3796bc0b244fc272b38882da3))
+
 # [3.6.0](https://github.com/asermax/tachikoma/compare/v3.5.0...v3.6.0) (2026-06-14)
 
 
