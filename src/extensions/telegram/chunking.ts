@@ -72,4 +72,4 @@ const hardSplit = (line: string, limit: number): string[] => {
   return fragments;
 };
 
-const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff;
+export const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff;

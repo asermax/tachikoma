@@ -129,9 +129,9 @@ export const editWithFallback = async (
 };
 
 /** Convert GFM markdown to an entity payload, then split it entity-safely at the length limit. */
-export const convertAndSplit = (text: string, limit?: number): TelegramPayload[] => {
+export const convertAndSplit = (text: string): TelegramPayload[] => {
   const { text: body, entities } = toTelegramEntities(text);
-  return splitMessageWithEntities(body, entities, limit);
+  return splitMessageWithEntities(body, entities);
 };
 
 /**

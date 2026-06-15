@@ -1,6 +1,6 @@
 import type { MessageEntity } from "grammy/types";
 import MarkdownIt from "markdown-it";
-import { TELEGRAM_MAX_MESSAGE_LENGTH } from "./chunking.ts";
+import { isLowSurrogate, TELEGRAM_MAX_MESSAGE_LENGTH } from "./chunking.ts";
 import { flattenTables } from "./markdown.ts";
 
 /** A converted message ready for `sendMessage`/`editMessageText` with `parse_mode` omitted. */
@@ -283,8 +283,6 @@ export const toTelegramEntities = (text: string): TelegramPayload => {
 /** True if split position `p` falls strictly inside an entity (would cut it). */
 const isInsideEntity = (p: number, entities: MessageEntity[]): boolean =>
   entities.some((e) => e.offset < p && p < e.offset + e.length);
-
-const isLowSurrogate = (code: number): boolean => code >= 0xdc00 && code <= 0xdfff;
 
 /**
  * The largest position `p` with `cursor < p <= maxEnd` that sits right after an
