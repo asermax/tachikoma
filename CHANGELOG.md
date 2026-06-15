@@ -1,3 +1,10 @@
+# [3.17.0](https://github.com/asermax/tachikoma/compare/v3.16.0...v3.17.0) (2026-06-15)
+
+
+### Features
+
+* **telegram:** render send_message_with_buttons prompt as entities ([00f3bef](https://github.com/asermax/tachikoma/commit/00f3bef8a0cdd317780605998bbf0426e78d18ec))
+
 # [3.16.0](https://github.com/asermax/tachikoma/compare/v3.15.0...v3.16.0) (2026-06-15)
 
 
