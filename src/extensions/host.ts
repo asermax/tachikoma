@@ -190,6 +190,7 @@ export class ExtensionHost {
         side: new SideRunner(services.agent, log),
         forkAndContinue: (sourceSessionFile, prompt, tier, tools) =>
           services.agent.forkAndContinue(sourceSessionFile, prompt, tier, tools),
+        isForking: () => services.agent.isForking(),
       },
 
       inbound: {

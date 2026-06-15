@@ -93,6 +93,11 @@ export class AgentManager {
   private readonly sources: AgentSessionSources;
   private readonly log: Logger;
 
+  // Number of forkAndContinue runs in flight. A non-bare fork binds every pi factory, so any
+  // before_agent_start work would otherwise also fire inside the memory/context post-processing
+  // forks; extensions consult isForking() to scope such work to genuine top-level turns.
+  private forkDepth = 0;
+
   constructor(workspace: Workspace, config: Config, sources: AgentSessionSources, log: Logger) {
     this.workspace = workspace;
     this.sources = sources;
@@ -202,16 +207,30 @@ export class AgentManager {
     tier: ModelTier,
     tools?: string[],
   ): Promise<void> {
-    const session = await this.open({
-      forkFromFile: sourceSessionFile,
-      tier,
-      ...(tools != null ? { tools } : {}),
-    });
+    // Mark the fork in flight before open() so isForking() stays true for the whole run —
+    // including the before_agent_start handlers fired during session.prompt — and the finally
+    // releases the counter even if open() throws.
+    this.forkDepth += 1;
 
     try {
-      await session.prompt(prompt);
+      const session = await this.open({
+        forkFromFile: sourceSessionFile,
+        tier,
+        ...(tools != null ? { tools } : {}),
+      });
+
+      try {
+        await session.prompt(prompt);
+      } finally {
+        session.dispose();
+      }
     } finally {
-      session.dispose();
+      this.forkDepth -= 1;
     }
+  }
+
+  /** Whether any forkAndContinue run is currently in flight (see `forkDepth`). */
+  isForking(): boolean {
+    return this.forkDepth > 0;
   }
 }

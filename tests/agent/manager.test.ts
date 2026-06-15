@@ -428,3 +428,68 @@ describe("AgentManager.forkAndContinue", () => {
     expect(session.dispose).toHaveBeenCalledOnce();
   });
 });
+
+describe("AgentManager.isForking", () => {
+  it("is true only while a fork run is in flight (AC15)", async () => {
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    let duringPrompt: boolean | undefined;
+    const session = {
+      prompt: vi.fn(async () => {
+        duringPrompt = manager.isForking();
+      }),
+      dispose: vi.fn(),
+    };
+    createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
+
+    expect(manager.isForking()).toBe(false);
+    await manager.forkAndContinue("/sessions/src.json", "go", "processor");
+
+    expect(duringPrompt).toBe(true);
+    expect(manager.isForking()).toBe(false);
+  });
+
+  it("stays true across a nested fork and nets back to false (AC15)", async () => {
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const observed: boolean[] = [];
+    let depth = 0;
+    createAgentSessionMock.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn(async () => {
+          if (depth++ === 0) await manager.forkAndContinue("/inner.json", "go", "processor");
+          observed.push(manager.isForking());
+        }),
+        dispose: vi.fn(),
+      },
+      modelFallbackMessage: null,
+    }));
+
+    await manager.forkAndContinue("/outer.json", "go", "processor");
+
+    expect(observed).toEqual([true, true]);
+    expect(manager.isForking()).toBe(false);
+  });
+
+  it("nets back to false after two parallel forks resolve (AC15)", async () => {
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const gates: Array<() => void> = [];
+    createAgentSessionMock.mockImplementation(async () => ({
+      session: {
+        prompt: vi.fn(() => new Promise<void>((resolve) => gates.push(resolve))),
+        dispose: vi.fn(),
+      },
+      modelFallbackMessage: null,
+    }));
+
+    const first = manager.forkAndContinue("/a.json", "go", "processor");
+    const second = manager.forkAndContinue("/b.json", "go", "processor");
+
+    expect(manager.isForking()).toBe(true);
+
+    // Let both opens + prompts reach the gate, then release them.
+    await vi.waitFor(() => expect(gates).toHaveLength(2));
+    for (const release of gates) release();
+    await Promise.all([first, second]);
+
+    expect(manager.isForking()).toBe(false);
+  });
+});

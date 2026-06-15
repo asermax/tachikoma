@@ -140,6 +140,12 @@ export interface AgentApi {
     tier: ModelTier,
     tools?: string[],
   ): Promise<void>;
+  /**
+   * Whether a `forkAndContinue` run is currently in flight. A non-bare fork binds every pi
+   * factory, so a `before_agent_start` handler also fires inside the memory/context
+   * post-processing forks; consult this to scope such per-turn work to genuine top-level turns.
+   */
+  isForking(): boolean;
 }
 
 export interface InboundApi {
