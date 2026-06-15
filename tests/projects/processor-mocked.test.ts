@@ -8,10 +8,12 @@ import { fakeLogger } from "./helpers.ts";
 
 const commitAll = vi.fn();
 const smartPush = vi.fn();
+const isAhead = vi.fn();
 const isDirty = vi.fn();
 const listSubmodules = vi.fn();
 
 vi.mock("../../src/extensions/projects/git.ts", () => ({
+  isAhead: (...args: unknown[]) => isAhead(...args),
   isDirty: (...args: unknown[]) => isDirty(...args),
   listSubmodules: (...args: unknown[]) => listSubmodules(...args),
 }));
@@ -36,6 +38,7 @@ const git = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  isAhead.mockResolvedValue(false);
 });
 
 describe("projects processor (mocked git)", () => {
@@ -49,14 +52,69 @@ describe("projects processor (mocked git)", () => {
     expect(log.debug).toHaveBeenCalledWith("no submodules found — skipping project processing");
   });
 
-  it("skips committing when no submodule is dirty", async () => {
+  it("skips committing when no submodule is dirty or ahead", async () => {
     listSubmodules.mockResolvedValue(["projects/app"]);
     isDirty.mockResolvedValue(false);
+    // isAhead defaults to false via beforeEach
 
     await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
 
     expect(commitAll).not.toHaveBeenCalled();
-    expect(log.debug).toHaveBeenCalledWith("no dirty submodules — skipping commit");
+    expect(smartPush).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith(
+      "no dirty or ahead submodules — skipping project processing",
+    );
+  });
+
+  it("pushes a clean submodule that is ahead of its remote without committing", async () => {
+    listSubmodules.mockResolvedValue(["projects/app"]);
+    isDirty.mockResolvedValue(false);
+    isAhead.mockResolvedValue(true);
+    smartPush.mockResolvedValue(PUSH_RESULT.pushed);
+
+    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+
+    expect(commitAll).not.toHaveBeenCalled();
+    expect(smartPush).toHaveBeenCalledWith("/ws/projects/app", "origin", "HEAD", { log });
+    expect(log.info).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "projects/app", result: PUSH_RESULT.pushed }),
+      "pushed ahead project changes",
+    );
+  });
+
+  it("commits a dirty submodule and separately pushes a clean-ahead one", async () => {
+    listSubmodules.mockResolvedValue(["projects/dirty", "projects/ahead"]);
+    isDirty.mockImplementation(async (repoPath: string) => repoPath.endsWith("dirty"));
+    isAhead.mockResolvedValue(true);
+    commitAll.mockResolvedValue("Update dirty");
+    smartPush.mockResolvedValue(PUSH_RESULT.pushed);
+
+    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+
+    expect(commitAll).toHaveBeenCalledTimes(1);
+    expect(commitAll).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/ws/projects/dirty" }));
+    expect(smartPush).toHaveBeenCalledTimes(2);
+    expect(smartPush).toHaveBeenCalledWith("/ws/projects/dirty", "origin", "HEAD", { log });
+    expect(smartPush).toHaveBeenCalledWith("/ws/projects/ahead", "origin", "HEAD", { log });
+  });
+
+  it("warns and skips a clean submodule whose ahead check rejected", async () => {
+    listSubmodules.mockResolvedValue(["projects/broken", "projects/ahead"]);
+    isDirty.mockResolvedValue(false);
+    isAhead.mockImplementation(async (repoPath: string) => {
+      if (repoPath.endsWith("broken")) throw new Error("git rev-parse failed");
+      return true;
+    });
+    smartPush.mockResolvedValue(PUSH_RESULT.pushed);
+
+    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "projects/broken" }),
+      "failed to check if submodule is ahead",
+    );
+    expect(smartPush).toHaveBeenCalledTimes(1);
+    expect(smartPush).toHaveBeenCalledWith("/ws/projects/ahead", "origin", "HEAD", { log });
   });
 
   it("warns and skips a submodule whose dirty check rejected", async () => {

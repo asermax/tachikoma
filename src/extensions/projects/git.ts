@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runGit, runGitCapture } from "../../git/git.ts";
+import { DIVERGENCE_STATUS, detectDivergence } from "../../git/sync.ts";
 
 // `listSubmodules` is a core git primitive (it just parses `git submodule status`),
 // so it lives in `src/git/git.ts` and is re-exported here for the project tools that
@@ -75,6 +76,20 @@ export const currentBranch = async (repoPath: string): Promise<string | null> =>
   if (result.code !== 0 || result.stdout === "") return null;
 
   return result.stdout;
+};
+
+/**
+ * Whether HEAD has commits not on the configured `origin` branch — a cheap,
+ * fetch-free check against the last-known remote-tracking ref. Returns false for
+ * detached HEAD or when no `origin/<branch>` ref exists (no remote / never
+ * fetched), so callers only push submodules that genuinely look ahead.
+ */
+export const isAhead = async (repoPath: string): Promise<boolean> => {
+  const branch = await currentBranch(repoPath);
+
+  if (branch == null) return false;
+
+  return (await detectDivergence(repoPath, "origin", branch)) === DIVERGENCE_STATUS.ahead;
 };
 
 export const currentCommitShort = async (repoPath: string): Promise<string> => {

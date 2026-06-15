@@ -13,6 +13,7 @@ const {
   currentBranch,
   currentCommitShort,
   describeProjectState,
+  isAhead,
   isDirty,
   projectState,
   resolveDefaultBranch,
@@ -92,6 +93,43 @@ describe("currentBranch", () => {
     runGitCapture.mockResolvedValue(ok(""));
 
     expect(await currentBranch("/repo")).toBeNull();
+  });
+});
+
+describe("isAhead", () => {
+  it("is true when the remote ref is an ancestor of HEAD but not vice-versa", async () => {
+    // currentBranch, then detectDivergence: remote→HEAD ancestor (ok), HEAD→remote not (fail)
+    runGitCapture
+      .mockResolvedValueOnce(ok("main"))
+      .mockResolvedValueOnce(ok(""))
+      .mockResolvedValueOnce(fail());
+
+    expect(await isAhead("/repo")).toBe(true);
+  });
+
+  it("is false when HEAD and the remote ref point at the same commit", async () => {
+    runGitCapture
+      .mockResolvedValueOnce(ok("main"))
+      .mockResolvedValueOnce(ok(""))
+      .mockResolvedValueOnce(ok(""));
+
+    expect(await isAhead("/repo")).toBe(false);
+  });
+
+  it("is false when HEAD is behind the remote", async () => {
+    runGitCapture
+      .mockResolvedValueOnce(ok("main"))
+      .mockResolvedValueOnce(fail())
+      .mockResolvedValueOnce(ok(""));
+
+    expect(await isAhead("/repo")).toBe(false);
+  });
+
+  it("is false on a detached HEAD without consulting divergence", async () => {
+    runGitCapture.mockResolvedValueOnce(fail());
+
+    expect(await isAhead("/repo")).toBe(false);
+    expect(runGitCapture).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -82,6 +82,25 @@ describe("projects processor", () => {
     expect(await headOf(projectPath)).toBe(head);
   });
 
+  it("pushes a clean project that is ahead of its remote without committing", async () => {
+    // Commit a change in the project so it sits ahead of origin with a clean tree.
+    await writeFile(join(projectPath, "note.md"), "ahead\n", "utf8");
+    await runGit(projectPath, ["add", "-A"]);
+    await runGit(projectPath, ["commit", "-m", "local work"]);
+    const projectHead = await headOf(projectPath);
+    expect(await headOf(origin)).not.toBe(projectHead);
+
+    const side: Completer = { complete: vi.fn() };
+
+    await createProjectsProcessor({ workspaceRoot: workspace, side, git }).process(context());
+
+    // No new commit (clean tree → no commit), and origin advanced to the project HEAD.
+    expect(side.complete).not.toHaveBeenCalled();
+    expect(await lastSubject(projectPath)).toBe("local work");
+    expect(await headOf(projectPath)).toBe(projectHead);
+    expect(await headOf(origin)).toBe(projectHead);
+  });
+
   it("falls back to a deterministic message when generation fails", async () => {
     await writeFile(join(projectPath, "feature.ts"), "export const x = 1;\n", "utf8");
     const side: Completer = { complete: vi.fn().mockRejectedValue(new Error("model down")) };
