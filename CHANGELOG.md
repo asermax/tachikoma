@@ -1,3 +1,10 @@
+# [3.14.0](https://github.com/asermax/tachikoma/compare/v3.13.0...v3.14.0) (2026-06-15)
+
+
+### Features
+
+* **telegram:** prepend context to inbound for older references ([037dc8d](https://github.com/asermax/tachikoma/commit/037dc8d051513feaa752876dfb1e16b45f848492))
+
 # [3.13.0](https://github.com/asermax/tachikoma/compare/v3.12.0...v3.13.0) (2026-06-15)
 
 
