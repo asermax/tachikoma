@@ -28,6 +28,9 @@ const factory: ExtensionFactory = (pi) => {
   pi.registerTool({
     ...originalBash,
     parameters: extendedSchema,
+    prepareArguments(args) {
+      return args as { command: string; description: string; timeout?: number };
+    },
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const { description: _, ...bashParams } = params;
       return originalBash.execute(toolCallId, bashParams, signal, onUpdate, ctx);
