@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { vi } from "vitest";
 
 import { runGit } from "../../src/git/git.ts";
+import type { RebaseResolver } from "../../src/git/sync.ts";
 import type { Logger } from "../../src/log.ts";
 
 export const fakeLogger = (): Logger =>
@@ -67,3 +68,23 @@ export const headOf = (repo: string): Promise<string> => runGit(repo, ["rev-pars
 
 export const lastSubject = (repo: string): Promise<string> =>
   runGit(repo, ["log", "-1", "--format=%s"]);
+
+/**
+ * Stand-in for the side agent: drives the in-progress rebase to completion the
+ * way the real agent would — resolves every conflicted file to a merged body,
+ * stages it, and continues — without spawning an LLM.
+ */
+export const resolvingResolver: RebaseResolver = async (cwd) => {
+  while (true) {
+    const conflicted = await runGit(cwd, ["diff", "--name-only", "--diff-filter=U"]);
+
+    if (conflicted === "") return;
+
+    for (const file of conflicted.split("\n")) {
+      await writeFile(join(cwd, file), "merged by agent\n", "utf8");
+      await runGit(cwd, ["add", file]);
+    }
+
+    await runGit(cwd, ["-c", "core.editor=true", "rebase", "--continue"]);
+  }
+};

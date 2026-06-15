@@ -1,12 +1,18 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { runGit } from "../../src/git/git.ts";
-import type { RebaseResolver } from "../../src/git/sync.ts";
 import { commitFile, initRepo } from "../git/helpers.ts";
 
-export { commitFile, configureIdentity, fakeLogger, headOf, lastSubject } from "../git/helpers.ts";
+export {
+  commitFile,
+  configureIdentity,
+  fakeLogger,
+  headOf,
+  lastSubject,
+  resolvingResolver,
+} from "../git/helpers.ts";
 
 // Submodule clones from local paths are blocked by default since the
 // CVE-2022-39253 hardening, and the spawned clone ignores the superproject's
@@ -35,25 +41,4 @@ export const createWorkspace = async (base: string): Promise<string> => {
   await commitFile(workspace, ".gitignore", ".tachikoma/\n", "Initial commit");
 
   return workspace;
-};
-
-/**
- * Stand-in for the side agent: drives the in-progress rebase to completion the
- * way the real agent would — resolves every conflicted file to a merged body,
- * stages it, and continues — without spawning an LLM. Mirrors the fake in
- * tests/git/sync.test.ts.
- */
-export const resolvingResolver: RebaseResolver = async (cwd) => {
-  while (true) {
-    const conflicted = await runGit(cwd, ["diff", "--name-only", "--diff-filter=U"]);
-
-    if (conflicted === "") return;
-
-    for (const file of conflicted.split("\n")) {
-      await writeFile(join(cwd, file), "merged by agent\n", "utf8");
-      await runGit(cwd, ["add", file]);
-    }
-
-    await runGit(cwd, ["-c", "core.editor=true", "rebase", "--continue"]);
-  }
 };

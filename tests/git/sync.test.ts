@@ -19,30 +19,11 @@ import {
   headOf,
   lastSubject,
   makeTempDir,
+  resolvingResolver,
   setupRemotePair,
 } from "./helpers.ts";
 
 const log = fakeLogger();
-
-/**
- * Stand-in for the side agent: drives the in-progress rebase to completion the
- * way the real agent would — resolves every conflicted file to a merged body,
- * stages it, and continues — without spawning an LLM.
- */
-const resolvingResolver: RebaseResolver = async (cwd) => {
-  while (true) {
-    const conflicted = await runGit(cwd, ["diff", "--name-only", "--diff-filter=U"]);
-
-    if (conflicted === "") return;
-
-    for (const file of conflicted.split("\n")) {
-      await writeFile(join(cwd, file), "merged by agent\n", "utf8");
-      await runGit(cwd, ["add", file]);
-    }
-
-    await runGit(cwd, ["-c", "core.editor=true", "rebase", "--continue"]);
-  }
-};
 
 /** A side agent that cannot resolve the conflict — leaves the rebase untouched. */
 const failingResolver: RebaseResolver = vi.fn(async () => {});
