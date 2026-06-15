@@ -1,4 +1,5 @@
 import type { TachikomaExtension } from "./api.ts";
+import bashDescription from "./bash-description/index.ts";
 import boundary from "./boundary/index.ts";
 import commands from "./commands/index.ts";
 import context from "./context/index.ts";
@@ -18,6 +19,7 @@ import workflows from "./workflows/index.ts";
 /** First-party extensions, in load order. */
 export const firstPartyExtensions = [
   commands,
+  bashDescription,
   context,
   memory,
   projects,
