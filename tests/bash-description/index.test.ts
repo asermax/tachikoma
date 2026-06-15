@@ -11,7 +11,7 @@ describe("bash-description extension", () => {
     const use = vi.fn();
     const app = {
       agent: { use, models: {} },
-    } as any;
+    } as { agent: { use: typeof use; models: Record<string, never> } };
 
     bashDescription.setup(app);
 
@@ -22,13 +22,13 @@ describe("bash-description extension", () => {
   });
 
   it("registers a bash tool override with a required description parameter", () => {
-    const registered: any[] = [];
-    const pi = { registerTool: (def) => registered.push(def) };
+    const registered: Array<Record<string, unknown>> = [];
+    const pi = { registerTool: (def: Record<string, unknown>) => registered.push(def) };
 
-    const use = vi.fn((_factory) => {
+    const use = vi.fn((_factory: (pi: typeof pi) => void) => {
       _factory(pi);
     });
-    const app = { agent: { use } } as any;
+    const app = { agent: { use } } as { agent: { use: typeof use } };
 
     bashDescription.setup(app);
 
@@ -58,40 +58,38 @@ describe("bash-description extension", () => {
     // correct. Instead we verify the schema: description is required in the
     // override but the original schema (used by createBashToolDefinition) only
     // has command and timeout.
-    const { createBashToolDefinition } = await import(
-      "@earendil-works/pi-coding-agent"
-    );
+    const { createBashToolDefinition } = await import("@earendil-works/pi-coding-agent");
     const original = createBashToolDefinition("/tmp");
 
     // Original schema properties: command, timeout (no description)
     const origProps = Object.keys(
-      (original.parameters as any).properties,
+      (original.parameters as { properties: Record<string, unknown> }).properties,
     ).sort();
     expect(origProps).toEqual(["command", "timeout"]);
 
     // Override schema properties: command, description, timeout
-    const registered: any[] = [];
-    const pi = { registerTool: (def) => registered.push(def) };
-    const use = vi.fn((_factory) => {
+    const registered: Array<Record<string, unknown>> = [];
+    const pi = { registerTool: (def: Record<string, unknown>) => registered.push(def) };
+    const use = vi.fn((_factory: (pi: typeof pi) => void) => {
       _factory(pi);
     });
-    const app = { agent: { use } } as any;
+    const app = { agent: { use } } as { agent: { use: typeof use } };
     bashDescription.setup(app);
 
     const overrideProps = Object.keys(
-      registered[0].parameters.properties,
+      (registered[0].parameters as { properties: Record<string, unknown> }).properties,
     ).sort();
     expect(overrideProps).toEqual(["command", "description", "timeout"]);
   });
 
   it("inherits the original tool's label and promptSnippet, with no custom renderers", () => {
-    const registered: any[] = [];
-    const pi = { registerTool: (def) => registered.push(def) };
+    const registered: Array<Record<string, unknown>> = [];
+    const pi = { registerTool: (def: Record<string, unknown>) => registered.push(def) };
 
-    const use = vi.fn((_factory) => {
+    const use = vi.fn((_factory: (pi: typeof pi) => void) => {
       _factory(pi);
     });
-    const app = { agent: { use } } as any;
+    const app = { agent: { use } } as { agent: { use: typeof use } };
     bashDescription.setup(app);
 
     const tool = registered[0];

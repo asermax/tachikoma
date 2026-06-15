@@ -6,7 +6,7 @@
  * and baked activity markers. The original bash tool handles execution and
  * rendering unchanged.
  */
-import { type ExtensionFactory, createBashToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createBashToolDefinition, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 import type { TachikomaExtension } from "../api.ts";
