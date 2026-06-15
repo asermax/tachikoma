@@ -1211,7 +1211,7 @@ describe("Coordinator encoding-error quarantine", () => {
     const dangling = registry.create("test", "/tmp/active.jsonl");
     registry.markErrored(dangling.id);
 
-    await coordinator.recoverDanglingSessions();
+    await coordinator.recoverUnprocessedSessions();
 
     expect(processed).toEqual([]);
     expect(registry.get(dangling.id)?.closedAt).not.toBeNull();
