@@ -1,7 +1,7 @@
-import { access, rm } from "node:fs/promises";
+import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { GitApi } from "../../src/extensions/api.ts";
 import { currentBranch } from "../../src/extensions/projects/git.ts";
@@ -18,6 +18,7 @@ import {
   fakeLogger,
   headOf,
   makeTempDir,
+  resolvingResolver,
 } from "./helpers.ts";
 
 const log = fakeLogger();
@@ -80,5 +81,36 @@ describe("syncProjects", () => {
     const projectPath = join(workspace, "projects", "app");
     await expect(access(join(projectPath, "update.txt"))).resolves.toBeUndefined();
     expect(await headOf(projectPath)).toBe(await headOf(seeder));
+  });
+
+  it("invokes the resolver and advances when a submodule pull hits a rebase conflict", async () => {
+    const origin = await createProjectOrigin(base, "app");
+    await handleRegisterProject({ workspaceRoot: workspace, log }, { name: "app", url: origin });
+
+    const projectPath = join(workspace, "projects", "app");
+    await configureIdentity(projectPath);
+
+    // A local commit that diverges from the origin on the same file/region.
+    await writeFile(join(projectPath, "README.md"), "local edit\n", "utf8");
+    await runGit(projectPath, ["add", "README.md"]);
+    await runGit(projectPath, ["commit", "-m", "Local edit"]);
+
+    // The remote advances the same region, so pulling produces a conflict.
+    const seeder = join(base, "seeder");
+    await runGit(base, ["clone", origin, seeder]);
+    await configureIdentity(seeder);
+    await writeFile(join(seeder, "README.md"), "remote edit\n", "utf8");
+    await runGit(seeder, ["add", "README.md"]);
+    await runGit(seeder, ["commit", "-m", "Remote edit"]);
+    await runGit(seeder, ["push", "origin", "main"]);
+
+    const resolver = vi.fn(resolvingResolver);
+    const before = await headOf(projectPath);
+
+    await syncProjects(workspace, git, log, resolver);
+
+    expect(resolver).toHaveBeenCalledWith(projectPath, "origin/main", expect.anything());
+    expect(await headOf(projectPath)).not.toBe(before);
+    expect(await readFile(join(projectPath, "README.md"), "utf8")).toBe("merged by agent\n");
   });
 });

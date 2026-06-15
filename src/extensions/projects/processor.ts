@@ -1,7 +1,7 @@
 import { join } from "node:path";
 
 import type { Completer } from "../../git/commit.ts";
-import { PUSH_SUCCESS } from "../../git/sync.ts";
+import { PUSH_SUCCESS, type RebaseResolver } from "../../git/sync.ts";
 import type { Logger } from "../../log.ts";
 import type { GitApi, PostProcessor } from "../api.ts";
 import { isAhead, isDirty, listSubmodules } from "./git.ts";
@@ -10,6 +10,7 @@ export interface ProjectsProcessorDeps {
   workspaceRoot: string;
   side: Completer;
   git: GitApi;
+  resolver?: RebaseResolver;
 }
 
 export const projectFallbackMessage = (name: string, now = new Date()): string =>
@@ -18,7 +19,8 @@ export const projectFallbackMessage = (name: string, now = new Date()): string =
 /**
  * Push a project's commits to `origin` and log the outcome. Shared by the dirty
  * pass (after committing) and the clean-ahead pass (push only), so the
- * `smartPush` + result-classification tail lives in one place.
+ * `smartPush` + result-classification tail lives in one place. A rebase conflict
+ * during push is handed to the resolver (agent-driven) when one is supplied.
  */
 const pushAndReport = async (
   git: GitApi,
@@ -27,8 +29,9 @@ const pushAndReport = async (
   log: Logger,
   successMessage: string,
   failureMessage: string,
+  resolver?: RebaseResolver,
 ): Promise<void> => {
-  const result = await git.smartPush(repoPath, "origin", "HEAD", { log });
+  const result = await git.smartPush(repoPath, "origin", "HEAD", { log, resolver });
 
   if (PUSH_SUCCESS.has(result)) {
     log.info({ path, result }, successMessage);
@@ -43,6 +46,7 @@ const commitAndPush = async (
   side: Completer,
   path: string,
   log: Logger,
+  resolver?: RebaseResolver,
 ): Promise<void> => {
   const repoPath = join(workspaceRoot, path);
   const name = path.split("/").at(-1) ?? path;
@@ -63,6 +67,7 @@ const commitAndPush = async (
     log,
     "pushed project changes",
     "push failed — changes remain committed locally",
+    resolver,
   );
 };
 
@@ -75,6 +80,7 @@ const pushProject = async (
   git: GitApi,
   path: string,
   log: Logger,
+  resolver?: RebaseResolver,
 ): Promise<void> => {
   await pushAndReport(
     git,
@@ -83,6 +89,7 @@ const pushProject = async (
     log,
     "pushed ahead project changes",
     "push failed — ahead commits remain local",
+    resolver,
   );
 };
 
@@ -91,11 +98,14 @@ const pushProject = async (
  * project before the workspace commit runs (so submodule pointer updates land
  * in the same workspace commit pass), then pushes any clean project that still
  * sits ahead of its remote so committed changes never linger across sessions.
+ * A rebase conflict during either push is handed to the resolver (agent-driven)
+ * before falling back to abort.
  */
 export const createProjectsProcessor = ({
   workspaceRoot,
   side,
   git,
+  resolver,
 }: ProjectsProcessorDeps): PostProcessor => ({
   name: "projects-commit",
   phase: "preFinalize",
@@ -133,7 +143,7 @@ export const createProjectsProcessor = ({
       log.info({ paths: dirtyPaths }, "processing dirty submodules");
 
       const results = await Promise.allSettled(
-        dirtyPaths.map((path) => commitAndPush(workspaceRoot, git, side, path, log)),
+        dirtyPaths.map((path) => commitAndPush(workspaceRoot, git, side, path, log, resolver)),
       );
 
       for (const [index, result] of results.entries()) {
@@ -172,7 +182,7 @@ export const createProjectsProcessor = ({
     log.info({ paths: aheadPaths }, "pushing clean submodules ahead of their remote");
 
     const pushResults = await Promise.allSettled(
-      aheadPaths.map((path) => pushProject(workspaceRoot, git, path, log)),
+      aheadPaths.map((path) => pushProject(workspaceRoot, git, path, log, resolver)),
     );
 
     for (const [index, result] of pushResults.entries()) {

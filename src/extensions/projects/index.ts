@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
+import { createGitResolver } from "../../git/resolve.ts";
 import { defineExtension } from "../api.ts";
 import { buildProjectsContext } from "./context-provider.ts";
 import { syncProjects } from "./hooks.ts";
@@ -31,8 +32,11 @@ export default defineExtension<ProjectsConfig>({
     }
 
     const workspaceRoot = app.workspace.root;
+    // One cwd-scoped resolver serves every submodule — it captures the repo path
+    // from each smartPull/smartPush call, so it can act inside any project tree.
+    const resolver = createGitResolver(app.agent.side);
 
-    app.bootstrap("sync-projects", () => syncProjects(workspaceRoot, app.git, app.log));
+    app.bootstrap("sync-projects", () => syncProjects(workspaceRoot, app.git, app.log, resolver));
 
     app.agent.use(createProjectsToolsFactory({ workspaceRoot, log: app.log }), {
       sessionScopes: ["main", "background"],
@@ -45,7 +49,7 @@ export default defineExtension<ProjectsConfig>({
     );
 
     app.sessions.registerProcessor(
-      createProjectsProcessor({ workspaceRoot, side: app.agent.side, git: app.git }),
+      createProjectsProcessor({ workspaceRoot, side: app.agent.side, git: app.git, resolver }),
     );
   },
 });

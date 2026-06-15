@@ -18,6 +18,7 @@ import {
   headOf,
   lastSubject,
   makeTempDir,
+  resolvingResolver,
 } from "./helpers.ts";
 
 const context = (): PostProcessorContext => ({
@@ -108,6 +109,31 @@ describe("projects processor", () => {
     await createProjectsProcessor({ workspaceRoot: workspace, side, git }).process(context());
 
     expect(await lastSubject(projectPath)).toMatch(/^Update app files \(\d{4}-\d{2}-\d{2}\)$/);
+    expect(await headOf(origin)).toBe(await headOf(projectPath));
+  });
+
+  it("invokes the resolver and pushes when a project push hits a rebase conflict", async () => {
+    // The remote advances README.md on the same region the local change touches.
+    const seeder = join(base, "seeder");
+    await runGit(base, ["clone", origin, seeder]);
+    await configureIdentity(seeder);
+    await writeFile(join(seeder, "README.md"), "remote edit\n", "utf8");
+    await runGit(seeder, ["add", "README.md"]);
+    await runGit(seeder, ["commit", "-m", "Remote edit"]);
+    await runGit(seeder, ["push", "origin", "main"]);
+
+    // A dirty local change to the same region; the processor commits then pushes it.
+    await writeFile(join(projectPath, "README.md"), "local edit\n", "utf8");
+
+    const side: Completer = { complete: vi.fn().mockResolvedValue("Local edit") };
+    const resolver = vi.fn(resolvingResolver);
+
+    await createProjectsProcessor({ workspaceRoot: workspace, side, git, resolver }).process(
+      context(),
+    );
+
+    expect(resolver).toHaveBeenCalledWith(projectPath, "origin/main", expect.anything());
+    // The rebased-and-resolved commit landed on the remote.
     expect(await headOf(origin)).toBe(await headOf(projectPath));
   });
 });
