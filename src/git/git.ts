@@ -41,3 +41,18 @@ export const hasUncommittedChanges = async (cwd: string): Promise<boolean> =>
 
 export const hasRemote = async (cwd: string, remote: string): Promise<boolean> =>
   (await runGitCapture(cwd, ["remote", "get-url", remote])).code === 0;
+
+/** List all registered submodule paths (e.g. ["projects/my-app"]) from git state. */
+export const listSubmodules = async (workspaceRoot: string): Promise<string[]> => {
+  const result = await runGitCapture(workspaceRoot, ["submodule", "status", "--recursive"]);
+
+  if (result.code !== 0) return [];
+
+  // Each line is like " abc1234 projects/my-app (heads/main)" — the first
+  // character is a status indicator (space, +, -, or U) fused to the hash.
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => parts.length >= 2)
+    .map((parts) => parts[1] as string);
+};

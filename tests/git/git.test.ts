@@ -4,7 +4,13 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { hasRemote, hasUncommittedChanges, runGit, runGitCapture } from "../../src/git/git.ts";
+import {
+  hasRemote,
+  hasUncommittedChanges,
+  listSubmodules,
+  runGit,
+  runGitCapture,
+} from "../../src/git/git.ts";
 import { initRepo, makeTempDir } from "./helpers.ts";
 
 vi.mock("node:child_process", async (importOriginal) => {
@@ -161,5 +167,14 @@ describe("hasRemote", () => {
     await runGit(base, ["remote", "add", "origin", "https://example.com/repo.git"]);
 
     expect(await hasRemote(base, "origin")).toBe(true);
+  });
+});
+
+describe("listSubmodules", () => {
+  it("returns an empty list for a repo with no submodules", async () => {
+    await initRepo(base);
+    await runGit(base, ["commit", "--allow-empty", "-m", "init"]);
+
+    expect(await listSubmodules(base)).toEqual([]);
   });
 });

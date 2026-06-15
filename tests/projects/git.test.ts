@@ -14,7 +14,6 @@ const {
   currentCommitShort,
   describeProjectState,
   isDirty,
-  listSubmodules,
   projectState,
   resolveDefaultBranch,
   uncommittedChangesDetail,
@@ -73,22 +72,6 @@ describe("resolveDefaultBranch", () => {
     runGitCapture.mockResolvedValueOnce(fail()).mockResolvedValueOnce(fail());
 
     expect(await resolveDefaultBranch("/repo")).toBe("main");
-  });
-});
-
-describe("listSubmodules", () => {
-  it("returns an empty list when the status command fails", async () => {
-    runGitCapture.mockResolvedValue(fail());
-
-    expect(await listSubmodules("/ws")).toEqual([]);
-  });
-
-  it("parses submodule paths and drops malformed lines", async () => {
-    runGitCapture.mockResolvedValue(
-      ok(" abc1234 projects/app (heads/main)\n\n-deadbeef projects/lib"),
-    );
-
-    expect(await listSubmodules("/ws")).toEqual(["projects/app", "projects/lib"]);
   });
 });
 
