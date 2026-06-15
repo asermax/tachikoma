@@ -41,4 +41,40 @@ describe("TelegramMessageStore", () => {
   it("returns null when no mapping exists for the message id", () => {
     expect(store.findSessionId("missing")).toBeNull();
   });
+
+  it("stores and retrieves the outgoing message text", () => {
+    const session = registry.create("telegram", "/tmp/s.jsonl");
+    store.record("m-1", session.id, "outgoing", "Proceed?");
+
+    expect(store.findMessageText("m-1")).toBe("Proceed?");
+  });
+
+  it("leaves text null when none is recorded and null for unknown ids", () => {
+    const session = registry.create("telegram", "/tmp/s.jsonl");
+    store.record("m-1", session.id, "incoming");
+
+    expect(store.findMessageText("m-1")).toBeNull();
+    expect(store.findMessageText("missing")).toBeNull();
+  });
+
+  it("preserves stored text when re-recorded without text", () => {
+    const session = registry.create("telegram", "/tmp/s.jsonl");
+    store.record("m-1", session.id, "outgoing", "Proceed?");
+    // A later exchange re-records the same id without text (e.g. routing refresh).
+    store.record("m-1", session.id, "outgoing");
+
+    expect(store.findMessageText("m-1")).toBe("Proceed?");
+  });
+
+  it("resolves the most recently recorded message id for a session", () => {
+    const session = registry.create("telegram", "/tmp/s.jsonl");
+    store.record("m-1", session.id, "outgoing", "first");
+    store.record("m-2", session.id, "incoming");
+
+    expect(store.findLatestMessageId(session.id)).toBe("m-2");
+  });
+
+  it("returns null for findLatestMessageId on an unknown session", () => {
+    expect(store.findLatestMessageId(99999)).toBeNull();
+  });
 });

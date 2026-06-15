@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import type { AppDatabase } from "../../db/index.ts";
 import type { ChannelMessageStore } from "./channel.ts";
@@ -18,13 +18,28 @@ export class TelegramMessageStore implements ChannelMessageStore {
     this.db = db;
   }
 
-  record(messageId: string, sessionId: number, direction: ChannelMessageDirection): void {
+  record(
+    messageId: string,
+    sessionId: number,
+    direction: ChannelMessageDirection,
+    text?: string,
+  ): void {
     this.db
       .insert(channelMessages)
-      .values({ channel: CHANNEL_NAME, messageId, sessionId, direction, createdAt: new Date() })
+      .values({
+        channel: CHANNEL_NAME,
+        messageId,
+        sessionId,
+        direction,
+        text: text ?? null,
+        createdAt: new Date(),
+      })
+      // Re-point the mapping on conflict. `text` is only overwritten when a value
+      // is supplied, so a re-record without text (e.g. an exchange re-recording an
+      // id already stored as a button prompt) leaves a stored prompt intact.
       .onConflictDoUpdate({
         target: [channelMessages.channel, channelMessages.messageId],
-        set: { sessionId, direction },
+        set: { sessionId, direction, ...(text != null ? { text } : {}) },
       })
       .run();
   }
@@ -38,6 +53,39 @@ export class TelegramMessageStore implements ChannelMessageStore {
           and(eq(channelMessages.channel, CHANNEL_NAME), eq(channelMessages.messageId, messageId)),
         )
         .get()?.sessionId ?? null
+    );
+  }
+
+  /** The stored text of an outgoing message (e.g. a button prompt), if any. */
+  findMessageText(messageId: string): string | null {
+    return (
+      this.db
+        .select({ text: channelMessages.text })
+        .from(channelMessages)
+        .where(
+          and(eq(channelMessages.channel, CHANNEL_NAME), eq(channelMessages.messageId, messageId)),
+        )
+        .get()?.text ?? null
+    );
+  }
+
+  /**
+   * The most recently recorded message id for a session (any direction), by
+   * created_at then row id. Used to tell whether an inbound references the
+   * session's latest message (already live in the agent's context) or an older
+   * one worth prepending context for.
+   */
+  findLatestMessageId(sessionId: number): string | null {
+    return (
+      this.db
+        .select({ messageId: channelMessages.messageId })
+        .from(channelMessages)
+        .where(
+          and(eq(channelMessages.channel, CHANNEL_NAME), eq(channelMessages.sessionId, sessionId)),
+        )
+        .orderBy(desc(channelMessages.createdAt), desc(channelMessages.id))
+        .limit(1)
+        .get()?.messageId ?? null
     );
   }
 }

@@ -8,7 +8,13 @@ import type { InboundMessage } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
 import { unpackCallbackData } from "./buttons.ts";
 import { toTelegramEntities } from "./entities.ts";
-import { mapButtonTap, mapMediaMessage, mapReaction, mapTextMessage } from "./inbound.ts";
+import {
+  mapButtonTap,
+  mapMediaMessage,
+  mapReaction,
+  mapTextMessage,
+  replyTargetId,
+} from "./inbound.ts";
 import {
   buildAttachment,
   downloadMedia,
@@ -29,8 +35,17 @@ import { StreamRenderer } from "./streaming.ts";
 
 /** Persists message id ↔ session mappings so a reply-to can be force-routed. */
 export interface ChannelMessageStore {
-  record(messageId: string, sessionId: number, direction: ChannelMessageDirection): void;
+  record(
+    messageId: string,
+    sessionId: number,
+    direction: ChannelMessageDirection,
+    text?: string,
+  ): void;
   findSessionId(messageId: string): number | null;
+  /** The stored text of an outgoing message (e.g. a button prompt), if any. */
+  findMessageText(messageId: string): string | null;
+  /** The most recently recorded message id for a session, or null if none. */
+  findLatestMessageId(sessionId: number): string | null;
 }
 
 export interface TelegramChannelOptions {
@@ -46,6 +61,8 @@ export interface TelegramChannelOptions {
   store: ChannelMessageStore;
   /** Id of the session currently receiving messages, for outbound recording. */
   currentSessionId: () => number | null;
+  /** Read a session's last exchange (user/assistant), used as reaction context. */
+  lastExchangeOf: (sessionId: number) => string | null;
 }
 
 export const STOP_COMMAND = "/stop";
@@ -129,7 +146,15 @@ export class TelegramChannel implements Channel {
           .catch((error) => runtime.log.warn({ err: error }, "keyboard removal failed"));
       }
 
-      runtime.submit(mapButtonTap(unpacked.value, messageId));
+      // Prepend the prompt only for an older button message; a tap on the
+      // session's latest message is already live in the agent's context.
+      const messageIdStr = messageId != null ? String(messageId) : null;
+      const prompt =
+        messageIdStr != null && !this.isLatestMessage(messageIdStr)
+          ? this.options.store.findMessageText(messageIdStr)
+          : null;
+
+      runtime.submit(mapButtonTap(unpacked.value, messageId, { prompt }));
     });
 
     this.bot.on("message_reaction", (ctx) => {
@@ -142,7 +167,20 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      const inbound = mapReaction(ctx.messageReaction);
+      const event = ctx.messageReaction;
+      const messageId = String(event.message_id);
+      // Prepend the owning session's last exchange only when the reaction targets
+      // an older message; a reaction to the latest is already live in the agent's
+      // context. An unrecorded target falls back to the active session's exchange.
+      const recordedSessionId = this.options.store.findSessionId(messageId);
+      const isLatest =
+        recordedSessionId != null &&
+        this.options.store.findLatestMessageId(recordedSessionId) === messageId;
+      const owningSessionId = recordedSessionId ?? this.options.currentSessionId();
+      const lastExchange =
+        isLatest || owningSessionId == null ? null : this.options.lastExchangeOf(owningSessionId);
+
+      const inbound = mapReaction(event, { lastExchange });
       if (inbound == null) return;
 
       runtime.submit(this.routeReply(inbound));
@@ -198,6 +236,29 @@ export class TelegramChannel implements Channel {
     if (sessionId == null) return message;
 
     return { ...message, metadata: { ...message.metadata, resumeSessionId: sessionId } };
+  }
+
+  /**
+   * Whether a referenced message is its owning session's most recent recorded
+   * message. Context (reply quotes, reaction last-exchange, button prompts) is
+   * only prepended for older messages; the latest is already live in the agent's
+   * context. An unrecorded message resolves to false (treated as older — add
+   * context) so a stale or foreign reference still gets context.
+   */
+  private isLatestMessage(messageId: string): boolean {
+    const sessionId = this.options.store.findSessionId(messageId);
+    if (sessionId == null) return false;
+    return this.options.store.findLatestMessageId(sessionId) === messageId;
+  }
+
+  /**
+   * Whether to suppress the reply quote: only when the reply targets its
+   * session's latest message (already live in the agent's context). Routing is
+   * unaffected — `routeReply` still stamps `resumeSessionId` from the target.
+   */
+  private shouldSkipQuote(message: Pick<Message, "reply_to_message">): boolean {
+    const target = replyTargetId(message);
+    return target != null && this.isLatestMessage(target);
   }
 
   async respond({ message, events }: Exchange): Promise<void> {
@@ -484,7 +545,7 @@ export class TelegramChannel implements Channel {
       return;
     }
 
-    const inbound = mapTextMessage(message);
+    const inbound = mapTextMessage(message, { skipQuote: this.shouldSkipQuote(message) });
     if (inbound == null) return;
 
     this.lastInboundId = message.message_id;
@@ -531,7 +592,11 @@ export class TelegramChannel implements Channel {
       await downloadMedia(this.bot.api, this.bot.token, resolved, destPath);
 
       this.runtimeOrThrow().submit(
-        this.routeReply(mapMediaMessage(message, buildAttachment(resolved, destPath))),
+        this.routeReply(
+          mapMediaMessage(message, buildAttachment(resolved, destPath), {
+            skipQuote: this.shouldSkipQuote(message),
+          }),
+        ),
       );
     } catch (error) {
       log.warn({ err: error }, "media download failed");

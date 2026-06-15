@@ -17,6 +17,10 @@ export const channelMessages = sqliteTable(
     messageId: text("message_id").notNull(),
     sessionId: integer("session_id").notNull(),
     direction: text("direction").$type<ChannelMessageDirection>().notNull(),
+    // Outgoing message text, populated only where a later inbound needs to
+    // recover it (e.g. the prompt of a button message a user taps). Nullable so
+    // incoming messages and streamed-exchange recordings leave it empty.
+    text: text("text"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (table) => [

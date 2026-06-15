@@ -268,7 +268,7 @@ describe("handleSendMessageWithButtons", () => {
       { prompt: "Proceed?", buttons: [[{ label: "Yes", value: "yes" }]] },
     );
 
-    expect(record).toHaveBeenCalledWith("11", 100, "outgoing");
+    expect(record).toHaveBeenCalledWith("11", 100, "outgoing", "Proceed?");
   });
 
   it("skips recording when no session is active", async () => {

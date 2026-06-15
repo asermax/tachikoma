@@ -80,6 +80,7 @@ export default defineExtension<TelegramConfig>({
       stop: () => app.sessions.abortExchange(),
       store,
       currentSessionId,
+      lastExchangeOf: (id) => app.sessions.get(id)?.lastExchange ?? null,
     });
 
     app.bootstrap("media-dir", () => ensureMediaDir(mediaDir, app.log));

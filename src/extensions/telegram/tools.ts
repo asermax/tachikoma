@@ -241,8 +241,12 @@ export const handleSendMessageWithButtons = async (
 
   // Map the prompt to the current session so a reply (or tap) routes back to
   // the session that asked the question, mirroring regular outbound recording.
+  // The prompt text is stored too so a later tap on an older button message can
+  // recover the question it answers.
   const sessionId = deps.currentSessionId();
-  if (sessionId != null) deps.store.record(String(sent.message_id), sessionId, "outgoing");
+  if (sessionId != null) {
+    deps.store.record(String(sent.message_id), sessionId, "outgoing", params.prompt);
+  }
 
   return `Buttons sent (message_id: ${sent.message_id})`;
 };

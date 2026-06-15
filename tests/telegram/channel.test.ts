@@ -46,6 +46,8 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
 
   const recorded: RecordedMessage[] = [];
   const mappings = new Map<string, number>();
+  const prompts = new Map<string, string>();
+  const lastExchanges = new Map<number, string>();
   const session = { id: 100 as number | null };
 
   const store = {
@@ -54,6 +56,11 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
       mappings.set(messageId, sessionId);
     }),
     findSessionId: vi.fn((messageId: string) => mappings.get(messageId) ?? null),
+    findMessageText: vi.fn((messageId: string) => prompts.get(messageId) ?? null),
+    findLatestMessageId: vi.fn(
+      (sessionId: number) =>
+        recorded.filter((r) => r.sessionId === sessionId).at(-1)?.messageId ?? null,
+    ),
   };
 
   const api = {
@@ -118,6 +125,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     stop,
     store,
     currentSessionId: () => session.id,
+    lastExchangeOf: (id: number) => lastExchanges.get(id) ?? null,
     ...overrides,
   });
 
@@ -199,6 +207,8 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     store,
     recorded,
     mappings,
+    prompts,
+    lastExchanges,
     session,
     triggerError: (error: unknown) => errorHandler({ error }),
     startCalls,
@@ -727,6 +737,38 @@ describe("reply-to session routing", () => {
     expect(submitted.metadata.resumeSessionId).toBeUndefined();
     expect(submitted.metadata.replyToMessageId).toBe("999");
   });
+
+  it("omits the reply quote when replying to the session's latest message", async () => {
+    const { channel, runtime, submit, mappings, recorded, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    mappings.set("3", 55);
+    recorded.push({ messageId: "3", sessionId: 55, direction: "outgoing" });
+
+    await dispatchText("follow-up", 9, { message_id: 3, text: "the plan is ready" });
+
+    const submitted = submit.mock.calls[0]?.[0];
+    expect(submitted.text).toBe("follow-up");
+    expect(submitted.metadata.replyToMessageId).toBe("3");
+    expect(submitted.metadata.resumeSessionId).toBe(55);
+  });
+
+  it("keeps the reply quote for an older replied-to message", async () => {
+    const { channel, runtime, submit, mappings, recorded, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    mappings.set("3", 55);
+    mappings.set("4", 55);
+    recorded.push(
+      { messageId: "3", sessionId: 55, direction: "outgoing" },
+      { messageId: "4", sessionId: 55, direction: "outgoing" },
+    );
+
+    await dispatchText("follow-up", 9, { message_id: 3, text: "the plan is ready" });
+
+    const submitted = submit.mock.calls[0]?.[0];
+    expect(submitted.text).toBe("Replied to:\n> the plan is ready\n\nfollow-up");
+  });
 });
 
 describe("inbound reactions", () => {
@@ -782,6 +824,60 @@ describe("inbound reactions", () => {
     await dispatchReaction(12, "👍", 42, 42, "👍");
 
     expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("prepends the owning session's last exchange when reacting to an older message", async () => {
+    const { channel, runtime, submit, mappings, recorded, lastExchanges, dispatchReaction } =
+      makeChannel();
+    await channel.start(runtime);
+
+    mappings.set("10", 77);
+    mappings.set("11", 77);
+    recorded.push(
+      { messageId: "10", sessionId: 77, direction: "outgoing" },
+      { messageId: "11", sessionId: 77, direction: "outgoing" },
+    );
+    lastExchanges.set(77, "user: hi\nassistant: hello there");
+
+    await dispatchReaction(10, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Reacted to:\nuser: hi\nassistant: hello there\n\nThe user reacted 👍 to a previous message. Interpret it in the context of the last exchange and respond accordingly.",
+      }),
+    );
+  });
+
+  it("omits context when reacting to the session's latest message", async () => {
+    const { channel, runtime, submit, mappings, recorded, lastExchanges, dispatchReaction } =
+      makeChannel();
+    await channel.start(runtime);
+
+    mappings.set("11", 77);
+    recorded.push({ messageId: "11", sessionId: 77, direction: "outgoing" });
+    lastExchanges.set(77, "user: hi\nassistant: hello there");
+
+    await dispatchReaction(11, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "The user reacted 👍 to a previous message." }),
+    );
+  });
+
+  it("falls back to the active session's exchange for an unrecorded reacted-to message", async () => {
+    const { channel, runtime, submit, lastExchanges, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    // Message 50 is not recorded; the active session (100) has an exchange.
+    lastExchanges.set(100, "user: hi\nassistant: hello there");
+
+    await dispatchReaction(50, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Reacted to:\nuser: hi\nassistant: hello there\n\nThe user reacted 👍 to a previous message. Interpret it in the context of the last exchange and respond accordingly.",
+      }),
+    );
   });
 });
 
@@ -878,6 +974,46 @@ describe("callback queries", () => {
 
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({ metadata: expect.objectContaining({ buttonValue: "approve" }) }),
+    );
+  });
+
+  it("prepends the original prompt when tapping an older button message", async () => {
+    const { channel, runtime, submit, mappings, recorded, prompts, dispatchCallback } =
+      makeChannel();
+    await channel.start(runtime);
+
+    mappings.set("5", 100);
+    mappings.set("8", 100);
+    recorded.push(
+      { messageId: "5", sessionId: 100, direction: "outgoing" },
+      { messageId: "8", sessionId: 100, direction: "outgoing" },
+    );
+    prompts.set("5", "Proceed?");
+
+    await dispatchCallback({ data: packCallbackData("yes", false), messageId: 5 });
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Proceed?\n\nThe user tapped the option `yes` out of the options you displayed.",
+      }),
+    );
+  });
+
+  it("omits the prompt when tapping the latest button message", async () => {
+    const { channel, runtime, submit, mappings, recorded, prompts, dispatchCallback } =
+      makeChannel();
+    await channel.start(runtime);
+
+    mappings.set("5", 100);
+    recorded.push({ messageId: "5", sessionId: 100, direction: "outgoing" });
+    prompts.set("5", "Proceed?");
+
+    await dispatchCallback({ data: packCallbackData("yes", false), messageId: 5 });
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "The user tapped the option `yes` out of the options you displayed.",
+      }),
     );
   });
 });

@@ -73,6 +73,20 @@ describe("mapTextMessage", () => {
     expect(inbound?.text).toBe("hi");
     expect(inbound?.metadata).toEqual({ messageId: 9, replyToMessageId: "4" });
   });
+
+  it("skips the reply quote but keeps routing metadata when skipQuote is set", () => {
+    const inbound = mapTextMessage(
+      {
+        message_id: 7,
+        text: "what about this?",
+        reply_to_message: { message_id: 3, text: "the plan is ready" } as never,
+      },
+      { skipQuote: true },
+    );
+
+    expect(inbound?.text).toBe("what about this?");
+    expect(inbound?.metadata).toEqual({ messageId: 7, replyToMessageId: "3" });
+  });
 });
 
 describe("mapReaction", () => {
@@ -128,6 +142,24 @@ describe("mapReaction", () => {
 
     expect(inbound?.text).toBe("The user reacted 🔥 to a previous message.");
   });
+
+  it("prepends the last exchange and guidance when context is supplied", () => {
+    const inbound = mapReaction(reaction(12, 42, ["👍"]), {
+      lastExchange: "user: hi\nassistant: hello there",
+    });
+
+    expect(inbound?.text).toBe(
+      "Reacted to:\nuser: hi\nassistant: hello there\n\n" +
+        "The user reacted 👍 to a previous message. Interpret it in the context of the last exchange and respond accordingly.",
+    );
+    expect(inbound?.metadata).toEqual({ reaction: true, replyToMessageId: "12" });
+  });
+
+  it("omits the context block and guidance when the last exchange is blank", () => {
+    const inbound = mapReaction(reaction(12, 42, ["👍"]), { lastExchange: "   " });
+
+    expect(inbound?.text).toBe("The user reacted 👍 to a previous message.");
+  });
 });
 
 describe("mapMediaMessage", () => {
@@ -158,6 +190,21 @@ describe("mapMediaMessage", () => {
     expect(inbound.text).toBe("Replied to:\n> the prior note\n\nsee this");
     expect(inbound.metadata).toEqual({ messageId: 6, replyToMessageId: "2" });
   });
+
+  it("skips the reply quote when skipQuote is set", () => {
+    const inbound = mapMediaMessage(
+      {
+        message_id: 6,
+        caption: "see this",
+        reply_to_message: { message_id: 2, text: "the prior note" } as never,
+      },
+      attachment,
+      { skipQuote: true },
+    );
+
+    expect(inbound.text).toBe("see this");
+    expect(inbound.metadata).toEqual({ messageId: 6, replyToMessageId: "2" });
+  });
 });
 
 describe("mapButtonTap", () => {
@@ -170,6 +217,21 @@ describe("mapButtonTap", () => {
 
   it("omits the message id from metadata when none is given", () => {
     expect(mapButtonTap("no", null).metadata).toEqual({ buttonValue: "no" });
+  });
+
+  it("prepends the original prompt when context is supplied", () => {
+    const inbound = mapButtonTap("yes", 9, { prompt: "Proceed?" });
+
+    expect(inbound.text).toBe(
+      "Proceed?\n\nThe user tapped the option `yes` out of the options you displayed.",
+    );
+    expect(inbound.metadata).toEqual({ buttonValue: "yes", messageId: 9 });
+  });
+
+  it("omits the prompt when it is blank", () => {
+    const inbound = mapButtonTap("yes", 9, { prompt: "  " });
+
+    expect(inbound.text).toBe("The user tapped the option `yes` out of the options you displayed.");
   });
 });
 

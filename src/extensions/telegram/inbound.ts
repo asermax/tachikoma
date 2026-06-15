@@ -34,12 +34,15 @@ export const replyTargetId = (message: Pick<Message, "reply_to_message">): strin
 
 export const mapTextMessage = (
   message: Pick<Message, "text" | "message_id" | "reply_to_message">,
+  options?: { skipQuote?: boolean },
 ): InboundMessage | null => {
   const text = message.text?.trim() ?? "";
 
   if (text.length === 0) return null;
 
-  const quote = replyQuote(message);
+  // The quote is suppressed when the reply targets the session's latest message
+  // (already live in the agent's context); routing metadata is still recorded.
+  const quote = options?.skipQuote !== true ? replyQuote(message) : null;
 
   return {
     text: quote != null ? `${quote}\n\n${text}` : text,
@@ -53,8 +56,9 @@ export const mapTextMessage = (
 export const mapMediaMessage = (
   message: Pick<Message, "caption" | "message_id" | "reply_to_message">,
   attachment: MediaAttachment,
+  options?: { skipQuote?: boolean },
 ): InboundMessage => {
-  const quote = replyQuote(message);
+  const quote = options?.skipQuote !== true ? replyQuote(message) : null;
   const caption = message.caption?.trim() ?? "";
 
   return {
@@ -83,8 +87,14 @@ const emojiSet = (reactions: ReactionType[] | undefined): Set<string> =>
 /**
  * Frame a reaction update as an inbound message. Diffs old/new reactions so the
  * agent sees what the user added or removed; returns null when nothing changed.
+ * When `context.lastExchange` is supplied (the reaction targets an older
+ * message), it is prepended as `Reacted to:` context with an interpretation
+ * hint; a reaction to the session's latest message is left bare (already live).
  */
-export const mapReaction = (event: MessageReactionUpdated): InboundMessage | null => {
+export const mapReaction = (
+  event: MessageReactionUpdated,
+  context?: { lastExchange: string | null },
+): InboundMessage | null => {
   const next = emojiSet(event.new_reaction);
   const previous = emojiSet(event.old_reaction);
 
@@ -98,8 +108,15 @@ export const mapReaction = (event: MessageReactionUpdated): InboundMessage | nul
     removed.length > 0 ? `removed reaction ${removed.join(" ")}` : null,
   ].filter((part) => part != null);
 
+  const prose = `The user ${parts.join(" and ")} to a previous message.`;
+  const exchange = context?.lastExchange?.trim();
+  const text =
+    exchange != null && exchange.length > 0
+      ? `Reacted to:\n${exchange}\n\n${prose} Interpret it in the context of the last exchange and respond accordingly.`
+      : prose;
+
   return {
-    text: `The user ${parts.join(" and ")} to a previous message.`,
+    text,
     channel: CHANNEL_NAME,
     receivedAt: new Date(),
     media: [],
@@ -107,11 +124,26 @@ export const mapReaction = (event: MessageReactionUpdated): InboundMessage | nul
   };
 };
 
-/** Frame a button tap so the agent can distinguish it from typed input. */
-export const mapButtonTap = (value: string, messageId: number | null): InboundMessage => ({
-  text: `The user tapped the option \`${value}\` out of the options you displayed.`,
-  channel: CHANNEL_NAME,
-  receivedAt: new Date(),
-  media: [],
-  metadata: { buttonValue: value, ...(messageId != null ? { messageId } : {}) },
-});
+/**
+ * Frame a button tap so the agent can distinguish it from typed input. When
+ * `context.prompt` is supplied (the tap targets an older button message), the
+ * original prompt is prepended so the agent sees the question its tap answers;
+ * a tap on the session's latest button message is left bare (already live).
+ */
+export const mapButtonTap = (
+  value: string,
+  messageId: number | null,
+  context?: { prompt: string | null },
+): InboundMessage => {
+  const prose = `The user tapped the option \`${value}\` out of the options you displayed.`;
+  const prompt = context?.prompt?.trim();
+  const text = prompt != null && prompt.length > 0 ? `${prompt}\n\n${prose}` : prose;
+
+  return {
+    text,
+    channel: CHANNEL_NAME,
+    receivedAt: new Date(),
+    media: [],
+    metadata: { buttonValue: value, ...(messageId != null ? { messageId } : {}) },
+  };
+};
