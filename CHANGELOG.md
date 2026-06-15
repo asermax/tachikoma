@@ -1,3 +1,10 @@
+# [3.11.0](https://github.com/asermax/tachikoma/compare/v3.10.0...v3.11.0) (2026-06-15)
+
+
+### Features
+
+* **projects:** push clean-ahead submodules on close ([ba521f2](https://github.com/asermax/tachikoma/commit/ba521f2a5c22aba360bc28509bf1312a0c85995a))
+
 # [3.10.0](https://github.com/asermax/tachikoma/compare/v3.9.0...v3.10.0) (2026-06-15)
 
 
