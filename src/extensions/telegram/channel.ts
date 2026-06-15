@@ -184,15 +184,15 @@ export class TelegramChannel implements Channel {
       const event = ctx.messageReaction;
       const messageId = String(event.message_id);
       // Prepend the owning session's last exchange only when the reaction targets
-      // an older message; a reaction to the latest is already live in the agent's
-      // context. An unrecorded target resolves to the active session here, but the
-      // handler below drops it (see routeReply), so that exchange is never submitted.
+      // an older recorded message; a reaction to the latest is already live in the
+      // agent's context. An unrecorded target is dropped by the handler below
+      // (routeReply returns it unresolved), so no context is prepared for it.
       const reference = this.options.store.findMessage(messageId);
-      const owningSessionId = reference?.sessionId ?? this.options.currentSessionId();
+      const owningSessionId = reference?.sessionId ?? null;
       const lastExchange =
-        (reference?.isLatest ?? false) || owningSessionId == null
-          ? null
-          : this.options.lastExchangeOf(owningSessionId);
+        reference != null && !reference.isLatest && owningSessionId != null
+          ? this.options.lastExchangeOf(owningSessionId)
+          : null;
 
       const inbound = mapReaction(event, { lastExchange });
       if (inbound == null) return;
