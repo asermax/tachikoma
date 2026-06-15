@@ -271,12 +271,23 @@ export class Coordinator {
     await this.runPostProcessing(record);
   }
 
-  /** Close sessions left open by a previous run so their post-processing still happens. */
-  async recoverDanglingSessions(): Promise<void> {
-    for (const record of this.registry.findDangling()) {
-      const closed = this.registry.close(record.id);
-      this.log.info({ sessionId: closed.id }, "recovered dangling session from previous run");
-      await this.runPostProcessing(closed);
+  /**
+   * Ensure no session is left without post-processing: re-run it for every session whose
+   * `postProcessingState` is null — both those left open by a crash (closed here first) and
+   * those closed but interrupted before post-processing persisted its state. Post-processing is
+   * idempotent at processor granularity (completed processors are skipped), so re-runs are safe.
+   */
+  async recoverUnprocessedSessions(): Promise<void> {
+    for (const record of this.registry.findUnprocessed()) {
+      const wasOpen = record.closedAt == null;
+      const target = wasOpen ? this.registry.close(record.id) : record;
+      this.log.info(
+        { sessionId: target.id },
+        wasOpen
+          ? "recovered dangling session from previous run"
+          : "resuming post-processing for closed session",
+      );
+      await this.runPostProcessing(target);
     }
   }
 

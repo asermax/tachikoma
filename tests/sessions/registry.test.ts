@@ -162,3 +162,27 @@ describe("SessionRegistry.listResumable errored exclusion", () => {
     expect(ids).not.toContain(broken.id);
   });
 });
+
+describe("SessionRegistry.findUnprocessed", () => {
+  it("selects both open and closed sessions whose postProcessingState is null", () => {
+    const registry = new SessionRegistry(db);
+
+    const open = registry.create("repl", "/tmp/open.jsonl");
+    const closed = registry.create("repl", "/tmp/closed.jsonl");
+    registry.close(closed.id);
+
+    const ids = registry.findUnprocessed().map((session) => session.id);
+
+    expect(ids).toEqual(expect.arrayContaining([open.id, closed.id]));
+  });
+
+  it("excludes sessions that completed post-processing (no backfill)", () => {
+    const registry = new SessionRegistry(db);
+
+    const processed = registry.create("repl", "/tmp/done.jsonl");
+    registry.close(processed.id);
+    registry.update(processed.id, { postProcessingState: { memory: "completed" } });
+
+    expect(registry.findUnprocessed().map((session) => session.id)).not.toContain(processed.id);
+  });
+});

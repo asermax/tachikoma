@@ -37,12 +37,12 @@ Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the 
 7. `EventBus`, `Scheduler`, `createRegistrations()` — passive services
 8. `AgentManager`, `SessionRegistry`, `Coordinator` — runtime consumers of the registrations
 9. `host.load(firstPartyExtensions)` — extension setups in list order, then `host.bootstrap()` runs all hooks
-10. `coordinator.recoverDanglingSessions()` — close and post-process sessions a previous run left open
-11. Channel resolution (`--channel` flag or `channels.default`), `channel.start`, then `coordinator.run(signal)` until SIGINT/SIGTERM aborts
+10. `coordinator.recoverUnprocessedSessions()` — close and post-process sessions a previous run left without completed post-processing (left open, or closed but interrupted before state persisted)
+11. Channel resolution (`--channel` flag or `channels.default`), `channel.start`, then `coordinator.run(signal)` until a `ShutdownController` aborts on `SIGINT`/`SIGTERM`/`uncaughtException`/`unhandledRejection`
 
 The three `adapt*` calls are best-effort legacy migrations (see [migration](../feature-designs/migration.md)); they sit between workspace creation and the runtime services so translated config/workspace/data is in place before anything reads it.
 
-Shutdown is the reverse tail: the abort signal wakes the coordinator loop, whose `finally` closes the active session (running post-processing); `runApp`'s `finally` then stops the channel and the scheduler.
+Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an uncaught error; the coordinator loop's `finally` closes the active session (running post-processing); `runApp`'s `finally` then stops the channel and the scheduler, and sets `process.exitCode = 1` when the drain followed a crash (so a supervisor restarts the process). See [conversation-loop](conversation-loop.md) for the crash-drain force-exit backstop.
 
 ## Components
 

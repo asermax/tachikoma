@@ -34,7 +34,7 @@ The core shell is everything that runs before and around conversations: configur
 | R13 | Extensions may enqueue further extensions during setup via `app.registerExtension()` (external extension support); enqueued extensions load in the same pass, after the current list |
 | R14 | Bootstrap hooks registered via `app.bootstrap(name, hook)` run after all extension setups complete, sequentially in registration order, named `<extension>:<name>`; a failing first-party hook aborts startup (propagates), while a failing external (third-party) hook is isolated — caught, logged as a warning, and skipped so startup continues |
 | R15 | The channel is selected by the `--channel` flag or `channels.default`; an unknown channel name fails startup with a message listing available channels |
-| R16 | On SIGINT/SIGTERM the main loop exits, the active session closes (running post-processing), the channel stops, and the scheduler stops all jobs |
+| R16 | On `SIGINT`/`SIGTERM`, or an uncaught exception/unhandled rejection, the main loop drains (the active session closes, running post-processing), the channel stops, and the scheduler stops all jobs; a crash-initiated drain is bounded by a force-exit timeout and exits non-zero so a supervisor restarts the process |
 | R17 | The `[env]` config section (a `string → string` map) is applied to `process.env` at startup, before any runtime service or pi session is constructed, so the variables are visible app-wide and to anything that inherits the process environment (sessions, spawned tools, detached processes); config-defined values overwrite existing same-named variables |
 
 ## Behaviors

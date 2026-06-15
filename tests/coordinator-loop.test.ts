@@ -541,17 +541,10 @@ describe("Coordinator.closeActiveSessionIfIdle", () => {
 });
 
 describe("Coordinator.runPostProcessing", () => {
-  it("runs processors by phase, records state, and skips already-completed ones", async () => {
+  it("runs processors by phase and records completed/failed state", async () => {
     const regs = createRegistrations();
     const calls: string[] = [];
 
-    regs.postProcessors.push({
-      name: "alreadyDone",
-      phase: "main",
-      process: async () => {
-        calls.push("alreadyDone");
-      },
-    });
     regs.postProcessors.push({
       name: "memory",
       phase: "main",
@@ -579,19 +572,19 @@ describe("Coordinator.runPostProcessing", () => {
     );
 
     const record = registry.create("test", "/tmp/active.jsonl");
-    registry.update(record.id, { postProcessingState: { alreadyDone: "completed" } });
 
     const postProcessed = vi.fn();
     events.on("session:post-processed", postProcessed);
 
     coordinator.attachChannel(createChannel());
 
-    // recoverDanglingSessions closes the open record then runs the full phased pipeline.
-    await coordinator.recoverDanglingSessions();
+    // recoverUnprocessedSessions closes the open (null-state) record then runs the pipeline.
+    // (The shouldSkip-for-completed wiring is covered in tests/post-processing.test.ts; recovery
+    // only ever selects null-state records, so it always runs every registered processor.)
+    await coordinator.recoverUnprocessedSessions();
 
-    expect(calls).toContain("memory");
-    expect(calls).toContain("archive");
-    expect(calls).not.toContain("alreadyDone");
+    // main phase runs before finalize
+    expect(calls.indexOf("memory")).toBeLessThan(calls.indexOf("archive"));
 
     expect(log.error).toHaveBeenCalledWith(
       expect.objectContaining({ processor: "broken" }),
@@ -600,7 +593,6 @@ describe("Coordinator.runPostProcessing", () => {
 
     const finalState = registry.get(record.id)?.postProcessingState;
     expect(finalState).toMatchObject({
-      alreadyDone: "completed",
       memory: "completed",
       archive: "completed",
       broken: "failed",
@@ -609,8 +601,8 @@ describe("Coordinator.runPostProcessing", () => {
   });
 });
 
-describe("Coordinator.recoverDanglingSessions", () => {
-  it("closes and post-processes sessions left open by a previous run", async () => {
+describe("Coordinator.recoverUnprocessedSessions", () => {
+  it("closes and post-processes sessions left open by a previous run (AC6)", async () => {
     const regs = createRegistrations();
     const processed: number[] = [];
     regs.postProcessors.push({
@@ -624,10 +616,57 @@ describe("Coordinator.recoverDanglingSessions", () => {
 
     const dangling = registry.create("test", "/tmp/active.jsonl");
 
-    await coordinator.recoverDanglingSessions();
+    await coordinator.recoverUnprocessedSessions();
 
     expect(processed).toEqual([dangling.id]);
     expect(registry.get(dangling.id)?.closedAt).not.toBeNull();
+  });
+
+  it("post-processes a closed-but-unprocessed session without re-closing it (AC5)", async () => {
+    const regs = createRegistrations();
+    const processed: number[] = [];
+    regs.postProcessors.push({
+      name: "recover",
+      process: async (ctx) => {
+        if (ctx.session != null) processed.push(ctx.session.id);
+      },
+    });
+
+    const { coordinator, registry } = makeCoordinator(db, createAgent(createSession()), regs);
+
+    // Closed by a crash/interrupted drain, but postProcessingState never persisted.
+    const closedUnprocessed = registry.create("test", "/tmp/active.jsonl");
+    const closed = registry.close(closedUnprocessed.id);
+    const closedAtBefore = closed.closedAt;
+
+    await coordinator.recoverUnprocessedSessions();
+
+    expect(processed).toEqual([closedUnprocessed.id]);
+    // closedAt must be untouched — recovery must not restamp an already-closed session.
+    expect(registry.get(closedUnprocessed.id)?.closedAt).toEqual(closedAtBefore);
+  });
+
+  it("recovers both an open-dangling and a closed-but-unprocessed session in one pass", async () => {
+    const regs = createRegistrations();
+    const processed: number[] = [];
+    regs.postProcessors.push({
+      name: "recover",
+      process: async (ctx) => {
+        if (ctx.session != null) processed.push(ctx.session.id);
+      },
+    });
+
+    const { coordinator, registry } = makeCoordinator(db, createAgent(createSession()), regs);
+
+    const open = registry.create("test", "/tmp/open.jsonl"); // dangling: open, null state
+    const closed = registry.create("test", "/tmp/closed.jsonl"); // interrupted: closed, null state
+    registry.close(closed.id);
+
+    await coordinator.recoverUnprocessedSessions();
+
+    expect(processed).toHaveLength(2);
+    expect(processed).toEqual(expect.arrayContaining([open.id, closed.id]));
+    expect(registry.get(open.id)?.closedAt).not.toBeNull();
   });
 });
 

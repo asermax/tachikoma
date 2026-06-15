@@ -12,6 +12,7 @@ import { componentLogger, createRootLogger, retainedFiles } from "./log.ts";
 import { adaptConfig, adaptWorkspace, adaptWorkspaceData } from "./migration/index.ts";
 import { Scheduler } from "./scheduler.ts";
 import { SessionRegistry } from "./sessions/registry.ts";
+import { ShutdownController } from "./shutdown.ts";
 import { Workspace } from "./workspace.ts";
 
 export interface RunOptions {
@@ -90,7 +91,7 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
 
   await host.load(firstPartyExtensions);
   await host.bootstrap();
-  await coordinator.recoverDanglingSessions();
+  await coordinator.recoverUnprocessedSessions();
 
   const channelName = options.channel ?? config.channels.default;
   const channel = regs.channels.get(channelName);
@@ -103,12 +104,11 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
   coordinator.attachChannel(channel);
 
   const abort = new AbortController();
-  const shutdown = (signal: string) => {
-    log.info({ signal }, "shutting down");
-    abort.abort();
-  };
-  process.once("SIGINT", () => shutdown("SIGINT"));
-  process.once("SIGTERM", () => shutdown("SIGTERM"));
+  const shutdown = new ShutdownController({ abort, log });
+  process.once("SIGINT", () => shutdown.trigger("SIGINT"));
+  process.once("SIGTERM", () => shutdown.trigger("SIGTERM"));
+  process.once("uncaughtException", (err) => shutdown.trigger("uncaughtException", err));
+  process.once("unhandledRejection", (reason) => shutdown.trigger("unhandledRejection", reason));
 
   await channel.start({
     log: componentLogger(log, channelName),
@@ -123,4 +123,9 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
     await channel.stop();
     scheduler.stopAll();
   }
+
+  // A crash-initiated drain completed: exit non-zero so supervisors (e.g. systemd) restart us.
+  // exitCode (not process.exit) lets the event loop empty and pino flush; the controller's own
+  // timeout/second-signal backstop still uses process.exit(1).
+  if (shutdown.didCrash) process.exitCode = 1;
 };

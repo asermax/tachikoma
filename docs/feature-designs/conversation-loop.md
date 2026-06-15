@@ -51,7 +51,8 @@ On session resume, bridging context (summaries of sessions closed since the resu
 | `src/channels/types.ts` | `Channel`, `Exchange`, `Delivery` contracts | `respond()` consumes the stream to completion, so channel rendering paces the exchange; `DELIVERY_TIERS` const map (per-tier timing lives in `delivery-queue.ts`) |
 | `src/domain/message.ts`, `src/domain/agent-events.ts` | SDK-free domain types crossing the channel boundary | Channels and extensions never import pi types |
 | `src/extensions/host.ts`, `src/extensions/api.ts` | Map `app.sessions` / `app.channels` / `app.inbound` services onto coordinator + registry methods | Registries (`src/extensions/registrations.ts`) are plain mutable arrays filled at setup, read at runtime |
-| `src/app.ts` | Wiring: registers `hostFactory()`, recovers dangling sessions after bootstrap, selects and starts the channel, runs the loop until SIGINT/SIGTERM | Channel selection fails fast listing available names |
+| `src/app.ts` | Wiring: registers `hostFactory()`, recovers unprocessed sessions after bootstrap, selects and starts the channel, wires process-exit causes to `ShutdownController`, runs the loop | Channel selection fails fast listing available names |
+| `src/shutdown.ts` | `ShutdownController`: routes `SIGINT`/`SIGTERM`/`uncaughtException`/`unhandledRejection` through one idempotent graceful drain | First trigger aborts (the loop's `finally` drains + post-processes); a crash cause also arms an unref'd force-exit timer (no external killer for autonomous crashes); a second trigger force-exits immediately and clears the timer; `exit` is injectable for tests |
 
 ## Key Decisions
 
@@ -97,13 +98,14 @@ On session resume, bridging context (summaries of sessions closed since the resu
 ### Per-processor completion state on the session row
 
 **Choice**: `runPostProcessing` drives the shared phase iterator (`runPhasedPostProcessors` in `src/extensions/post-processing.ts`) with state-tracking callbacks: it records `completed`/`failed` per processor in the record's `postProcessingState` JSON column (via `onProcessorSettled`) and skips already-completed processors on re-entry (via `shouldSkip`).
-**Why**: Dangling recovery re-runs post-processing for sessions closed by a crash; without per-processor state, every recovery would re-extract memories, re-commit, etc. State on the row makes the pipeline idempotent at processor granularity.
+**Why**: Startup recovery re-runs post-processing for sessions that never completed it — left open by a crash, or closed but interrupted before state persisted; without per-processor state, every recovery would re-extract memories, re-commit, etc. State on the row makes the pipeline idempotent at processor granularity.
 **Alternatives Considered**:
 - A single `processedAt` timestamp: all-or-nothing, so one failing processor forces rerunning all of them
 - A separate processing-log table: more structure than a per-session map needs
 
 **Consequences**:
-- Pro: crash-safe, retry-friendly; failed processors retry on the next run while completed ones do not
+- Pro: crash-safe — recovery catches every session whose post-processing never persisted state (a crash before or mid-drain), recording which processors ran
+- Con: recovery selects only null-state rows (`findUnprocessed`), so a processor that ran but failed (non-null state persisted) is terminal — it is not retried on subsequent startups; the `shouldSkip`-for-completed guard is a re-entry safety net for repeated close paths
 - Con: a processor renamed between runs is treated as never-run
 
 Headless/background runs that have no per-session close lifecycle reach the same processors through `app.sessions.runPostProcessors(context)`, which calls the same shared `runPhasedPostProcessors` iterator but omits the state-tracking callbacks — every registered processor runs once in phase order, error-isolated, with **no** per-processor completion-state tracking, since there is no session row to record state on. The phase order itself is a single source of truth (`POST_PROCESSING_PHASE_ORDER`, derived from `POST_PROCESSING_PHASES` in `src/extensions/api.ts`). Transcript-dependent processors no-op when `context.transcriptPath` is null.
@@ -143,6 +145,18 @@ Headless/background runs that have no per-session close lifecycle reach the same
 - Pro: a corrupt session can never pollute derived state; the loop never stops on a quarantine.
 - Con: a quarantined session's rolling summary stops updating (intentional — it will not be resumed); the user may keep using the active session, which is quarantined when it eventually closes.
 
+### Crash drain: route uncaught errors through the same abort path
+
+**Choice**: A `ShutdownController` (`src/shutdown.ts`) routes `SIGINT`, `SIGTERM`, `uncaughtException`, and `unhandledRejection` through one idempotent trigger. The first call aborts the `AbortController` the loop already drains on; a crash cause (uncaught exception / unhandled rejection) additionally arms an unref'd force-exit timer (`SHUTDOWN_FORCE_EXIT_MS`, 3 min). A second trigger force-exits immediately and clears the timer. `app.ts` sets `process.exitCode = 1` (not `process.exit`) once a crash drain completes, so the loop empties and pino flushes; the timeout/second-signal backstop still calls `process.exit(1)`.
+**Why**: Post-processing reads the durable on-disk transcript and is error-isolated per processor, so salvaging it on the crash path is safe — and it is the *same* `finally` block already trusted on graceful shutdown, not new teardown work. Without this, an unhandled rejection (Node's default `--unhandled-rejections=throw`) exits the process before the drain, deferring the whole session's memory to next-startup recovery. The force-exit timer is crash-only because signals already have an external killer (operator / systemd `TimeoutStopSec`); an autonomous crash does not. `exitCode` over `process.exit` keeps the crash-drain flush path working (the backstop accepts a best-effort final log line — recovery backstops the *data*, not the logs).
+**Alternatives Considered**:
+- Minimal cleanup + immediate exit (the literal Node guidance for `uncaughtException`): rejected — it defers all session work to next-startup recovery, the exact fragility this closes.
+- Aborting the in-flight exchange on crash: out of scope — abort only wakes a parked loop, so a mid-exchange crash waits for the exchange to finish (bounded by the timer, backstopped by recovery).
+**Consequences**:
+- Pro: a crash mid-conversation still extracts memory, updates context, and commits the workspace before exit, instead of losing the whole session
+- Pro: recovery (R11) backstops any drain the timeout cuts short, so the force-exit value is non-critical
+- Con: on the unstable `uncaughtException` path the pino flush is best-effort; a final log line may be lost (acceptable — recovery protects the data)
+
 ## System Behavior
 
 ### Scenario: User redirects a long run mid-exchange
@@ -159,9 +173,21 @@ Headless/background runs that have no per-session close lifecycle reach the same
 
 ### Scenario: Crash before close
 
-**Given**: The process died with a session row whose `closedAt` is null and one post-processor previously `completed`
-**When**: The next startup calls `recoverDanglingSessions()`
-**Then**: The row is closed and post-processing runs with the persisted state — the completed processor is skipped, the rest run, and the merged state is written back.
+**Given**: The process died with a session row whose `closedAt` and `postProcessingState` are both null
+**When**: The next startup calls `recoverUnprocessedSessions()`
+**Then**: The row is closed and post-processing runs the full pipeline; the per-processor state is written back.
+
+### Scenario: Crash mid-drain leaves a closed-but-unprocessed session
+
+**Given**: The process was force-killed after a drain stamped `closedAt` but before `postProcessingState` persisted — or the crash-drain force-exit timer cut the drain short
+**When**: The next startup calls `recoverUnprocessedSessions()`
+**Then**: The closed row is found via its null `postProcessingState`, post-processing runs in place, and `closedAt` is left untouched.
+
+### Scenario: Uncaught error drains before exit
+
+**Given**: An active session with pending post-processing, and an unhandled rejection fires
+**When**: `ShutdownController` catches the rejection
+**Then**: The loop's `finally` drains (post-processing runs) through the same path as a graceful signal, then the process exits non-zero so a supervisor restarts it.
 
 ### Scenario: Background delivery during a conversation
 

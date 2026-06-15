@@ -44,6 +44,15 @@ export class SessionRegistry {
     return this.db.select().from(sessions).where(isNull(sessions.closedAt)).all();
   }
 
+  /**
+   * Sessions that never completed post-processing — left open by a crash, or closed but
+   * interrupted before post-processing persisted its state. `postProcessingState` is written
+   * only at the end of a successful run, so null reliably means "never finished".
+   */
+  findUnprocessed(): SessionRecord[] {
+    return this.db.select().from(sessions).where(isNull(sessions.postProcessingState)).all();
+  }
+
   /** Closed sessions recent enough to be candidates for topic resumption. */
   listResumable(windowSeconds: number): SessionRecord[] {
     const cutoff = new Date(Date.now() - windowSeconds * 1000);

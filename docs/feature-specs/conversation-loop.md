@@ -4,7 +4,7 @@
 
 ## Overview
 
-The conversation loop is the message-handling cycle at the center of the app: channels submit inbound messages to the coordinator, which serializes them through an inbox into one exchange at a time (a message arriving mid-exchange instead steers the live run), runs the inbound middleware chain (where [boundary decisions](boundary-detection.md) close or resume sessions), ensures a long-lived pi `AgentSession`, gathers extension context, streams the exchange back through the active channel, and runs exchange processors. Closing a session — via an extension (boundary's topical or idle decision), dangling recovery, or shutdown — triggers phased post-processing with per-processor completion tracking.
+The conversation loop is the message-handling cycle at the center of the app: channels submit inbound messages to the coordinator, which serializes them through an inbox into one exchange at a time (a message arriving mid-exchange instead steers the live run), runs the inbound middleware chain (where [boundary decisions](boundary-detection.md) close or resume sessions), ensures a long-lived pi `AgentSession`, gathers extension context, streams the exchange back through the active channel, and runs exchange processors. Closing a session — via an extension (boundary's topical or idle decision), startup recovery, or shutdown — triggers phased post-processing with per-processor completion tracking.
 
 The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/registry.ts` and the channel contract in `src/channels/types.ts`. How pi sessions are constructed and how pi events become domain events is specified in [agent-integration](agent-integration.md).
 
@@ -24,21 +24,22 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R2 | Inbound messages carry text, source channel, receipt timestamp, media attachments (kind, path, optional mime/description), and free-form metadata |
 | R3 | Registered inbound middleware runs as a chain before session resolution, receiving the message, the active session record (or null), and `closeSession`/`resumeSession` controls |
 | R4 | When no session is active, the coordinator opens a pi `AgentSession` with all registered extension factories bound, creates a database record, emits `session:opened`, and runs session-open hooks with error isolation |
-| R5 | Session records persist channel, pi transcript path, summary, last exchange, created/closed/resumed timestamps, an `error` (quarantine) flag, and per-processor post-processing state; the registry supports create, get, update, close, reopen, mark-errored, dangling lookup, and resumable listing within a time window (resumable listing excludes errored sessions) |
+| R5 | Session records persist channel, pi transcript path, summary, last exchange, created/closed/resumed timestamps, an `error` (quarantine) flag, and per-processor post-processing state; the registry supports create, get, update, close, reopen, mark-errored, unprocessed lookup, and resumable listing within a time window (resumable listing excludes errored sessions) |
 | R6 | On session resume, the coordinator injects bridging context (summaries of sessions closed since the resumed session's prior close) as a single hidden `tachikoma-context` message via pi's `before_agent_start`. Extension-contributed context (memory, projects, subsystem usage) is not coordinator-gathered — each extension registers its own context section (`app.agent.use(provideContext(provide, customType?), { sessionScopes })`, see [DES-001](../design/DES-001-unified-extension-api.md)) injected directly through pi |
 | R7 | Each exchange streams domain `AgentEvent`s to the active channel's `respond()`; media attachments are rendered into the prompt as an `<attachments>` block |
 | R8 | Exchange processors run in parallel after every completed exchange with the session record, user text, and latest assistant text, error-isolated; processors are skipped for a quarantined (errored) session; the coordinator's cached session record is refreshed afterwards |
 | R9 | Closing a session disposes the pi session, stamps `closedAt`, emits `session:closed`, and runs post-processing |
 | R10 | Post-processors run in phases `main → preFinalize → finalize`, parallel within a phase, error-isolated; per-processor `completed`/`failed` state is recorded on the session row and already-completed processors are skipped; a quarantined (errored) session skips post-processing entirely |
-| R11 | On startup, sessions left open by a previous run are closed and post-processed (dangling recovery) |
+| R11 | On startup, sessions whose post-processing never completed — whether left open by a crash or closed but interrupted before state persisted — are recovered (closed if still open) and post-processed before the channel starts; an already-closed row is post-processed without restamping `closedAt` |
 | R12 | Resuming a quarantined (errored) session is refused — the active session is kept; otherwise resuming closes the current session, reopens the target record (`closedAt` cleared, `lastResumedAt` set), and opens a fresh pi session from the stored transcript file |
 | R13 | `closeIfIdle()` closes the active session only when no exchange is in flight (returning whether it closed), so time-based policies in extensions can never dispose a streaming session |
 | R14 | Background deliveries (`app.channels.deliver`) are queued, never steering an in-flight exchange. Each carries a `tier` (default `normal`); the coordinator holds them in a priority queue ordered by tier (Urgent → Normal → Low) then FIFO. Per-tier timing governs when the front item — and with it the whole batch — becomes deliverable: an idle window since the last exchange (Urgent 30s, Normal 120s, Low 300s) or a max-hold from enqueue (Urgent 120s, Normal 900s, Low never-force). When the front item is deliverable and no exchange is in flight, all queued items drain into one digest injected as a single system-origin turn (`origin: "system"`, `boundary: "skip"`) the agent surfaces — never a direct channel render. A `Delivery` with `immediate: true` (synchronous command UI, e.g. the `/new` ack) bypasses the queue and renders straight through `channel.deliver()` |
 | R15 | Enqueuing a delivery and completing an exchange both re-evaluate the queue against a single shared unref'd timer; a deliverable batch wakes the parked loop (via the digest submit) so it lands promptly at idle, and a non-deliverable queue parks on one timer without busy-spin |
 | R17 | At shutdown the loop sets a `shuttingDown` flag, runs registered `onShutdown` hooks (error-isolated), then renders any remaining queued items — tier/FIFO ordered, including those a hook pushes in — as one digest straight through `channel.deliver()` before closing the active session. No agent turn can run during teardown, so this channel render is the one surviving background-render path; queued items are never re-submitted to the no-longer-drained inbox. When a session is active, the loop also announces the shutdown to the user: it awaits a `Wrapping up the conversation…` line, closes the session (post-processing progress reported on the same message), then awaits a final `Done` |
+| R18 | An uncaught exception or unhandled rejection drains the active session through the same path as a graceful signal (R17) before the process exits, rather than dying mid-conversation. The shutdown trigger is idempotent: a second exit cause during a drain force-exits immediately. A crash-initiated drain is bounded by a force-exit timeout (autonomous crashes have no external killer) and exits non-zero so a supervisor restarts the process |
 | R15 | `status(text)` surfaces pipeline progress as `status` events on the app event bus; the coordinator emits per-provider and per-processor status lines. While shutting down, status is routed to the channel's `shutdownStatus()` (a dedicated persistent message) when available, since the streaming renderer that normally hosts the line is gone |
 | R16 | A message submitted while an exchange is in flight (with an active session and non-system origin) is routed into the live run via the pi session's `steer()` instead of being queued. Two leading-slash prefixes opt out of steering: `/queue ` strips the prefix, tags the message `queued`, and waits in the inbox for the next exchange; `/new ` strips the prefix, tags the message `forceNew` (honored downstream by the boundary extension, which closes the active session), and likewise skips steering. A `steer()` failure is logged and the message dropped. `abortExchange()` aborts the in-flight run on request |
-| R18 | When an exchange ends in an encoding-classified error, the active session is marked errored (quarantined) — best-effort, never stopping the loop. A quarantined session is excluded from resumption, its exchange processors are skipped, and its post-processing is skipped, so corrupt output never produces broken derived state |
+| R19 | When an exchange ends in an encoding-classified error, the active session is marked errored (quarantined) — best-effort, never stopping the loop. A quarantined session is excluded from resumption, its exchange processors are skipped, and its post-processing is skipped, so corrupt output never produces broken derived state |
 
 ## Behaviors
 
@@ -76,7 +77,7 @@ Middleware composes as a `next()`-style chain ahead of session resolution — th
 - Given middleware calls `context.resumeSession(record)`, when it returns, then the resumed session is the active session for the exchange
 - Given no session is active (cold start), when middleware runs, then `context.session` is null
 
-### Session Lifecycle (R4, R5, R9, R11, R12, R18)
+### Session Lifecycle (R4, R5, R9, R11, R12, R19)
 
 One database row per conversation; the active pi session and its record travel together as the coordinator's `ActiveSession`.
 
@@ -84,7 +85,7 @@ One database row per conversation; the active pi session and its record travel t
 - Given no active session, when an exchange starts, then `AgentManager.open()` creates a pi session, `SessionRegistry.create()` records the channel and pi session file, and registered `onOpen` hooks run (a failing hook is logged, the exchange continues)
 - Given an active session, when subsequent messages arrive, then the same pi session is prompted (no per-message client)
 - Given a session closes, when `closeActiveSession()` runs, then the pi session is disposed, `closedAt` is stamped, `session:closed` is emitted, and post-processing runs to completion
-- Given rows with null `closedAt` exist at startup, when `recoverDanglingSessions()` runs, then each is closed and post-processed before the channel starts
+- Given rows with null `postProcessingState` exist at startup (left open by a crash, or closed but interrupted before state persisted), when `recoverUnprocessedSessions()` runs, then each is closed if still open and post-processed before the channel starts; an already-closed row is post-processed without restamping `closedAt`
 - Given a resumable record, when `resumeSession(record)` runs, then the current session is closed first, the record's `closedAt` is cleared with `lastResumedAt` set, and a new pi session opens from `piSessionFile` (`session:opened` with `resumed: true`)
 - Given a window in seconds, when `listResumable()` is queried, then only sessions closed after the cutoff are returned, newest first, excluding any marked errored
 - Given an active session, when its exchange ends in an encoding-classified error, then the session is marked errored (`error: true`) and a warning is logged, without stopping the loop
@@ -116,8 +117,8 @@ Phased, idempotent processing of the closed session's transcript.
 **Acceptance Criteria**:
 - Given processors registered across phases, when post-processing runs, then `main` completes before `preFinalize`, which completes before `finalize`; processors within a phase run in parallel
 - Given a processor fails, when its phase settles, then it is recorded as `failed`, the error is logged, and later phases still run
-- Given a record whose `postProcessingState` already marks a processor `completed`, when post-processing runs again (e.g. dangling recovery), then that processor is skipped
-- Given a closed session marked errored, when post-processing would run (via close or dangling recovery), then the entire pipeline is skipped and a warning is logged
+- Given a record whose `postProcessingState` already marks a processor `completed`, when post-processing runs again, then that processor is skipped (a re-entry guard; startup recovery selects only null-state rows, so it always runs every registered processor)
+- Given a closed session marked errored, when post-processing would run (via close or startup recovery), then the entire pipeline is skipped and a warning is logged
 - Given all phases finish, when state is persisted, then `session:post-processed` is emitted with the per-processor state map
 - Given a processor runs, when it is invoked, then it receives the session record, the pi transcript path, and a processor-bound child logger
 - Given a headless or background run that has no per-session close lifecycle, when `app.sessions.runPostProcessors(context)` is called, then the registered post-processors run once in phase order, error-isolated, with no per-processor completion-state tracking (processors that require a transcript no-op when `transcriptPath` is null)
@@ -130,7 +131,7 @@ Phased, idempotent processing of the closed session's transcript.
 - Given an exchange in flight, when `closeIfIdle()` is called, then nothing closes and `false` is returned; when called while idle with an active session, the session closes (post-processing runs) and `true` is returned
 - Given no active session, when `closeIfIdle()` is called, then nothing closes and `false` is returned
 
-### Delivery Queue and Shutdown Drain (R14, R15, R17)
+### Delivery Queue and Shutdown Drain (R14, R15, R17, R18)
 
 Background-originated output (`app.channels.deliver`) is queued and delivered as an agent turn at conversation pauses, ordered by tier.
 
@@ -145,6 +146,9 @@ Background-originated output (`app.channels.deliver`) is queued and delivered as
 - Given the loop is shutting down, when queued items remain (including ones an `onShutdown` hook pushes in), then they render to `channel.deliver()` as one tier/FIFO-ordered digest and are never re-submitted to the dead inbox
 - Given `channel.deliver()` throws during the shutdown drain, when it is rendered, then the error is logged and teardown proceeds
 - Given the loop is shutting down with an active session, when teardown runs, then the user sees a `Wrapping up the conversation…` line, per-processor `Post-processing: <name>…` progress on the same message, and a final `Done`, each awaited so it lands before the process exits
+- Given an active session with pending post-processing, when an uncaught exception or unhandled rejection fires, then the session drains (post-processing runs) through the same path as a graceful signal before the process exits non-zero
+- Given a drain is already in progress, when a second exit cause arrives (a repeated signal or another error), then the process force-exits immediately and the force-exit is logged
+- Given a crash drain has not finished within the force-exit window, when the timeout fires, then the process exits; any session closed but left unprocessed by the interrupted drain is recovered at the next startup (R11)
 
 ### Processing Status (R15)
 
