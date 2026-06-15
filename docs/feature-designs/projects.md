@@ -38,7 +38,7 @@ One extension (`src/extensions/projects/index.ts`) wires four pieces onto the ap
 | `src/extensions/projects/git.ts` | Submodule plumbing: init/add/remove, default-branch resolution, `ProjectState` + `describeProjectState` (listing is the core `listSubmodules`, re-exported from `src/git/git.ts`) | One state-line format shared by the tool and the context section; dirty count derived from porcelain output |
 | `src/extensions/projects/hooks.ts` | `syncProjects` bootstrap: ensure `projects/`, init → checkout default branch → `smartPull` per submodule | `Promise.allSettled` parallelism; whole sequence retried once per submodule; failures logged, never abort startup; no dirty guard — init and checkout run unconditionally, and only `smartPull` returns `DIRTY_SKIPPED` for a dirty tree |
 | `src/extensions/projects/context-provider.ts` | `buildProjectsContext`: the `projects` section content (usage + session-start state snapshot) | Always returns the usage guidance (plus an empty-state note when nothing is registered), so the agent knows `register_project` exists; per-project failures excluded with a warning |
-| `src/extensions/projects/processor.ts` | `projects-commit` post-processor (`preFinalize`): commit + push each dirty project | `commitAll` with `Update <name> files (date)` fallback; push outcome checked against `PUSH_SUCCESS` — which excludes `NOTHING_TO_PUSH`, so an already-up-to-date push is logged as a "push failed" warning; parallel with per-project isolation |
+| `src/extensions/projects/processor.ts` | `projects-commit` post-processor (`preFinalize`): commit + push dirty projects, then push clean projects that are ahead of their remote | Two passes: dirty (`commitAll` + `smartPush`) and clean-ahead (`smartPush` only, no commit); ahead detection is fetch-free via `detectDivergence` against the last-known remote-tracking ref (see Key Decision); push outcome checked against `PUSH_SUCCESS` — which excludes `NOTHING_TO_PUSH`; both passes parallel with per-project isolation |
 | `src/extensions/projects/tools.ts` | `register_project`, `deregister_project`, `list_projects` handlers and the pi factory | Handlers exported standalone; registration cleans up partial state on failure; deregistration guards dirty trees behind `force` |
 
 ## Key Decisions
@@ -85,6 +85,17 @@ One extension (`src/extensions/projects/index.ts`) wires four pieces onto the ap
 - Pro: Full tool behavior (cleanup on failure, force guard) covered by fast vitest suites
 - Con: A thin layer of registration boilerplate per tool
 
+### Fetch-free ahead detection at session close
+
+**Choice**: The session-close processor runs a second pass over clean submodules, pushing any that are ahead of their remote. It detects "ahead" with `detectDivergence` against the last-known remote-tracking ref — no `git fetch` — and only submodules classified `AHEAD` trigger a `smartPush` (which then fetches and re-classifies, so a genuinely diverged-with-local-ahead submodule still gets rebased and pushed).
+**Why**: Session close is automatic and frequent; fetching every clean submodule on every close would be wasteful. Classifying against the already-known `origin/<branch>` ref is a cheap local check sufficient to decide "is there something local worth pushing" — and `smartPush`'s own fetch makes the final call. The on-demand `commit_workspace` tool fetches-and-pushes every submodule on each call because it is user-initiated; the session-close path trades a tiny staleness window for far less network I/O.
+**Alternatives Considered**:
+- Fetch every clean submodule at close (as `commit_workspace` does): simpler, but pays a fetch per submodule per close on the automatic, frequent path
+**Consequences**:
+- Pro: Clean up-to-date submodules incur no push attempt and no fetch at close; only ahead ones pay for a `smartPush`
+- Con: A submodule whose `origin/<branch>` ref is absent (never fetched / no remote) reads as not-ahead and is skipped that session; the startup sync's `smartPull` fetch establishes the ref, so this only affects a brand-new, never-synced submodule until the next session
+- Con: A clean submodule that is behind or diverged-without-local-ahead is intentionally not pushed (nothing local to push) and is left to the startup sync or the on-demand tool
+
 ## System Behavior
 
 ### Scenario: Registration fails midway
@@ -104,6 +115,12 @@ One extension (`src/extensions/projects/index.ts`) wires four pieces onto the ap
 **Given**: A project has uncommitted changes and its remote gained commits
 **When**: `projects-commit` runs in `preFinalize`
 **Then**: Changes are committed with a generated message, `smartPush` fetches, rebases the local commits on top of the remote, and pushes. If the rebase conflicts, the push is abandoned (`REBASE_FAILED`), the commits stay local, and the next startup sync retries.
+
+### Scenario: Clean project ahead of its remote at session close
+
+**Given**: A project has a clean working tree but local commits ahead of `origin` (made by a background task or an earlier exchange)
+**When**: `projects-commit` runs in `preFinalize`
+**Then**: The dirty pass skips it (clean tree); the ahead pass detects it via `detectDivergence` and pushes the commits with `smartPush`. If the remote has also advanced (true divergence), `smartPush` fetches, rebases, and pushes; if the rebase conflicts, the push is abandoned (`REBASE_FAILED`), the commits stay local, and the next startup sync retries.
 
 ## Notes
 

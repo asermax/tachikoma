@@ -4,7 +4,7 @@
 
 ## Overview
 
-External code repositories managed as git submodules under `projects/` in the workspace. The agent registers, lists, and deregisters projects mid-conversation through pi tools; registered projects are synchronized on startup, their git state is injected before every prompt, and dirty projects are committed and pushed automatically when a session closes — just before the workspace commit, so submodule pointer updates land in the same pass (see [git-workspace.md](git-workspace.md)). A project's git history can also be purged via the `scrub` tool's optional `project` parameter (see [git-workspace.md](git-workspace.md)). A project that is clean but has commits ahead of its remote can also be pushed on demand via the `commit_workspace` tool (see [git-workspace.md](git-workspace.md) R16).
+External code repositories managed as git submodules under `projects/` in the workspace. The agent registers, lists, and deregisters projects mid-conversation through pi tools; registered projects are synchronized on startup, their git state is injected before every prompt, and dirty projects are committed and pushed automatically when a session closes — just before the workspace commit, so submodule pointer updates land in the same pass (see [git-workspace.md](git-workspace.md)). A project's git history can also be purged via the `scrub` tool's optional `project` parameter (see [git-workspace.md](git-workspace.md)). A project that is clean but has commits ahead of its remote (for example, commits left by a background task or an earlier exchange) is also pushed automatically at session close, and on demand via the `commit_workspace` tool (see [git-workspace.md](git-workspace.md) R16).
 
 Git authentication (SSH keys, tokens) is the user's responsibility: the system assumes credentials are configured externally and surfaces failures as tool errors or warning logs.
 
@@ -30,6 +30,7 @@ Git authentication (SSH keys, tokens) is the user's responsibility: the system a
 | R8 | A `preFinalize` post-processor commits each dirty project with a generated descriptive message (deterministic dated fallback) and pushes via `smartPush`, in parallel with per-project error isolation |
 | R9 | The projects processor runs before the workspace commit (`finalize` phase) so submodule pointer updates land in the same workspace commit pass |
 | R10 | The extension can be disabled entirely via `[extensions.projects] enabled = false` |
+| R11 | At session close, the `projects-commit` post-processor also pushes any clean project that is ahead of its remote (e.g. commits left by a background task or an earlier exchange) via `smartPush`, so committed changes never linger unpushed across sessions |
 
 ## Behaviors
 
@@ -75,14 +76,16 @@ The `sync-projects` bootstrap hook brings every registered submodule up to date 
 - Given a submodule has uncommitted changes, when the hook runs, then init and default-branch checkout still execute unconditionally (the hook has no dirty guard); only the `smartPull` step detects the dirty tree and returns `DIRTY_SKIPPED` with a warning, so the local commits are not rebased away
 - Given a submodule sync fails, when the first attempt errors, then the full sequence retries once; a second failure is logged and the remaining submodules continue (startup is never aborted)
 
-### Session-Close Commit and Push (R8, R9)
+### Session-Close Commit and Push (R8, R9, R11)
 
-The `projects-commit` post-processor preserves work in every dirty project before the workspace commit runs.
+The `projects-commit` post-processor preserves work in every dirty project before the workspace commit runs, and pushes any clean project that still sits ahead of its remote so committed changes never linger.
 
 **Acceptance Criteria**:
 - Given a project with uncommitted changes, when the session closes, then all changes are staged and committed with a one-line message generated from the staged diffstat (processor-tier side completion), then pushed to `origin` via `smartPush`
 - Given message generation fails, when committing, then the deterministic fallback `Update <name> files (YYYY-MM-DD)` is used and the push still proceeds
-- Given a project with a clean tree, when the processor runs, then it is left untouched and no side completion is made
+- Given a project with a clean tree and no local commits ahead of its remote, when the processor runs, then it is left untouched and no side completion is made
+- Given a project with a clean tree but local commits ahead of its remote (e.g. committed by a background task), when the session closes, then those commits are pushed via `smartPush` without recommitting — no `commitAll`, no message generation
+- Given a clean project that is behind, diverged-without-local-ahead, on a detached HEAD, or has no `origin` remote-tracking ref, when the processor runs, then it is not pushed by the ahead pass (only strictly-ahead projects are pushed)
 - Given a push fails or the remote has conflicting divergence, when the processor runs, then a warning is logged and the commits remain local (retried by the next startup sync)
 - Given `smartPush` returns `NOTHING_TO_PUSH` (the project was already up-to-date with the remote), when the processor checks the result, then because `NOTHING_TO_PUSH` is *not* in `PUSH_SUCCESS` (which is `PUSHED`/`REBASE_SUCCEEDED`/`AGENT_RESOLVED`), the same "push failed — changes remain committed locally" warning is logged even though nothing was actually wrong
 - Given multiple dirty projects, when the processor runs, then they are processed in parallel and one project's failure does not affect the others
