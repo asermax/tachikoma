@@ -112,28 +112,32 @@ export const handleScrubWorkspace = async (
   { workspaceRoot, log }: GitToolDeps,
   args: Static<typeof ScrubWorkspaceParams>,
 ): Promise<string> => {
-  if (args.project === "") {
+  const project = args.project;
+
+  if (project === "") {
     throw new Error("'project' cannot be empty; omit it to scrub the workspace repository.");
   }
 
-  const target =
-    args.project == null ? workspaceRoot : join(workspaceRoot, "projects", args.project);
+  const isProject = project != null;
+  const target = isProject ? join(workspaceRoot, "projects", project) : workspaceRoot;
 
-  if (args.project != null && !(await exists(target))) {
-    throw new Error(`Project '${args.project}' not found under projects/`);
+  if (isProject && !(await exists(target))) {
+    throw new Error(`Project '${project}' not found under projects/`);
   }
 
   const outcome = await scrubPaths(target, args.paths, log);
+
+  // Non-project scrubs, or any outcome that didn't fully rewrite history, need
+  // no further annotation.
+  if (!isProject || outcome.code !== SCRUB_RESULT.scrubbed) {
+    return outcome.message;
+  }
 
   // After filter-repo rewrites a project's history, its commit SHAs change, so
   // the parent workspace's recorded submodule pointer goes stale. The next
   // session-close commit picks up the new pointer — surface that so the agent
   // isn't confused by the resulting "modified submodule" state.
-  if (args.project != null && outcome.code === SCRUB_RESULT.scrubbed) {
-    return `${outcome.message} The projects/${args.project} submodule pointer in the workspace will update at the next session-close commit.`;
-  }
-
-  return outcome.message;
+  return `${outcome.message} The projects/${project} submodule pointer in the workspace will update at the next session-close commit.`;
 };
 
 const textResult = (text: string) => ({
