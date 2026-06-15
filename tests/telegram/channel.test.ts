@@ -10,6 +10,8 @@ import {
   STOP_COMMAND,
   TelegramChannel,
   type TelegramChannelOptions,
+  UNRESOLVED_REACTION_NOTICE,
+  UNRESOLVED_REPLY_HINT,
 } from "../../src/extensions/telegram/channel.ts";
 import { toTelegramEntities } from "../../src/extensions/telegram/entities.ts";
 import type { Logger } from "../../src/log.ts";
@@ -728,7 +730,7 @@ describe("reply-to session routing", () => {
     );
   });
 
-  it("falls back to normal routing when the replied-to message is unknown", async () => {
+  it("annotates an unresolved reply with a hint while falling back to normal routing", async () => {
     const { channel, runtime, submit, dispatchText } = makeChannel();
     await channel.start(runtime);
 
@@ -737,6 +739,7 @@ describe("reply-to session routing", () => {
     const submitted = submit.mock.calls[0]?.[0];
     expect(submitted.metadata.resumeSessionId).toBeUndefined();
     expect(submitted.metadata.replyToMessageId).toBe("999");
+    expect(submitted.text).toBe(`follow-up${UNRESOLVED_REPLY_HINT}`);
   });
 
   it("omits the reply quote when replying to the session's latest message", async () => {
@@ -774,8 +777,10 @@ describe("reply-to session routing", () => {
 
 describe("inbound reactions", () => {
   it("surfaces an authorized reaction to the agent", async () => {
-    const { channel, runtime, submit, dispatchReaction } = makeChannel();
+    const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
     await channel.start(runtime);
+
+    mappings.set("12", 100);
 
     await dispatchReaction(12, "👍");
 
@@ -865,19 +870,27 @@ describe("inbound reactions", () => {
     );
   });
 
-  it("falls back to the active session's exchange for an unrecorded reacted-to message", async () => {
-    const { channel, runtime, submit, lastExchanges, dispatchReaction } = makeChannel();
+  it("drops a reaction to an unrecorded message and notifies the user", async () => {
+    const { channel, runtime, submit, calls, dispatchReaction } = makeChannel();
     await channel.start(runtime);
 
-    // Message 50 is not recorded; the active session (100) has an exchange.
-    lastExchanges.set(100, "user: hi\nassistant: hello there");
+    await dispatchReaction(404, "👍");
 
-    await dispatchReaction(50, "👍");
+    expect(submit).not.toHaveBeenCalled();
+    expect(calls).toContainEqual({ type: "send", text: UNRESOLVED_REACTION_NOTICE });
+  });
 
-    expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: "Reacted to:\nuser: hi\nassistant: hello there\n\nThe user reacted 👍 to a previous message. Interpret it in the context of the last exchange and respond accordingly.",
-      }),
+  it("warns and drops a reaction when the unresolved-reaction notice fails to send", async () => {
+    const { channel, runtime, api, submit, dispatchReaction } = makeChannel();
+    api.sendMessage.mockRejectedValueOnce(new Error("send failed"));
+    await channel.start(runtime);
+
+    await dispatchReaction(404, "👍");
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(fakeLog.warn).toHaveBeenCalledWith(
+      expect.anything(),
+      "unresolved reaction notice failed",
     );
   });
 });
