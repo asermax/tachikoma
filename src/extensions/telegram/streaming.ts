@@ -1,10 +1,12 @@
 import type { Logger } from "../../log.ts";
 import { splitMessage, TELEGRAM_MAX_MESSAGE_LENGTH } from "./chunking.ts";
+import { toTelegramEntities } from "./entities.ts";
 import {
-  editWithMarkdownFallback,
+  convertAndSplit,
+  editWithFallback,
   type SendApi,
   sendChunked,
-  sendWithMarkdownFallback,
+  sendWithFallback,
 } from "./sending.ts";
 import { formatToolActivity, summarizeToolActivities, type ToolActivity } from "./tool-labels.ts";
 
@@ -105,10 +107,10 @@ export class StreamRenderer {
 
     let lastId = this.messageId;
 
-    for (const [index, chunk] of splitMessage(text).entries()) {
+    for (const [index, payload] of convertAndSplit(text).entries()) {
       if (index === 0 && this.messageId != null) {
         try {
-          await editWithMarkdownFallback(this.api, this.chatId, this.messageId, chunk);
+          await editWithFallback(this.api, this.chatId, this.messageId, payload);
           lastId = this.messageId;
           continue;
         } catch (error) {
@@ -116,7 +118,7 @@ export class StreamRenderer {
         }
       }
 
-      lastId = await this.sendText(chunk);
+      lastId = await sendWithFallback(this.api, this.chatId, payload, { silent: this.silent });
     }
 
     return lastId;
@@ -154,7 +156,7 @@ export class StreamRenderer {
       if (this.messageId == null) {
         this.messageId = await this.sendText(display);
       } else {
-        await editWithMarkdownFallback(this.api, this.chatId, this.messageId, display);
+        await editWithFallback(this.api, this.chatId, this.messageId, toTelegramEntities(display));
       }
 
       this.lastRendered = display;
@@ -173,15 +175,21 @@ export class StreamRenderer {
   private async commitOverflow(): Promise<void> {
     if (this.buffer.length <= TELEGRAM_MAX_MESSAGE_LENGTH) return;
 
+    // Split the raw buffer at paragraph boundaries (entity-safe) and keep the raw
+    // tail streaming; each committed chunk is converted to an entity payload. The
+    // tail must stay raw so later appends + reconversion keep working. A single
+    // oversize paragraph with formatting spanning a hard split is the one edge
+    // where an entity can be cut here (rare; text always survives).
     const chunks = splitMessage(this.buffer);
     this.buffer = chunks.at(-1) ?? "";
 
     for (const chunk of chunks.slice(0, -1)) {
+      const payload = toTelegramEntities(chunk);
       if (this.messageId != null) {
-        await editWithMarkdownFallback(this.api, this.chatId, this.messageId, chunk);
+        await editWithFallback(this.api, this.chatId, this.messageId, payload);
         this.messageId = null;
       } else {
-        await this.sendText(chunk);
+        await sendWithFallback(this.api, this.chatId, payload, { silent: this.silent });
       }
     }
 
@@ -220,7 +228,9 @@ export class StreamRenderer {
    * so every fresh send from the renderer shares that contract.
    */
   private async sendText(text: string): Promise<number> {
-    return sendWithMarkdownFallback(this.api, this.chatId, text, { silent: this.silent });
+    return sendWithFallback(this.api, this.chatId, toTelegramEntities(text), {
+      silent: this.silent,
+    });
   }
 
   /**

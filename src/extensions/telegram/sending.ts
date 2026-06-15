@@ -1,17 +1,17 @@
+import type { MessageEntity } from "grammy/types";
 import type { Logger } from "../../log.ts";
-import { splitMessage } from "./chunking.ts";
-import { toTelegramMarkdown } from "./markdown.ts";
+import { splitMessageWithEntities, type TelegramPayload, toTelegramEntities } from "./entities.ts";
 
 // Telegram keeps a chat action visible for ~5 seconds, so refresh just before it expires.
 const TYPING_REFRESH_MS = 5000;
 
 export interface SendMessageOptions {
-  parse_mode?: "MarkdownV2";
+  entities?: MessageEntity[];
   disable_notification?: boolean;
 }
 
 export interface EditMessageOptions {
-  parse_mode?: "MarkdownV2";
+  entities?: MessageEntity[];
 }
 
 /** Narrow grammY API surface the channel sends through — fakeable in tests. */
@@ -48,83 +48,97 @@ const errorDetail = (error: unknown): string => {
       : "";
 };
 
+/** Telegram rejects an invalid/overlapping entity set with "can't parse entities". */
 export const isMarkdownParseError = (error: unknown): boolean =>
   /can't parse entities/i.test(errorDetail(error));
 
 /**
- * MarkdownV2 escaping inflates length, so a chunk that fit as raw text can
- * overflow once converted — Telegram then rejects it as too long. Treated like
- * a parse rejection: resend the raw text, which is always within the limit.
+ * A formatting-dense message can exceed Telegram's per-message entity cap and be
+ * rejected as "entities too many". Treated like any other render rejection: resend
+ * the raw text, which carries no entities.
+ */
+export const isEntitiesTooManyError = (error: unknown): boolean =>
+  /entities too many/i.test(errorDetail(error));
+
+/**
+ * Edge cases can still overflow the 4096-char text limit (e.g. a single oversize
+ * entity dropped into a near-full chunk). Resending the raw text recovers.
  */
 export const isMessageTooLongError = (error: unknown): boolean =>
   /message is too long/i.test(errorDetail(error));
 
-/** Either failure mode of the converted MarkdownV2 send — both recover by resending raw. */
-const isMarkdownRenderError = (error: unknown): boolean =>
-  isMarkdownParseError(error) || isMessageTooLongError(error);
+/** Any rejection caused by the rendered payload — all recover by resending raw text. */
+const isRenderError = (error: unknown): boolean =>
+  isMarkdownParseError(error) || isEntitiesTooManyError(error) || isMessageTooLongError(error);
 
 /** Telegram rejects edits whose content matches the current message — benign. */
 export const isMessageNotModifiedError = (error: unknown): boolean =>
   /message is not modified/i.test(errorDetail(error));
 
 /**
- * Send `text` (GitHub-flavored markdown) converted to MarkdownV2; on a Telegram
- * render rejection resend the raw text as plain, so formatting is best-effort
- * but the message is never lost.
+ * Send a converted entity payload; on a Telegram render rejection resend the text
+ * plain (no entities), so formatting is best-effort but the message is never lost.
+ * With `parse_mode` omitted, Telegram treats the text as literal — ordinary
+ * punctuation (`.`, `-`, `!`) can't trigger a parse failure, so the fallback is rare.
  */
-export const sendWithMarkdownFallback = async (
+export const sendWithFallback = async (
   api: Pick<SendApi, "sendMessage">,
   chatId: number,
-  text: string,
+  payload: TelegramPayload,
   options: { silent?: boolean } = {},
 ): Promise<number> => {
   const base: SendMessageOptions = options.silent === true ? { disable_notification: true } : {};
 
   try {
-    const sent = await api.sendMessage(chatId, toTelegramMarkdown(text), {
+    const sent = await api.sendMessage(chatId, payload.text, {
       ...base,
-      parse_mode: "MarkdownV2",
+      entities: payload.entities,
     });
     return sent.message_id;
   } catch (error) {
-    if (!isMarkdownRenderError(error)) throw error;
+    if (!isRenderError(error)) throw error;
 
-    const sent = await api.sendMessage(chatId, text, base);
+    const sent = await api.sendMessage(chatId, payload.text, base);
     return sent.message_id;
   }
 };
 
 /**
- * Edit a message with `text` converted to MarkdownV2, falling back to the raw
- * text on a render rejection. "Message is not modified" rejections are swallowed
- * — the visible content already matches.
+ * Edit a message with a converted entity payload, falling back to plain text on a
+ * render rejection. "Message is not modified" rejections are swallowed — the
+ * visible content already matches.
  */
-export const editWithMarkdownFallback = async (
+export const editWithFallback = async (
   api: Pick<SendApi, "editMessageText">,
   chatId: number,
   messageId: number,
-  text: string,
+  payload: TelegramPayload,
 ): Promise<void> => {
   try {
-    await api.editMessageText(chatId, messageId, toTelegramMarkdown(text), {
-      parse_mode: "MarkdownV2",
-    });
+    await api.editMessageText(chatId, messageId, payload.text, { entities: payload.entities });
   } catch (error) {
     if (isMessageNotModifiedError(error)) return;
-    if (!isMarkdownRenderError(error)) throw error;
+    if (!isRenderError(error)) throw error;
 
     try {
-      await api.editMessageText(chatId, messageId, text);
+      await api.editMessageText(chatId, messageId, payload.text);
     } catch (fallbackError) {
       if (!isMessageNotModifiedError(fallbackError)) throw fallbackError;
     }
   }
 };
 
+/** Convert GFM markdown to an entity payload, then split it entity-safely at the length limit. */
+export const convertAndSplit = (text: string, limit?: number): TelegramPayload[] => {
+  const { text: body, entities } = toTelegramEntities(text);
+  return splitMessageWithEntities(body, entities, limit);
+};
+
 /**
- * Send text as one or more messages, split at Telegram's length limit. With
- * `notifyOnlyLast`, every chunk but the last is sent silently so the delivery
- * fires exactly one push notification — on the final chunk.
+ * Send text as one or more messages, split at Telegram's length limit without ever
+ * cutting a formatting entity across two messages. With `notifyOnlyLast`, every
+ * chunk but the last is sent silently so the delivery fires exactly one push
+ * notification — on the final chunk.
  */
 export const sendChunked = async (
   api: Pick<SendApi, "sendMessage">,
@@ -134,14 +148,14 @@ export const sendChunked = async (
 ): Promise<number[]> => {
   if (text.trim().length === 0) return [];
 
-  const chunks = splitMessage(text);
+  const chunks = convertAndSplit(text);
   const ids: number[] = [];
 
   for (const [index, chunk] of chunks.entries()) {
     const silent =
       options.notifyOnlyLast === true ? index < chunks.length - 1 : options.silent === true;
 
-    ids.push(await sendWithMarkdownFallback(api, chatId, chunk, { silent }));
+    ids.push(await sendWithFallback(api, chatId, chunk, { silent }));
   }
 
   return ids;

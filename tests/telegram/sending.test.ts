@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { toTelegramMarkdown } from "../../src/extensions/telegram/markdown.ts";
+import {
+  type TelegramPayload,
+  toTelegramEntities,
+} from "../../src/extensions/telegram/entities.ts";
 import {
   deliverText,
-  editWithMarkdownFallback,
+  editWithFallback,
   forceNotification,
+  isEntitiesTooManyError,
   isMarkdownParseError,
   isMessageNotModifiedError,
   isMessageTooLongError,
   sendChunked,
-  sendWithMarkdownFallback,
+  sendWithFallback,
   startTyping,
 } from "../../src/extensions/telegram/sending.ts";
 import type { Logger } from "../../src/log.ts";
@@ -35,6 +39,20 @@ const tooLongError = () =>
     description: "Bad Request: message is too long",
   });
 
+const tooManyEntitiesError = () =>
+  Object.assign(new Error("400: Bad Request: entities too many"), {
+    description: "Bad Request: entities too many",
+  });
+
+/** A sendMessage/editMessageText mock that rejects the formatted (entity-bearing) call. */
+const rejectFormatted =
+  (error: Error) =>
+  async (...args: unknown[]) => {
+    const other = args.at(-1) as { entities?: unknown[] } | string | undefined;
+    if (other != null && typeof other === "object" && other.entities != null) throw error;
+    return { message_id: 9 };
+  };
+
 describe("isMarkdownParseError", () => {
   it("recognizes Telegram entity-parse rejections", () => {
     expect(isMarkdownParseError(parseError())).toBe(true);
@@ -52,6 +70,16 @@ describe("isMarkdownParseError", () => {
 
   it("ignores a non-string description", () => {
     expect(isMarkdownParseError({ description: 42 })).toBe(false);
+  });
+});
+
+describe("isEntitiesTooManyError", () => {
+  it("recognizes entities-too-many rejections", () => {
+    expect(isEntitiesTooManyError(tooManyEntitiesError())).toBe(true);
+  });
+
+  it("rejects unrelated errors", () => {
+    expect(isEntitiesTooManyError(new Error("chat not found"))).toBe(false);
   });
 });
 
@@ -75,15 +103,16 @@ describe("isMessageNotModifiedError", () => {
   });
 });
 
-describe("editWithMarkdownFallback", () => {
-  it("edits with the converted MarkdownV2 text", async () => {
+describe("editWithFallback", () => {
+  it("edits with the converted entity payload", async () => {
     const editMessageText = vi.fn().mockResolvedValue(true);
+    const payload = toTelegramEntities("**hi**");
 
-    await editWithMarkdownFallback({ editMessageText }, 42, 7, "**hi**");
+    await editWithFallback({ editMessageText }, 42, 7, payload);
 
     expect(editMessageText).toHaveBeenCalledTimes(1);
-    expect(editMessageText).toHaveBeenCalledWith(42, 7, toTelegramMarkdown("**hi**"), {
-      parse_mode: "MarkdownV2",
+    expect(editMessageText).toHaveBeenCalledWith(42, 7, payload.text, {
+      entities: payload.entities,
     });
   });
 
@@ -91,34 +120,38 @@ describe("editWithMarkdownFallback", () => {
     const editMessageText = vi.fn().mockRejectedValue(notModifiedError());
 
     await expect(
-      editWithMarkdownFallback({ editMessageText }, 42, 7, "same"),
+      editWithFallback({ editMessageText }, 42, 7, toTelegramEntities("same")),
     ).resolves.toBeUndefined();
     expect(editMessageText).toHaveBeenCalledTimes(1);
   });
 
-  it("propagates non-parse, non-not-modified errors", async () => {
+  it("propagates non-render errors", async () => {
     const editMessageText = vi.fn().mockRejectedValue(new Error("chat not found"));
 
-    await expect(editWithMarkdownFallback({ editMessageText }, 42, 7, "x")).rejects.toThrow(
-      "chat not found",
-    );
+    await expect(
+      editWithFallback({ editMessageText }, 42, 7, toTelegramEntities("x")),
+    ).rejects.toThrow("chat not found");
     expect(editMessageText).toHaveBeenCalledTimes(1);
   });
 
   it("falls back to plain text on a parse rejection", async () => {
-    const editMessageText = vi
-      .fn()
-      .mockImplementation(
-        async (_chat: number, _id: number, _text: string, other?: { parse_mode?: string }) => {
-          if (other?.parse_mode != null) throw parseError();
-          return true;
-        },
-      );
+    const editMessageText = vi.fn().mockImplementation(rejectFormatted(parseError()));
+    const payload = toTelegramEntities("broken *markdown");
 
-    await editWithMarkdownFallback({ editMessageText }, 42, 7, "broken *markdown");
+    await editWithFallback({ editMessageText }, 42, 7, payload);
 
     expect(editMessageText).toHaveBeenCalledTimes(2);
-    expect(editMessageText).toHaveBeenLastCalledWith(42, 7, "broken *markdown");
+    expect(editMessageText).toHaveBeenLastCalledWith(42, 7, payload.text);
+  });
+
+  it("falls back to plain text on an entities-too-many rejection", async () => {
+    const editMessageText = vi.fn().mockImplementation(rejectFormatted(tooManyEntitiesError()));
+    const payload = toTelegramEntities("**hi**");
+
+    await editWithFallback({ editMessageText }, 42, 7, payload);
+
+    expect(editMessageText).toHaveBeenCalledTimes(2);
+    expect(editMessageText).toHaveBeenLastCalledWith(42, 7, payload.text);
   });
 
   it("swallows a not-modified rejection on the plain-text fallback", async () => {
@@ -132,7 +165,7 @@ describe("editWithMarkdownFallback", () => {
       });
 
     await expect(
-      editWithMarkdownFallback({ editMessageText }, 42, 7, "broken *markdown"),
+      editWithFallback({ editMessageText }, 42, 7, toTelegramEntities("broken *markdown")),
     ).resolves.toBeUndefined();
     expect(editMessageText).toHaveBeenCalledTimes(2);
   });
@@ -148,7 +181,7 @@ describe("editWithMarkdownFallback", () => {
       });
 
     await expect(
-      editWithMarkdownFallback({ editMessageText }, 42, 7, "broken *markdown"),
+      editWithFallback({ editMessageText }, 42, 7, toTelegramEntities("broken *markdown")),
     ).rejects.toThrow("chat not found");
     expect(editMessageText).toHaveBeenCalledTimes(2);
   });
@@ -197,61 +230,44 @@ describe("startTyping", () => {
   });
 });
 
-describe("sendWithMarkdownFallback", () => {
-  it("sends the converted MarkdownV2 text by default", async () => {
+describe("sendWithFallback", () => {
+  it("sends the converted entity payload by default", async () => {
     const sendMessage = vi.fn().mockResolvedValue({ message_id: 7 });
+    const payload = toTelegramEntities("**hi**");
 
-    const id = await sendWithMarkdownFallback({ sendMessage }, 42, "**hi**");
+    const id = await sendWithFallback({ sendMessage }, 42, payload);
 
     expect(id).toBe(7);
     expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(42, toTelegramMarkdown("**hi**"), {
-      parse_mode: "MarkdownV2",
-    });
+    expect(sendMessage).toHaveBeenCalledWith(42, payload.text, { entities: payload.entities });
   });
 
-  it("falls back to plain raw text when the converted send is too long", async () => {
-    const sendMessage = vi
-      .fn()
-      .mockImplementation(
-        async (_chatId: number, _text: string, other?: { parse_mode?: string }) => {
-          if (other?.parse_mode != null) throw tooLongError();
-          return { message_id: 9 };
-        },
-      );
+  it("falls back to plain text when the formatted send is too long", async () => {
+    const sendMessage = vi.fn().mockImplementation(rejectFormatted(tooLongError()));
+    const payload = toTelegramEntities("long raw text");
 
-    const id = await sendWithMarkdownFallback({ sendMessage }, 42, "long raw text");
+    const id = await sendWithFallback({ sendMessage }, 42, payload);
 
     expect(id).toBe(9);
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(sendMessage).toHaveBeenLastCalledWith(42, "long raw text", {});
+    expect(sendMessage).toHaveBeenLastCalledWith(42, payload.text, {});
   });
 
   it("falls back to plain text on a parse error", async () => {
-    const sendMessage = vi
-      .fn()
-      .mockImplementation(
-        async (_chatId: number, _text: string, other?: { parse_mode?: string }) => {
-          if (other?.parse_mode != null) throw parseError();
-          return { message_id: 9 };
-        },
-      );
+    const sendMessage = vi.fn().mockImplementation(rejectFormatted(parseError()));
+    const payload = toTelegramEntities("broken *markdown");
 
-    const id = await sendWithMarkdownFallback({ sendMessage }, 42, "broken *markdown", {
-      silent: true,
-    });
+    const id = await sendWithFallback({ sendMessage }, 42, payload, { silent: true });
 
     expect(id).toBe(9);
     expect(sendMessage).toHaveBeenCalledTimes(2);
-    expect(sendMessage).toHaveBeenLastCalledWith(42, "broken *markdown", {
-      disable_notification: true,
-    });
+    expect(sendMessage).toHaveBeenLastCalledWith(42, payload.text, { disable_notification: true });
   });
 
-  it("propagates non-parse errors", async () => {
+  it("propagates non-render errors", async () => {
     const sendMessage = vi.fn().mockRejectedValue(new Error("chat not found"));
 
-    await expect(sendWithMarkdownFallback({ sendMessage }, 42, "hi")).rejects.toThrow(
+    await expect(sendWithFallback({ sendMessage }, 42, toTelegramEntities("hi"))).rejects.toThrow(
       "chat not found",
     );
     expect(sendMessage).toHaveBeenCalledTimes(1);
@@ -259,7 +275,7 @@ describe("sendWithMarkdownFallback", () => {
 });
 
 describe("sendChunked", () => {
-  it("sends one message per chunk, in order", async () => {
+  it("sends one message per chunk, in order, each carrying its entities", async () => {
     let next = 0;
     const sendMessage = vi.fn().mockImplementation(async () => {
       next += 1;
@@ -271,13 +287,15 @@ describe("sendChunked", () => {
     const ids = await sendChunked({ sendMessage }, 42, `${first}\n\n${second}`, { silent: true });
 
     expect(ids).toEqual([1, 2]);
-    expect(sendMessage).toHaveBeenNthCalledWith(1, 42, toTelegramMarkdown(first), {
+    const firstPayload: TelegramPayload = toTelegramEntities(first);
+    const secondPayload: TelegramPayload = toTelegramEntities(second);
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 42, firstPayload.text, {
       disable_notification: true,
-      parse_mode: "MarkdownV2",
+      entities: firstPayload.entities,
     });
-    expect(sendMessage).toHaveBeenNthCalledWith(2, 42, toTelegramMarkdown(second), {
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 42, secondPayload.text, {
       disable_notification: true,
-      parse_mode: "MarkdownV2",
+      entities: secondPayload.entities,
     });
   });
 
@@ -302,13 +320,29 @@ describe("sendChunked", () => {
     });
 
     expect(ids).toEqual([1, 2]);
-    expect(sendMessage).toHaveBeenNthCalledWith(1, 42, toTelegramMarkdown(first), {
+    const firstPayload: TelegramPayload = toTelegramEntities(first);
+    const secondPayload: TelegramPayload = toTelegramEntities(second);
+    expect(sendMessage).toHaveBeenNthCalledWith(1, 42, firstPayload.text, {
       disable_notification: true,
-      parse_mode: "MarkdownV2",
+      entities: firstPayload.entities,
     });
-    expect(sendMessage).toHaveBeenNthCalledWith(2, 42, toTelegramMarkdown(second), {
-      parse_mode: "MarkdownV2",
+    expect(sendMessage).toHaveBeenNthCalledWith(2, 42, secondPayload.text, {
+      entities: secondPayload.entities,
     });
+  });
+
+  it("keeps a bold span whole in a single chunk instead of splitting it", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ message_id: 1 });
+    // A bold span straddling the 4096 boundary: the chunker moves it whole into
+    // one message, so only one chunk carries the bold entity.
+    const markdown = `${"x".repeat(4090)}**${"y".repeat(20)}**`;
+
+    await sendChunked({ sendMessage }, 42, markdown);
+
+    const boldChunks = sendMessage.mock.calls.filter(([, , other]) =>
+      (other as { entities?: { type: string }[] })?.entities?.some((e) => e.type === "bold"),
+    );
+    expect(boldChunks).toHaveLength(1);
   });
 });
 
@@ -335,30 +369,31 @@ describe("deliverText", () => {
     const { api, calls } = fakeApi();
     const first = "a".repeat(3000);
     const second = "b".repeat(3000);
+    const firstPayload: TelegramPayload = toTelegramEntities(first);
+    const secondPayload: TelegramPayload = toTelegramEntities(second);
 
     const id = await deliverText(api, 42, `${first}\n\n${second}`, true);
 
     expect(id).toBe(2);
     expect(calls).toEqual(["send:a", "send:b"]);
-    expect(api.sendMessage).toHaveBeenNthCalledWith(1, 42, toTelegramMarkdown(first), {
+    expect(api.sendMessage).toHaveBeenNthCalledWith(1, 42, firstPayload.text, {
       disable_notification: true,
-      parse_mode: "MarkdownV2",
+      entities: firstPayload.entities,
     });
-    expect(api.sendMessage).toHaveBeenNthCalledWith(2, 42, toTelegramMarkdown(second), {
-      parse_mode: "MarkdownV2",
+    expect(api.sendMessage).toHaveBeenNthCalledWith(2, 42, secondPayload.text, {
+      entities: secondPayload.entities,
     });
   });
 
   it("sends audibly when push notifications are off", async () => {
     const { api, calls } = fakeApi();
+    const payload: TelegramPayload = toTelegramEntities("notice");
 
     const id = await deliverText(api, 42, "notice", false);
 
     expect(id).toBe(1);
     expect(calls).toEqual(["send:n"]);
-    expect(api.sendMessage).toHaveBeenCalledWith(42, toTelegramMarkdown("notice"), {
-      parse_mode: "MarkdownV2",
-    });
+    expect(api.sendMessage).toHaveBeenCalledWith(42, payload.text, { entities: payload.entities });
   });
 
   it("returns null when there is nothing to send", async () => {

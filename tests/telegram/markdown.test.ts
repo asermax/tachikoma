@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { flattenTables, toTelegramMarkdown } from "../../src/extensions/telegram/markdown.ts";
+import { flattenTables } from "../../src/extensions/telegram/markdown.ts";
 
 describe("flattenTables", () => {
   it("flattens a standard two-column table to bolded-label bullets, dropping the header", () => {
@@ -106,33 +106,5 @@ describe("flattenTables", () => {
     const input = "Hello **world**\n\nThis is a paragraph with no table.\n- a list item";
 
     expect(flattenTables(input)).toBe(input);
-  });
-});
-
-describe("toTelegramMarkdown with tables", () => {
-  it("preserves surrounding formatting and escapes table cell content correctly (no double-escape)", () => {
-    const input = [
-      "No calendar conflicts next week. Here's what I'm thinking...",
-      "",
-      "| Day | Activities |",
-      "|-----|-----------|",
-      "| Monday | 🎹 Piano 7-8 PM |",
-      "",
-      "The main change is **Wednesday** getting trimmed down...",
-    ].join("\n");
-
-    const out = toTelegramMarkdown(input);
-
-    // The table row became a bullet (flattened), so its text is present.
-    expect(out).toContain("Monday");
-    expect(out).toContain("Piano");
-    // MarkdownV2 conversion happened on the surrounding text (periods escaped),
-    // i.e. this is formatted output, not the plain-text fallback.
-    expect(out).toContain("\\.");
-    // The escape-mode table-cell double-escape bug is gone: "7-8" must not appear
-    // as two literal backslashes before the hyphen.
-    expect(out).not.toContain(String.raw`7\\-8`);
-    // Surrounding bold survives conversion.
-    expect(out.toLowerCase()).toContain("wednesday");
   });
 });

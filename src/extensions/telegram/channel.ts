@@ -7,6 +7,7 @@ import type { AgentEvent } from "../../domain/agent-events.ts";
 import type { InboundMessage } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
 import { unpackCallbackData } from "./buttons.ts";
+import { toTelegramEntities } from "./entities.ts";
 import { mapButtonTap, mapMediaMessage, mapReaction, mapTextMessage } from "./inbound.ts";
 import {
   buildAttachment,
@@ -19,9 +20,9 @@ import { Mutex } from "./mutex.ts";
 import type { ChannelMessageDirection } from "./schema.ts";
 import {
   deliverText,
-  editWithMarkdownFallback,
+  editWithFallback,
   forceNotification,
-  sendWithMarkdownFallback,
+  sendWithFallback,
   startTyping,
 } from "./sending.ts";
 import { StreamRenderer } from "./streaming.ts";
@@ -427,11 +428,16 @@ export class TelegramChannel implements Channel {
       // reclaimed into the streamed response, which forces its own push on
       // completion) and shutdown status (informational, no push wanted). With push
       // notifications off, default notification behavior applies.
-      return sendWithMarkdownFallback(this.bot.api, this.options.chatId, display, {
+      return sendWithFallback(this.bot.api, this.options.chatId, toTelegramEntities(display), {
         silent: this.options.pushNotifications,
       });
     }
-    await editWithMarkdownFallback(this.bot.api, this.options.chatId, messageId, display);
+    await editWithFallback(
+      this.bot.api,
+      this.options.chatId,
+      messageId,
+      toTelegramEntities(display),
+    );
     return messageId;
   }
 

@@ -1,15 +1,13 @@
-import convert from "telegramify-markdown";
-
 /** A fenced-code-block delimiter: ``` or ~~~ (with optional language hint). */
 const FENCE_PATTERN = /^\s*(```|~~~)/;
 
 /**
- * GFM tables have no MarkdownV2 representation: `telegramify-markdown`'s escape
- * mode double-escapes table cell content (a cell `7-8` becomes `7\\-8`, leaving
- * an unescaped `-` that Telegram rejects), and Telegram can't render real tables
- * anyway. `flattenTables` rewrites each GFM table into a flat bullet list *before*
- * conversion, so no table structure reaches the converter and the surrounding
- * inline formatting (bold, italic, code) survives.
+ * GFM tables have no Telegram representation: there is no table `MessageEntity`
+ * and Telegram can't render real tables, so a table reaching the entity converter
+ * would either lose its structure or produce broken offsets. `flattenTables`
+ * rewrites each GFM table into a flat bullet list *before* conversion, so no table
+ * structure reaches the converter and the surrounding inline formatting (bold,
+ * italic, code) survives as entities.
  */
 export const flattenTables = (text: string): string => {
   // No pipe means no possible GFM table; skip the line scan entirely. This is the
@@ -83,7 +81,7 @@ const parseCells = (line: string): string[] =>
 /**
  * Render table data rows as bullets: the first cell is bolded as a label and the
  * remaining cells are joined by a middle dot. Inline markdown inside cells is
- * preserved verbatim — the later MarkdownV2 conversion escapes it correctly.
+ * preserved verbatim — the later entity conversion turns it into spans.
  */
 const renderRows = (rows: string[][]): string =>
   rows
@@ -94,15 +92,3 @@ const renderRows = (rows: string[][]): string =>
       return first.length > 0 ? `- **${first}**: ${rest}` : `- ${rest}`;
     })
     .join("\n");
-
-/**
- * Convert the agent's GitHub-flavored markdown into the Telegram MarkdownV2
- * dialect. Telegram's own parsers don't understand GFM and reject whole
- * messages on any unescaped punctuation (`.`, `-`, `!`, `(`, …); telegramify
- * rewrites the constructs Telegram supports (bold, italic, code, links, lists)
- * and escapes everything else, mirroring the legacy Python channel. GFM tables
- * are flattened to a bullet list first (see `flattenTables`) since the converter
- * mishandles their cells and Telegram has no table rendering. "escape" renders
- * unsupported HTML as visible escaped text rather than silently dropping it.
- */
-export const toTelegramMarkdown = (text: string): string => convert(flattenTables(text), "escape");
