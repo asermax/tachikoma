@@ -78,11 +78,12 @@ An opinionated personal assistant built on an embeddable agent SDK that maintain
 **Trigger**: User's message matches a domain where specialized knowledge is available
 **Steps**:
 1. Skills are packages following the Agent Skills standard — a `SKILL.md` with YAML frontmatter whose description advertises when the skill applies
-2. pi surfaces every skill's description in the system prompt (progressive disclosure); when the conversation enters a skill's domain, the agent reads the full instructions on demand — no separate classification pass
-3. Loaded skills can carry references, scripts, and bundled agent definitions the assistant delegates focused work to
-4. The workspace skills directory is a first-class skill source, and changes to it are picked up without restarting
+2. pi surfaces every skill's description in the system prompt (progressive disclosure); when the conversation enters a skill's domain, the agent reads the full instructions on demand
+3. A conversation-aware classifier augments this on each turn — it picks which loaded skills fit the latest message and proactively recommends the agent load them, so relevant expertise is pulled in even when the agent would not pick the skill itself
+4. Loaded skills can carry references, scripts, and bundled agent definitions the assistant delegates focused work to
+5. The workspace skills directory is a first-class skill source, and changes to it are picked up without restarting
 
-**Result**: The assistant adapts its capabilities to the topic at hand, drawing on packaged expertise as needed — with detection handled natively by the agent runtime instead of a bolt-on classifier
+**Result**: The assistant adapts its capabilities to the topic at hand, drawing on packaged expertise as needed — combining pi's native progressive disclosure with proactive, conversation-aware loading
 
 ## Architecture
 
@@ -118,7 +119,7 @@ First-party extensions, all in-repo: **context** (SOUL.md/USER.md/AGENTS.md), **
 
 pi sessions are long-lived in-process objects: the coordinator holds one `AgentSession` per conversation and replaces it on topic boundary via `AgentSessionRuntime` — no per-message client recreation, no resume bookkeeping, no context persistence layer to reassemble injected context. Transcripts are tree-structured JSONL files under a dedicated `agentDir` (`{workspace}/.tachikoma/pi`), isolating Tachikoma's pi state from any user pi install.
 
-Post-session extraction opens the JSONL transcript read-only and runs one-shot side-channel `complete()` calls from pi-ai. Agent tools are plain `pi.registerTool()` registrations, and skill discovery relies on pi's native progressive disclosure rather than an LLM classification pass.
+Post-session extraction opens the JSONL transcript read-only and runs one-shot side-channel `complete()` calls from pi-ai. Agent tools are plain `pi.registerTool()` registrations; skill discovery relies on pi's native progressive disclosure, with a per-turn conversation-aware classifier layered on top that recommends the skills most relevant to the current message for the agent to load.
 
 ### Workspace Compatibility
 
@@ -165,7 +166,6 @@ A thin core shell plus first-party extensions covering the full assistant featur
 Machinery that subprocess-based agent SDKs force on a host and pi makes unnecessary is deliberately absent:
 - Custom SDK transports (ARG_MAX tempfile workarounds) — pi is embedded in-process
 - Per-message client recreation, context persistence entries, and context reassembly — sessions are long-lived
-- LLM-based skill classification — pi's progressive disclosure covers detection
 - Subprocess stderr capture — there is no subprocess
 
 Larger capabilities (parallel sessions, autonomous long-running agents, proactive nudges, evaluation framework, observability) are tracked as backlog deltas — see Future Considerations.

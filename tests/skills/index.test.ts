@@ -12,7 +12,10 @@ import skills from "../../src/extensions/skills/index.ts";
 const repoSkillsDir = resolve(import.meta.dirname, "../../src/extensions/skills/builtin-skills");
 
 const setup = async (
-  config: { enabled: boolean } = { enabled: true },
+  config: { enabled: boolean; proactiveLoading?: boolean } = {
+    enabled: true,
+    proactiveLoading: true,
+  },
 ): Promise<{
   workspaceDir: string;
   workspaceSkillsDir: string;
@@ -36,6 +39,7 @@ const setup = async (
   const app = {
     extensionConfig: config,
     log,
+    status: vi.fn(),
     workspace: { resolve: (...segments: string[]) => join(workspaceDir, ...segments) },
     bootstrap: vi.fn((name: string, hook: () => void | Promise<void>) => {
       bootstrapHooks.set(name, hook);
@@ -45,9 +49,10 @@ const setup = async (
         factory = registered;
         useOptions = options;
       },
-      side: {},
+      side: { classify: vi.fn() },
+      isForking: () => false,
     },
-  } as unknown as AppContext<{ enabled: boolean }>;
+  } as unknown as AppContext<{ enabled: boolean; proactiveLoading?: boolean }>;
 
   skills.setup(app);
 
@@ -115,6 +120,30 @@ describe("skills extension", () => {
     expect(existsSync(workspaceSkillsDir)).toBe(true);
 
     await rm(workspaceSkillsDir, { recursive: true, force: true });
+  });
+
+  it("registers the proactive skill-suggestion handler when proactiveLoading is on", async () => {
+    const { on } = await setup({ enabled: true, proactiveLoading: true });
+
+    const handlers = on.mock.calls.filter(([event]) => event === "before_agent_start");
+
+    expect(handlers).toHaveLength(1);
+  });
+
+  it("registers no skill-suggestion handler when proactiveLoading is off", async () => {
+    const { on } = await setup({ enabled: true, proactiveLoading: false });
+
+    const handlers = on.mock.calls.filter(([event]) => event === "before_agent_start");
+
+    expect(handlers).toHaveLength(0);
+  });
+
+  it("defaults proactiveLoading to true in the config schema", () => {
+    const schema = skills.configSchema as {
+      properties: { proactiveLoading: { default: boolean } };
+    };
+
+    expect(schema.properties.proactiveLoading.default).toBe(true);
   });
 
   it("does nothing but log when disabled by configuration", async () => {

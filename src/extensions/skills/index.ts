@@ -8,9 +8,11 @@ import { discoverSkillAgents } from "./agents.ts";
 import { BUILTIN_AGENTS } from "./builtins.ts";
 import { createDelegateTool } from "./delegate.ts";
 import { registerReload } from "./reload.ts";
+import { registerSkillSuggestion } from "./suggest.ts";
 
 interface SkillsConfig {
   enabled: boolean;
+  proactiveLoading: boolean;
 }
 
 // Built-in authoring skills ship alongside this extension, in its builtin-skills/ directory.
@@ -27,6 +29,9 @@ export default defineExtension<SkillsConfig>({
 
   configSchema: Type.Object({
     enabled: Type.Boolean({ default: true }),
+    // Per-turn conversation-aware classifier that proactively loads relevant skills (augments
+    // pi's progressive disclosure). Disable to fall back to pi-native loading only.
+    proactiveLoading: Type.Boolean({ default: true }),
   }),
 
   setup(app) {
@@ -46,6 +51,15 @@ export default defineExtension<SkillsConfig>({
         pi.on("resources_discover", () => ({ skillPaths: [skillsDir, builtinSkillsDir] }));
 
         registerReload(pi);
+
+        if (app.extensionConfig.proactiveLoading) {
+          registerSkillSuggestion(pi, {
+            classifier: app.agent.side,
+            isForking: app.agent.isForking,
+            status: app.status,
+            log: app.log,
+          });
+        }
 
         // Discovery runs per agent session, so new skill agents appear on the next session without
         // a restart. The built-in general-purpose agent is always present, so delegation is always
