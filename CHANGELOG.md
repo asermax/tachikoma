@@ -1,3 +1,10 @@
+# [3.13.0](https://github.com/asermax/tachikoma/compare/v3.12.0...v3.13.0) (2026-06-15)
+
+
+### Features
+
+* add prepareArguments to bash-description extension ([4bb6b2b](https://github.com/asermax/tachikoma/commit/4bb6b2b524e9841139c70493773a3c9e33d12aca))
+
 # [3.12.0](https://github.com/asermax/tachikoma/compare/v3.11.0...v3.12.0) (2026-06-15)
 
 
