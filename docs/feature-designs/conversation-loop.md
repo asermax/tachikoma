@@ -47,7 +47,7 @@ On session resume, bridging context (summaries of sessions closed since the resu
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/coordinator.ts` | Inbox loop, mid-exchange steering (`submit`→`session.steer`), `/queue` opt-out, `abortExchange`, middleware chain, session lifecycle (ensure/close/close-if-idle/resume/recover), pipelines, the delivery priority queue (`DELIVERY_TIERS` in `types.ts`, `TIER_TIMING`/`evaluate` in `delivery-queue.ts`), status emission | Serial *new* exchanges, but mid-exchange input steers the live run; promise-based wake instead of polling; one `ActiveSession` pairing the db record with the live pi session; no coordinator-owned idle timer (a boundary policy drives `closeActiveSessionIfIdle`) |
-| `src/sessions/registry.ts` | Drizzle CRUD over the `sessions` table (`src/db/core-schema.ts`) | Synchronous better-sqlite3 access; lifecycle expressed as timestamp updates (`closedAt`, `lastResumedAt`) rather than a state enum |
+| `src/sessions/registry.ts` | Drizzle CRUD over the `sessions` table (`src/db/core-schema.ts`) | Synchronous better-sqlite3 access; lifecycle expressed as timestamp updates (`closedAt`, `lastResumedAt`) plus an `error` quarantine flag, rather than a state enum |
 | `src/channels/types.ts` | `Channel`, `Exchange`, `Delivery` contracts | `respond()` consumes the stream to completion, so channel rendering paces the exchange; `DELIVERY_TIERS` const map (per-tier timing lives in `delivery-queue.ts`) |
 | `src/domain/message.ts`, `src/domain/agent-events.ts` | SDK-free domain types crossing the channel boundary | Channels and extensions never import pi types |
 | `src/extensions/host.ts`, `src/extensions/api.ts` | Map `app.sessions` / `app.channels` / `app.inbound` services onto coordinator + registry methods | Registries (`src/extensions/registrations.ts`) are plain mutable arrays filled at setup, read at runtime |
@@ -131,6 +131,18 @@ Headless/background runs that have no per-session close lifecycle reach the same
 - Pro: notices queued or pushed at shutdown reach the user as one digest rather than dying with the process
 - Con: the shutdown digest is a plain channel render, not an agent turn — no agent framing for those last items
 
+### Quarantine sessions that hit encoding errors
+
+**Choice**: When an exchange terminates with an encoding-classified error — the adapter yields a terminal `error` event only when `session.prompt()` rejects, carrying `errorKind` from `classifyError` — the coordinator marks the session's `error` flag (via `SessionRegistry.markErrored`). A quarantined session is excluded from `listResumable()`, refused by `resumeSession()`, and has its exchange processors and post-processing skipped. The coordinator observes the error in flight through a single-consumer passthrough over the event stream (`tapEncodingErrors`: the channel still consumes every event, the coordinator just notes the `encoding` kind) and reuses `classifyError` rather than a second heuristic.
+**Why**: Encoding failures (unpaired surrogates, invalid byte sequences) leave the transcript/output un-encodable. `sanitizeText` and `classifyError` are prevention and classification, but neither persists; a session with subtle encoding corruption could otherwise pass every post-processor and still produce broken memories or a corrupt transcript archive. The quarantine (mirroring the legacy `mark_errored()`) ensures corrupt sessions never feed downstream pipelines. Only `encoding` errors quarantine — auth/billing are non-recoverable (the loop stops) and not corruption, while provider/unknown errors are transient hiccups the loop should ride out. The active session is not force-closed: the exchange already ended, `recoverable: true` means the next turn retries, and the quarantine effects apply when the session later closes.
+**Alternatives Considered**:
+- A `status` text enum: unnecessary — `closedAt` and `postProcessingState` already cover open/closed and per-processor state; a boolean matches the `tasks.enabled` convention and the existing boolean-style filters.
+- Force-closing the active session on the error: a larger behavioral change for no quarantine benefit.
+- Broadening quarantine to all error kinds: would over-quarantine healthy sessions on transient provider blips.
+**Consequences**:
+- Pro: a corrupt session can never pollute derived state; the loop never stops on a quarantine.
+- Con: a quarantined session's rolling summary stops updating (intentional — it will not be resumed); the user may keep using the active session, which is quarantined when it eventually closes.
+
 ## System Behavior
 
 ### Scenario: User redirects a long run mid-exchange
@@ -162,6 +174,12 @@ Headless/background runs that have no per-session close lifecycle reach the same
 **Given**: A completed exchange and no further messages
 **When**: the boundary extension's idle timer (`[extensions.boundary].idleCloseSeconds`, default 900) fires and calls `sessions.closeIfIdle()`
 **Then**: The session closes and post-processing runs; the next message starts with no active session, so boundary middleware matches it against resumable sessions (cold-start path). The coordinator contributes only the safety primitive — `closeIfIdle()` refuses while an exchange is in flight, the one piece of loop-internal state extensions cannot see.
+
+### Scenario: Session quarantined after an encoding failure
+
+**Given**: An active session mid-conversation
+**When**: Its exchange ends with an encoding-classified error (the adapter's terminal `error` event, `errorKind: encoding`)
+**Then**: The coordinator marks the session errored (`error: true`) and logs a warning. The session stays active and the loop continues handling the next message, but it is never resumed, its exchange processors and post-processing are skipped, and `listResumable` excludes it — so the corrupt output never produces broken derived state.
 
 ## Notes
 

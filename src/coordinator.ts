@@ -9,6 +9,7 @@ import { buildDigest } from "./channels/delivery-digest.ts";
 import { compareQueued, evaluate, type QueuedItem } from "./channels/delivery-queue.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
 import type { SessionRecord } from "./db/core-schema.ts";
+import { type AgentEvent, ERROR_KINDS } from "./domain/agent-events.ts";
 import type { InboundMessage } from "./domain/message.ts";
 import type { EventBus } from "./events.ts";
 import type { InboundContext } from "./extensions/api.ts";
@@ -280,6 +281,13 @@ export class Coordinator {
   }
 
   async resumeSession(record: SessionRecord): Promise<void> {
+    // A quarantined session must never be reopened — resuming it would rebuild on a corrupt
+    // transcript. Keep the active session (mirrors the missing-file guard below).
+    if (record.error) {
+      this.log.warn({ sessionId: record.id }, "resume skipped — session is quarantined");
+      return;
+    }
+
     // Verify the target is openable BEFORE disposing the live session — a failed
     // open after teardown would leave the conversation with no active session.
     if (record.piSessionFile == null || !existsSync(record.piSessionFile)) {
@@ -327,6 +335,7 @@ export class Coordinator {
 
   private async handle(message: InboundMessage): Promise<void> {
     this.exchanging = true;
+    let encodingError = false;
 
     try {
       await this.runInboundMiddleware(message);
@@ -335,11 +344,31 @@ export class Coordinator {
       if (message.metadata.handled === true) return;
 
       const active = await this.ensureSession(message.channel);
+      const wasErrored = active.record.error;
 
-      const events = streamPrompt(active.session, renderPrompt(message));
+      // The channel consumes the stream; we observe it in flight to detect a terminal encoding
+      // error (the adapter yields `error` only when `session.prompt()` rejects). An encoding
+      // failure leaves the transcript/output un-encodable, so the session is quarantined.
+      const events = tapEncodingErrors(streamPrompt(active.session, renderPrompt(message)), () => {
+        encodingError = true;
+      });
       await this.channel?.respond({ message, events });
 
-      await this.runExchangeProcessors(active, message);
+      if (encodingError) {
+        this.registry.markErrored(active.record.id);
+        this.log.warn({ sessionId: active.record.id }, "session quarantined — encoding failure");
+        const refreshed = this.registry.get(active.record.id);
+        if (refreshed != null && this.active?.record.id === refreshed.id) {
+          this.active = { ...this.active, record: refreshed };
+        }
+      }
+
+      // A quarantined session's derived state (rolling summary, last exchange) is not maintained —
+      // it will not be resumed or post-processed, so leave its record untouched rather than risk
+      // summarizing the corrupt exchange.
+      if (!wasErrored && !encodingError) {
+        await this.runExchangeProcessors(active, message);
+      }
     } finally {
       this.exchanging = false;
       this.lastExchangeAt = this.now();
@@ -420,6 +449,13 @@ export class Coordinator {
   }
 
   private async runPostProcessing(record: SessionRecord): Promise<void> {
+    // A quarantined session's transcript may be too corrupt to feed extractors/archivers — skip
+    // the pipeline entirely rather than risk writing broken derived state (memories, archives).
+    if (record.error) {
+      this.log.warn({ sessionId: record.id }, "post-processing skipped — session quarantined");
+      return;
+    }
+
     const state: Record<string, "completed" | "failed"> = {
       ...(record.postProcessingState ?? {}),
     };
@@ -521,6 +557,24 @@ export class Coordinator {
     }
   }
 }
+
+/**
+ * Forward an exchange's event stream unchanged while watching for a terminal encoding error.
+ * The adapter yields an `error` event only when `session.prompt()` rejects; an `encoding` kind
+ * means the transcript/output is un-encodable, so the caller quarantines the session. This is a
+ * single-consumer passthrough (not a tee): the channel still sees every event, the coordinator
+ * just observes the error kind in flight.
+ */
+const tapEncodingErrors = (
+  events: AsyncIterable<AgentEvent>,
+  onEncoding: () => void,
+): AsyncIterable<AgentEvent> =>
+  (async function* () {
+    for await (const event of events) {
+      if (event.kind === "error" && event.errorKind === ERROR_KINDS.encoding) onEncoding();
+      yield event;
+    }
+  })();
 
 const renderPrompt = (message: InboundMessage): string => {
   if (message.media.length === 0) return message.text;

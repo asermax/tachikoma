@@ -96,6 +96,44 @@ describe("Coordinator.resumeSession guard", () => {
 
     expect(coordinator.current()?.id).toBe(activeId);
   });
+
+  it("keeps the active session when the target is quarantined (errored)", async () => {
+    const log = createFakeLog();
+    const registry = new SessionRegistry(db);
+    const agent = createFakeAgent();
+
+    const coordinator = new Coordinator(
+      registry,
+      agent,
+      createRegistrations(),
+      new EventBus(log),
+      log,
+    );
+
+    // Establish a real active session from an openable file.
+    const liveFile = join(dir, "live.jsonl");
+    await writeFile(liveFile, "");
+    const live = registry.create("test", liveFile);
+    await coordinator.resumeSession(live);
+    const activeId = coordinator.current()?.id;
+    expect(activeId).toBeDefined();
+
+    // A quarantined target with a real file on disk — refused despite being openable.
+    const targetFile = join(dir, "quarantined.jsonl");
+    await writeFile(targetFile, "");
+    const target = registry.create("test", targetFile);
+    registry.close(target.id);
+    registry.markErrored(target.id);
+    const erroredTarget = registry.get(target.id);
+
+    await coordinator.resumeSession(erroredTarget as NonNullable<typeof erroredTarget>);
+
+    expect(coordinator.current()?.id).toBe(activeId);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: target.id }),
+      "resume skipped — session is quarantined",
+    );
+  });
 });
 
 describe("Coordinator.resumeSession bridging context", () => {

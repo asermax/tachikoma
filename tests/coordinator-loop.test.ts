@@ -1091,3 +1091,136 @@ describe("lastAssistantText extraction", () => {
     ).toBe("");
   });
 });
+
+describe("Coordinator encoding-error quarantine", () => {
+  it("marks the active session errored when an exchange fails with an encoding error", async () => {
+    const session = createSession({
+      prompt: vi.fn().mockRejectedValue(new Error("cannot encode surrogate pair")),
+    });
+    const { coordinator, registry, log } = makeCoordinator(db, createAgent(session));
+    coordinator.attachChannel(createChannel());
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("hi"));
+
+    const sessionId = await vi.waitFor(() => {
+      const id = coordinator.current()?.id;
+      expect(id).toBeDefined();
+      return id as number;
+    });
+    await vi.waitFor(() => expect(registry.get(sessionId)?.error).toBe(true));
+
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId }),
+      "session quarantined — encoding failure",
+    );
+
+    controller.abort();
+    await loop;
+  });
+
+  it("does not mark the session errored on a non-encoding (provider) error", async () => {
+    const regs = createRegistrations();
+    let exchangeDone = false;
+    regs.exchangeProcessors.push({
+      name: "signal",
+      process: async () => {
+        exchangeDone = true;
+      },
+    });
+
+    const session = createSession({
+      prompt: vi.fn().mockRejectedValue(new Error("429 too many requests")),
+    });
+    const { coordinator, registry } = makeCoordinator(db, createAgent(session), regs);
+    coordinator.attachChannel(createChannel());
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("hi"));
+
+    const sessionId = await vi.waitFor(() => {
+      const id = coordinator.current()?.id;
+      expect(id).toBeDefined();
+      return id as number;
+    });
+    // The exchange processor runs only after the encoding-error check, so when it fires the
+    // decision not to quarantine is already settled.
+    await vi.waitFor(() => expect(exchangeDone).toBe(true));
+
+    expect(registry.get(sessionId)?.error).toBe(false);
+
+    controller.abort();
+    await loop;
+  });
+
+  it("skips post-processing for a quarantined session while still closing it", async () => {
+    const regs = createRegistrations();
+    const processed: number[] = [];
+    regs.postProcessors.push({
+      name: "should-not-run",
+      process: async (ctx) => {
+        if (ctx.session != null) processed.push(ctx.session.id);
+      },
+    });
+
+    const { coordinator, registry, log } = makeCoordinator(db, createAgent(createSession()), regs);
+
+    const dangling = registry.create("test", "/tmp/active.jsonl");
+    registry.markErrored(dangling.id);
+
+    await coordinator.recoverDanglingSessions();
+
+    expect(processed).toEqual([]);
+    expect(registry.get(dangling.id)?.closedAt).not.toBeNull();
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: dangling.id }),
+      "post-processing skipped — session quarantined",
+    );
+  });
+
+  it("keeps handling messages after an exchange ends in an encoding error", async () => {
+    // First exchange fails with an encoding error; the second must still be handled. The active
+    // session is not force-closed on quarantine, so the loop carries on against the same session —
+    // but its exchange processors are skipped, since a quarantined session's state is not maintained.
+    let attempt = 0;
+    const session = createSession({
+      prompt: vi.fn(() => {
+        attempt += 1;
+        return attempt === 1
+          ? Promise.reject(new Error("invalid utf-8 byte sequence"))
+          : Promise.resolve(undefined);
+      }),
+    });
+    const regs = createRegistrations();
+    const processed: string[] = [];
+    regs.exchangeProcessors.push({
+      name: "capture",
+      process: async (ctx) => {
+        processed.push(ctx.userText);
+      },
+    });
+
+    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
+    coordinator.attachChannel(createChannel());
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("first"));
+    await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(1));
+
+    // The loop survives the quarantine and handles the next message against the same session.
+    coordinator.submit(textMsg("second"));
+    await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(2));
+
+    // The quarantined session's derived state is left untouched.
+    expect(processed).toEqual([]);
+
+    controller.abort();
+    await loop;
+  });
+});

@@ -34,6 +34,11 @@ export class SessionRegistry {
     return this.update(id, { closedAt: null, lastResumedAt: new Date() });
   }
 
+  /** Quarantine a session whose transcript is too corrupt to resume or post-process. */
+  markErrored(id: number): SessionRecord {
+    return this.update(id, { error: true });
+  }
+
   /** Sessions left open by a previous run (crash or restart). */
   findDangling(): SessionRecord[] {
     return this.db.select().from(sessions).where(isNull(sessions.closedAt)).all();
@@ -45,10 +50,17 @@ export class SessionRegistry {
 
     // A null piSessionFile cannot be reopened on disk, so it must never be offered:
     // a chosen-but-unopenable candidate would tear down the live session first.
+    // An errored session is quarantined — its transcript may be too corrupt to build on.
     return this.db
       .select()
       .from(sessions)
-      .where(and(gt(sessions.closedAt, cutoff), isNotNull(sessions.piSessionFile)))
+      .where(
+        and(
+          gt(sessions.closedAt, cutoff),
+          isNotNull(sessions.piSessionFile),
+          eq(sessions.error, false),
+        ),
+      )
       .orderBy(desc(sessions.closedAt))
       .all();
   }

@@ -131,3 +131,34 @@ describe("SessionRegistry.findDangling", () => {
     expect(ids).not.toContain(closed.id);
   });
 });
+
+describe("SessionRegistry.markErrored", () => {
+  it("sets the error flag, quarantining the session", () => {
+    const registry = new SessionRegistry(db);
+
+    const created = registry.create("repl", "/tmp/s.jsonl");
+    expect(created.error).toBe(false);
+
+    const errored = registry.markErrored(created.id);
+
+    expect(errored.error).toBe(true);
+    expect(registry.get(created.id)?.error).toBe(true);
+  });
+});
+
+describe("SessionRegistry.listResumable errored exclusion", () => {
+  it("excludes an errored session that otherwise meets the resumable predicates", () => {
+    const registry = new SessionRegistry(db);
+
+    const healthy = registry.create("repl", "/tmp/healthy.jsonl");
+    const broken = registry.create("repl", "/tmp/broken.jsonl");
+    registry.close(healthy.id);
+    registry.close(broken.id);
+    registry.markErrored(broken.id);
+
+    const ids = registry.listResumable(3600).map((session) => session.id);
+
+    expect(ids).toContain(healthy.id);
+    expect(ids).not.toContain(broken.id);
+  });
+});

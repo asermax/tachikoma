@@ -23,7 +23,7 @@ The feature ships as the `boundary` extension (`src/extensions/boundary/`): an i
 | R2 | When summarization fails on a non-empty exchange, the last exchange is still persisted, the previous summary is left untouched, and the error is logged |
 | R3 | Each inbound message is classified as `continue`, `new`, or `resume` via a single structured side-channel classification (`classifier` model tier) |
 | R4 | Classification is skipped when there is nothing to compare against: no active-session summary and no resume candidates |
-| R5 | Resume candidates are closed sessions within the configured window (`sessions.resumeWindowSeconds`, default 86400) that have a non-null summary, excluding the active session, sessions with a null `piSessionFile` (unopenable on disk — `listResumable` filters these out), and sessions whose post-processing state contains `"failed"` (incomplete derived state) |
+| R5 | Resume candidates are closed sessions within the configured window (`sessions.resumeWindowSeconds`, default 86400) that have a non-null summary, excluding the active session, sessions with a null `piSessionFile` (unopenable on disk — `listResumable` filters these out), sessions marked errored (quarantined — also filtered out by `listResumable`), and sessions whose post-processing state contains `"failed"` (incomplete derived state) |
 | R6 | A `new` decision with an active session closes it — running its post-processing to completion — before the message is handled in a fresh session |
 | R7 | A `resume` decision naming a known candidate closes the active session and reopens the named one, restoring its pi session file |
 | R8 | A `resume` decision naming an unknown session id is downgraded to `continue` with a warning |
@@ -32,7 +32,7 @@ The feature ships as the `boundary` extension (`src/extensions/boundary/`): an i
 | R11 | Setting `[extensions.boundary] enabled = false` disables topic-shift detection — the summary processor is not registered, and the inbound middleware (always registered) short-circuits topic classification; the idle boundary is governed independently by `idleCloseSeconds` |
 | R12 | A message with `metadata.boundary === "skip"` (system-originated injections such as session tasks and notices) bypasses all boundary logic, never shifting topics |
 | R13 | A message with `metadata.forceNew === true` (the `/new` command) closes the active session, if any, and proceeds in a fresh one — honored even when topic detection is disabled, so the user can always start over explicitly |
-| R14 | A message with a numeric `metadata.resumeSessionId` (an explicit reply-to target, e.g. a Telegram reply) force-routes to that session via `resumeSession`, bypassing topic classification; if the id is unknown or already the active session, the message proceeds unchanged |
+| R14 | A message with a numeric `metadata.resumeSessionId` (an explicit reply-to target, e.g. a Telegram reply) force-routes to that session via `resumeSession`, bypassing topic classification; if the id is unknown, already the active session, or the target is quarantined (errored), the message proceeds unchanged (the coordinator refuses to resume a quarantined session) |
 
 ## Behaviors
 
@@ -80,3 +80,4 @@ The inbound middleware checks message metadata before any topic logic. These che
 - Given a message with `metadata.boundary === "skip"`, when the middleware runs, then it calls `next()` immediately without closing, resuming, or classifying
 - Given a message with `metadata.forceNew === true` and an active session, when the middleware runs, then it surfaces "Starting a new conversation" via `app.status`, closes the active session, and proceeds in a fresh one — even with detection disabled
 - Given a message with a numeric `metadata.resumeSessionId` naming a session other than the active one, when the middleware runs, then it surfaces "Switching to the conversation you replied to", resumes that session, and proceeds; if the id is unknown or equals the active session, no transition occurs
+- Given a numeric `metadata.resumeSessionId` naming a quarantined (errored) session, when the middleware runs, then `resumeSession` refuses it, the active session is kept, and the message proceeds unchanged

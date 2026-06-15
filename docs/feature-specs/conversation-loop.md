@@ -24,20 +24,21 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R2 | Inbound messages carry text, source channel, receipt timestamp, media attachments (kind, path, optional mime/description), and free-form metadata |
 | R3 | Registered inbound middleware runs as a chain before session resolution, receiving the message, the active session record (or null), and `closeSession`/`resumeSession` controls |
 | R4 | When no session is active, the coordinator opens a pi `AgentSession` with all registered extension factories bound, creates a database record, emits `session:opened`, and runs session-open hooks with error isolation |
-| R5 | Session records persist channel, pi transcript path, summary, last exchange, created/closed/resumed timestamps, and per-processor post-processing state; the registry supports create, get, update, close, reopen, dangling lookup, and resumable listing within a time window |
+| R5 | Session records persist channel, pi transcript path, summary, last exchange, created/closed/resumed timestamps, an `error` (quarantine) flag, and per-processor post-processing state; the registry supports create, get, update, close, reopen, mark-errored, dangling lookup, and resumable listing within a time window (resumable listing excludes errored sessions) |
 | R6 | On session resume, the coordinator injects bridging context (summaries of sessions closed since the resumed session's prior close) as a single hidden `tachikoma-context` message via pi's `before_agent_start`. Extension-contributed context (memory, projects, subsystem usage) is not coordinator-gathered — each extension registers its own context section (`app.agent.use(provideContext(provide, customType?), { sessionScopes })`, see [DES-001](../design/DES-001-unified-extension-api.md)) injected directly through pi |
 | R7 | Each exchange streams domain `AgentEvent`s to the active channel's `respond()`; media attachments are rendered into the prompt as an `<attachments>` block |
-| R8 | Exchange processors run in parallel after every completed exchange with the session record, user text, and latest assistant text, error-isolated; the coordinator's cached session record is refreshed afterwards |
+| R8 | Exchange processors run in parallel after every completed exchange with the session record, user text, and latest assistant text, error-isolated; processors are skipped for a quarantined (errored) session; the coordinator's cached session record is refreshed afterwards |
 | R9 | Closing a session disposes the pi session, stamps `closedAt`, emits `session:closed`, and runs post-processing |
-| R10 | Post-processors run in phases `main → preFinalize → finalize`, parallel within a phase, error-isolated; per-processor `completed`/`failed` state is recorded on the session row and already-completed processors are skipped |
+| R10 | Post-processors run in phases `main → preFinalize → finalize`, parallel within a phase, error-isolated; per-processor `completed`/`failed` state is recorded on the session row and already-completed processors are skipped; a quarantined (errored) session skips post-processing entirely |
 | R11 | On startup, sessions left open by a previous run are closed and post-processed (dangling recovery) |
-| R12 | Resuming closes the current session, reopens the target record (`closedAt` cleared, `lastResumedAt` set), and opens a fresh pi session from the stored transcript file |
+| R12 | Resuming a quarantined (errored) session is refused — the active session is kept; otherwise resuming closes the current session, reopens the target record (`closedAt` cleared, `lastResumedAt` set), and opens a fresh pi session from the stored transcript file |
 | R13 | `closeIfIdle()` closes the active session only when no exchange is in flight (returning whether it closed), so time-based policies in extensions can never dispose a streaming session |
 | R14 | Background deliveries (`app.channels.deliver`) are queued, never steering an in-flight exchange. Each carries a `tier` (default `normal`); the coordinator holds them in a priority queue ordered by tier (Urgent → Normal → Low) then FIFO. Per-tier timing governs when the front item — and with it the whole batch — becomes deliverable: an idle window since the last exchange (Urgent 30s, Normal 120s, Low 300s) or a max-hold from enqueue (Urgent 120s, Normal 900s, Low never-force). When the front item is deliverable and no exchange is in flight, all queued items drain into one digest injected as a single system-origin turn (`origin: "system"`, `boundary: "skip"`) the agent surfaces — never a direct channel render. A `Delivery` with `immediate: true` (synchronous command UI, e.g. the `/new` ack) bypasses the queue and renders straight through `channel.deliver()` |
 | R15 | Enqueuing a delivery and completing an exchange both re-evaluate the queue against a single shared unref'd timer; a deliverable batch wakes the parked loop (via the digest submit) so it lands promptly at idle, and a non-deliverable queue parks on one timer without busy-spin |
 | R17 | At shutdown the loop sets a `shuttingDown` flag, runs registered `onShutdown` hooks (error-isolated), then renders any remaining queued items — tier/FIFO ordered, including those a hook pushes in — as one digest straight through `channel.deliver()` before closing the active session. No agent turn can run during teardown, so this channel render is the one surviving background-render path; queued items are never re-submitted to the no-longer-drained inbox. When a session is active, the loop also announces the shutdown to the user: it awaits a `Wrapping up the conversation…` line, closes the session (post-processing progress reported on the same message), then awaits a final `Done` |
 | R15 | `status(text)` surfaces pipeline progress as `status` events on the app event bus; the coordinator emits per-provider and per-processor status lines. While shutting down, status is routed to the channel's `shutdownStatus()` (a dedicated persistent message) when available, since the streaming renderer that normally hosts the line is gone |
 | R16 | A message submitted while an exchange is in flight (with an active session and non-system origin) is routed into the live run via the pi session's `steer()` instead of being queued. Two leading-slash prefixes opt out of steering: `/queue ` strips the prefix, tags the message `queued`, and waits in the inbox for the next exchange; `/new ` strips the prefix, tags the message `forceNew` (honored downstream by the boundary extension, which closes the active session), and likewise skips steering. A `steer()` failure is logged and the message dropped. `abortExchange()` aborts the in-flight run on request |
+| R18 | When an exchange ends in an encoding-classified error, the active session is marked errored (quarantined) — best-effort, never stopping the loop. A quarantined session is excluded from resumption, its exchange processors are skipped, and its post-processing is skipped, so corrupt output never produces broken derived state |
 
 ## Behaviors
 
@@ -75,7 +76,7 @@ Middleware composes as a `next()`-style chain ahead of session resolution — th
 - Given middleware calls `context.resumeSession(record)`, when it returns, then the resumed session is the active session for the exchange
 - Given no session is active (cold start), when middleware runs, then `context.session` is null
 
-### Session Lifecycle (R4, R5, R9, R11, R12)
+### Session Lifecycle (R4, R5, R9, R11, R12, R18)
 
 One database row per conversation; the active pi session and its record travel together as the coordinator's `ActiveSession`.
 
@@ -85,7 +86,9 @@ One database row per conversation; the active pi session and its record travel t
 - Given a session closes, when `closeActiveSession()` runs, then the pi session is disposed, `closedAt` is stamped, `session:closed` is emitted, and post-processing runs to completion
 - Given rows with null `closedAt` exist at startup, when `recoverDanglingSessions()` runs, then each is closed and post-processed before the channel starts
 - Given a resumable record, when `resumeSession(record)` runs, then the current session is closed first, the record's `closedAt` is cleared with `lastResumedAt` set, and a new pi session opens from `piSessionFile` (`session:opened` with `resumed: true`)
-- Given a window in seconds, when `listResumable()` is queried, then only sessions closed after the cutoff are returned, newest first
+- Given a window in seconds, when `listResumable()` is queried, then only sessions closed after the cutoff are returned, newest first, excluding any marked errored
+- Given an active session, when its exchange ends in an encoding-classified error, then the session is marked errored (`error: true`) and a warning is logged, without stopping the loop
+- Given an errored session record, when `resumeSession(record)` is called, then the active session is kept unchanged and a warning is logged
 
 ### Bridging Context Injection (R6)
 
@@ -104,6 +107,7 @@ After each completed prompt cycle, exchange processors (e.g. the rolling summary
 - Given registered exchange processors, when an exchange completes, then all run in parallel with the session record, user text, and the text blocks of the latest assistant message
 - Given a processor throws, when results settle, then the failure is logged with the processor name and other processors are unaffected
 - Given processors updated the session row (summary, last exchange), when they finish, then the coordinator's cached record is refreshed from the registry
+- Given a quarantined (errored) session, when an exchange completes, then exchange processors are skipped — no summary or last exchange is written
 
 ### Post-Processing on Close (R10)
 
@@ -113,6 +117,7 @@ Phased, idempotent processing of the closed session's transcript.
 - Given processors registered across phases, when post-processing runs, then `main` completes before `preFinalize`, which completes before `finalize`; processors within a phase run in parallel
 - Given a processor fails, when its phase settles, then it is recorded as `failed`, the error is logged, and later phases still run
 - Given a record whose `postProcessingState` already marks a processor `completed`, when post-processing runs again (e.g. dangling recovery), then that processor is skipped
+- Given a closed session marked errored, when post-processing would run (via close or dangling recovery), then the entire pipeline is skipped and a warning is logged
 - Given all phases finish, when state is persisted, then `session:post-processed` is emitted with the per-processor state map
 - Given a processor runs, when it is invoked, then it receives the session record, the pi transcript path, and a processor-bound child logger
 - Given a headless or background run that has no per-session close lifecycle, when `app.sessions.runPostProcessors(context)` is called, then the registered post-processors run once in phase order, error-isolated, with no per-processor completion-state tracking (processors that require a transcript no-op when `transcriptPath` is null)

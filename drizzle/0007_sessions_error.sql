@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `error` integer DEFAULT false NOT NULL;

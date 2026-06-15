@@ -12,6 +12,9 @@ export const sessions = sqliteTable("sessions", {
   postProcessingState: text("post_processing_state", { mode: "json" }).$type<
     Record<string, "completed" | "failed">
   >(),
+  // Set when an exchange ends in an encoding failure, quarantining the session so it is
+  // never resumed or post-processed — its transcript may be too corrupt to build on.
+  error: integer("error", { mode: "boolean" }).notNull().default(false),
 });
 
 export type SessionRecord = typeof sessions.$inferSelect;
