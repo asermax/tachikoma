@@ -1,3 +1,10 @@
+# [3.18.0](https://github.com/asermax/tachikoma/compare/v3.17.0...v3.18.0) (2026-06-15)
+
+
+### Features
+
+* **telegram:** surface unrecorded reply/reaction targets ([3b172b1](https://github.com/asermax/tachikoma/commit/3b172b1123a530b087700c38c046b3ad96849f1a))
+
 # [3.17.0](https://github.com/asermax/tachikoma/compare/v3.16.0...v3.17.0) (2026-06-15)
 
 
