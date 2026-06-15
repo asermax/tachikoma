@@ -74,6 +74,17 @@ export const STOP_COMMAND = "/stop";
 export const STOP_ACKNOWLEDGEMENT = "⏹ Stopped.";
 
 /**
+ * Appended to a text/media reply whose target couldn't be resolved, so the agent
+ * knows the turn was routed to the current conversation rather than the original one.
+ */
+export const UNRESOLVED_REPLY_HINT =
+  "\n\n(This reply could not be matched to its original conversation, so it is being handled in the current one.)";
+
+/** Notice sent when a reaction targets a message whose owning session can't be found. */
+export const UNRESOLVED_REACTION_NOTICE =
+  "I couldn't find the conversation that message belongs to, so I couldn't apply your reaction there.";
+
+/**
  * Agent tools that already deliver a notifying message during the turn (a file, a
  * pin, an inline-button message). When one of these runs the user is already
  * pushed, so forcing an extra push on the streamed response would double-notify —
@@ -160,7 +171,7 @@ export class TelegramChannel implements Channel {
       runtime.submit(mapButtonTap(unpacked.value, messageId, { prompt }));
     });
 
-    this.bot.on("message_reaction", (ctx) => {
+    this.bot.on("message_reaction", async (ctx) => {
       if (ctx.chat.id !== this.options.chatId) return;
       if (ctx.messageReaction.user?.id !== this.options.chatId) {
         runtime.log.debug(
@@ -173,19 +184,26 @@ export class TelegramChannel implements Channel {
       const event = ctx.messageReaction;
       const messageId = String(event.message_id);
       // Prepend the owning session's last exchange only when the reaction targets
-      // an older message; a reaction to the latest is already live in the agent's
-      // context. An unrecorded target falls back to the active session's exchange.
+      // an older recorded message; a reaction to the latest is already live in the
+      // agent's context. An unrecorded target is dropped by the handler below
+      // (routeReply returns it unresolved), so no context is prepared for it.
       const reference = this.options.store.findMessage(messageId);
-      const owningSessionId = reference?.sessionId ?? this.options.currentSessionId();
+      const owningSessionId = reference?.sessionId ?? null;
       const lastExchange =
-        (reference?.isLatest ?? false) || owningSessionId == null
-          ? null
-          : this.options.lastExchangeOf(owningSessionId);
+        reference != null && !reference.isLatest && owningSessionId != null
+          ? this.options.lastExchangeOf(owningSessionId)
+          : null;
 
       const inbound = mapReaction(event, { lastExchange });
       if (inbound == null) return;
 
-      runtime.submit(this.routeReply(inbound));
+      const { message: routed, resolved } = this.routeReply(inbound);
+      if (!resolved) {
+        await this.notifyUnresolvedReaction();
+        return;
+      }
+
+      runtime.submit(routed);
     });
 
     this.bot.catch(({ error }) => {
@@ -227,17 +245,32 @@ export class TelegramChannel implements Channel {
 
   /**
    * When a message replies to a known past message, stamp the owning session as
-   * an explicit resume target. An unknown reply target leaves the message
-   * untouched so it follows the normal active-session/boundary path.
+   * an explicit resume target. A target that isn't recorded is returned
+   * unresolved so the caller can act by kind: a reaction is dropped with a
+   * notice (its meaning is tied to the referenced message), while a text/media
+   * reply still carries value and is annotated with a hint for normal routing.
    */
-  private routeReply(message: InboundMessage): InboundMessage {
+  private routeReply(message: InboundMessage): { message: InboundMessage; resolved: boolean } {
     const replyToMessageId = message.metadata.replyToMessageId;
-    if (typeof replyToMessageId !== "string") return message;
+    if (typeof replyToMessageId !== "string") return { message, resolved: true };
 
     const sessionId = this.options.store.findSessionId(replyToMessageId);
-    if (sessionId == null) return message;
+    if (sessionId != null) {
+      return {
+        message: { ...message, metadata: { ...message.metadata, resumeSessionId: sessionId } },
+        resolved: true,
+      };
+    }
 
-    return { ...message, metadata: { ...message.metadata, resumeSessionId: sessionId } };
+    // Target not recorded. A reaction is returned unresolved for the handler to
+    // drop; a text/media reply proceeds under normal routing with a hint (leading
+    // separator trimmed when the reply carries no text, e.g. a captionless photo).
+    if (message.metadata.reaction === true) return { message, resolved: false };
+
+    const text = message.text
+      ? `${message.text}${UNRESOLVED_REPLY_HINT}`
+      : UNRESOLVED_REPLY_HINT.trim();
+    return { message: { ...message, text }, resolved: false };
   }
 
   /**
@@ -542,7 +575,7 @@ export class TelegramChannel implements Channel {
     this.lastInboundId = message.message_id;
     // Bridge the gap until respond()'s typing loop takes over.
     this.pingTyping();
-    this.runtimeOrThrow().submit(this.routeReply(inbound));
+    this.runtimeOrThrow().submit(this.routeReply(inbound).message);
   }
 
   /** Abort the in-flight run instead of submitting — "/stop" never reaches the agent. */
@@ -587,7 +620,7 @@ export class TelegramChannel implements Channel {
           mapMediaMessage(message, buildAttachment(resolved, destPath), {
             skipQuote: this.shouldSkipQuote(message),
           }),
-        ),
+        ).message,
       );
     } catch (error) {
       log.warn({ err: error }, "media download failed");
@@ -611,6 +644,13 @@ export class TelegramChannel implements Channel {
     await this.bot.api
       .sendMessage(this.options.chatId, notice)
       .catch((error) => log.warn({ err: error }, "error notice failed"));
+  }
+
+  /** Tell the user a reaction couldn't be matched to a conversation and was dropped. */
+  private async notifyUnresolvedReaction(): Promise<void> {
+    await this.bot.api
+      .sendMessage(this.options.chatId, UNRESOLVED_REACTION_NOTICE)
+      .catch((error) => this.log().warn({ err: error }, "unresolved reaction notice failed"));
   }
 
   private runtimeOrThrow(): ChannelRuntime {
