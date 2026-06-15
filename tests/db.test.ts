@@ -59,14 +59,4 @@ describe("SessionRegistry", () => {
     expect(resumable.map((s) => s.id)).toContain(recent.id);
     expect(registry.listResumable(0)).toHaveLength(0);
   });
-
-  it("finds sessions left open by a previous run", () => {
-    const registry = new SessionRegistry(db);
-
-    const dangling = registry.create("repl", null);
-    const closed = registry.create("repl", null);
-    registry.close(closed.id);
-
-    expect(registry.findDangling().map((s) => s.id)).toEqual([dangling.id]);
-  });
 });

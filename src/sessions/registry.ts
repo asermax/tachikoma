@@ -39,11 +39,6 @@ export class SessionRegistry {
     return this.update(id, { error: true });
   }
 
-  /** Sessions left open by a previous run (crash or restart). */
-  findDangling(): SessionRecord[] {
-    return this.db.select().from(sessions).where(isNull(sessions.closedAt)).all();
-  }
-
   /**
    * Sessions that never completed post-processing — left open by a crash, or closed but
    * interrupted before post-processing persisted its state. `postProcessingState` is written

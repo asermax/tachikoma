@@ -117,21 +117,6 @@ describe("SessionRegistry close/reopen", () => {
   });
 });
 
-describe("SessionRegistry.findDangling", () => {
-  it("returns only sessions that were never closed", () => {
-    const registry = new SessionRegistry(db);
-
-    const open = registry.create("repl", "/tmp/open.jsonl");
-    const closed = registry.create("repl", "/tmp/closed.jsonl");
-    registry.close(closed.id);
-
-    const ids = registry.findDangling().map((session) => session.id);
-
-    expect(ids).toContain(open.id);
-    expect(ids).not.toContain(closed.id);
-  });
-});
-
 describe("SessionRegistry.markErrored", () => {
   it("sets the error flag, quarantining the session", () => {
     const registry = new SessionRegistry(db);
