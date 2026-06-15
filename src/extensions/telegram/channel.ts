@@ -197,12 +197,8 @@ export class TelegramChannel implements Channel {
       const inbound = mapReaction(event, { lastExchange });
       if (inbound == null) return;
 
-      const routed = this.routeReply(inbound);
-      // mapReaction always sets replyToMessageId, so for a reaction an absent
-      // resumeSessionId means the target wasn't recorded. A reaction's meaning is
-      // bound to that message, so notify the user and drop it rather than steering
-      // the wrong session (matching the legacy _notify_failed_reply + drop).
-      if (typeof routed.metadata.resumeSessionId !== "number") {
+      const { message: routed, resolved } = this.routeReply(inbound);
+      if (!resolved) {
         await this.notifyUnresolvedReaction();
         return;
       }
@@ -249,27 +245,32 @@ export class TelegramChannel implements Channel {
 
   /**
    * When a message replies to a known past message, stamp the owning session as
-   * an explicit resume target. A reply target that isn't recorded is handled by
-   * kind: a reaction is returned without a resumeSessionId so the reaction
-   * handler can notify the user and drop it (its meaning is tied to the
-   * referenced message), while a text/media reply still has value, so it is
-   * annotated with an unresolved-reply hint and left to normal routing.
+   * an explicit resume target. A target that isn't recorded is returned
+   * unresolved so the caller can act by kind: a reaction is dropped with a
+   * notice (its meaning is tied to the referenced message), while a text/media
+   * reply still carries value and is annotated with a hint for normal routing.
    */
-  private routeReply(message: InboundMessage): InboundMessage {
+  private routeReply(message: InboundMessage): { message: InboundMessage; resolved: boolean } {
     const replyToMessageId = message.metadata.replyToMessageId;
-    if (typeof replyToMessageId !== "string") return message;
+    if (typeof replyToMessageId !== "string") return { message, resolved: true };
 
     const sessionId = this.options.store.findSessionId(replyToMessageId);
     if (sessionId != null) {
-      return { ...message, metadata: { ...message.metadata, resumeSessionId: sessionId } };
+      return {
+        message: { ...message, metadata: { ...message.metadata, resumeSessionId: sessionId } },
+        resolved: true,
+      };
     }
 
-    // Reply target not recorded. Reactions are dropped by the handler; a
-    // text/media reply proceeds under normal routing with a hint so the agent
-    // knows it couldn't be routed back to the original conversation.
-    if (message.metadata.reaction === true) return message;
+    // Target not recorded. A reaction is returned unresolved for the handler to
+    // drop; a text/media reply proceeds under normal routing with a hint (leading
+    // separator trimmed when the reply carries no text, e.g. a captionless photo).
+    if (message.metadata.reaction === true) return { message, resolved: false };
 
-    return { ...message, text: `${message.text}${UNRESOLVED_REPLY_HINT}` };
+    const text = message.text
+      ? `${message.text}${UNRESOLVED_REPLY_HINT}`
+      : UNRESOLVED_REPLY_HINT.trim();
+    return { message: { ...message, text }, resolved: false };
   }
 
   /**
@@ -574,7 +575,7 @@ export class TelegramChannel implements Channel {
     this.lastInboundId = message.message_id;
     // Bridge the gap until respond()'s typing loop takes over.
     this.pingTyping();
-    this.runtimeOrThrow().submit(this.routeReply(inbound));
+    this.runtimeOrThrow().submit(this.routeReply(inbound).message);
   }
 
   /** Abort the in-flight run instead of submitting — "/stop" never reaches the agent. */
@@ -619,7 +620,7 @@ export class TelegramChannel implements Channel {
           mapMediaMessage(message, buildAttachment(resolved, destPath), {
             skipQuote: this.shouldSkipQuote(message),
           }),
-        ),
+        ).message,
       );
     } catch (error) {
       log.warn({ err: error }, "media download failed");
