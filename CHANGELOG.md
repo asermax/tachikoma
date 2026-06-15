@@ -1,3 +1,10 @@
+# [3.8.0](https://github.com/asermax/tachikoma/compare/v3.7.0...v3.8.0) (2026-06-15)
+
+
+### Features
+
+* **config:** read app-wide env variables from config ([7b8b43d](https://github.com/asermax/tachikoma/commit/7b8b43dfcf8cf5570bc8519f8f8b77b83e6bfc46))
+
 # [3.7.0](https://github.com/asermax/tachikoma/compare/v3.6.0...v3.7.0) (2026-06-15)
 
 
