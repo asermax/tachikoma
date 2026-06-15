@@ -1,3 +1,10 @@
+# [3.12.0](https://github.com/asermax/tachikoma/compare/v3.11.0...v3.12.0) (2026-06-15)
+
+
+### Features
+
+* **telegram:** add ls tool labels ([e1fc7be](https://github.com/asermax/tachikoma/commit/e1fc7be245518e5e2a59c266e2d245d96dce8642))
+
 # [3.11.0](https://github.com/asermax/tachikoma/compare/v3.10.0...v3.11.0) (2026-06-15)
 
 
