@@ -113,9 +113,13 @@ export class Coordinator {
     await this.active?.session.abort();
   }
 
-  status(text: string): void {
+  status(text: string, silent = false): void {
     this.log.debug({ status: text }, "pipeline status");
     this.events.emit("status", { text });
+
+    // No renderer to host the line (e.g. an idle-timeout close): stop here so
+    // it's logged for operators without leaving a ghost status in the chat.
+    if (silent) return;
 
     try {
       // During teardown there is no streaming renderer to host the line, so
@@ -253,9 +257,8 @@ export class Coordinator {
 
     if (this.active == null) return false;
 
-    // Silent: the user isn't watching an idle close, and there is no imminent
-    // respond() to reclaim a status lead-in — surfacing per-processor progress
-    // would leave ghost status messages. It's logged instead (see runPostProcessing).
+    // Silent: an idle close has no active renderer and no imminent respond() to
+    // reclaim a status lead-in, so post-processing lines are logged, not surfaced.
     await this.closeActiveSession(true);
     return true;
   }
@@ -271,7 +274,7 @@ export class Coordinator {
     this.log.info({ sessionId: record.id }, "session closed");
     this.events.emit("session:closed", { session: record });
 
-    await this.runPostProcessing(record, { silent });
+    await this.runPostProcessing(record, silent);
   }
 
   /**
@@ -464,18 +467,13 @@ export class Coordinator {
     if (refreshed != null) this.syncActiveRecord(refreshed);
   }
 
-  private async runPostProcessing(
-    record: SessionRecord,
-    options: { silent?: boolean } = {},
-  ): Promise<void> {
+  private async runPostProcessing(record: SessionRecord, silent = false): Promise<void> {
     // A quarantined session's transcript may be too corrupt to feed extractors/archivers — skip
     // the pipeline entirely rather than risk writing broken derived state (memories, archives).
     if (record.error) {
       this.log.warn({ sessionId: record.id }, "post-processing skipped — session quarantined");
       return;
     }
-
-    const silent = options.silent === true;
     const state: Record<string, "completed" | "failed"> = {
       ...(record.postProcessingState ?? {}),
     };
@@ -489,17 +487,7 @@ export class Coordinator {
       },
       log: this.log,
       shouldSkip: (processor) => state[processor.name] === "completed",
-      onProcessorStart: (processor) => {
-        const text = `Post-processing: ${processor.name}…`;
-        if (silent) {
-          // Idle close: there is no active renderer and no imminent respond() to
-          // reclaim a status lead-in, so surfacing the line would leave a ghost
-          // status message in the chat. Log it for operators instead.
-          this.log.debug({ status: text }, "post-processing status (idle close — suppressed)");
-        } else {
-          this.status(text);
-        }
-      },
+      onProcessorStart: (processor) => this.status(`Post-processing: ${processor.name}…`, silent),
       onProcessorSettled: (processor, result) => {
         state[processor.name] = result.status === "fulfilled" ? "completed" : "failed";
       },

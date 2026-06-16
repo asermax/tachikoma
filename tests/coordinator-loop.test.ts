@@ -571,7 +571,7 @@ describe("Coordinator.closeActiveSessionIfIdle post-processing status", () => {
     // …and each line was logged for operators instead.
     expect(log.debug).toHaveBeenCalledWith(
       expect.objectContaining({ status: "Post-processing: memory…" }),
-      "post-processing status (idle close — suppressed)",
+      "pipeline status",
     );
 
     expect(registry.get(sessionId)?.postProcessingState).toMatchObject({
