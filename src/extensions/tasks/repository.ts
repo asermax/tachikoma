@@ -43,7 +43,7 @@ const ACTIVE_STATUSES: TaskStatus[] = ["pending", "running", "waiting"];
 // Failed is excluded so a retry within the same period stays possible.
 const PERIOD_COVERING_STATUSES: TaskStatus[] = ["pending", "running", "waiting", "completed"];
 
-const TERMINAL_STATUSES: TaskStatus[] = ["completed", "failed"];
+export const TERMINAL_STATUSES: TaskStatus[] = ["completed", "failed"];
 
 export class TaskRepository {
   private readonly db: AppDatabase;
@@ -281,6 +281,20 @@ export class TaskRepository {
       .where(eq(taskInstances.status, "running"))
       .returning()
       .all().length;
+  }
+
+  /**
+   * Cancel a single instance by ID: mark it `failed` with a cancellation reason.
+   * A thin intention-revealing write over `updateInstance`; returns the updated
+   * record or null when no row matches. The caller owns the not-found and
+   * already-terminal validation, mirroring `respond_to_task`.
+   */
+  cancelInstance(id: string, reason: string): TaskInstanceRecord | null {
+    return this.updateInstance(id, {
+      status: "failed",
+      completedAt: this.now(),
+      result: reason,
+    });
   }
 
   /**

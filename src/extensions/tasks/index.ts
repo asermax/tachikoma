@@ -76,9 +76,17 @@ export default defineExtension<TasksConfig>({
       log: app.log,
     });
 
-    app.agent.use(createTaskToolsFactory({ repository, timezone, now }), {
-      sessionScopes: ["main", "background"],
-    });
+    app.agent.use(
+      createTaskToolsFactory({
+        repository,
+        timezone,
+        now,
+        cancelRunningInstance: (id) => runner.cancel(id),
+      }),
+      {
+        sessionScopes: ["main", "background"],
+      },
+    );
 
     app.agent.use(provideContext(buildTasksUsage(timezone), "tasks-usage"), {
       sessionScopes: ["main", "background"],
