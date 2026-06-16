@@ -1,6 +1,6 @@
 {
   "name": "@asermax/tachikoma",
-  "version": "3.24.0",
+  "version": "3.24.1",
   "type": "module",
   "bin": {
     "tachikoma": "./dist/main.js"

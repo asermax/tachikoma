@@ -1,3 +1,10 @@
+## [3.24.1](https://github.com/asermax/tachikoma/compare/v3.24.0...v3.24.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **telegram:** claim lead-in seed under send mutex ([4c65f57](https://github.com/asermax/tachikoma/commit/4c65f57d59bc185604ef344ff207f5720a7d1f87))
+
 # [3.24.0](https://github.com/asermax/tachikoma/compare/v3.23.0...v3.24.0) (2026-06-16)
 
 
