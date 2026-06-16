@@ -1,3 +1,10 @@
+# [3.24.0](https://github.com/asermax/tachikoma/compare/v3.23.0...v3.24.0) (2026-06-16)
+
+
+### Features
+
+* increase skill classification timeout to 30s ([63bf3d3](https://github.com/asermax/tachikoma/commit/63bf3d3bac5cf2083085e11b8c43eef9b7f1731f))
+
 # [3.23.0](https://github.com/asermax/tachikoma/compare/v3.22.1...v3.23.0) (2026-06-16)
 
 
