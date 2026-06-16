@@ -1,3 +1,10 @@
+# [3.21.0](https://github.com/asermax/tachikoma/compare/v3.20.0...v3.21.0) (2026-06-16)
+
+
+### Features
+
+* **tasks:** add stop_task tool to cancel running and queued instances ([5557471](https://github.com/asermax/tachikoma/commit/555747142f4fd14e46db4c11550e624521cebac7))
+
 # [3.20.0](https://github.com/asermax/tachikoma/compare/v3.19.0...v3.20.0) (2026-06-16)
 
 
