@@ -28,7 +28,7 @@ export const SkillSelectionSchema = Type.Object({
 export type SkillSelection = Static<typeof SkillSelectionSchema>;
 
 // Bail out of a slow classify rather than stalling the user-visible response.
-export const SKILL_CLASSIFY_TIMEOUT_MS = 2000;
+export const SKILL_CLASSIFY_TIMEOUT_MS = 10_000;
 
 // Recent conversation messages serialized as context for the selection — bounded so a long
 // conversation does not bloat the classifier call.
