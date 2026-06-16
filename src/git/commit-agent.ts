@@ -104,7 +104,14 @@ const buildCommitTools = (cwd: string): ToolDefinition[] => [
   } satisfies ToolDefinition<typeof GitParams>,
 ];
 
-const WORKSPACE_COMMIT_SYSTEM = `You commit workspace changes for an automated workspace-versioning agent, grouping related changes into separate, descriptive commits.
+/** Shared constraints appended to every commit-agent system prompt. */
+const SAFETY =
+  "You may only use status, diff, log, add, commit, and show. Never push, amend, reset, rebase, clean, or rewrite history, and never touch the .git directory. When you are done, report what you committed.";
+
+/** Per-mode system prompt and instruction. The mode is fixed at agent creation. */
+const MODE_CONFIG = {
+  workspace: {
+    system: `You commit workspace changes for an automated workspace-versioning agent, grouping related changes into separate, descriptive commits.
 
 The workspace holds: memories (episodic summaries, topic and learning notes), context files (SOUL.md, USER.md, AGENTS.md), configuration, transcripts, and project submodule pointers.
 
@@ -115,9 +122,12 @@ Steps:
 4. Run git status again. If anything remains uncommitted, commit it.
 5. Stop when the working tree is clean.
 
-You may only use status, diff, log, add, commit, and show. Never push, amend, reset, rebase, clean, or rewrite history, and never touch the .git directory. When you are done, report what you committed.`;
-
-const PROJECT_COMMIT_SYSTEM = `You commit changes in an external project repository, matching that project's own commit-message conventions.
+${SAFETY}`,
+    prompt:
+      "Commit the workspace's uncommitted changes as one or more cohesive commits grouped by area, then verify the working tree is clean.",
+  },
+  project: {
+    system: `You commit changes in an external project repository, matching that project's own commit-message conventions.
 
 Steps:
 1. Run git log --oneline -10 to learn this project's commit-message style (conventional commits, semantic prefixes, plain prose, etc.).
@@ -127,7 +137,11 @@ Steps:
 5. For each group: git add <the specific paths>, then git commit -m "<message matching the project style>".
 6. Run git status again; commit anything remaining. Stop when the working tree is clean.
 
-You may only use status, diff, log, add, commit, and show. Never push, amend, reset, rebase, clean, or rewrite history, and never touch the .git directory. When you are done, report what you committed.`;
+${SAFETY}`,
+    prompt:
+      "Commit this project's uncommitted changes as one or more cohesive commits that match its existing style, then verify the working tree is clean.",
+  },
+} as const;
 
 /**
  * A `CommitAgent` backed by a headless side agent. The agent inspects the diff,
@@ -139,14 +153,13 @@ You may only use status, diff, log, add, commit, and show. Never push, amend, re
 export const createCommitAgent =
   (side: AgentRunner, mode: "workspace" | "project"): CommitAgent =>
   async (cwd, log) => {
+    const { system, prompt } = MODE_CONFIG[mode];
+
     log.info({ path: cwd, mode }, "spawning commit agent");
 
     await side.run({
-      system: mode === "project" ? PROJECT_COMMIT_SYSTEM : WORKSPACE_COMMIT_SYSTEM,
-      prompt:
-        mode === "project"
-          ? "Commit this project's uncommitted changes as one or more cohesive commits that match its existing style, then verify the working tree is clean."
-          : "Commit the workspace's uncommitted changes as one or more cohesive commits grouped by area, then verify the working tree is clean.",
+      system,
+      prompt,
       customTools: buildCommitTools(cwd),
       tier: "processor",
     });
