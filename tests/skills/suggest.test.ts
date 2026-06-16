@@ -48,12 +48,16 @@ const register = (
 
   const classify = overrides.classifier?.classify ?? vi.fn();
   const status = (overrides.status as ReturnType<typeof vi.fn>) ?? vi.fn();
+  // Default fake so the existing fake `filePath` fixtures work without the real filesystem;
+  // tests that care about the body or read failures override it.
+  const readSkill = overrides.readSkill ?? (() => "Injected skill body.");
 
   registerSkillSuggestion(pi, {
     classifier: { classify },
     isForking: overrides.isForking ?? (() => false),
     status,
     log: fakeLog,
+    readSkill,
   });
 
   if (handler == null) throw new Error("handler not registered");
@@ -70,17 +74,19 @@ const event = (prompt: string, skills: Skill[]) => ({
 });
 
 describe("registerSkillSuggestion", () => {
-  it("recommends the matched skill as one hidden message (AC1)", async () => {
+  it("injects the matched skill's full content as one hidden message (AC1)", async () => {
     const pdf = makeSkill("pdf-tools", "Work with PDFs");
     const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
     const { handler } = register({ classifier: { classify } });
 
     const result = await handler(event("merge these pdfs", [pdf]), emptyCtx());
 
-    expect(result?.message.customType).toBe("skill-recommendation");
+    expect(result?.message.customType).toBe("skill-content");
     expect(result?.message.display).toBe(false);
-    expect(result?.message.content).toContain("/skill:pdf-tools");
-    expect(result?.message.content).toContain("Work with PDFs");
+    expect(result?.message.content).toContain("injected for this session");
+    expect(result?.message.content).toContain('<injected-skill name="pdf-tools">');
+    expect(result?.message.content).toContain("Injected skill body.");
+    expect(result?.message.content).not.toContain("/skill:");
   });
 
   it("skips entirely (no classify) when isForking() is true (AC2)", async () => {
@@ -168,7 +174,7 @@ describe("registerSkillSuggestion", () => {
     expect(status).not.toHaveBeenCalled();
   });
 
-  it("packs multiple matches into one message, each by /skill name, without paths (AC10)", async () => {
+  it("packs multiple matches into one message, each as an injected-skill section (AC10)", async () => {
     const pdf = makeSkill("pdf-tools", "Work with PDFs");
     const csv = makeSkill("csv-tools", "Work with CSVs");
     const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools", "csv-tools"] });
@@ -177,16 +183,17 @@ describe("registerSkillSuggestion", () => {
     const result = await handler(event("process files", [pdf, csv]), emptyCtx());
     const content = result?.message.content ?? "";
 
-    const recommendations = content.match(/\/skill:/g) ?? [];
-    expect(recommendations).toHaveLength(2);
-    expect(content).toContain("/skill:pdf-tools");
-    expect(content).toContain("/skill:csv-tools");
-    // No filesystem path leaked.
+    const sections = content.match(/<injected-skill /g) ?? [];
+    expect(sections).toHaveLength(2);
+    expect(content).toContain('<injected-skill name="pdf-tools">');
+    expect(content).toContain('<injected-skill name="csv-tools">');
+    // The wrapper carries only the skill name — no filesystem path, no /skill: command.
     expect(content).not.toContain("SKILL.md");
     expect(content).not.toContain("/skills/");
+    expect(content).not.toContain("/skill:");
   });
 
-  it("recommends only the not-yet-recommended skill when one was already loaded (AC11)", async () => {
+  it("injects only the not-yet-injected skill when one was already injected (AC11)", async () => {
     const pdf = makeSkill("pdf-tools", "Work with PDFs");
     const csv = makeSkill("csv-tools", "Work with CSVs");
 
@@ -200,8 +207,105 @@ describe("registerSkillSuggestion", () => {
     const second = await handler(event("now the csv too", [pdf, csv]), emptyCtx());
     const content = second?.message.content ?? "";
 
-    expect(content).toContain("/skill:csv-tools");
-    expect(content).not.toContain("/skill:pdf-tools");
+    expect(content).toContain('<injected-skill name="csv-tools">');
+    expect(content).not.toContain('<injected-skill name="pdf-tools">');
+  });
+
+  it("injects the full file body returned by readSkill (AC1 body)", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const readSkill = vi.fn(() => "## Step 1\nDo the thing.");
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
+    const { handler } = register({ classifier: { classify }, readSkill });
+
+    const result = await handler(event("merge pdfs", [pdf]), emptyCtx());
+
+    expect(result?.message.content).toContain("## Step 1\nDo the thing.");
+    expect(readSkill).toHaveBeenCalledWith("/skills/pdf-tools/SKILL.md");
+  });
+
+  it("skips an unreadable skill but still injects the rest, logging a warning (AC7)", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const csv = makeSkill("csv-tools", "Work with CSVs");
+    const readSkill = vi.fn((filePath: string) => {
+      if (filePath.includes("pdf-tools")) throw new Error("ENOENT");
+      return "csv body";
+    });
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools", "csv-tools"] });
+    const { handler } = register({ classifier: { classify }, readSkill });
+
+    const result = await handler(event("process files", [pdf, csv]), emptyCtx());
+    const content = result?.message.content ?? "";
+
+    expect(content).not.toContain('<injected-skill name="pdf-tools">');
+    expect(content).toContain('<injected-skill name="csv-tools">');
+    expect(fakeLog.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ skill: "pdf-tools" }),
+      expect.any(String),
+    );
+  });
+
+  it("does not mark an unreadable skill as injected, so it can retry next turn (R4)", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const readSkill = vi.fn(() => {
+      throw new Error("ENOENT");
+    });
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
+    const { handler } = register({ classifier: { classify }, readSkill });
+
+    const first = await handler(event("merge pdfs", [pdf]), emptyCtx());
+    expect(first).toBeUndefined();
+
+    // Still a candidate next turn: classify runs again and read is re-attempted.
+    const second = await handler(event("merge more pdfs", [pdf]), emptyCtx());
+    expect(second).toBeUndefined();
+    expect(readSkill).toHaveBeenCalledTimes(2);
+  });
+
+  it("skips empty and whitespace-only content without marking injected (AC7)", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const csv = makeSkill("csv-tools", "Work with CSVs");
+    const txt = makeSkill("txt-tools", "Work with text");
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools", "csv-tools", "txt-tools"] });
+    const { handler } = register({
+      classifier: { classify },
+      readSkill: (filePath) => {
+        if (filePath.includes("pdf-tools")) return "";
+        if (filePath.includes("csv-tools")) return "   \n";
+        return "txt body";
+      },
+    });
+
+    const result = await handler(event("process files", [pdf, csv, txt]), emptyCtx());
+    const content = result?.message.content ?? "";
+
+    expect(content).not.toContain('<injected-skill name="pdf-tools">');
+    expect(content).not.toContain('<injected-skill name="csv-tools">');
+    expect(content).toContain('<injected-skill name="txt-tools">');
+    expect(fakeLog.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ skill: "pdf-tools" }),
+      expect.any(String),
+    );
+    expect(fakeLog.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ skill: "csv-tools" }),
+      expect.any(String),
+    );
+  });
+
+  it("injects nothing and stays silent when every matched read fails (AC9)", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const csv = makeSkill("csv-tools", "Work with CSVs");
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools", "csv-tools"] });
+    const { handler } = register({
+      classifier: { classify },
+      readSkill: () => {
+        throw new Error("ENOENT");
+      },
+    });
+
+    const result = await handler(event("process files", [pdf, csv]), emptyCtx());
+
+    expect(result).toBeUndefined();
+    expect(fakeLog.warn).toHaveBeenCalledTimes(2);
   });
 
   it("calls status exactly once when eligible and never when not (AC13)", async () => {

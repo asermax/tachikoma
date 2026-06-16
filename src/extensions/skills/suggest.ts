@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   buildSessionContext,
   convertToLlm,
@@ -17,6 +18,8 @@ export interface SkillSuggestionDeps {
   isForking: () => boolean;
   status: (text: string) => void;
   log: Logger;
+  /** Reads a matched skill's SKILL.md content; defaults to `readFileSync` (utf-8). Injectable for tests. */
+  readSkill?: (filePath: string) => string;
 }
 
 export const SkillSelectionSchema = Type.Object({
@@ -70,17 +73,21 @@ const classifyWithTimeout = async <T>(work: Promise<T>, ms: number): Promise<T> 
 type SkillSuggestionResult = { message: { customType: string; content: string; display: false } };
 
 const PREFACE =
-  "These skills look relevant to the current request. Load each one before responding with its /skill command, then follow its instructions:";
+  "The following skill content has been injected for this session — the instructions below are available immediately, so no /skill command is needed. Follow each skill's instructions where relevant:";
 
 /**
  * Proactive skill loading: on each genuine top-level turn, a conversation-aware classifier picks
- * which loaded skills are relevant to the latest message and injects a hidden message recommending
- * the agent load them — covering the gap where pi's progressive disclosure leaves loading to the
- * model, which "does not always do this". The pass is best-effort and never blocks the response:
- * it is skipped inside forks (`isForking`), when no skills are eligible, and on any classify failure.
+ * which loaded skills are relevant to the latest message and injects each matched skill's full
+ * SKILL.md content directly as a hidden, persisted message — giving the model the instructions
+ * with no separate /skill load round-trip, covering the gap where pi's progressive disclosure
+ * leaves loading to the model, which "does not always do this". The pass is best-effort and never
+ * blocks the response: it is skipped inside forks (`isForking`), when no skills are eligible, and
+ * on any classify failure. A skill whose content cannot be read (or is empty) is skipped without
+ * aborting the rest.
  */
 export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionDeps): void => {
   const { classifier, isForking, status, log } = deps;
+  const readSkill = deps.readSkill ?? ((filePath: string) => readFileSync(filePath, "utf-8"));
 
   // Skills injected this session — never re-injected, since the message persists in the transcript.
   // Per-session: the factory (and this closure) is recreated for each agent session.
@@ -126,16 +133,39 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
 
       if (matched.length === 0) return undefined;
 
-      for (const skill of matched) injected.add(skill.name);
+      // Read each matched skill's full content and inject it directly, so the model has the
+      // instructions without a separate /skill load round-trip. A per-skill try/catch means one
+      // unreadable (or empty) file skips only that skill rather than aborting the whole injection;
+      // skipped skills are not added to `injected`, so a transient failure can retry next turn.
+      const sections: string[] = [];
+      for (const skill of matched) {
+        try {
+          const body = readSkill(skill.filePath);
+          if (body.trim() === "") {
+            log.debug(
+              { skill: skill.name },
+              "proactive skill content is empty — skipping injection",
+            );
+            continue;
+          }
+          injected.add(skill.name);
+          sections.push(`<injected-skill name="${skill.name}">\n${body}\n</injected-skill>`);
+        } catch (error) {
+          log.warn(
+            { err: error, skill: skill.name },
+            "failed to read skill content — skipping injection",
+          );
+        }
+      }
 
-      log.debug({ skills: matched.length }, "recommending proactive skills");
+      if (sections.length === 0) return undefined;
 
-      const lines = matched.map((skill) => `- /skill:${skill.name} — ${skill.description}`);
+      log.debug({ skills: sections.length }, "injecting proactive skill content");
 
       return {
         message: {
-          customType: "skill-recommendation",
-          content: `${PREFACE}\n${lines.join("\n")}`,
+          customType: "skill-content",
+          content: `${PREFACE}\n\n${sections.join("\n\n")}`,
           display: false,
         },
       };
