@@ -129,6 +129,7 @@ export const evaluateCompletion = async (
 export const executeBackgroundInstance = async (
   deps: ExecutorDeps,
   instance: TaskInstanceRecord,
+  signal?: AbortSignal,
 ): Promise<void> => {
   const { repository, side, emit, runPostProcessors, maxIterations, timezone, now, log } = deps;
 
@@ -169,6 +170,15 @@ export const executeBackgroundInstance = async (
   const legacyResume = resuming && instance.piSessionFile == null && instance.question != null;
 
   let session: Awaited<ReturnType<BackgroundSide["openBackgroundSession"]>> | null = null;
+
+  // Aborting the signal cancels a run: session.abort() ends a mid-flight prompt
+  // gracefully, and signal.aborted is checked between iterations. On abort the
+  // loop unwinds WITHOUT writing status — the cancel initiator owns that write,
+  // so the executor never clobbers a `failed`-by-cancellation row.
+  const onAbort = (): void => {
+    session?.abort();
+  };
+  signal?.addEventListener("abort", onAbort);
 
   try {
     const system = buildSystemPrompt(now(), timezone);
@@ -231,7 +241,16 @@ export const executeBackgroundInstance = async (
           : instance.prompt;
 
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
+      // Covers a cancel that landed before this iteration (between turns, or
+      // before the first prompt ever runs).
+      if (signal?.aborted) break;
+
       await session.prompt(prompt);
+
+      // Covers a cancel that interrupted the prompt itself (session.abort()
+      // resolved it mid-flight). Bail before persisting any waiting transition.
+      if (signal?.aborted) break;
+
       const text = lastAssistantText(session.messages);
 
       if (pendingQuestion != null) {
@@ -287,15 +306,26 @@ export const executeBackgroundInstance = async (
       prompt = buildContinuationPrompt(evaluation.reason);
     }
 
-    fail(
-      `Max iterations (${maxIterations}) reached without completion`,
-      `Task failed: reached max iterations (${maxIterations})`,
-    );
+    // Skipped on cancel: the loop `break`s out of a cancellation, and the cancel
+    // initiator has already written the terminal `failed` row.
+    if (!signal?.aborted) {
+      fail(
+        `Max iterations (${maxIterations}) reached without completion`,
+        `Task failed: reached max iterations (${maxIterations})`,
+      );
+    }
   } catch (error) {
-    log.error({ instanceId: instance.id, err: error }, "background task errored");
-    fail(`Task failed: ${error}`, `Task failed with error: ${error}`);
+    // A cancellation may surface here if abort raced with an in-flight operation;
+    // the initiator owns the terminal write, so log and swallow rather than fail.
+    if (signal?.aborted) {
+      log.info({ instanceId: instance.id }, "background task cancelled");
+    } else {
+      log.error({ instanceId: instance.id, err: error }, "background task errored");
+      fail(`Task failed: ${error}`, `Task failed with error: ${error}`);
+    }
   } finally {
     // Guarantees the live session handle never leaks — the complete path nulls it after disposing.
+    signal?.removeEventListener("abort", onAbort);
     session?.dispose();
   }
 };
@@ -308,7 +338,13 @@ export const executeBackgroundInstance = async (
  */
 export class BackgroundRunner {
   private readonly deps: ExecutorDeps;
-  private readonly inFlight = new Map<string, Promise<void>>();
+  // One entry per dispatched instance, pairing its in-flight run with the
+  // AbortController that cancels it. Binding them in a single map (rather than
+  // two kept in lockstep) makes the controller/promise pairing structural.
+  private readonly runs = new Map<
+    string,
+    { controller: AbortController; promise: Promise<void> }
+  >();
 
   constructor(deps: ExecutorDeps) {
     this.deps = deps;
@@ -321,25 +357,43 @@ export class BackgroundRunner {
     ];
 
     for (const instance of dispatchable) {
-      if (this.inFlight.size >= this.deps.maxConcurrent) break;
+      if (this.runs.size >= this.deps.maxConcurrent) break;
 
-      if (this.inFlight.has(instance.id)) continue;
+      if (this.runs.has(instance.id)) continue;
 
-      const run = executeBackgroundInstance(this.deps, instance)
+      const controller = new AbortController();
+      const promise = executeBackgroundInstance(this.deps, instance, controller.signal)
         .catch((error) =>
           this.deps.log.error(
             { instanceId: instance.id, err: error },
             "background executor crashed",
           ),
         )
-        .finally(() => this.inFlight.delete(instance.id));
+        .finally(() => this.runs.delete(instance.id));
 
-      this.inFlight.set(instance.id, run);
+      this.runs.set(instance.id, { controller, promise });
     }
+  }
+
+  /**
+   * Cancel an in-flight instance: signal its evaluator loop to abort and await
+   * the run so the caller sees it settled. Returns false when the instance is
+   * not running in this process (the caller's own terminal write is then the
+   * whole effect).
+   */
+  async cancel(instanceId: string): Promise<boolean> {
+    const run = this.runs.get(instanceId);
+    if (run == null) return false;
+
+    run.controller.abort();
+    // `run.promise` already swallows its own errors via the `.catch` in `tick`,
+    // so awaiting it never throws — it just waits for the run to unwind.
+    await run.promise;
+    return true;
   }
 
   /** Await in-flight executions (tests and shutdown). */
   async drain(): Promise<void> {
-    await Promise.allSettled(this.inFlight.values());
+    await Promise.allSettled([...this.runs.values()].map((r) => r.promise));
   }
 }

@@ -1,5 +1,5 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AppDatabase } from "../../src/db/index.ts";
 import { TaskRepository } from "../../src/extensions/tasks/repository.ts";
@@ -13,6 +13,7 @@ import {
   handleQueryTaskInstances,
   handleRespondToTask,
   handleRunTaskNow,
+  handleStopTask,
   handleUpdateTask,
   type ToolDeps,
 } from "../../src/extensions/tasks/tools.ts";
@@ -441,6 +442,101 @@ describe("handleRespondToTask", () => {
   });
 });
 
+describe("handleStopTask", () => {
+  const makeInstance = (status: "pending" | "running" | "waiting" | "completed" | "failed") => {
+    const instance = repository.createInstance({
+      definitionId: null,
+      taskType: "background",
+      prompt: "do some work",
+      scheduledFor: current,
+    });
+
+    if (status !== "pending") {
+      repository.updateInstance(instance.id, {
+        status,
+        question: status === "waiting" ? "?" : null,
+      });
+    }
+
+    return instance;
+  };
+
+  const cancelDeps = (cancel: ReturnType<typeof vi.fn>) => ({
+    ...deps,
+    cancelRunningInstance: cancel,
+  });
+
+  it("cancels a pending instance so it never runs", async () => {
+    const cancel = vi.fn().mockResolvedValue(false);
+    const instance = makeInstance("pending");
+
+    const message = await handleStopTask(cancelDeps(cancel), { task_instance_id: instance.id });
+
+    expect(message).toContain(instance.id);
+    expect(message).toContain("pending");
+
+    const updated = repository.getInstance(instance.id);
+    expect(updated?.status).toBe("failed");
+    expect(updated?.result).toContain("cancelled");
+    expect(updated?.completedAt).toEqual(current);
+  });
+
+  it("cancels a waiting instance and dismisses its pending question", async () => {
+    const cancel = vi.fn().mockResolvedValue(false);
+    const instance = makeInstance("waiting");
+
+    await handleStopTask(cancelDeps(cancel), { task_instance_id: instance.id });
+
+    expect(repository.getInstance(instance.id)?.status).toBe("failed");
+    expect(
+      repository.getResumableInstances("background").find((row) => row.id === instance.id),
+    ).toBeUndefined();
+  });
+
+  it("marks a running instance failed and aborts the live run", async () => {
+    const cancel = vi.fn().mockResolvedValue(true);
+    const instance = makeInstance("running");
+
+    const message = await handleStopTask(cancelDeps(cancel), { task_instance_id: instance.id });
+
+    expect(repository.getInstance(instance.id)?.status).toBe("failed");
+    expect(cancel).toHaveBeenCalledWith(instance.id);
+    expect(message).toContain("running");
+  });
+
+  it("rejects an unknown instance without touching anything", async () => {
+    const cancel = vi.fn().mockResolvedValue(false);
+
+    await expect(handleStopTask(cancelDeps(cancel), { task_instance_id: "nope" })).rejects.toThrow(
+      "not found",
+    );
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("rejects an already-completed instance", async () => {
+    const cancel = vi.fn().mockResolvedValue(false);
+    const instance = makeInstance("completed");
+
+    await expect(
+      handleStopTask(cancelDeps(cancel), { task_instance_id: instance.id }),
+    ).rejects.toThrow("already finished");
+    expect(repository.getInstance(instance.id)?.status).toBe("completed");
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it("rejects an already-failed instance and leaves its result intact", async () => {
+    const cancel = vi.fn().mockResolvedValue(false);
+    const instance = makeInstance("failed");
+    repository.updateInstance(instance.id, { result: "earlier error" });
+
+    await expect(
+      handleStopTask(cancelDeps(cancel), { task_instance_id: instance.id }),
+    ).rejects.toThrow("already finished");
+    expect(repository.getInstance(instance.id)?.result).toBe("earlier error");
+    expect(cancel).not.toHaveBeenCalled();
+  });
+});
+
 describe("tool factory split", () => {
   it("keeps the interactive respond_to_task out of the background-bound toolset", () => {
     const operational = registeredToolNames(createTaskToolsFactory(deps));
@@ -453,6 +549,7 @@ describe("tool factory split", () => {
       "delete_task",
       "run_task_now",
       "query_task_instances",
+      "stop_task",
     ]);
     expect(operational).not.toContain("respond_to_task");
   });

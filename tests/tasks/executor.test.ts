@@ -32,6 +32,7 @@ interface FakeSession {
   messages: { role: string; content: { type: string; text: string }[] }[];
   prompt: ReturnType<typeof vi.fn>;
   dispose: ReturnType<typeof vi.fn>;
+  abort: ReturnType<typeof vi.fn>;
 }
 
 interface FakeSide extends BackgroundSide {
@@ -58,6 +59,7 @@ const makeSide = (
     messages: [],
     prompt: vi.fn(),
     dispose: vi.fn(),
+    abort: vi.fn(),
   };
 
   let tools: { name: string; execute: (id: string, params: unknown) => unknown }[] = [];
@@ -409,6 +411,54 @@ describe("executeBackgroundInstance", () => {
       }),
     );
   });
+
+  it("never prompts when cancelled before the first iteration", async () => {
+    const classify = vi.fn();
+    const side = makeSide(() => "anything", classify);
+    const deps = makeDeps(side);
+
+    const instance = pendingInstance();
+    const controller = new AbortController();
+    controller.abort();
+
+    await executeBackgroundInstance(deps, instance, controller.signal);
+
+    expect(side.session.prompt).not.toHaveBeenCalled();
+    expect(side.session.dispose).toHaveBeenCalled();
+    // The cancel initiator owns the terminal write: the executor leaves its
+    // initial `running` transition in place and emits no failure notice.
+    expect(repository.getInstance(instance.id)?.status).toBe("running");
+    expect(classify).not.toHaveBeenCalled();
+    expect(notifyPayloads(deps.emit)).toHaveLength(0);
+  });
+
+  it("stops prompting and emits no failure when cancelled between iterations", async () => {
+    const classify = vi.fn().mockResolvedValue({ status: "continue", reason: "more to do" });
+    const side = makeSide(() => "still working", classify);
+    const deps = makeDeps(side);
+
+    const instance = pendingInstance();
+    const controller = new AbortController();
+
+    // After the first turn completes, cancel — the abort listener interrupts
+    // and the loop bails before iteration 2.
+    side.session.prompt.mockImplementationOnce(async () => {
+      side.session.messages.push({
+        role: "assistant",
+        content: [{ type: "text", text: "turn one" }],
+      });
+      controller.abort();
+    });
+
+    await executeBackgroundInstance(deps, instance, controller.signal);
+
+    expect(side.session.prompt).toHaveBeenCalledTimes(1);
+    expect(side.session.abort).toHaveBeenCalledTimes(1);
+    expect(side.session.dispose).toHaveBeenCalled();
+    expect(repository.getInstance(instance.id)?.status).toBe("running");
+    expect(classify).not.toHaveBeenCalled();
+    expect(notifyPayloads(deps.emit)).toHaveLength(0);
+  });
 });
 
 describe("BackgroundRunner", () => {
@@ -564,5 +614,60 @@ describe("BackgroundRunner", () => {
 
     expect(peak).toBeLessThanOrEqual(2);
     expect(openBackgroundSession).toHaveBeenCalledTimes(5);
+  });
+
+  it("cancel() aborts an in-flight run and awaits its unwind", async () => {
+    // A prompt that blocks until released, so the run is genuinely mid-flight.
+    let release: () => void = () => {};
+    const prompt = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const dispose = vi.fn();
+    const sessionAbort = vi.fn(() => release());
+    const openBackgroundSession = vi.fn(async () => ({
+      sessionFile: "/sessions/bg-task.jsonl",
+      messages: [],
+      prompt,
+      dispose,
+      abort: sessionAbort,
+    }));
+    const deps = makeDeps({
+      openBackgroundSession,
+      classify: vi.fn(),
+    } as unknown as BackgroundSide);
+    const runner = new BackgroundRunner(deps);
+
+    const instance = pendingInstance();
+    runner.tick();
+    expect(repository.getInstance(instance.id)?.status).toBe("running");
+
+    // Let the run reach its blocking prompt before cancelling.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(prompt).toHaveBeenCalledTimes(1);
+
+    const cancelled = await runner.cancel(instance.id);
+
+    expect(cancelled).toBe(true);
+    expect(sessionAbort).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalled();
+    // The executor's abort path writes no terminal status and emits no notice —
+    // the cancel initiator (here omitted) owns the terminal write.
+    expect(repository.getInstance(instance.id)?.status).toBe("running");
+    expect(notifyPayloads(deps.emit)).toHaveLength(0);
+  });
+
+  it("cancel() reports false for an instance not running in this process", async () => {
+    const side = makeSide(
+      () => "done",
+      vi.fn().mockResolvedValue({ status: "complete", reason: "done" }),
+    );
+    const runner = new BackgroundRunner(makeDeps(side));
+
+    const cancelled = await runner.cancel("not-in-flight");
+
+    expect(cancelled).toBe(false);
   });
 });

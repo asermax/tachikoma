@@ -45,6 +45,9 @@ const PERIOD_COVERING_STATUSES: TaskStatus[] = ["pending", "running", "waiting",
 
 const TERMINAL_STATUSES: TaskStatus[] = ["completed", "failed"];
 
+/** Whether a status is a terminal state (`completed` or `failed`). */
+export const isTerminalStatus = (status: TaskStatus): boolean => TERMINAL_STATUSES.includes(status);
+
 export class TaskRepository {
   private readonly db: AppDatabase;
   private readonly now: () => Date;
@@ -284,6 +287,20 @@ export class TaskRepository {
   }
 
   /**
+   * Cancel a single instance by ID: mark it `failed` with a cancellation reason.
+   * A thin intention-revealing write over `updateInstance`; returns the updated
+   * record or null when no row matches. The caller owns the not-found and
+   * already-terminal validation, mirroring `respond_to_task`.
+   */
+  cancelInstance(id: string, reason: string): TaskInstanceRecord | null {
+    return this.updateInstance(id, {
+      status: "failed",
+      completedAt: this.now(),
+      result: reason,
+    });
+  }
+
+  /**
    * Retention pruning for one-shot definitions that have fired and whose every
    * instance is terminal (completed/failed). The retention anchor is the latest
    * instance `completedAt`, falling back to the definition's `lastFiredAt` when
@@ -309,9 +326,7 @@ export class TaskRepository {
         .where(eq(taskInstances.definitionId, definition.id))
         .all();
 
-      const allTerminal = instances.every((instance) =>
-        TERMINAL_STATUSES.includes(instance.status),
-      );
+      const allTerminal = instances.every((instance) => isTerminalStatus(instance.status));
 
       if (!allTerminal) continue;
 

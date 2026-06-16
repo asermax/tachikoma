@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
-import type { DefinitionPatch, TaskRepository } from "./repository.ts";
+import { type DefinitionPatch, isTerminalStatus, type TaskRepository } from "./repository.ts";
 import { formatInTimezone, formatSchedule, parseSchedule } from "./schedule.ts";
 import type { TaskDefinitionRecord } from "./schema.ts";
 
@@ -10,6 +10,12 @@ export interface ToolDeps {
   repository: TaskRepository;
   timezone: string | undefined;
   now: () => Date;
+  /**
+   * Abort an in-flight background run by instance ID. Optional so operational
+   * tool handlers that don't need it (and test deps objects) can omit it; the
+   * live-abort step is skipped when absent, leaving the DB write as the effect.
+   */
+  cancelRunningInstance?: (instanceId: string) => Promise<boolean>;
 }
 
 const SCHEDULE_DESCRIPTION =
@@ -100,6 +106,12 @@ export const RespondToTaskParams = Type.Object({
     description: "ID of the waiting task instance, as given in the input-request notification",
   }),
   response: Type.String({ description: "The user's reply to relay to the waiting task" }),
+});
+
+export const StopTaskParams = Type.Object({
+  task_instance_id: Type.String({
+    description: "ID of the task instance to cancel (get IDs from query_task_instances)",
+  }),
 });
 
 const describeDefinition = (
@@ -344,6 +356,32 @@ export const handleRespondToTask = (
   return "Response sent. The task will resume with your reply.";
 };
 
+export const handleStopTask = async (
+  { repository, cancelRunningInstance }: ToolDeps,
+  args: Static<typeof StopTaskParams>,
+): Promise<string> => {
+  const instance = repository.getInstance(args.task_instance_id);
+
+  if (instance == null) throw new Error(`Task instance '${args.task_instance_id}' not found.`);
+
+  const previousStatus = instance.status;
+
+  if (isTerminalStatus(instance.status)) {
+    throw new Error(
+      `Task instance '${args.task_instance_id}' is already finished (status: ${instance.status}).`,
+    );
+  }
+
+  // The initiator owns the terminal write: pending/waiting instances never run
+  // again, and a running one is marked failed before its live run is signalled
+  // to abort (the executor's abort path writes nothing, so there is no race).
+  repository.cancelInstance(instance.id, "Task cancelled by user");
+
+  await cancelRunningInstance?.(args.task_instance_id);
+
+  return `Task instance '${args.task_instance_id}' cancelled (was ${previousStatus}).`;
+};
+
 const textResult = (text: string) => ({
   content: [{ type: "text" as const, text }],
   details: undefined,
@@ -459,6 +497,21 @@ export const createTaskToolsFactory =
       parameters: QueryTaskInstancesParams,
       async execute(_toolCallId, params) {
         return textResult(handleQueryTaskInstances(deps, params));
+      },
+    });
+
+    pi.registerTool({
+      name: "stop_task",
+      label: "Stop Task",
+      description:
+        "Cancel a task instance by ID so it never runs or runs no further. Works on any non-terminal instance (pending, running, or waiting): a running instance has its live execution aborted promptly, while pending/waiting ones are marked failed outright. Already-finished (completed/failed) or unknown instances fail with a clear error. Get the instance ID from query_task_instances or a task notification.",
+      promptSnippet: "Cancel a queued or running task instance",
+      promptGuidelines: [
+        "Use stop_task when a task is doing the wrong thing, running too long, or is no longer needed — instead of waiting for the timeout or restarting.",
+      ],
+      parameters: StopTaskParams,
+      async execute(_toolCallId, params) {
+        return textResult(await handleStopTask(deps, params));
       },
     });
   };
