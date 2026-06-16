@@ -70,7 +70,7 @@ On `new` or `resume`, the middleware drives the transition through the `InboundC
 
 **Acceptance Criteria**:
 - Given `[extensions.boundary] enabled = false`, when the extension loads, then setup logs the disabled state and skips registering the summary processor; the inbound middleware is still registered but short-circuits topic classification (after honoring the `boundary === "skip"` and `forceNew` fast-paths) — messages are never classified against summaries and summaries are never generated; the idle timer still registers unless `idleCloseSeconds = 0`
-- Given a completed exchange, when `idleCloseSeconds` elapses with no further exchange, then `closeIfIdle()` closes the session; a timer firing during a streaming exchange closes nothing and the next exchange re-arms it
+- Given a completed exchange, when `idleCloseSeconds` elapses with no further exchange, then `closeIfIdle()` closes the session and its post-processing runs silently (per-processor status lines are suppressed and logged, not surfaced to the channel — see [conversation-loop](conversation-loop.md) R15); a timer firing during a streaming exchange closes nothing and the next exchange re-arms it
 
 ### Metadata Fast-Paths (R12, R13, R14)
 

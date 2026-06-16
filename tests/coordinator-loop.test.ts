@@ -540,6 +540,73 @@ describe("Coordinator.closeActiveSessionIfIdle", () => {
   });
 });
 
+describe("Coordinator.closeActiveSessionIfIdle post-processing status", () => {
+  it("suppresses per-processor status on idle close but still runs them and logs", async () => {
+    const regs = createRegistrations();
+    const ran: string[] = [];
+    regs.postProcessors.push({ name: "memory", process: async () => void ran.push("memory") });
+    regs.postProcessors.push({
+      name: "archive",
+      phase: "finalize",
+      process: async () => void ran.push("archive"),
+    });
+
+    const status = vi.fn();
+    const { coordinator, registry, log } = makeCoordinator(db, createAgent(createSession()), regs);
+    coordinator.attachChannel(createChannel({ status }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+    coordinator.submit(textMsg("hi"));
+    await vi.waitFor(() => expect(coordinator.current()).not.toBeNull());
+    const sessionId = coordinator.current()?.id as number;
+
+    const closed = await coordinator.closeActiveSessionIfIdle();
+
+    expect(closed).toBe(true);
+    // No Post-processing status line reached the channel…
+    expect(status).not.toHaveBeenCalled();
+    // …but every processor still ran…
+    expect(ran).toEqual(["memory", "archive"]);
+    // …and each line was logged for operators instead.
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ status: "Post-processing: memory…" }),
+      "post-processing status (idle close — suppressed)",
+    );
+
+    expect(registry.get(sessionId)?.postProcessingState).toMatchObject({
+      memory: "completed",
+      archive: "completed",
+    });
+
+    controller.abort();
+    await loop;
+  });
+});
+
+describe("Coordinator.closeActiveSession post-processing status", () => {
+  it("emits per-processor status lines on an explicit (non-idle) close", async () => {
+    const regs = createRegistrations();
+    regs.postProcessors.push({ name: "memory", process: async () => {} });
+
+    const status = vi.fn();
+    const { coordinator } = makeCoordinator(db, createAgent(createSession()), regs);
+    coordinator.attachChannel(createChannel({ status }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+    coordinator.submit(textMsg("hi"));
+    await vi.waitFor(() => expect(coordinator.current()).not.toBeNull());
+
+    await coordinator.closeActiveSession();
+
+    expect(status).toHaveBeenCalledWith("Post-processing: memory…");
+
+    controller.abort();
+    await loop;
+  });
+});
+
 describe("Coordinator.runPostProcessing", () => {
   it("runs processors by phase and records completed/failed state", async () => {
     const regs = createRegistrations();

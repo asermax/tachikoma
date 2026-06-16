@@ -124,6 +124,7 @@ The channel gives immediate feedback the moment a message arrives and keeps a vi
 - Given a lead-in message exists when `respond()` starts, when the exchange streams text, then the lead-in is reclaimed as the streaming message (the response text edits it in place rather than sending a second message)
 - Given a lead-in message exists when `respond()` starts, when the exchange yields no text, then the lead-in message is deleted
 - Given a message is steered into a live exchange or queued behind it, when submitted, then it skips preparation and no lead-in is shown for it
+- Given an idle-timeout session close, when post-processing runs, then no lead-in is created for the "Post-processing: …" lines — the coordinator suppresses them and logs only, since there is no imminent `respond()` to reclaim a lead-in and the user isn't watching (see [conversation-loop](conversation-loop.md) R15)
 
 ### Inbound Media (R8, R9, R10)
 
