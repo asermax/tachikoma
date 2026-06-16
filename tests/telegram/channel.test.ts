@@ -632,6 +632,44 @@ describe("preparation lead-in handoff", () => {
       { type: "send", text: rendered("Hello paragraph one.") },
     ]);
   });
+
+  // Reproduces the race where status() sends the lead-in fire-and-forget: with no settle()
+  // between status and respond the lead-in send is still pending when agent_start is consumed,
+  // so the seed must be claimed under the send mutex or the lead-in orphans after the response.
+  it("reclaims the lead-in even when its send is still in flight when the response starts", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    channel.status("Checking for relevant skills…");
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello paragraph one.\n\nParagraph two." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    const sends = calls.filter((call) => call.type === "send");
+    expect(sends).toEqual([{ type: "send", text: rendered("_Checking for relevant skills…_") }]);
+    const edits = calls.filter((call) => call.type === "edit");
+    expect(edits.length).toBeGreaterThan(0);
+    expect(edits.every((call) => call.messageId === 1)).toBe(true);
+  });
+
+  it("deletes the in-flight lead-in when the response yields no text", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    channel.status("Checking for relevant skills…");
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([{ kind: "result", stopReason: "done" }]),
+    });
+
+    const sends = calls.filter((call) => call.type === "send");
+    expect(sends).toEqual([{ type: "send", text: rendered("_Checking for relevant skills…_") }]);
+    expect(calls).toContainEqual({ type: "delete", messageId: 1 });
+  });
 });
 
 describe("receipt typing", () => {

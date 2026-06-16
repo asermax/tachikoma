@@ -291,9 +291,10 @@ export class TelegramChannel implements Channel {
     // The mutex is held only for the seed handoff and finalize — not for the entire
     // streaming loop. This keeps the lock free during before_agent_start so that
     // preparation-phase status calls (e.g. skill detection) can send their lead-in
-    // messages without queueing behind respond(). The first event is agent_start,
-    // emitted by pi after all before_agent_start handlers have settled, so the
-    // lead-in is guaranteed to have arrived by the time we claim it.
+    // messages without queueing behind respond(). status() sends that lead-in
+    // fire-and-forget, so initStreamingRenderer claims the seed under the same mutex —
+    // serialized behind any in-flight lead-in send — so the streamed response always
+    // reclaims it (or deletes it on a no-text turn) instead of orphaning it.
     const startedAt = Date.now();
     let notifyingToolUsed = false;
 
@@ -385,21 +386,26 @@ export class TelegramChannel implements Channel {
     };
 
     const log = this.log();
-    const seedMessageId = this.leadInMessageId;
-    this.leadInMessageId = null;
     const stopTyping = startTyping(this.bot.api, this.options.chatId, log);
-    const renderer = new StreamRenderer(
-      this.bot.api,
-      this.options.chatId,
-      log,
-      seedMessageId,
-      this.options.pushNotifications,
-    );
 
-    // The mutex serializes with any in-flight showLeadIn that may still be
-    // delivering the lead-in message to Telegram.
-    await this.mutex.run(async () => {
-      this.activeRenderer = renderer;
+    // Claim the lead-in (and build the renderer) under the send mutex. status() sends the
+    // preparation lead-in fire-and-forget (showLeadIn is async and not awaited by status()),
+    // so a lead-in send can still be in flight when agent_start arrives — e.g. when skill
+    // classification resolves faster than the lead-in API call. Claiming here, serialized
+    // behind showLeadIn (FIFO mutex), guarantees we see the settled lead-in id (if any)
+    // rather than racing past it and orphaning the message after the streamed response.
+    const renderer = await this.mutex.run(async () => {
+      const seedMessageId = this.leadInMessageId;
+      this.leadInMessageId = null;
+      const created = new StreamRenderer(
+        this.bot.api,
+        this.options.chatId,
+        log,
+        seedMessageId,
+        this.options.pushNotifications,
+      );
+      this.activeRenderer = created;
+      return created;
     });
 
     return { renderer, remainingEvents: remaining, stopTyping };
@@ -529,8 +535,9 @@ export class TelegramChannel implements Channel {
   /**
    * Surface a preparation status line on a single provisional message, created on
    * the first call and edited in place thereafter. Serialized through the send
-   * mutex so it orders cleanly behind any in-flight send; respond() reclaims it as
-   * the streaming message, so the lead-in never lingers across a normal exchange.
+   * mutex so it orders cleanly behind any in-flight send; initStreamingRenderer
+   * claims this id under that same mutex, so the streamed response reclaims it (or
+   * deletes it on a no-text turn) and the lead-in never lingers across an exchange.
    */
   private async showLeadIn(text: string): Promise<void> {
     await this.mutex.run(async () => {
