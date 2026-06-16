@@ -1,3 +1,10 @@
+## [3.22.1](https://github.com/asermax/tachikoma/compare/v3.22.0...v3.22.1) (2026-06-16)
+
+
+### Bug Fixes
+
+* **coordinator:** suppress post-processing status on idle close ([fdc09d0](https://github.com/asermax/tachikoma/commit/fdc09d04cbbad610cb94b348615667942418430d))
+
 # [3.22.0](https://github.com/asermax/tachikoma/compare/v3.21.0...v3.22.0) (2026-06-16)
 
 
