@@ -5,6 +5,7 @@ import {
   type ExtensionAPI,
   type Skill,
   serializeConversation,
+  stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
@@ -140,8 +141,12 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
       const sections: string[] = [];
       for (const skill of matched) {
         try {
-          const body = readSkill(skill.filePath);
-          if (body.trim() === "") {
+          // Strip the YAML frontmatter and trim — matching how pi renders a skill loaded via
+          // `/skill` (its `_expandSkillCommand` calls `stripFrontmatter(content).trim()`): the
+          // frontmatter is metadata (name/description) already surfaced in the catalog, not
+          // instructions, so injecting it only wastes tokens.
+          const body = stripFrontmatter(readSkill(skill.filePath)).trim();
+          if (body === "") {
             log.debug(
               { skill: skill.name },
               "proactive skill content is empty — skipping injection",

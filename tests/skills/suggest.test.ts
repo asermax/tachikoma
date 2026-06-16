@@ -223,6 +223,23 @@ describe("registerSkillSuggestion", () => {
     expect(readSkill).toHaveBeenCalledWith("/skills/pdf-tools/SKILL.md");
   });
 
+  it("strips YAML frontmatter from the injected body, matching /skill (AC1)", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const readSkill = vi.fn(
+      () => "---\nname: pdf-tools\ndescription: Work with PDFs\n---\n\n## Step 1\nDo the thing.",
+    );
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
+    const { handler } = register({ classifier: { classify }, readSkill });
+
+    const result = await handler(event("merge pdfs", [pdf]), emptyCtx());
+
+    const content = result?.message.content ?? "";
+    expect(content).toContain("## Step 1\nDo the thing.");
+    // Frontmatter is metadata already surfaced in the catalog — it must not leak into the injection.
+    expect(content).not.toContain("name: pdf-tools");
+    expect(content).not.toContain("description: Work with PDFs");
+  });
+
   it("skips an unreadable skill but still injects the rest, logging a warning (AC7)", async () => {
     const pdf = makeSkill("pdf-tools", "Work with PDFs");
     const csv = makeSkill("csv-tools", "Work with CSVs");
