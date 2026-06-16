@@ -1,3 +1,10 @@
+# [3.19.0](https://github.com/asermax/tachikoma/compare/v3.18.0...v3.19.0) (2026-06-16)
+
+
+### Features
+
+* **projects:** resolve rebase conflicts via agent in sync and push ([156c3a6](https://github.com/asermax/tachikoma/commit/156c3a6d73e939b0ef31debdf01856a6e366892c))
+
 # [3.18.0](https://github.com/asermax/tachikoma/compare/v3.17.0...v3.18.0) (2026-06-15)
 
 
