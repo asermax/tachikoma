@@ -28,7 +28,7 @@ const resolver = vi.fn();
 
 const deps = {
   workspaceRoot: "/ws",
-  side: { complete: vi.fn() },
+  agent: async () => {},
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   resolver,
 };
@@ -40,7 +40,7 @@ beforeEach(() => {
 
 describe("handleCommitWorkspace — push orchestration", () => {
   it("forwards the resolver to smartPush", async () => {
-    commitAll.mockResolvedValue(null);
+    commitAll.mockResolvedValue([]);
     listSubmodules.mockResolvedValue([]);
     smartPush.mockResolvedValue(PUSH_RESULT.nothingToPush);
 
@@ -50,7 +50,7 @@ describe("handleCommitWorkspace — push orchestration", () => {
   });
 
   it("does not push when push is false", async () => {
-    commitAll.mockResolvedValue("Save changes");
+    commitAll.mockResolvedValue(["Save changes"]);
     listSubmodules.mockResolvedValue(["projects/app"]);
 
     const output = await handleCommitWorkspace(deps, { push: false });
@@ -60,7 +60,7 @@ describe("handleCommitWorkspace — push orchestration", () => {
   });
 
   it("skips repos without an origin remote", async () => {
-    commitAll.mockResolvedValue("Save changes");
+    commitAll.mockResolvedValue(["Save changes"]);
     hasRemote.mockResolvedValue(false);
     listSubmodules.mockResolvedValue(["projects/app"]);
 
@@ -71,7 +71,7 @@ describe("handleCommitWorkspace — push orchestration", () => {
   });
 
   it("omits push lines when every repo is up to date", async () => {
-    commitAll.mockResolvedValue(null);
+    commitAll.mockResolvedValue([]);
     listSubmodules.mockResolvedValue(["projects/app"]);
     smartPush.mockResolvedValue(PUSH_RESULT.nothingToPush);
 
@@ -81,7 +81,7 @@ describe("handleCommitWorkspace — push orchestration", () => {
   });
 
   it("reports each submodule's outcome in listSubmodules order and never throws", async () => {
-    commitAll.mockResolvedValue(null);
+    commitAll.mockResolvedValue([]);
     listSubmodules.mockResolvedValue(["projects/alpha", "projects/beta"]);
     smartPush.mockImplementation(async (cwd: string) => {
       if (cwd.endsWith("alpha")) return PUSH_RESULT.pushed;
@@ -100,7 +100,7 @@ describe("handleCommitWorkspace — push orchestration", () => {
   });
 
   it("surfaces a failure line (and keeps pushing siblings) when a submodule push throws", async () => {
-    commitAll.mockResolvedValue(null);
+    commitAll.mockResolvedValue([]);
     listSubmodules.mockResolvedValue(["projects/broken", "projects/ok"]);
     smartPush.mockImplementation(async (cwd: string) => {
       if (cwd.endsWith("broken")) throw new Error("network down");

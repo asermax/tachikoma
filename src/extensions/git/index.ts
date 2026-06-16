@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
+import { createCommitAgent } from "../../git/commit-agent.ts";
 import { createGitResolver } from "../../git/resolve.ts";
 import { defineExtension } from "../api.ts";
 import { createGitGuardrailFactory } from "./guardrail.ts";
@@ -34,13 +35,14 @@ export default defineExtension<GitConfig>({
 
     const workspaceRoot = app.workspace.root;
     const resolver = createGitResolver(app.agent.side);
+    const commitAgent = createCommitAgent(app.agent.side, "workspace");
 
     app.bootstrap("init-workspace-repo", () =>
       initializeWorkspaceRepo(workspaceRoot, app.log, resolver),
     );
 
     app.agent.use(
-      createGitToolsFactory({ workspaceRoot, side: app.agent.side, log: app.log, resolver }),
+      createGitToolsFactory({ workspaceRoot, agent: commitAgent, log: app.log, resolver }),
       { sessionScopes: ["main", "background"] },
     );
     app.agent.use(createGitGuardrailFactory(app.log), { sessionScopes: ["main", "background"] });
@@ -50,7 +52,7 @@ export default defineExtension<GitConfig>({
     });
 
     app.sessions.registerProcessor(
-      createGitProcessor({ workspaceRoot, side: app.agent.side, resolver }),
+      createGitProcessor({ workspaceRoot, agent: commitAgent, resolver }),
     );
   },
 });

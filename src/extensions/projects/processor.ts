@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import type { Completer } from "../../git/commit.ts";
+import type { CommitAgent } from "../../git/commit-agent.ts";
 import { PUSH_SUCCESS, type RebaseResolver } from "../../git/sync.ts";
 import type { Logger } from "../../log.ts";
 import type { GitApi, PostProcessor } from "../api.ts";
@@ -8,7 +8,7 @@ import { isAhead, isDirty, listSubmodules } from "./git.ts";
 
 export interface ProjectsProcessorDeps {
   workspaceRoot: string;
-  side: Completer;
+  agent: CommitAgent;
   git: GitApi;
   resolver?: RebaseResolver;
 }
@@ -43,7 +43,7 @@ const pushAndReport = async (
 const commitAndPush = async (
   workspaceRoot: string,
   git: GitApi,
-  side: Completer,
+  agent: CommitAgent,
   path: string,
   log: Logger,
   resolver?: RebaseResolver,
@@ -51,14 +51,14 @@ const commitAndPush = async (
   const repoPath = join(workspaceRoot, path);
   const name = path.split("/").at(-1) ?? path;
 
-  const message = await git.commitAll({
+  const subjects = await git.commitAll({
+    agent,
     cwd: repoPath,
-    side,
     fallbackMessage: projectFallbackMessage(name),
     log,
   });
 
-  if (message != null) log.info({ path, message }, "committed project changes");
+  if (subjects.length > 0) log.info({ path, subjects }, "committed project changes");
 
   await pushAndReport(
     git,
@@ -103,7 +103,7 @@ const pushProject = async (
  */
 export const createProjectsProcessor = ({
   workspaceRoot,
-  side,
+  agent,
   git,
   resolver,
 }: ProjectsProcessorDeps): PostProcessor => ({
@@ -143,7 +143,7 @@ export const createProjectsProcessor = ({
       log.info({ paths: dirtyPaths }, "processing dirty submodules");
 
       const results = await Promise.allSettled(
-        dirtyPaths.map((path) => commitAndPush(workspaceRoot, git, side, path, log, resolver)),
+        dirtyPaths.map((path) => commitAndPush(workspaceRoot, git, agent, path, log, resolver)),
       );
 
       for (const [index, result] of results.entries()) {

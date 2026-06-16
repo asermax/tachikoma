@@ -6,6 +6,8 @@ import { runGit } from "../../src/git/git.ts";
 import { commitFile, initRepo } from "../git/helpers.ts";
 
 export {
+  agentCommittingAs,
+  agentThatThrows,
   commitFile,
   configureIdentity,
   fakeLogger,

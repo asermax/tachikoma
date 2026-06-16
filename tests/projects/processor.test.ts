@@ -7,10 +7,13 @@ import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { GitApi, PostProcessorContext } from "../../src/extensions/api.ts";
 import { createProjectsProcessor } from "../../src/extensions/projects/processor.ts";
 import { handleRegisterProject } from "../../src/extensions/projects/tools.ts";
-import { type Completer, commitAll } from "../../src/git/commit.ts";
+import { commitAll } from "../../src/git/commit.ts";
+import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { runGit } from "../../src/git/git.ts";
 import { smartPull, smartPush } from "../../src/git/sync.ts";
 import {
+  agentCommittingAs,
+  agentThatThrows,
   configureIdentity,
   createProjectOrigin,
   createWorkspace,
@@ -29,6 +32,7 @@ const context = (): PostProcessorContext => ({
 
 const git: GitApi = {
   commitAll: (options) => commitAll({ ...options, log: options.log ?? fakeLogger() }),
+  createCommitAgent: () => (async () => {}) as CommitAgent,
   smartPush: (cwd, remote, branch, options) =>
     smartPush(cwd, remote, branch, options?.log ?? fakeLogger(), options?.resolver),
   smartPull: (cwd, remote, branch, options) =>
@@ -62,24 +66,30 @@ afterEach(async () => {
 });
 
 describe("projects processor", () => {
-  it("commits and pushes each dirty project with the generated message", async () => {
+  it("commits and pushes each dirty project via the agent", async () => {
     await writeFile(join(projectPath, "feature.ts"), "export const x = 1;\n", "utf8");
-    const side: Completer = { complete: vi.fn().mockResolvedValue("Add feature module") };
 
-    await createProjectsProcessor({ workspaceRoot: workspace, side, git }).process(context());
+    await createProjectsProcessor({
+      workspaceRoot: workspace,
+      agent: agentCommittingAs("Add feature module"),
+      git,
+    }).process(context());
 
     expect(await lastSubject(projectPath)).toBe("Add feature module");
     expect(await runGit(projectPath, ["status", "--porcelain"])).toBe("");
     expect(await headOf(origin)).toBe(await headOf(projectPath));
   });
 
-  it("leaves clean projects untouched", async () => {
-    const side: Completer = { complete: vi.fn() };
+  it("leaves clean projects untouched and does not invoke the agent", async () => {
+    const recorder = { calls: 0 };
+    const agent: CommitAgent = async () => {
+      recorder.calls += 1;
+    };
     const head = await headOf(projectPath);
 
-    await createProjectsProcessor({ workspaceRoot: workspace, side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: workspace, agent, git }).process(context());
 
-    expect(side.complete).not.toHaveBeenCalled();
+    expect(recorder.calls).toBe(0);
     expect(await headOf(projectPath)).toBe(head);
   });
 
@@ -91,22 +101,28 @@ describe("projects processor", () => {
     const projectHead = await headOf(projectPath);
     expect(await headOf(origin)).not.toBe(projectHead);
 
-    const side: Completer = { complete: vi.fn() };
+    // A clean tree is never committed, so the agent is never invoked.
+    const recorder = { calls: 0 };
+    const agent: CommitAgent = async () => {
+      recorder.calls += 1;
+    };
 
-    await createProjectsProcessor({ workspaceRoot: workspace, side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: workspace, agent, git }).process(context());
 
-    // No new commit (clean tree → no commit), and origin advanced to the project HEAD.
-    expect(side.complete).not.toHaveBeenCalled();
+    expect(recorder.calls).toBe(0);
     expect(await lastSubject(projectPath)).toBe("local work");
     expect(await headOf(projectPath)).toBe(projectHead);
     expect(await headOf(origin)).toBe(projectHead);
   });
 
-  it("falls back to a deterministic message when generation fails", async () => {
+  it("falls back to a deterministic message when the agent fails", async () => {
     await writeFile(join(projectPath, "feature.ts"), "export const x = 1;\n", "utf8");
-    const side: Completer = { complete: vi.fn().mockRejectedValue(new Error("model down")) };
 
-    await createProjectsProcessor({ workspaceRoot: workspace, side, git }).process(context());
+    await createProjectsProcessor({
+      workspaceRoot: workspace,
+      agent: agentThatThrows(new Error("model down")),
+      git,
+    }).process(context());
 
     expect(await lastSubject(projectPath)).toMatch(/^Update app files \(\d{4}-\d{2}-\d{2}\)$/);
     expect(await headOf(origin)).toBe(await headOf(projectPath));
@@ -125,10 +141,10 @@ describe("projects processor", () => {
     // A dirty local change to the same region; the processor commits then pushes it.
     await writeFile(join(projectPath, "README.md"), "local edit\n", "utf8");
 
-    const side: Completer = { complete: vi.fn().mockResolvedValue("Local edit") };
+    const agent = agentCommittingAs("Local edit");
     const resolver = vi.fn(resolvingResolver);
 
-    await createProjectsProcessor({ workspaceRoot: workspace, side, git, resolver }).process(
+    await createProjectsProcessor({ workspaceRoot: workspace, agent, git, resolver }).process(
       context(),
     );
 

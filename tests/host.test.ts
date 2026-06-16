@@ -419,7 +419,9 @@ describe("ExtensionHost context API delegation", () => {
       expect(typeof app.git.smartPull).toBe("function");
 
       // A clean tree has nothing to commit — proves the call reaches the core helper.
-      await expect(app.git.commitAll({ cwd: base, fallbackMessage: "noop" })).resolves.toBeNull();
+      await expect(
+        app.git.commitAll({ agent: async () => {}, cwd: base, fallbackMessage: "noop" }),
+      ).resolves.toEqual([]);
     } finally {
       await rm(base, { recursive: true, force: true });
     }

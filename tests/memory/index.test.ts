@@ -12,6 +12,7 @@ import memory, {
   MemoryConfigSchema,
 } from "../../src/extensions/memory/index.ts";
 import { commitAll } from "../../src/git/commit.ts";
+import { type AgentRunner, createCommitAgent } from "../../src/git/commit-agent.ts";
 import { runGit } from "../../src/git/git.ts";
 import { commitFile, initRepo } from "../git/helpers.ts";
 
@@ -44,6 +45,7 @@ const setupWith = (
   extensionConfig: MemoryConfig,
   workspaceDir: string,
   side: Record<string, unknown>,
+  commitAllImpl?: (options: Parameters<GitApi["commitAll"]>[0]) => Promise<string[]>,
 ): SetupResult => {
   const cronCalls: CronCall[] = [];
   const cron = vi.fn((name: string, schedule: string, run: () => Promise<void>) => {
@@ -56,9 +58,13 @@ const setupWith = (
     useFactory = factory;
   });
 
+  const defaultCommitAll = ({ log: callLog, ...options }: Parameters<GitApi["commitAll"]>[0]) =>
+    commitAll({ ...options, log: callLog ?? (log as never) });
+
   const git = {
-    commitAll: ({ log: callLog, ...options }: Parameters<GitApi["commitAll"]>[0]) =>
-      commitAll({ ...options, log: callLog ?? (log as never) }),
+    commitAll: commitAllImpl ?? defaultCommitAll,
+    createCommitAgent: (mode: "workspace" | "project") =>
+      createCommitAgent(side as unknown as AgentRunner, mode),
     smartPush: vi.fn(),
     smartPull: vi.fn(),
   } as unknown as GitApi;
@@ -149,8 +155,17 @@ describe("memory extension setup", () => {
 });
 
 describe("memory maintenance commitChanges", () => {
-  const runMaintenanceCron = async (name: string, workspaceDir: string): Promise<SetupResult> => {
-    const result = setupWith(config(), workspaceDir, { run: vi.fn().mockResolvedValue(undefined) });
+  const runMaintenanceCron = async (
+    name: string,
+    workspaceDir: string,
+    commitAllImpl?: (options: Parameters<GitApi["commitAll"]>[0]) => Promise<string[]>,
+  ): Promise<SetupResult> => {
+    const result = setupWith(
+      config(),
+      workspaceDir,
+      { run: vi.fn().mockResolvedValue(undefined) },
+      commitAllImpl,
+    );
     const call = result.cronCalls.find((entry) => entry.name === name) as CronCall;
 
     await call.run();
@@ -167,7 +182,11 @@ describe("memory maintenance commitChanges", () => {
 
     const result = await runMaintenanceCron("memory-context-maintenance", workspaceDir);
 
-    expect(result.run).toHaveBeenCalledTimes(1);
+    expect(result.run).toHaveBeenCalledTimes(2);
+    expect(result.log.info).toHaveBeenCalledWith(
+      { message: "chore(memory): scheduled context file maintenance" },
+      "committed memory maintenance changes",
+    );
     expect(result.log.info).toHaveBeenCalledWith(
       { message: "chore(memory): scheduled context file maintenance" },
       "committed memory maintenance changes",
@@ -195,7 +214,13 @@ describe("memory maintenance commitChanges", () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-memory-nogit-"));
     tempDirs.push(workspaceDir);
 
-    const result = await runMaintenanceCron("memory-episodic-maintenance", workspaceDir);
+    const result = await runMaintenanceCron(
+      "memory-episodic-maintenance",
+      workspaceDir,
+      async () => {
+        throw new Error("disk full");
+      },
+    );
 
     expect(result.log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ err: expect.anything() }),

@@ -8,6 +8,7 @@ import { currentBranch } from "../../src/extensions/projects/git.ts";
 import { syncProjects } from "../../src/extensions/projects/hooks.ts";
 import { handleRegisterProject } from "../../src/extensions/projects/tools.ts";
 import { commitAll } from "../../src/git/commit.ts";
+import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { runGit } from "../../src/git/git.ts";
 import { smartPull, smartPush } from "../../src/git/sync.ts";
 import {
@@ -25,6 +26,7 @@ const log = fakeLogger();
 
 const git: GitApi = {
   commitAll: (options) => commitAll({ ...options, log: options.log ?? log }),
+  createCommitAgent: () => (async () => {}) as CommitAgent,
   smartPush: (cwd, remote, branch, options) =>
     smartPush(cwd, remote, branch, options?.log ?? log, options?.resolver),
   smartPull: (cwd, remote, branch, options) =>

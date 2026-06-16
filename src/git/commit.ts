@@ -1,85 +1,77 @@
-import type { SideRunner } from "../agent/side-run.ts";
 import type { Logger } from "../log.ts";
-import { runGit, runGitCapture } from "./git.ts";
-
-export type Completer = Pick<SideRunner, "complete">;
-
-const COMMIT_MESSAGE_SYSTEM = `You write git commit messages for an automated workspace-versioning agent.
-
-Given the staged diffstat of a commit, respond with a single descriptive commit
-message line: imperative mood, under 72 characters, mentioning what changed.
-Output only the message — no quotes, no prose, no trailing punctuation.`;
-
-const MAX_MESSAGE_CHARS = 100;
-
-const sanitizeMessage = (raw: string): string | null => {
-  const line = raw
-    .split("\n")
-    .map((candidate) => candidate.trim())
-    .find((candidate) => candidate !== "");
-
-  if (line == null) return null;
-
-  const cleaned = line.replaceAll(/^["'`]+|["'`]+$/g, "").trim();
-
-  if (cleaned === "") return null;
-
-  return cleaned.length <= MAX_MESSAGE_CHARS ? cleaned : `${cleaned.slice(0, MAX_MESSAGE_CHARS)}…`;
-};
-
-export const generateCommitMessage = async (
-  side: Completer,
-  diffStat: string,
-  fallback: string,
-  log: Logger,
-): Promise<string> => {
-  try {
-    const generated = sanitizeMessage(
-      await side.complete({ system: COMMIT_MESSAGE_SYSTEM, user: diffStat, tier: "processor" }),
-    );
-
-    return generated ?? fallback;
-  } catch (error) {
-    log.warn({ err: error }, "commit message generation failed — using fallback");
-    return fallback;
-  }
-};
+import type { CommitAgent } from "./commit-agent.ts";
+import { hasUncommittedChanges, runGit, runGitCapture } from "./git.ts";
 
 export interface CommitAllOptions {
+  /**
+   * Drives the grouped-commit agent. Runs first whenever there are changes; the
+   * `fallbackMessage` is used only if the agent fails or leaves the tree dirty.
+   */
+  agent: CommitAgent;
   cwd: string;
-  /** Generates the message from the diffstat; omit when passing an explicit message. */
-  side?: Completer;
-  /** Deterministic message used when generation fails or produces nothing usable. */
+  /**
+   * Deterministic message used for a single fallback commit when the agent
+   * fails or leaves changes uncommitted.
+   */
   fallbackMessage: string;
-  /** Explicit message — skips generation entirely. */
-  message?: string;
   log: Logger;
 }
 
+/** Subjects of every commit made since `head`, oldest-first. `null` head = all commits. */
+const subjectsSince = async (cwd: string, head: string | null): Promise<string[]> => {
+  const range = head != null ? `${head}..HEAD` : "HEAD";
+  const { stdout } = await runGitCapture(cwd, ["log", range, "--format=%s"]);
+  const subjects = stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+
+  return subjects.reverse();
+};
+
 /**
- * Stage everything and commit with a descriptive message generated from the
- * staged diffstat. Returns the commit message, or null when there was nothing
- * to commit.
+ * Commit every change in `cwd`. The agent runs first, grouping changes into
+ * cohesive commits; if it throws, returns nothing usable, or leaves the tree
+ * dirty, whatever remains is committed in one fallback commit with
+ * `fallbackMessage`. Returns the subjects of every commit made — read from git,
+ * never the agent's report — or an empty array when there was nothing to commit.
  */
 export const commitAll = async ({
+  agent,
   cwd,
-  side,
   fallbackMessage,
-  message,
   log,
-}: CommitAllOptions): Promise<string | null> => {
+}: CommitAllOptions): Promise<string[]> => {
+  if (!(await hasUncommittedChanges(cwd))) return [];
+
+  const headResult = await runGitCapture(cwd, ["rev-parse", "HEAD"]);
+  const head = headResult.code === 0 && headResult.stdout !== "" ? headResult.stdout : null;
+
+  let agentRan = false;
+
+  try {
+    await agent(cwd, log);
+    agentRan = true;
+  } catch (error) {
+    log.warn({ err: error }, "commit agent failed — falling back to a single commit");
+  }
+
+  if (agentRan && !(await hasUncommittedChanges(cwd))) {
+    return subjectsSince(cwd, head);
+  }
+
+  if (agentRan) {
+    log.warn({ path: cwd }, "commit agent left the tree dirty — committing the remainder");
+  }
+
+  // Fallback: one commit with the deterministic message for whatever remains.
   await runGit(cwd, ["add", "-A"]);
 
   const { stdout: diffStat } = await runGitCapture(cwd, ["diff", "--cached", "--stat"]);
 
-  if (diffStat === "") return null;
+  if (diffStat === "") return subjectsSince(cwd, head);
 
-  const resolved =
-    message ??
-    (side != null
-      ? await generateCommitMessage(side, diffStat, fallbackMessage, log)
-      : fallbackMessage);
-  await runGit(cwd, ["commit", "-m", resolved]);
+  await runGit(cwd, ["commit", "-m", fallbackMessage]);
 
-  return resolved;
+  return subjectsSince(cwd, head);
 };

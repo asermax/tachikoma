@@ -49,7 +49,12 @@ export default defineExtension<ProjectsConfig>({
     );
 
     app.sessions.registerProcessor(
-      createProjectsProcessor({ workspaceRoot, side: app.agent.side, git: app.git, resolver }),
+      createProjectsProcessor({
+        workspaceRoot,
+        agent: app.git.createCommitAgent("project"),
+        git: app.git,
+        resolver,
+      }),
     );
   },
 });

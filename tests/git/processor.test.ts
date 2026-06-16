@@ -1,14 +1,23 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { PostProcessorContext } from "../../src/extensions/api.ts";
 import { createGitProcessor } from "../../src/extensions/git/processor.ts";
-import type { Completer } from "../../src/git/commit.ts";
+import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { runGit } from "../../src/git/git.ts";
-import { commitFile, fakeLogger, headOf, initRepo, lastSubject, makeTempDir } from "./helpers.ts";
+import {
+  agentCommittingAs,
+  agentThatThrows,
+  commitFile,
+  fakeLogger,
+  headOf,
+  initRepo,
+  lastSubject,
+  makeTempDir,
+} from "./helpers.ts";
 
 const ctxLog = (): PostProcessorContext["log"] => fakeLogger();
 
@@ -16,10 +25,6 @@ const context = (log = ctxLog()): PostProcessorContext => ({
   session: {} as SessionRecord,
   transcriptPath: null,
   log,
-});
-
-const completerReturning = (message: string): Completer => ({
-  complete: vi.fn().mockResolvedValue(message),
 });
 
 let base: string;
@@ -38,34 +43,38 @@ afterEach(async () => {
 });
 
 describe("git processor", () => {
-  it("stages and commits all changes with the generated message", async () => {
+  it("commits all changes via the agent", async () => {
     await writeFile(join(workspace, "notes.md"), "remember this\n", "utf8");
-    const side = completerReturning("Add session notes");
 
-    await createGitProcessor({ workspaceRoot: workspace, side }).process(context());
+    await createGitProcessor({
+      workspaceRoot: workspace,
+      agent: agentCommittingAs("Add session notes"),
+    }).process(context());
 
     expect(await lastSubject(workspace)).toBe("Add session notes");
     expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
-    expect(side.complete).toHaveBeenCalledWith(
-      expect.objectContaining({ user: expect.stringContaining("notes.md") }),
-    );
   });
 
-  it("does nothing when the workspace is clean", async () => {
-    const side = completerReturning("unused");
+  it("does nothing and does not invoke the agent when the workspace is clean", async () => {
+    const recorder = { calls: 0 };
+    const agent: CommitAgent = async () => {
+      recorder.calls += 1;
+    };
     const head = await headOf(workspace);
 
-    await createGitProcessor({ workspaceRoot: workspace, side }).process(context());
+    await createGitProcessor({ workspaceRoot: workspace, agent }).process(context());
 
-    expect(side.complete).not.toHaveBeenCalled();
+    expect(recorder.calls).toBe(0);
     expect(await headOf(workspace)).toBe(head);
   });
 
-  it("falls back to a deterministic message when generation fails", async () => {
+  it("falls back to a deterministic message when the agent fails", async () => {
     await writeFile(join(workspace, "notes.md"), "content\n", "utf8");
-    const side: Completer = { complete: vi.fn().mockRejectedValue(new Error("model down")) };
 
-    await createGitProcessor({ workspaceRoot: workspace, side }).process(context());
+    await createGitProcessor({
+      workspaceRoot: workspace,
+      agent: agentThatThrows(new Error("model down")),
+    }).process(context());
 
     expect(await lastSubject(workspace)).toMatch(/^Update workspace files \(\d{4}-\d{2}-\d{2}\)$/);
     expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
@@ -81,7 +90,7 @@ describe("git processor", () => {
 
     await createGitProcessor({
       workspaceRoot: workspace,
-      side: completerReturning("Add notes"),
+      agent: agentCommittingAs("Add notes"),
     }).process(context());
 
     expect(await headOf(origin)).toBe(await headOf(workspace));
@@ -106,7 +115,7 @@ describe("git processor", () => {
 
     await createGitProcessor({
       workspaceRoot: workspace,
-      side: completerReturning("Local change"),
+      agent: agentCommittingAs("Local change"),
     }).process(context(log));
 
     expect(await lastSubject(workspace)).toBe("Local change");
@@ -116,7 +125,9 @@ describe("git processor", () => {
     );
   });
 
-  it("succeeds on retry when the second commit pass clears the tree", async () => {
+  it("does not retry when the commit pass leaves the tree clean", async () => {
+    // A post-commit hook creates a file once; commitAll's fallback mops it up
+    // within a single pass, so the processor never enters the retry branch.
     const hook = join(workspace, ".git", "hooks", "post-commit");
     const leftover = join(workspace, "leftover.txt");
     await writeFile(
@@ -130,17 +141,16 @@ describe("git processor", () => {
 
     await createGitProcessor({
       workspaceRoot: workspace,
-      side: completerReturning("Add notes"),
+      agent: agentCommittingAs("Add notes"),
     }).process(context(log));
 
-    expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("retrying"));
-    expect(log.warn).not.toHaveBeenCalledWith(
-      expect.stringContaining("remain after git processor retry"),
-    );
+    expect(log.warn).not.toHaveBeenCalledWith(expect.stringContaining("retrying"));
     expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
   });
 
-  it("warns when changes still remain after the retry pass", async () => {
+  it("retries and warns when changes keep appearing after each commit pass", async () => {
+    // A non-idempotent post-commit hook appends a fresh line on every commit, so
+    // the tree is perpetually dirty — the processor retries once, then warns.
     const hook = join(workspace, ".git", "hooks", "post-commit");
     const stamp = join(workspace, "post-commit-stamp");
     await writeFile(hook, `#!/bin/sh\ndate +%s%N >> "${stamp}"\n`, { mode: 0o755 });
@@ -150,7 +160,7 @@ describe("git processor", () => {
 
     await createGitProcessor({
       workspaceRoot: workspace,
-      side: completerReturning("Add notes"),
+      agent: agentCommittingAs("Add notes"),
     }).process(context(log));
 
     expect(log.warn).toHaveBeenCalledWith(expect.stringContaining("retrying"));

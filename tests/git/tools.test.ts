@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createGitToolsFactory,
   type GitToolDeps,
@@ -11,7 +11,15 @@ import {
   handleScrubWorkspace,
 } from "../../src/extensions/git/tools.ts";
 import { runGit } from "../../src/git/git.ts";
-import { commitFile, fakeLogger, initRepo, lastSubject, makeTempDir } from "./helpers.ts";
+import {
+  agentCommittingAs,
+  agentThatThrows,
+  commitFile,
+  fakeLogger,
+  initRepo,
+  lastSubject,
+  makeTempDir,
+} from "./helpers.ts";
 
 let workspace: string;
 let deps: GitToolDeps;
@@ -24,7 +32,7 @@ beforeEach(async () => {
 
   deps = {
     workspaceRoot: workspace,
-    side: { complete: vi.fn().mockResolvedValue("Generated message") },
+    agent: agentCommittingAs("Generated message"),
     log: fakeLogger(),
   };
 });
@@ -128,23 +136,26 @@ describe("handleListRecentCommits", () => {
 });
 
 describe("handleCommitWorkspace", () => {
-  it("commits with an explicit message without invoking generation", async () => {
+  it("commits via the agent when no message is given", async () => {
     await writeFile(join(workspace, "pending.md"), "draft\n", "utf8");
 
-    const output = await handleCommitWorkspace(deps, { message: "Save the draft" });
+    const output = await handleCommitWorkspace(deps, {});
+
+    expect(output).toContain("Generated message");
+    expect(await lastSubject(workspace)).toBe("Generated message");
+    expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
+  });
+
+  it("uses the message as a fallback when the agent fails", async () => {
+    await writeFile(join(workspace, "pending.md"), "draft\n", "utf8");
+
+    const output = await handleCommitWorkspace(
+      { ...deps, agent: agentThatThrows() },
+      { message: "Save the draft" },
+    );
 
     expect(output).toContain("Save the draft");
     expect(await lastSubject(workspace)).toBe("Save the draft");
-    expect(deps.side.complete).not.toHaveBeenCalled();
-  });
-
-  it("generates a message from the staged changes when none is given", async () => {
-    await writeFile(join(workspace, "pending.md"), "draft\n", "utf8");
-
-    await handleCommitWorkspace(deps, {});
-
-    expect(await lastSubject(workspace)).toBe("Generated message");
-    expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
   });
 
   it("reports a clean tree without committing", async () => {
@@ -191,8 +202,8 @@ describe("createGitToolsFactory", () => {
     expect(commits.content[0]?.text).toContain("Later commit");
 
     await writeFile(join(workspace, "draft.md"), "draft\n", "utf8");
-    const committed = await byName("commit_workspace").execute("call-3", { message: "Save draft" });
-    expect(committed.content[0]?.text).toContain("Save draft");
+    const committed = await byName("commit_workspace").execute("call-3", {});
+    expect(committed.content[0]?.text).toContain("Committed workspace changes");
 
     const scrubbed = await byName("scrub").execute("call-4", { paths: ["never-existed.txt"] });
     expect(scrubbed.content[0]?.text).toMatch(/never-existed\.txt/);

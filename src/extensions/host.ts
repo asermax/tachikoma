@@ -9,6 +9,7 @@ import type { AppDatabase } from "../db/index.ts";
 import { KeyValueState } from "../db/state.ts";
 import type { EventBus } from "../events.ts";
 import { commitAll } from "../git/commit.ts";
+import { createCommitAgent } from "../git/commit-agent.ts";
 import { smartPull, smartPush } from "../git/sync.ts";
 import { componentLogger, type Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
@@ -144,6 +145,8 @@ export class ExtensionHost {
         ? parseWithSchema(extension.configSchema, rawSection, `extensions.${extension.name}`)
         : rawSection;
 
+    const side = new SideRunner(services.agent, log);
+
     return {
       config: services.config,
       extensionConfig,
@@ -187,7 +190,7 @@ export class ExtensionHost {
           if (targets.background) services.regs.backgroundFactories.push(factory);
         },
         models: services.agent.tiers,
-        side: new SideRunner(services.agent, log),
+        side,
         forkAndContinue: (sourceSessionFile, prompt, tier, tools) =>
           services.agent.forkAndContinue(sourceSessionFile, prompt, tier, tools),
         isForking: () => services.agent.isForking(),
@@ -199,6 +202,7 @@ export class ExtensionHost {
 
       git: {
         commitAll: ({ log: callLog, ...options }) => commitAll({ ...options, log: callLog ?? log }),
+        createCommitAgent: (mode) => createCommitAgent(side, mode),
         smartPush: (cwd, remote, branch, options) =>
           smartPush(cwd, remote, branch, options?.log ?? log, options?.resolver),
         smartPull: (cwd, remote, branch, options) =>

@@ -37,18 +37,18 @@ afterEach(async () => {
 });
 
 describe("git processor commit message logging", () => {
-  it("does not log a commit when the commit pass yields no message", async () => {
-    commitAll.mockResolvedValue(null);
+  it("does not log a commit when the commit pass yields no subjects", async () => {
+    commitAll.mockResolvedValue([]);
     await writeFile(join(workspace, "notes.md"), "content\n", "utf8");
     const log = fakeLogger();
 
     await createGitProcessor({
       workspaceRoot: workspace,
-      side: { complete: vi.fn() },
+      agent: async () => {},
     }).process(context(log));
 
     expect(log.info).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.anything() }),
+      expect.objectContaining({ subjects: expect.anything() }),
       expect.stringContaining("committed workspace changes"),
     );
   });

@@ -71,15 +71,18 @@ export default defineExtension<MemoryConfig>({
     const { maintenance } = app.extensionConfig;
 
     if (maintenance.enabled) {
+      const commitAgent = app.git.createCommitAgent("workspace");
+
       const commitChanges = async (message: string): Promise<void> => {
         try {
           const committed = await app.git.commitAll({
+            agent: commitAgent,
             cwd: workspaceRoot,
-            message,
             fallbackMessage: message,
           });
 
-          if (committed != null) app.log.info({ message }, "committed memory maintenance changes");
+          if (committed.length > 0)
+            app.log.info({ message }, "committed memory maintenance changes");
         } catch (error) {
           app.log.warn({ err: error }, "memory maintenance commit failed");
         }

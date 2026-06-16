@@ -10,6 +10,7 @@ import type { KeyValueState } from "../db/state.ts";
 import type { InboundMessage } from "../domain/message.ts";
 import type { EventBus } from "../events.ts";
 import type { CommitAllOptions } from "../git/commit.ts";
+import type { CommitAgent } from "../git/commit-agent.ts";
 import type { PushResult, RebaseResolver, SyncResult } from "../git/sync.ts";
 import type { Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
@@ -161,12 +162,18 @@ export interface InboundApi {
  */
 export interface GitApi {
   /**
-   * Stage everything in `cwd` and commit with a message — generated from the
-   * staged diffstat when a `side` completer is supplied, or the explicit
-   * `message`. Returns the commit message, or null when there was nothing to
-   * commit. `log` defaults to the extension's logger when omitted.
+   * Commit every change in `cwd` via the agent-driven grouped flow: the agent
+   * runs first, and `fallbackMessage` backs a single commit only if it fails or
+   * leaves the tree dirty. Returns the subjects of every commit made, or an
+   * empty array when there was nothing to commit. `log` defaults to the
+   * extension's logger when omitted.
    */
-  commitAll(options: Omit<CommitAllOptions, "log"> & { log?: Logger }): Promise<string | null>;
+  commitAll(options: Omit<CommitAllOptions, "log"> & { log?: Logger }): Promise<string[]>;
+  /**
+   * Build a `CommitAgent` for a repo. `"workspace"` groups workspace changes by
+   * area; `"project"` matches the target repo's own commit-message style.
+   */
+  createCommitAgent(mode: "workspace" | "project"): CommitAgent;
   /** Push local commits with divergence recovery (fetch → detect → push or rebase-then-push). */
   smartPush(
     cwd: string,

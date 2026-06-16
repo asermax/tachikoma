@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { vi } from "vitest";
 
+import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { runGit } from "../../src/git/git.ts";
 import type { RebaseResolver } from "../../src/git/sync.ts";
 import type { Logger } from "../../src/log.ts";
@@ -68,6 +69,63 @@ export const headOf = (repo: string): Promise<string> => runGit(repo, ["rev-pars
 
 export const lastSubject = (repo: string): Promise<string> =>
   runGit(repo, ["log", "-1", "--format=%s"]);
+
+/** Subjects of every commit on the repo, oldest-first. */
+export const subjects = async (repo: string): Promise<string[]> => {
+  const log = await runGit(repo, ["log", "--format=%s"]);
+  return log
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .reverse();
+};
+
+// ---- fake CommitAgent helpers ----------------------------------------------
+
+/** A CommitAgent that stages everything and commits it once with `subject`. */
+export const agentCommittingAs =
+  (subject: string): CommitAgent =>
+  async (cwd) => {
+    await runGit(cwd, ["add", "-A"]);
+    await runGit(cwd, ["commit", "-m", subject]);
+  };
+
+/**
+ * A CommitAgent that makes one commit per group, staging only that group's
+ * paths — the multi-commit grouping shape the real agent produces.
+ */
+export const agentCommittingGroups =
+  (groups: { paths: string[]; subject: string }[]): CommitAgent =>
+  async (cwd) => {
+    for (const group of groups) {
+      await runGit(cwd, ["add", ...group.paths]);
+      await runGit(cwd, ["commit", "-m", group.subject]);
+    }
+  };
+
+/** A CommitAgent that records it was called, then commits everything once. */
+export const recordingAgentCommittingAs = (
+  subject: string,
+): { agent: CommitAgent; calls: number } => {
+  const state = { calls: 0 };
+  return {
+    agent: async (cwd) => {
+      state.calls += 1;
+      await runGit(cwd, ["add", "-A"]);
+      await runGit(cwd, ["commit", "-m", subject]);
+    },
+    get calls() {
+      return state.calls;
+    },
+  };
+};
+
+/** A CommitAgent that throws, simulating an agent failure. */
+export const agentThatThrows =
+  (error: Error = new Error("agent failed")): CommitAgent =>
+  async () => {
+    throw error;
+  };
 
 /**
  * Stand-in for the side agent: drives the in-progress rebase to completion the

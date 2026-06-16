@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { GitApi, PostProcessorContext } from "../../src/extensions/api.ts";
-import type { Completer } from "../../src/git/commit.ts";
+import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { PUSH_RESULT } from "../../src/git/sync.ts";
 import { fakeLogger } from "./helpers.ts";
 
@@ -28,7 +28,7 @@ const context = (): PostProcessorContext => ({
   log,
 });
 
-const side: Completer = { complete: vi.fn() };
+const agent: CommitAgent = async () => {};
 
 const git = {
   commitAll: (...args: unknown[]) => commitAll(...args),
@@ -45,7 +45,7 @@ describe("projects processor (mocked git)", () => {
   it("skips entirely when there are no submodules", async () => {
     listSubmodules.mockResolvedValue([]);
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(isDirty).not.toHaveBeenCalled();
     expect(commitAll).not.toHaveBeenCalled();
@@ -57,7 +57,7 @@ describe("projects processor (mocked git)", () => {
     isDirty.mockResolvedValue(false);
     // isAhead defaults to false via beforeEach
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(commitAll).not.toHaveBeenCalled();
     expect(smartPush).not.toHaveBeenCalled();
@@ -123,10 +123,10 @@ describe("projects processor (mocked git)", () => {
       if (repoPath.endsWith("broken")) throw new Error("not a git repo");
       return true;
     });
-    commitAll.mockResolvedValue("Update app");
+    commitAll.mockResolvedValue(["Update app"]);
     smartPush.mockResolvedValue(PUSH_RESULT.pushed);
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ path: "projects/broken" }),
@@ -138,10 +138,10 @@ describe("projects processor (mocked git)", () => {
   it("warns when a push fails but leaves the commit in place", async () => {
     listSubmodules.mockResolvedValue(["projects/app"]);
     isDirty.mockResolvedValue(true);
-    commitAll.mockResolvedValue("Update app");
+    commitAll.mockResolvedValue(["Update app"]);
     smartPush.mockResolvedValue(PUSH_RESULT.pushFailed);
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ path: "projects/app", result: PUSH_RESULT.pushFailed }),
@@ -152,13 +152,13 @@ describe("projects processor (mocked git)", () => {
   it("does not log a commit message when nothing was committed", async () => {
     listSubmodules.mockResolvedValue(["projects/app"]);
     isDirty.mockResolvedValue(true);
-    commitAll.mockResolvedValue(null);
+    commitAll.mockResolvedValue([]);
     smartPush.mockResolvedValue(PUSH_RESULT.nothingToPush);
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(log.info).not.toHaveBeenCalledWith(
-      expect.objectContaining({ message: expect.anything() }),
+      expect.objectContaining({ subjects: expect.anything() }),
       "committed project changes",
     );
   });
@@ -166,10 +166,10 @@ describe("projects processor (mocked git)", () => {
   it("derives the project name from a path with no separator", async () => {
     listSubmodules.mockResolvedValue(["flat"]);
     isDirty.mockResolvedValue(true);
-    commitAll.mockResolvedValue(null);
+    commitAll.mockResolvedValue([]);
     smartPush.mockResolvedValue(PUSH_RESULT.pushed);
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(commitAll).toHaveBeenCalledWith(
       expect.objectContaining({ fallbackMessage: expect.stringContaining("flat") }),
@@ -181,7 +181,7 @@ describe("projects processor (mocked git)", () => {
     isDirty.mockResolvedValue(true);
     commitAll.mockRejectedValue(new Error("disk full"));
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ path: "projects/app" }),

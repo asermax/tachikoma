@@ -5,10 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { PostProcessorContext } from "../../src/extensions/api.ts";
-import type { Completer } from "../../src/git/commit.ts";
 import { runGit } from "../../src/git/git.ts";
 import { PUSH_RESULT } from "../../src/git/sync.ts";
-import { commitFile, fakeLogger, initRepo, makeTempDir } from "./helpers.ts";
+import { agentCommittingAs, commitFile, fakeLogger, initRepo, makeTempDir } from "./helpers.ts";
 
 const smartPush = vi.hoisted(() => vi.fn());
 
@@ -23,10 +22,6 @@ const context = (log: PostProcessorContext["log"]): PostProcessorContext => ({
   session: {} as SessionRecord,
   transcriptPath: null,
   log,
-});
-
-const completerReturning = (message: string): Completer => ({
-  complete: vi.fn().mockResolvedValue(message),
 });
 
 let base: string;
@@ -59,7 +54,7 @@ describe("git processor push outcomes", () => {
 
     await createGitProcessor({
       workspaceRoot: workspace,
-      side: completerReturning("Add notes"),
+      agent: agentCommittingAs("Add notes"),
     }).process(context(log));
 
     expect(smartPush).toHaveBeenCalled();
@@ -73,7 +68,7 @@ describe("git processor push outcomes", () => {
 
     await createGitProcessor({
       workspaceRoot: workspace,
-      side: completerReturning("Add notes"),
+      agent: agentCommittingAs("Add notes"),
     }).process(context(log));
 
     expect(log.info).toHaveBeenCalledWith(

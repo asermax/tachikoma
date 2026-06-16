@@ -2,8 +2,8 @@ import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { type ExtensionFactory, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-
-import { type Completer, commitAll } from "../../git/commit.ts";
+import { commitAll } from "../../git/commit.ts";
+import type { CommitAgent } from "../../git/commit-agent.ts";
 import { hasRemote, listSubmodules, runGitCapture } from "../../git/git.ts";
 import {
   PUSH_RESULT,
@@ -18,7 +18,7 @@ import { SCRUB_RESULT, scrubPaths } from "./scrub.ts";
 
 export interface GitToolDeps {
   workspaceRoot: string;
-  side: Completer;
+  agent: CommitAgent;
   log: Logger;
   resolver?: RebaseResolver;
 }
@@ -34,7 +34,8 @@ export const ListRecentCommitsParams = Type.Object({
 export const CommitWorkspaceParams = Type.Object({
   message: Type.Optional(
     Type.String({
-      description: "Commit message to use; when omitted, a message is generated from the changes",
+      description:
+        "Fallback commit message, used only if automatic grouped committing fails. Omit to let changes be grouped into descriptive commits (with a deterministic dated fallback).",
     }),
   ),
   push: Type.Optional(
@@ -179,21 +180,22 @@ const pushWorkspaceAndSubmodules = async (
 };
 
 export const handleCommitWorkspace = async (
-  { workspaceRoot, side, log, resolver }: GitToolDeps,
+  { workspaceRoot, agent, log, resolver }: GitToolDeps,
   args: Static<typeof CommitWorkspaceParams>,
 ): Promise<string> => {
-  const message = await commitAll({
+  const subjects = await commitAll({
+    agent,
     cwd: workspaceRoot,
-    side,
-    fallbackMessage: workspaceFallbackMessage(),
-    ...(args.message != null ? { message: args.message } : {}),
+    fallbackMessage: args.message ?? workspaceFallbackMessage(),
     log,
   });
 
   const lines: string[] = [];
 
-  if (message != null) {
-    lines.push(`Committed workspace changes: ${message}`);
+  if (subjects.length === 1) {
+    lines.push(`Committed workspace changes: ${subjects[0] ?? "(no message)"}`);
+  } else if (subjects.length > 1) {
+    lines.push(`Committed ${subjects.length} workspace changes:\n- ${subjects.join("\n- ")}`);
   } else {
     lines.push("Nothing to commit — the working tree is clean.");
   }

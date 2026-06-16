@@ -1,7 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { GitToolDeps } from "../../src/extensions/git/tools.ts";
 import { handleCommitWorkspace } from "../../src/extensions/git/tools.ts";
@@ -9,6 +9,7 @@ import { handleRegisterProject } from "../../src/extensions/projects/tools.ts";
 import { runGit } from "../../src/git/git.ts";
 import { createProjectOrigin } from "../projects/helpers.ts";
 import {
+  agentCommittingAs,
   commitFile,
   configureIdentity,
   fakeLogger,
@@ -21,7 +22,7 @@ import {
 // allowlist is the only switch that reaches the spawned clone.
 process.env.GIT_ALLOW_PROTOCOL = "file";
 
-const side = { complete: vi.fn().mockResolvedValue("Update files") };
+const agent = agentCommittingAs("Add notes");
 
 let base: string;
 let workspace: string;
@@ -38,7 +39,7 @@ afterEach(async () => {
   await rm(base, { recursive: true, force: true });
 });
 
-const gitDeps = (): GitToolDeps => ({ workspaceRoot: workspace, side, log: fakeLogger() });
+const gitDeps = (): GitToolDeps => ({ workspaceRoot: workspace, agent, log: fakeLogger() });
 
 /** Create a bare `origin`, wire the workspace to it, and push the seed commit. */
 const addWorkspaceOrigin = async (): Promise<string> => {

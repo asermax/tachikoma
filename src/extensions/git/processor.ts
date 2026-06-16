@@ -1,11 +1,12 @@
-import { type Completer, commitAll } from "../../git/commit.ts";
+import { commitAll } from "../../git/commit.ts";
+import type { CommitAgent } from "../../git/commit-agent.ts";
 import { hasRemote, hasUncommittedChanges } from "../../git/git.ts";
 import { PUSH_RESULT, PUSH_SUCCESS, type RebaseResolver, smartPush } from "../../git/sync.ts";
 import type { PostProcessor } from "../api.ts";
 
 export interface GitProcessorDeps {
   workspaceRoot: string;
-  side: Completer;
+  agent: CommitAgent;
   resolver?: RebaseResolver;
 }
 
@@ -13,13 +14,14 @@ export const workspaceFallbackMessage = (now = new Date()): string =>
   `Update workspace files (${now.toISOString().slice(0, 10)})`;
 
 /**
- * Finalize-phase post-processor: stages and commits all workspace changes after
- * each session with a message generated from the staged diffstat, then pushes
- * to origin when a remote is configured.
+ * Finalize-phase post-processor: commits all workspace changes after each
+ * session via the agent-driven grouped flow (falling back to a single
+ * deterministic commit on failure), then pushes to origin when a remote is
+ * configured.
  */
 export const createGitProcessor = ({
   workspaceRoot,
-  side,
+  agent,
   resolver,
 }: GitProcessorDeps): PostProcessor => ({
   name: "git-commit",
@@ -31,14 +33,14 @@ export const createGitProcessor = ({
       return;
     }
 
-    const message = await commitAll({
+    const subjects = await commitAll({
+      agent,
       cwd: workspaceRoot,
-      side,
       fallbackMessage: workspaceFallbackMessage(),
       log,
     });
 
-    if (message != null) log.info({ message }, "committed workspace changes");
+    if (subjects.length > 0) log.info({ subjects }, "committed workspace changes");
 
     if (await hasRemote(workspaceRoot, "origin")) {
       const result = await smartPush(workspaceRoot, "origin", "HEAD", log, resolver);
@@ -56,8 +58,8 @@ export const createGitProcessor = ({
       log.warn("uncommitted changes remain after commit pass — retrying");
 
       await commitAll({
+        agent,
         cwd: workspaceRoot,
-        side,
         fallbackMessage: workspaceFallbackMessage(),
         log,
       });
