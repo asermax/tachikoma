@@ -1,3 +1,15 @@
+# [3.23.0](https://github.com/asermax/tachikoma/compare/v3.22.1...v3.23.0) (2026-06-16)
+
+
+### Bug Fixes
+
+* **skills:** strip frontmatter from proactively injected skill content ([4f5050e](https://github.com/asermax/tachikoma/commit/4f5050eeef2f1307b14e2f5aa23faec3d14267c5))
+
+
+### Features
+
+* **skills:** inject full skill content instead of recommending /skill ([f63cff0](https://github.com/asermax/tachikoma/commit/f63cff03d6c0bb51c1439d49d5059b7ba1f7dca7))
+
 ## [3.22.1](https://github.com/asermax/tachikoma/compare/v3.22.0...v3.22.1) (2026-06-16)
 
 
