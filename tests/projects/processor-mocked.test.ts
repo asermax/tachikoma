@@ -72,7 +72,7 @@ describe("projects processor (mocked git)", () => {
     isAhead.mockResolvedValue(true);
     smartPush.mockResolvedValue(PUSH_RESULT.pushed);
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(commitAll).not.toHaveBeenCalled();
     expect(smartPush).toHaveBeenCalledWith("/ws/projects/app", "origin", "HEAD", { log });
@@ -89,7 +89,7 @@ describe("projects processor (mocked git)", () => {
     commitAll.mockResolvedValue("Update dirty");
     smartPush.mockResolvedValue(PUSH_RESULT.pushed);
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(commitAll).toHaveBeenCalledTimes(1);
     expect(commitAll).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/ws/projects/dirty" }));
@@ -107,7 +107,7 @@ describe("projects processor (mocked git)", () => {
     });
     smartPush.mockResolvedValue(PUSH_RESULT.pushed);
 
-    await createProjectsProcessor({ workspaceRoot: "/ws", side, git }).process(context());
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git }).process(context());
 
     expect(log.warn).toHaveBeenCalledWith(
       expect.objectContaining({ path: "projects/broken" }),
