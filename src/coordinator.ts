@@ -1,34 +1,41 @@
 import { existsSync } from "node:fs";
 
-import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { streamPrompt } from "./agent/adapter.ts";
 import type { AgentManager } from "./agent/manager.ts";
-import { lastAssistantText } from "./agent/side-run.ts";
+import { branchEntriesSinceBase } from "./agent/session-tree.ts";
 import { buildDigest } from "./channels/delivery-digest.ts";
 import { compareQueued, evaluate, type QueuedItem } from "./channels/delivery-queue.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
-import type { SessionRecord } from "./db/core-schema.ts";
-import { type AgentEvent, ERROR_KINDS } from "./domain/agent-events.ts";
 import type { InboundMessage } from "./domain/message.ts";
 import type { EventBus } from "./events.ts";
-import type { InboundContext } from "./extensions/api.ts";
+import type { InboundContext, TrunkInbound } from "./extensions/api.ts";
 import { runPhasedPostProcessors } from "./extensions/post-processing.ts";
 import type { Registrations } from "./extensions/registrations.ts";
 import type { Logger } from "./log.ts";
-import type { SessionRegistry } from "./sessions/registry.ts";
+import {
+  getBranchRecords,
+  localDay,
+  nextBranchId,
+  openOrCreateTrunk,
+  readBoomerangState,
+  type TrunkState,
+} from "./sessions/trunk.ts";
 
-interface ActiveSession {
-  record: SessionRecord;
+/** The live daily trunk the coordinator owns; identity lives in the `app_state` pointer, not a row. */
+interface ActiveTrunk {
   session: AgentSession;
+  day: string;
+  sessionFile: string;
 }
 
 export class Coordinator {
   private readonly inbox: InboundMessage[] = [];
   private wake: (() => void) | null = null;
-  private active: ActiveSession | null = null;
-  /** Bridging-context blocks injected once on the next agent run (session resume). */
-  private pendingContext: string[] = [];
+  private active: ActiveTrunk | null = null;
+  /** True only while a trunk is open; the delivery gate holds drains until this flips. */
+  private trunkLive = false;
   private readonly heldDeliveries: QueuedItem[] = [];
   /** Timestamp of the most recently completed exchange; the queue's idle-window anchor. */
   private lastExchangeAt: Date | null = null;
@@ -38,26 +45,29 @@ export class Coordinator {
   private shuttingDown = false;
   private channel: Channel | null = null;
 
-  private readonly registry: SessionRegistry;
+  private readonly trunkState: TrunkState;
   private readonly agent: AgentManager;
   private readonly regs: Registrations;
   private readonly events: EventBus;
   private readonly log: Logger;
   private readonly now: () => Date;
+  private readonly timezone: string | undefined;
 
   constructor(
-    registry: SessionRegistry,
+    trunkState: TrunkState,
     agent: AgentManager,
     regs: Registrations,
     events: EventBus,
     log: Logger,
+    timezone: string | undefined,
     now: () => Date = () => new Date(),
   ) {
-    this.registry = registry;
+    this.trunkState = trunkState;
     this.agent = agent;
     this.regs = regs;
     this.events = events;
     this.log = log;
+    this.timezone = timezone;
     this.now = now;
   }
 
@@ -69,7 +79,7 @@ export class Coordinator {
 
   submit(message: InboundMessage): void {
     // Leading slash commands are channel-agnostic. "/queue …" opts out of steering
-    // (the message waits for the next exchange); "/new …" forces a fresh session,
+    // (the message waits for the next exchange); "/new …" forces a fresh topic branch,
     // honored downstream by the boundary extension. Both skip steering: neither
     // wants to fold into the live run.
     const queued = message.text.startsWith("/queue ");
@@ -113,12 +123,17 @@ export class Coordinator {
     await this.active?.session.abort();
   }
 
+  /** The live daily-trunk pi session, or null when no trunk is active. */
+  activeTrunkSession(): AgentSession | null {
+    return this.active?.session ?? null;
+  }
+
   status(text: string, silent = false): void {
     this.log.debug({ status: text }, "pipeline status");
     this.events.emit("status", { text });
 
-    // No renderer to host the line (e.g. an idle-timeout close): stop here so
-    // it's logged for operators without leaving a ghost status in the chat.
+    // No renderer to host the line: stop here so it's logged for operators without
+    // leaving a ghost status in the chat.
     if (silent) return;
 
     try {
@@ -138,7 +153,7 @@ export class Coordinator {
   /**
    * Emit a shutdown-sequence line and await its delivery, so the message lands
    * before the process exits. Falls back to the fire-and-forget `status`
-   * surface for channels without a dedicated shutdown message (e.g. the REPL).
+   * surface for channels without a dedicated shutdown message.
    */
   private async emitShutdownStatus(text: string): Promise<void> {
     this.log.debug({ status: text }, "shutdown status");
@@ -172,24 +187,6 @@ export class Coordinator {
     this.scheduleDelivery();
   }
 
-  // ---- pi integration -----------------------------------------------------------
-
-  /** Host-owned pi extension: injects gathered context blocks before each agent run. */
-  hostFactory(): ExtensionFactory {
-    return (pi) => {
-      pi.on("before_agent_start", () => {
-        if (this.pendingContext.length === 0) return undefined;
-
-        const content = this.pendingContext.join("\n\n");
-        this.pendingContext = [];
-
-        return {
-          message: { customType: "tachikoma-context", content, display: false },
-        };
-      });
-    };
-  }
-
   // ---- main loop ----------------------------------------------------------------
 
   async run(signal: AbortSignal): Promise<void> {
@@ -204,6 +201,19 @@ export class Coordinator {
         const message = this.inbox.shift();
 
         if (message == null) {
+          // A held background delivery can be the first event of the day: with no live trunk nothing
+          // would ever drain it (the gate holds until trunkLive). Open today's trunk (after any
+          // stale-day recovery) so the queue can flush, then re-evaluate.
+          if (this.heldDeliveries.length > 0 && !this.trunkLive) {
+            try {
+              await this.ensureTrunk();
+              this.scheduleDelivery();
+            } catch (error) {
+              this.log.error({ err: error }, "trunk open for held delivery failed");
+            }
+            continue;
+          }
+
           await new Promise<void>((resolve) => {
             this.wake = resolve;
           });
@@ -234,175 +244,44 @@ export class Coordinator {
 
       // Per-processor progress emitted inside this call routes to the same
       // shutdown message (see status() — shuttingDown is set above).
-      await this.closeActiveSession();
+      await this.closeTrunk();
 
       if (announceShutdown) await this.emitShutdownStatus("Done");
     }
   }
 
-  current(): SessionRecord | null {
-    return this.active?.record ?? null;
-  }
+  // ---- trunk lifecycle ----------------------------------------------------------
 
   /**
-   * Close the active session only when no exchange is in flight. This is the
-   * safe primitive for time-based policies (extensions cannot see the loop's
-   * busy state); an in-flight exchange means the session is not idle anyway.
+   * Ensure today's trunk is live. Before opening today's, if the active pointer belongs to an earlier
+   * day, lazily close it first (the stale-day backstop for a missed nightly close — idempotent).
+   * Fires the once-per-day open hooks when a trunk first becomes live.
    */
-  async closeActiveSessionIfIdle(): Promise<boolean> {
-    if (this.exchanging) {
-      this.log.debug("idle close skipped — exchange in flight");
-      return false;
-    }
-
-    if (this.active == null) return false;
-
-    // Silent: an idle close has no active renderer and no imminent respond() to
-    // reclaim a status lead-in, so post-processing lines are logged, not surfaced.
-    await this.closeActiveSession(true);
-    return true;
-  }
-
-  async closeActiveSession(silent = false): Promise<void> {
-    const active = this.active;
-    if (active == null) return;
-
-    this.active = null;
-    active.session.dispose();
-
-    const record = this.registry.close(active.record.id);
-    this.log.info({ sessionId: record.id }, "session closed");
-    this.events.emit("session:closed", { session: record });
-
-    await this.runPostProcessing(record, silent);
-  }
-
-  /**
-   * Ensure no session is left without post-processing: re-run it for every session whose
-   * `postProcessingState` is null — both those left open by a crash (closed here first) and
-   * those closed but interrupted before post-processing persisted its state. Post-processing is
-   * idempotent at processor granularity (completed processors are skipped), so re-runs are safe.
-   */
-  async recoverUnprocessedSessions(): Promise<void> {
-    for (const record of this.registry.findUnprocessed()) {
-      const wasOpen = record.closedAt == null;
-      const target = wasOpen ? this.registry.close(record.id) : record;
-      this.log.info(
-        { sessionId: target.id },
-        wasOpen
-          ? "recovered dangling session from previous run"
-          : "resuming post-processing for closed session",
-      );
-      await this.runPostProcessing(target);
-    }
-  }
-
-  async resumeSession(record: SessionRecord): Promise<void> {
-    // A quarantined session must never be reopened — resuming it would rebuild on a corrupt
-    // transcript. Keep the active session (mirrors the missing-file guard below).
-    if (record.error) {
-      this.log.warn({ sessionId: record.id }, "resume skipped — session is quarantined");
-      return;
-    }
-
-    // Verify the target is openable BEFORE disposing the live session — a failed
-    // open after teardown would leave the conversation with no active session.
-    if (record.piSessionFile == null || !existsSync(record.piSessionFile)) {
-      this.log.warn(
-        { sessionId: record.id, sessionFile: record.piSessionFile },
-        "resume skipped — pi session file missing; keeping the active session",
-      );
-      return;
-    }
-
-    const priorClosedAt = record.closedAt;
-
-    await this.closeActiveSession();
-
-    const reopened = this.registry.reopen(record.id);
-    const session = await this.agent.open({ sessionFile: reopened.piSessionFile });
-
-    this.active = { record: reopened, session };
-    this.log.info({ sessionId: reopened.id }, "session resumed");
-    this.events.emit("session:opened", { session: reopened, resumed: true });
-
-    this.injectBridgingContext(priorClosedAt);
-  }
-
-  /**
-   * Surface what happened while a resumed session was closed: concatenate the
-   * summaries of sessions that closed between its prior close and now, oldest-first.
-   */
-  private injectBridgingContext(priorClosedAt: Date | null): void {
-    if (priorClosedAt == null) return;
-
-    const bridging = this.registry.listClosedBetween(priorClosedAt, new Date());
-    if (bridging.length === 0) return;
-
-    const content = bridging
-      .map((session) => session.summary)
-      .filter((summary): summary is string => summary != null)
-      .join("\n\n");
-    if (content.length === 0) return;
-
-    this.pendingContext.push(content);
-  }
-
-  // ---- internals ------------------------------------------------------------------
-
-  private async handle(message: InboundMessage): Promise<void> {
-    this.exchanging = true;
-    let encodingError = false;
-
-    try {
-      await this.runInboundMiddleware(message);
-
-      // A middleware (e.g. the commands extension) fully handled the message.
-      if (message.metadata.handled === true) return;
-
-      const active = await this.ensureSession(message.channel);
-      const wasErrored = active.record.error;
-
-      // Observe the stream in flight for a terminal encoding error — an encoding failure leaves the
-      // transcript un-encodable, so the session is quarantined below.
-      const events = tapEncodingErrors(streamPrompt(active.session, renderPrompt(message)), () => {
-        encodingError = true;
-      });
-      await this.channel?.respond({ message, events });
-
-      if (encodingError) {
-        // Sync the quarantined record into the active session so the next exchange sees wasErrored.
-        const refreshed = this.registry.markErrored(active.record.id);
-        this.log.warn({ sessionId: refreshed.id }, "session quarantined — encoding failure");
-        this.syncActiveRecord(refreshed);
-      }
-
-      // A quarantined session's derived state (rolling summary, last exchange) is not maintained —
-      // it will not be resumed or post-processed, so leave its record untouched rather than risk
-      // summarizing the corrupt exchange.
-      if (!wasErrored && !encodingError) {
-        await this.runExchangeProcessors(active, message);
-      }
-    } finally {
-      this.exchanging = false;
-      this.lastExchangeAt = this.now();
-      this.scheduleDelivery();
-    }
-  }
-
-  private async ensureSession(channel: string): Promise<ActiveSession> {
+  private async ensureTrunk(): Promise<ActiveTrunk> {
     if (this.active != null) return this.active;
 
-    const session = await this.agent.open();
-    const record = this.registry.create(channel, session.sessionFile ?? null);
+    const today = localDay(this.now, this.timezone);
 
-    this.active = { record, session };
-    this.log.info({ sessionId: record.id }, "session opened");
-    this.events.emit("session:opened", { session: record, resumed: false });
+    await this.closeStaleActivePointer(today);
+
+    const opened = await openOrCreateTrunk(
+      { agent: this.agent, trunk: this.trunkState, now: this.now, timezone: this.timezone },
+      today,
+    );
+
+    this.active = {
+      session: opened.session,
+      day: opened.day,
+      sessionFile: opened.sessionFile,
+    };
+    this.trunkLive = true;
+
+    this.log.info({ sessionFile: opened.sessionFile, day: opened.day }, "trunk opened");
+    this.events.emit("session:opened", { resumed: !opened.isNew });
 
     for (const hook of this.regs.sessionOpenHooks) {
       try {
-        await hook(record);
+        await hook();
       } catch (error) {
         this.log.error({ err: error }, "session open hook failed");
       }
@@ -411,12 +290,145 @@ export class Coordinator {
     return this.active;
   }
 
-  private async runInboundMiddleware(message: InboundMessage): Promise<void> {
-    const context: InboundContext = {
-      session: this.active?.record ?? null,
-      closeSession: () => this.closeActiveSession(),
-      resumeSession: (record) => this.resumeSession(record),
-    };
+  /**
+   * If the active pointer belongs to a day before `today`, close that trunk through the post-processing
+   * pipeline before opening today's. The lazy stale-day backstop (ADR-014) for a close the nightly cron
+   * missed; idempotent because the close pipeline's markers skip already-done work.
+   */
+  private async closeStaleActivePointer(today: string): Promise<void> {
+    const pointer = this.trunkState.getActive();
+
+    // Nothing to do for a missing or same-day pointer — the same-day pointer is reopened below.
+    if (pointer == null || pointer.day >= today) return;
+
+    // Stale but its file vanished: drop it from the index/pointer and move on.
+    if (!existsSync(pointer.sessionFile)) {
+      this.trunkState.retireTrunk(pointer.sessionFile);
+      this.trunkState.clearActive();
+      return;
+    }
+
+    const session = await this.agent.open({ sessionFile: pointer.sessionFile });
+
+    await this.closeTrunkSession(
+      { session, day: pointer.day, sessionFile: pointer.sessionFile },
+      true,
+    );
+    this.trunkState.clearActive();
+  }
+
+  /**
+   * Nightly-close trigger: close the live trunk only when one is active AND no exchange is in flight.
+   * The coordinator loop is serial, so checking `exchanging` here is enough — a fired cron during a
+   * live exchange is skipped (the lazy stale-day backstop in `ensureTrunk` closes it next day instead).
+   */
+  async closeTrunkIfDue(): Promise<void> {
+    if (this.active == null || this.exchanging) {
+      this.log.debug(
+        { active: this.active != null, exchanging: this.exchanging },
+        "nightly close skipped — no idle trunk",
+      );
+      return;
+    }
+
+    await this.closeTrunk();
+  }
+
+  /** Close the live trunk (shutdown / explicit). No-op when no trunk is open. */
+  async closeTrunk(silent = false): Promise<void> {
+    const active = this.active;
+    if (active == null) return;
+
+    this.active = null;
+    this.trunkLive = false;
+
+    await this.closeTrunkSession(active, silent);
+    this.trunkState.clearActive();
+  }
+
+  /**
+   * Run the close pipeline over a trunk: dispose the live session, post-process the trunk, then retire
+   * it from the unclosed index. The retire happens ONLY after post-processing completes (the
+   * write-ordering invariant's second half) so a crash mid-close keeps the trunk recoverable.
+   */
+  private async closeTrunkSession(trunk: ActiveTrunk, silent: boolean): Promise<void> {
+    trunk.session.dispose();
+
+    this.log.info({ sessionFile: trunk.sessionFile, day: trunk.day }, "trunk closed");
+    this.events.emit("session:closed", { sessionFile: trunk.sessionFile, day: trunk.day });
+
+    await this.runPostProcessing(trunk, silent);
+
+    this.trunkState.retireTrunk(trunk.sessionFile);
+  }
+
+  /**
+   * Close + post-process every stale-day trunk left by downtime, before the channel starts. Reads the
+   * active pointer plus the `unclosed` index; any trunk whose day is before today (and whose file still
+   * exists) is run through the idempotent close pipeline and retired. First run ever (no pointer, no
+   * files) is a clean no-op.
+   */
+  async recoverStaleTrunks(): Promise<void> {
+    const today = localDay(this.now, this.timezone);
+    const pointer = this.trunkState.getActive();
+
+    const files = new Set(this.trunkState.listUnclosed());
+    const pointerDay = new Map<string, string>();
+
+    if (pointer != null) {
+      files.add(pointer.sessionFile);
+      pointerDay.set(pointer.sessionFile, pointer.day);
+    }
+
+    for (const file of files) {
+      if (!existsSync(file)) {
+        this.trunkState.retireTrunk(file);
+        continue;
+      }
+
+      const day = pointerDay.get(file) ?? today;
+
+      // An unclosed trunk with no pointer-day is from a prior run by definition; treat the pointer's
+      // own trunk as stale only when its day precedes today.
+      if (pointerDay.has(file) && day >= today) continue;
+
+      this.log.info({ sessionFile: file, day }, "recovering stale trunk");
+
+      const session = await this.agent.open({ sessionFile: file });
+      await this.closeTrunkSession({ session, day, sessionFile: file }, true);
+    }
+
+    if (pointer != null && pointer.day < today) this.trunkState.clearActive();
+  }
+
+  // ---- internals ------------------------------------------------------------------
+
+  private async handle(message: InboundMessage): Promise<void> {
+    this.exchanging = true;
+
+    try {
+      // Ensure the trunk BEFORE the inbound middleware so the boundary middleware can drive collapse on
+      // the live trunk. A command middleware that sets `handled` still short-circuits before streaming.
+      const active = await this.ensureTrunk();
+
+      await this.runInboundMiddleware(message, active);
+
+      // A middleware (e.g. the commands extension) fully handled the message.
+      if (message.metadata.handled === true) return;
+
+      const events = streamPrompt(active.session, renderPrompt(message));
+      await this.channel?.respond({ message, events });
+
+      await this.runExchangeProcessors(message);
+    } finally {
+      this.exchanging = false;
+      this.lastExchangeAt = this.now();
+      this.scheduleDelivery();
+    }
+  }
+
+  private async runInboundMiddleware(message: InboundMessage, active: ActiveTrunk): Promise<void> {
+    const context: InboundContext = { trunk: this.buildTrunkInbound(active) };
 
     const chain = [...this.regs.inboundMiddleware];
 
@@ -430,26 +442,30 @@ export class Coordinator {
     await invoke(0);
   }
 
-  /** Propagate a freshly-read record into the cached active session, if it is still the active one. */
-  private syncActiveRecord(refreshed: SessionRecord): void {
-    if (this.active?.record.id === refreshed.id) {
-      this.active = { ...this.active, record: refreshed };
-    }
+  /** Snapshot the live trunk for the inbound middleware (current base, branch records, empty-branch guard). */
+  private buildTrunkInbound(active: ActiveTrunk): TrunkInbound {
+    const branchRecords = getBranchRecords(active.session);
+    const currentBaseId =
+      readBoomerangState(active.session)?.currentTopicBaseId ??
+      branchRecords.at(-1)?.summaryEntryId ??
+      null;
+
+    return {
+      session: active.session,
+      sessionFile: active.sessionFile,
+      currentBaseId,
+      branchRecords,
+      liveBranchId: nextBranchId(branchRecords),
+      hasAssistantTurnSinceBase: hasAssistantTurnSinceBase(active.session, currentBaseId),
+    };
   }
 
-  private async runExchangeProcessors(
-    active: ActiveSession,
-    message: InboundMessage,
-  ): Promise<void> {
-    const assistantText = lastAssistantText(active.session.messages);
+  private async runExchangeProcessors(message: InboundMessage): Promise<void> {
+    if (this.regs.exchangeProcessors.length === 0) return;
 
     const results = await Promise.allSettled(
       this.regs.exchangeProcessors.map((processor) =>
-        processor.process({
-          session: active.record,
-          userText: message.text,
-          assistantText,
-        }),
+        processor.process({ userText: message.text }),
       ),
     );
 
@@ -461,47 +477,34 @@ export class Coordinator {
         );
       }
     });
-
-    // Refresh the cached record — processors typically update summary/lastExchange.
-    const refreshed = this.registry.get(active.record.id);
-    if (refreshed != null) this.syncActiveRecord(refreshed);
   }
 
-  private async runPostProcessing(record: SessionRecord, silent = false): Promise<void> {
-    // A quarantined session's transcript may be too corrupt to feed extractors/archivers — skip
-    // the pipeline entirely rather than risk writing broken derived state (memories, archives).
-    if (record.error) {
-      this.log.warn({ sessionId: record.id }, "post-processing skipped — session quarantined");
-      return;
-    }
-    const state: Record<string, "completed" | "failed"> = {
-      ...(record.postProcessingState ?? {}),
-    };
-
+  private async runPostProcessing(trunk: ActiveTrunk, silent = false): Promise<void> {
     await runPhasedPostProcessors({
       processors: this.regs.postProcessors,
       context: {
-        session: record,
-        transcriptPath: record.piSessionFile,
+        trunk: {
+          session: trunk.session,
+          sessionFile: trunk.sessionFile,
+          day: trunk.day,
+          branchRecords: getBranchRecords(trunk.session),
+        },
+        transcriptPath: trunk.sessionFile,
         log: this.log,
       },
       log: this.log,
-      shouldSkip: (processor) => state[processor.name] === "completed",
       onProcessorStart: (processor) => this.status(`Post-processing: ${processor.name}…`, silent),
-      onProcessorSettled: (processor, result) => {
-        state[processor.name] = result.status === "fulfilled" ? "completed" : "failed";
-      },
     });
 
-    this.registry.update(record.id, { postProcessingState: state });
-    this.events.emit("session:post-processed", { sessionId: record.id, state });
+    this.events.emit("session:post-processed", { sessionFile: trunk.sessionFile });
   }
 
   /**
    * The sole queue decision point. Re-evaluates the held queue and either flushes it as
    * one agent turn or arms the shared timer for the next actionable moment. Called on
    * enqueue, on exchange completion, and from the timer itself — never recurses into a
-   * flush directly, so re-evaluation is idempotent and never busy-spins.
+   * flush directly, so re-evaluation is idempotent and never busy-spins. Nothing drains
+   * while an exchange is in flight OR before a trunk is live (deliveries land in a live trunk).
    */
   private scheduleDelivery(): void {
     if (this.deliveryTimer != null) {
@@ -510,6 +513,14 @@ export class Coordinator {
     }
 
     if (this.shuttingDown || this.exchanging || this.heldDeliveries.length === 0) return;
+
+    // A held delivery with no live trunk: wake the parked loop so it opens today's trunk (the
+    // first-event-of-the-day path) and re-enters this method with trunkLive set.
+    if (!this.trunkLive) {
+      this.wake?.();
+      this.wake = null;
+      return;
+    }
 
     const result = evaluate(
       this.now().getTime(),
@@ -576,21 +587,11 @@ export class Coordinator {
   }
 }
 
-/**
- * Pass-through for an exchange's event stream that flags when it ends in a terminal encoding
- * error. The channel still consumes every event unchanged; this only observes the error kind in
- * flight (single-consumer passthrough, not a tee).
- */
-const tapEncodingErrors = (
-  events: AsyncIterable<AgentEvent>,
-  onEncoding: () => void,
-): AsyncIterable<AgentEvent> =>
-  (async function* () {
-    for await (const event of events) {
-      if (event.kind === "error" && event.errorKind === ERROR_KINDS.encoding) onEncoding();
-      yield event;
-    }
-  })();
+/** Whether the live branch (entries after `baseId` on the leaf path) holds an assistant message. */
+const hasAssistantTurnSinceBase = (session: AgentSession, baseId: string | null): boolean =>
+  branchEntriesSinceBase(session, baseId).some(
+    (entry) => entry.type === "message" && entry.message.role === "assistant",
+  );
 
 const renderPrompt = (message: InboundMessage): string => {
   if (message.media.length === 0) return message.text;

@@ -42,14 +42,7 @@ export const ConfigSchema = Type.Object({
 
   channels: Type.Object(
     {
-      default: Type.String({ default: "repl" }),
-    },
-    { default: {} },
-  ),
-
-  sessions: Type.Object(
-    {
-      resumeWindowSeconds: Type.Number({ default: 86400 }),
+      default: Type.String({ default: "telegram" }),
     },
     { default: {} },
   ),
@@ -57,6 +50,9 @@ export const ConfigSchema = Type.Object({
   scheduler: Type.Object(
     {
       timezone: Type.Optional(Type.String()),
+      // Hour (0–23, scheduler tz) the nightly trunk-close cron fires. 04:00 matches the slot the
+      // former core-context maintenance cron used; close only happens when no exchange is in flight.
+      nightlyCloseHour: Type.Number({ default: 4 }),
     },
     { default: {} },
   ),

@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { PostProcessorContext } from "../../src/extensions/api.ts";
 import { commitFile, fakeLogger, initRepo, makeTempDir } from "./helpers.ts";
 
@@ -14,7 +13,7 @@ vi.mock("../../src/git/commit.ts", () => ({ commitAll }));
 const { createGitProcessor } = await import("../../src/extensions/git/processor.ts");
 
 const context = (log: PostProcessorContext["log"]): PostProcessorContext => ({
-  session: {} as SessionRecord,
+  trunk: null,
   transcriptPath: null,
   log,
 });

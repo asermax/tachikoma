@@ -8,12 +8,11 @@ import type { Coordinator } from "../coordinator.ts";
 import type { AppDatabase } from "../db/index.ts";
 import { KeyValueState } from "../db/state.ts";
 import type { EventBus } from "../events.ts";
-import { commitAll } from "../git/commit.ts";
+import { commitAll, commitAllDeterministic } from "../git/commit.ts";
 import { createCommitAgent } from "../git/commit-agent.ts";
 import { smartPull, smartPush } from "../git/sync.ts";
 import { componentLogger, type Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
-import type { SessionRegistry } from "../sessions/registry.ts";
 import type { Workspace } from "../workspace.ts";
 import {
   type AppContext,
@@ -47,7 +46,6 @@ export interface HostServices {
   events: EventBus;
   scheduler: Scheduler;
   agent: AgentManager;
-  registry: SessionRegistry;
   coordinator: Coordinator;
   regs: Registrations;
 }
@@ -158,14 +156,9 @@ export class ExtensionHost {
       scheduler: services.scheduler,
 
       sessions: {
-        current: () => services.coordinator.current(),
-        get: (id) => services.registry.get(id),
-        update: (id, patch) => services.registry.update(id, patch),
-        listResumable: () =>
-          services.registry.listResumable(services.config.sessions.resumeWindowSeconds),
-        close: () => services.coordinator.closeActiveSession(),
-        closeIfIdle: () => services.coordinator.closeActiveSessionIfIdle(),
+        close: () => services.coordinator.closeTrunk(),
         abortExchange: () => services.coordinator.abortExchange(),
+        activeTrunkSession: () => services.coordinator.activeTrunkSession(),
         onOpen: (hook) => services.regs.sessionOpenHooks.push(hook),
         onExchange: (processor) => services.regs.exchangeProcessors.push(processor),
         registerProcessor: (processor) => services.regs.postProcessors.push(processor),
@@ -194,6 +187,8 @@ export class ExtensionHost {
         forkAndContinue: (sourceSessionFile, prompt, tier, tools) =>
           services.agent.forkAndContinue(sourceSessionFile, prompt, tier, tools),
         isForking: () => services.agent.isForking(),
+        shadowFork: (sourceSessionFile, options) =>
+          services.agent.shadowFork(sourceSessionFile, options),
       },
 
       inbound: {
@@ -202,6 +197,8 @@ export class ExtensionHost {
 
       git: {
         commitAll: ({ log: callLog, ...options }) => commitAll({ ...options, log: callLog ?? log }),
+        commitAllDeterministic: ({ log: callLog, ...options }) =>
+          commitAllDeterministic({ ...options, log: callLog ?? log }),
         createCommitAgent: (mode) => createCommitAgent(side, mode),
         smartPush: (cwd, remote, branch, options) =>
           smartPush(cwd, remote, branch, options?.log ?? log, options?.resolver),

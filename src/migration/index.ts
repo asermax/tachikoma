@@ -4,6 +4,7 @@ import type { Workspace } from "../workspace.ts";
 import { type Ask, createAsk } from "./ask.ts";
 import { adaptContextFiles } from "./context.ts";
 import { adaptLegacyDatabase } from "./database.ts";
+import { backupBeforeSessionsDrop } from "./drop-sessions-table.ts";
 import { adaptSkillsFrontmatter } from "./skills.ts";
 import { adaptLegacyTasks } from "./tasks.ts";
 
@@ -22,6 +23,10 @@ export const adaptWorkspace = async (
 ): Promise<void> => {
   // Must complete before drizzle opens the database file, so failures propagate.
   await adaptLegacyDatabase(workspace, log);
+
+  // Back up before the destructive schema migration (drop sessions, reshape channel_messages).
+  // Self-detecting/idempotent; runs after the legacy adaptation so a freshly-imported DB is also guarded.
+  await backupBeforeSessionsDrop(workspace, log);
 
   try {
     await adaptContextFiles(workspace, log);

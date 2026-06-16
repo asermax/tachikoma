@@ -181,7 +181,7 @@ describe("executeBackgroundInstance", () => {
       "/sessions/with-transcript.jsonl",
     );
     expect(deps.runPostProcessors).toHaveBeenCalledWith(
-      expect.objectContaining({ transcriptPath: "/sessions/with-transcript.jsonl", session: null }),
+      expect.objectContaining({ transcriptPath: "/sessions/with-transcript.jsonl", trunk: null }),
     );
   });
 

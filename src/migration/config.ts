@@ -76,10 +76,6 @@ const translateOldConfig = async (
 
   if (typeof raw.channel === "string") result.channels = { default: raw.channel };
 
-  const resumeWindow = oldAgent?.session_resume_window;
-
-  if (typeof resumeWindow === "number") result.sessions = { resumeWindowSeconds: resumeWindow };
-
   const timezone = asTable(raw.tasks)?.timezone;
 
   if (typeof timezone === "string" && timezone !== "") result.scheduler = { timezone };

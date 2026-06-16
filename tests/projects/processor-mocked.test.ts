@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { GitApi, PostProcessorContext } from "../../src/extensions/api.ts";
 import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { PUSH_RESULT } from "../../src/git/sync.ts";
@@ -23,7 +22,7 @@ const { createProjectsProcessor } = await import("../../src/extensions/projects/
 const log = fakeLogger();
 
 const context = (): PostProcessorContext => ({
-  session: {} as SessionRecord,
+  trunk: null,
   transcriptPath: null,
   log,
 });

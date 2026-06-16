@@ -35,9 +35,14 @@ interface ApiCall {
 
 type UpdateHandler = (ctx: unknown) => Promise<void> | void;
 
+interface MessageRouting {
+  treeEntryId: string;
+  branchId: string;
+}
+
 interface RecordedMessage {
   messageId: string;
-  sessionId: number;
+  routing: MessageRouting;
   direction: "incoming" | "outgoing";
 }
 
@@ -47,23 +52,21 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
   let next = 0;
 
   const recorded: RecordedMessage[] = [];
-  const mappings = new Map<string, number>();
-  const prompts = new Map<string, string>();
-  const lastExchanges = new Map<number, string>();
-  const session = { id: 100 as number | null };
+  const mappings = new Map<string, MessageRouting>();
+  const branchExchanges = new Map<string, string>();
+  // The trunk routing for the message being produced/received: live leaf entry + live branch id.
+  const routing = {
+    current: { treeEntryId: "entry-1", branchId: "topic-1" } as MessageRouting | null,
+  };
 
   const store = {
-    record: vi.fn((messageId: string, sessionId: number, direction: "incoming" | "outgoing") => {
-      recorded.push({ messageId, sessionId, direction });
-      mappings.set(messageId, sessionId);
-    }),
-    findSessionId: vi.fn((messageId: string) => mappings.get(messageId) ?? null),
-    findMessage: vi.fn((messageId: string) => {
-      const sessionId = mappings.get(messageId);
-      if (sessionId == null) return null;
-      const latest = recorded.filter((r) => r.sessionId === sessionId).at(-1)?.messageId ?? null;
-      return { sessionId, text: prompts.get(messageId) ?? null, isLatest: latest === messageId };
-    }),
+    record: vi.fn(
+      (messageId: string, value: MessageRouting, direction: "incoming" | "outgoing") => {
+        recorded.push({ messageId, routing: value, direction });
+        mappings.set(messageId, value);
+      },
+    ),
+    resolve: vi.fn((messageId: string) => mappings.get(messageId) ?? null),
   };
 
   const api = {
@@ -127,8 +130,8 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     mediaDir: "/tmp/media",
     stop,
     store,
-    currentSessionId: () => session.id,
-    lastExchangeOf: (id: number) => lastExchanges.get(id) ?? null,
+    currentRouting: () => routing.current,
+    branchLastExchange: (branchId: string) => branchExchanges.get(branchId) ?? null,
     ...overrides,
   });
 
@@ -210,9 +213,8 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     store,
     recorded,
     mappings,
-    prompts,
-    lastExchanges,
-    session,
+    branchExchanges,
+    routing,
     triggerError: (error: unknown) => errorHandler({ error }),
     startCalls,
     setRunning: (value: boolean) => {
@@ -412,7 +414,11 @@ describe("respond push notification", () => {
       ]),
     });
 
-    expect(recorded).toContainEqual({ messageId: "2", sessionId: 100, direction: "outgoing" });
+    expect(recorded).toContainEqual({
+      messageId: "2",
+      routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+      direction: "outgoing",
+    });
   });
 
   it("keeps the streamed message when the copy fails", async () => {
@@ -509,7 +515,11 @@ describe("respond push notification", () => {
       ]),
     });
 
-    expect(recorded).toContainEqual({ messageId: "1", sessionId: 100, direction: "outgoing" });
+    expect(recorded).toContainEqual({
+      messageId: "1",
+      routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+      direction: "outgoing",
+    });
   });
 });
 
@@ -719,7 +729,7 @@ const inboundWith = (text: string, messageId: number) => ({
 });
 
 describe("message recording", () => {
-  it("records the inbound and outbound message ids against the receiving session", async () => {
+  it("records the inbound and outbound message ids against the current routing", async () => {
     const { channel, runtime, recorded } = makeChannel();
     await channel.start(runtime);
 
@@ -732,14 +742,22 @@ describe("message recording", () => {
     });
 
     expect(recorded).toEqual([
-      { messageId: "7", sessionId: 100, direction: "incoming" },
-      { messageId: "1", sessionId: 100, direction: "outgoing" },
+      {
+        messageId: "7",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "incoming",
+      },
+      {
+        messageId: "1",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "outgoing",
+      },
     ]);
   });
 
-  it("skips recording when no session is active", async () => {
-    const { channel, runtime, recorded, session } = makeChannel();
-    session.id = null;
+  it("skips recording when no trunk is active", async () => {
+    const { channel, runtime, recorded, routing } = makeChannel();
+    routing.current = null;
     await channel.start(runtime);
 
     await channel.respond({
@@ -754,17 +772,22 @@ describe("message recording", () => {
   });
 });
 
-describe("reply-to session routing", () => {
-  it("stamps the owning session as a resume target when replying to a known message", async () => {
+describe("reply-to branch routing", () => {
+  it("stamps the referenced branch when replying to a known message", async () => {
     const { channel, runtime, submit, mappings, dispatchText } = makeChannel();
     await channel.start(runtime);
 
-    mappings.set("3", 55);
+    mappings.set("3", { treeEntryId: "entry-9", branchId: "topic-2" });
 
     await dispatchText("follow-up", 9, { message_id: 3 });
 
     expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({ metadata: expect.objectContaining({ resumeSessionId: 55 }) }),
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          forcedBranchId: "topic-2",
+          forcedTreeEntryId: "entry-9",
+        }),
+      }),
     );
   });
 
@@ -775,36 +798,32 @@ describe("reply-to session routing", () => {
     await dispatchText("follow-up", 9, { message_id: 999 });
 
     const submitted = submit.mock.calls[0]?.[0];
-    expect(submitted.metadata.resumeSessionId).toBeUndefined();
+    expect(submitted.metadata.forcedBranchId).toBeUndefined();
     expect(submitted.metadata.replyToMessageId).toBe("999");
     expect(submitted.text).toBe(`follow-up${UNRESOLVED_REPLY_HINT}`);
   });
 
-  it("omits the reply quote when replying to the session's latest message", async () => {
-    const { channel, runtime, submit, mappings, recorded, dispatchText } = makeChannel();
+  it("omits the reply quote when replying to the live branch's message", async () => {
+    const { channel, runtime, submit, mappings, dispatchText } = makeChannel();
     await channel.start(runtime);
 
-    mappings.set("3", 55);
-    recorded.push({ messageId: "3", sessionId: 55, direction: "outgoing" });
+    // Target on the live branch (topic-1, the current routing): quote is suppressed (already live).
+    mappings.set("3", { treeEntryId: "entry-3", branchId: "topic-1" });
 
     await dispatchText("follow-up", 9, { message_id: 3, text: "the plan is ready" });
 
     const submitted = submit.mock.calls[0]?.[0];
     expect(submitted.text).toBe("follow-up");
     expect(submitted.metadata.replyToMessageId).toBe("3");
-    expect(submitted.metadata.resumeSessionId).toBe(55);
+    expect(submitted.metadata.forcedBranchId).toBe("topic-1");
   });
 
-  it("keeps the reply quote for an older replied-to message", async () => {
-    const { channel, runtime, submit, mappings, recorded, dispatchText } = makeChannel();
+  it("keeps the reply quote for a message on an earlier branch", async () => {
+    const { channel, runtime, submit, mappings, dispatchText } = makeChannel();
     await channel.start(runtime);
 
-    mappings.set("3", 55);
-    mappings.set("4", 55);
-    recorded.push(
-      { messageId: "3", sessionId: 55, direction: "outgoing" },
-      { messageId: "4", sessionId: 55, direction: "outgoing" },
-    );
+    // Target on an earlier branch (topic-2, not the live topic-1): the quote is kept for context.
+    mappings.set("3", { treeEntryId: "entry-3", branchId: "topic-2" });
 
     await dispatchText("follow-up", 9, { message_id: 3, text: "the plan is ready" });
 
@@ -818,7 +837,7 @@ describe("inbound reactions", () => {
     const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
     await channel.start(runtime);
 
-    mappings.set("12", 100);
+    mappings.set("12", { treeEntryId: "entry-12", branchId: "topic-1" });
 
     await dispatchReaction(12, "👍");
 
@@ -830,16 +849,21 @@ describe("inbound reactions", () => {
     );
   });
 
-  it("routes a reaction to the session that owns the reacted-to message", async () => {
+  it("routes a reaction to the branch that owns the reacted-to message", async () => {
     const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
     await channel.start(runtime);
 
-    mappings.set("12", 77);
+    mappings.set("12", { treeEntryId: "entry-12", branchId: "topic-2" });
 
     await dispatchReaction(12, "👍");
 
     expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({ metadata: expect.objectContaining({ resumeSessionId: 77 }) }),
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          forcedBranchId: "topic-2",
+          forcedTreeEntryId: "entry-12",
+        }),
+      }),
     );
   });
 
@@ -870,18 +894,13 @@ describe("inbound reactions", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("prepends the owning session's last exchange when reacting to an older message", async () => {
-    const { channel, runtime, submit, mappings, recorded, lastExchanges, dispatchReaction } =
-      makeChannel();
+  it("prepends the referenced branch's last exchange when reacting to an earlier branch", async () => {
+    const { channel, runtime, submit, mappings, branchExchanges, dispatchReaction } = makeChannel();
     await channel.start(runtime);
 
-    mappings.set("10", 77);
-    mappings.set("11", 77);
-    recorded.push(
-      { messageId: "10", sessionId: 77, direction: "outgoing" },
-      { messageId: "11", sessionId: 77, direction: "outgoing" },
-    );
-    lastExchanges.set(77, "user: hi\nassistant: hello there");
+    // Reaction targets a message on an earlier branch (topic-2, not the live topic-1).
+    mappings.set("10", { treeEntryId: "entry-10", branchId: "topic-2" });
+    branchExchanges.set("topic-2", "user: hi\nassistant: hello there");
 
     await dispatchReaction(10, "👍");
 
@@ -892,14 +911,13 @@ describe("inbound reactions", () => {
     );
   });
 
-  it("omits context when reacting to the session's latest message", async () => {
-    const { channel, runtime, submit, mappings, recorded, lastExchanges, dispatchReaction } =
-      makeChannel();
+  it("omits context when reacting to a message on the live branch", async () => {
+    const { channel, runtime, submit, mappings, branchExchanges, dispatchReaction } = makeChannel();
     await channel.start(runtime);
 
-    mappings.set("11", 77);
-    recorded.push({ messageId: "11", sessionId: 77, direction: "outgoing" });
-    lastExchanges.set(77, "user: hi\nassistant: hello there");
+    // Reaction targets a message on the live branch (topic-1, the current routing).
+    mappings.set("11", { treeEntryId: "entry-11", branchId: "topic-1" });
+    branchExchanges.set("topic-1", "user: hi\nassistant: hello there");
 
     await dispatchReaction(11, "👍");
 
@@ -1029,44 +1047,34 @@ describe("callback queries", () => {
     );
   });
 
-  it("prepends the original prompt when tapping an older button message", async () => {
-    const { channel, runtime, submit, mappings, recorded, prompts, dispatchCallback } =
-      makeChannel();
+  it("forces the referenced branch when tapping a button on an earlier branch", async () => {
+    const { channel, runtime, submit, mappings, dispatchCallback } = makeChannel();
     await channel.start(runtime);
 
-    mappings.set("5", 100);
-    mappings.set("8", 100);
-    recorded.push(
-      { messageId: "5", sessionId: 100, direction: "outgoing" },
-      { messageId: "8", sessionId: 100, direction: "outgoing" },
-    );
-    prompts.set("5", "Proceed?");
+    mappings.set("5", { treeEntryId: "entry-5", branchId: "topic-2" });
 
     await dispatchCallback({ data: packCallbackData("yes", false), messageId: 5 });
 
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Proceed?\n\nThe user tapped the option `yes` out of the options you displayed.",
+        metadata: expect.objectContaining({
+          buttonValue: "yes",
+          forcedBranchId: "topic-2",
+          forcedTreeEntryId: "entry-5",
+        }),
       }),
     );
   });
 
-  it("omits the prompt when tapping the latest button message", async () => {
-    const { channel, runtime, submit, mappings, recorded, prompts, dispatchCallback } =
-      makeChannel();
+  it("carries no forced routing when tapping an unrecorded button message", async () => {
+    const { channel, runtime, submit, dispatchCallback } = makeChannel();
     await channel.start(runtime);
-
-    mappings.set("5", 100);
-    recorded.push({ messageId: "5", sessionId: 100, direction: "outgoing" });
-    prompts.set("5", "Proceed?");
 
     await dispatchCallback({ data: packCallbackData("yes", false), messageId: 5 });
 
-    expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: "The user tapped the option `yes` out of the options you displayed.",
-      }),
-    );
+    const submitted = submit.mock.calls[0]?.[0];
+    expect(submitted.metadata.buttonValue).toBe("yes");
+    expect(submitted.metadata.forcedBranchId).toBeUndefined();
   });
 });
 
@@ -1191,7 +1199,7 @@ describe("message recording errors", () => {
         record: vi.fn(() => {
           throw new Error("db down");
         }),
-        findSessionId: vi.fn(() => null),
+        resolve: vi.fn(() => null),
       },
     });
     void store;
@@ -1226,7 +1234,13 @@ describe("message recording errors", () => {
       ]),
     });
 
-    expect(recorded).toEqual([{ messageId: "1", sessionId: 100, direction: "outgoing" }]);
+    expect(recorded).toEqual([
+      {
+        messageId: "1",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "outgoing",
+      },
+    ]);
   });
 });
 
@@ -1357,7 +1371,7 @@ describe("media handling", () => {
   });
 });
 
-describe("routeReply with non-string reply target", () => {
+describe("forced routing with no reply target", () => {
   it("leaves the message untouched when there is no reply-to id", async () => {
     const { channel, runtime, submit, dispatchText } = makeChannel();
     await channel.start(runtime);
@@ -1365,7 +1379,7 @@ describe("routeReply with non-string reply target", () => {
     await dispatchText("plain message");
 
     const submitted = submit.mock.calls[0]?.[0];
-    expect(submitted.metadata.resumeSessionId).toBeUndefined();
+    expect(submitted.metadata.forcedBranchId).toBeUndefined();
   });
 });
 

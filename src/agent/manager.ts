@@ -1,4 +1,5 @@
 import { existsSync, statSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type AgentSession,
@@ -17,6 +18,22 @@ import type { Logger } from "../log.ts";
 import type { Workspace } from "../workspace.ts";
 import { type ModelTier, ModelTiers } from "./models.ts";
 import { buildMainSystemPrompt } from "./prompts.ts";
+import { lastAssistantText } from "./side-run.ts";
+
+/**
+ * A throwaway headless session forked from a live branch, used for non-invasive topic-shift
+ * classification. `prompt` runs one agent turn against the forked conversation and returns the
+ * assistant text; `dispose` tears down the session and deletes the temporary forked file.
+ */
+export interface ShadowFork {
+  prompt(text: string): Promise<string>;
+  dispose(): Promise<void>;
+}
+
+export interface ShadowForkOptions {
+  systemPrompt?: string;
+  tier?: ModelTier;
+}
 
 export interface AgentSessionSources {
   piFactories: ExtensionFactory[];
@@ -123,9 +140,11 @@ export class AgentManager {
   /**
    * Open the main conversational session, with all registered extensions bound.
    *
-   * We open a fresh AgentSession per topic via createAgentSession and deliberately bypass pi's
-   * AgentSessionRuntime replacement API (newSession/switchSession/fork): Tachikoma owns session
-   * lifecycle and resumption through its drizzle-backed session registry, not pi's session tree.
+   * The coordinator owns the single-active invariant and the daily-trunk lifecycle through this
+   * `open` (today's trunk is one `AgentSession` reopened from its session file); pi's
+   * `AgentSessionRuntime` replacement API (newSession/switchSession/fork) remains unused. Conversational
+   * state lives on the pi session file as native tree entries — there is no session registry (see
+   * [ADR-014](../../docs/architecture/ADR-014-session-source-of-truth.md)).
    */
   async open(options: OpenSessionOptions = {}): Promise<AgentSession> {
     const workspace = this.workspace;
@@ -232,5 +251,49 @@ export class AgentManager {
   /** Whether any forkAndContinue run is currently in flight (see `forkDepth`). */
   isForking(): boolean {
     return this.forkDepth > 0;
+  }
+
+  /**
+   * Fork the current branch of `sourceSessionFile` into a throwaway headless session for
+   * non-invasive classification (topic-shift detection). We open the source file in a SEPARATE
+   * `SessionManager` and `createBranchedSession(leafId)` a fresh file containing only the
+   * root→leaf path — the source transcript is never mutated (R6). The forked session is opened
+   * bare (no extensions — so the boundary extension does not recursively load in the shadow) with
+   * no tools and the live system prompt, then deleted on dispose.
+   *
+   * Reuses the existing `open()` machinery rather than pi's lower-level
+   * `createAgentSessionServices`/`FromServices` two-call path (see design S2): `open` already
+   * composes the loader, model tier, and tool allowlist we need, and `bare` + `tools: []` give an
+   * extension-free, tool-free headless session equivalent to `noTools: "all"`.
+   */
+  async shadowFork(
+    sourceSessionFile: string,
+    options: ShadowForkOptions = {},
+  ): Promise<ShadowFork> {
+    const source = SessionManager.open(sourceSessionFile, this.workspace.sessionsDir);
+    const leafId = source.getLeafId();
+    if (leafId == null) throw new Error("cannot shadow-fork a session with no entries");
+
+    const forkedFile = source.createBranchedSession(leafId);
+    if (forkedFile == null) throw new Error("shadow fork did not persist a branched session file");
+
+    const session = await this.open({
+      sessionFile: forkedFile,
+      bare: true,
+      tier: options.tier ?? "classifier",
+      tools: [],
+      ...(options.systemPrompt != null ? { systemPrompt: options.systemPrompt } : {}),
+    });
+
+    return {
+      prompt: async (text) => {
+        await session.prompt(text);
+        return lastAssistantText(session.messages);
+      },
+      dispose: async () => {
+        session.dispose();
+        await rm(forkedFile, { force: true });
+      },
+    };
   }
 }

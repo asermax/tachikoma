@@ -3,22 +3,15 @@ import { type Static, Type } from "typebox";
 import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { createTranscriptArchiveProcessor, pruneTranscripts } from "./archive.ts";
-import { createExtractionProcessor } from "./extraction.ts";
+import { createTrunkClosePipeline } from "./close-pipeline.ts";
 import { buildMemoryContext } from "./indexes.ts";
-import { ensureMemoryLayout, MEMORY_STORES } from "./layout.ts";
-import { runContextMaintenanceTick, runMaintenanceTick } from "./maintenance.ts";
+import { ensureMemoryLayout } from "./layout.ts";
 
 export const MemoryConfigSchema = Type.Object({
   enabled: Type.Boolean({ default: true }),
   maintenance: Type.Object(
     {
       enabled: Type.Boolean({ default: true }),
-      // Staggered so the three headless agent runs don't pile up at the same minute.
-      episodicSchedule: Type.String({ default: "0 3 * * *" }),
-      factsSchedule: Type.String({ default: "20 3 * * *" }),
-      preferencesSchedule: Type.String({ default: "40 3 * * *" }),
-      // Foundational context (SOUL/USER/AGENTS) cleanup; staggered after the store ticks.
-      contextSchedule: Type.String({ default: "0 4 * * *" }),
       recentDays: Type.Number({ default: 15 }),
       weeklyThresholdMonths: Type.Number({ default: 3 }),
       monthlyThresholdMonths: Type.Number({ default: 12 }),
@@ -35,8 +28,9 @@ export type MemoryConfig = Static<typeof MemoryConfigSchema>;
 /**
  * Long-term memory: a git-versioned markdown store under workspace `memories/`
  * (episodic, facts, preferences, transcripts). Injects a static index of the
- * store on every message, extracts memories at session close, archives the pi
- * transcript, and consolidates the store on a nightly schedule.
+ * store on every message; folds extraction + pruning + consolidation + the
+ * once-daily core-context update into the trunk-close pipeline, and archives
+ * the trunk transcript at close.
  */
 export default defineExtension<MemoryConfig>({
   name: "memory",
@@ -50,6 +44,7 @@ export default defineExtension<MemoryConfig>({
     }
 
     const workspaceRoot = app.workspace.root;
+    const { maintenance } = app.extensionConfig;
 
     app.bootstrap("init-memory-layout", () => ensureMemoryLayout(workspaceRoot, app.log));
 
@@ -57,18 +52,6 @@ export default defineExtension<MemoryConfig>({
       provideContext(() => buildMemoryContext(workspaceRoot), "memories"),
       { sessionScopes: ["main", "background"] },
     );
-
-    // Each store registers its own processor; phase:"main" runs them via Promise.allSettled,
-    // so the three run as three parallel forks of the just-ended conversation.
-    const extraction = { agent: app.agent, workspaceRoot };
-
-    for (const store of MEMORY_STORES) {
-      app.sessions.registerProcessor(createExtractionProcessor(store, extraction));
-    }
-
-    app.sessions.registerProcessor(createTranscriptArchiveProcessor(workspaceRoot));
-
-    const { maintenance } = app.extensionConfig;
 
     if (maintenance.enabled) {
       const commitAgent = app.git.createCommitAgent("workspace");
@@ -81,38 +64,36 @@ export default defineExtension<MemoryConfig>({
             fallbackMessage: message,
           });
 
-          if (committed.length > 0)
-            app.log.info({ message }, "committed memory maintenance changes");
+          if (committed.length > 0) app.log.info({ message }, "committed memory pipeline changes");
         } catch (error) {
-          app.log.warn({ err: error }, "memory maintenance commit failed");
+          app.log.warn({ err: error }, "memory pipeline commit failed");
         }
       };
 
-      const deps = {
-        side: app.agent.side,
-        workspaceRoot,
-        settings: maintenance,
-        log: app.log,
-        commitChanges,
-      };
-
-      app.scheduler.cron("memory-episodic-maintenance", maintenance.episodicSchedule, () =>
-        runMaintenanceTick("episodic", deps),
-      );
-      app.scheduler.cron("memory-facts-maintenance", maintenance.factsSchedule, () =>
-        runMaintenanceTick("facts", deps),
-      );
-      app.scheduler.cron("memory-preferences-maintenance", maintenance.preferencesSchedule, () =>
-        runMaintenanceTick("preferences", deps),
-      );
-
-      app.scheduler.cron("memory-context-maintenance", maintenance.contextSchedule, () =>
-        runContextMaintenanceTick(deps),
-      );
-
-      app.scheduler.cron("memory-transcripts-maintenance", maintenance.transcriptsSchedule, () =>
-        pruneTranscripts(workspaceRoot, maintenance.transcriptRetentionDays, app.log),
+      // The whole nightly memory pipeline now runs at trunk close: per-branch extraction,
+      // prune, consolidation, and the once-daily core-context update — each guarded by an idempotent
+      // marker on the session file. The phase bodies are a pluggable seam (close-pipeline.ts) reusing
+      // the existing maintenance logic; a later consolidation change replaces them behind the same functions.
+      app.sessions.registerProcessor(
+        createTrunkClosePipeline({
+          extraction: { agent: { forkAndContinue: app.agent.forkAndContinue }, workspaceRoot },
+          phases: {
+            side: app.agent.side,
+            workspaceRoot,
+            settings: maintenance,
+            log: app.log,
+            commitChanges,
+          },
+        }),
       );
     }
+
+    app.sessions.registerProcessor(createTranscriptArchiveProcessor(workspaceRoot));
+
+    // Transcript retention stays a deterministic, host-side cleanup cron (no agent run) — it prunes
+    // archived transcripts purely by age, unlike the agent-driven maintenance that moved into close.
+    app.scheduler.cron("memory-transcripts-prune", maintenance.transcriptsSchedule, () =>
+      pruneTranscripts(workspaceRoot, maintenance.transcriptRetentionDays, app.log),
+    );
   },
 });

@@ -19,7 +19,7 @@ describe("config loading", () => {
 
     expect(created).toBe(true);
     expect(config.agent.main).toBeUndefined();
-    expect(config.sessions.resumeWindowSeconds).toBe(86400);
+    expect(config.channels.default).toBe("telegram");
     await expect(readFile(path, "utf8")).resolves.toContain("[workspace]");
   });
 
@@ -34,7 +34,7 @@ describe("config loading", () => {
     expect(created).toBe(false);
     expect(config.agent.main).toBe("anthropic/claude-fable-5");
     expect(config.agent.processor).toBeUndefined();
-    expect(config.channels.default).toBe("repl");
+    expect(config.channels.default).toBe("telegram");
   });
 
   it("rejects malformed TOML with a ConfigError carrying the line and column", async () => {
@@ -69,7 +69,7 @@ describe("config loading", () => {
     const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
     const path = join(dir, "config.toml");
     const { writeFile } = await import("node:fs/promises");
-    await writeFile(path, '[sessions]\nresumeWindowSeconds = "soon"\n', "utf8");
+    await writeFile(path, '[logging]\nretentionDays = "soon"\n', "utf8");
 
     await expect(loadConfig(path)).rejects.toThrow(ConfigError);
   });
@@ -83,6 +83,27 @@ describe("config loading", () => {
     const { config } = await loadConfig(path);
 
     expect(config.scheduler.timezone).toBe("America/Argentina/Buenos_Aires");
+  });
+
+  it("defaults the nightly trunk-close hour to 04:00", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+    const path = join(dir, "config.toml");
+
+    const { config } = await loadConfig(path);
+
+    expect(config.scheduler.nightlyCloseHour).toBe(4);
+  });
+
+  it("honours a configured nightly trunk-close hour", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+    const path = join(dir, "config.toml");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path, "[scheduler]\nnightlyCloseHour = 2\n", "utf8");
+
+    const { config } = await loadConfig(path);
+
+    expect(config.scheduler.nightlyCloseHour).toBe(2);
+    expect(`0 ${config.scheduler.nightlyCloseHour} * * *`).toBe("0 2 * * *");
   });
 
   it("rejects an invalid scheduler timezone with a clear error", async () => {

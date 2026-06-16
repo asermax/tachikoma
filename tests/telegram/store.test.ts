@@ -6,69 +6,42 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { type AppDatabase, createDatabase, runMigrations } from "../../src/db/index.ts";
 import { TelegramMessageStore } from "../../src/extensions/telegram/store.ts";
-import { SessionRegistry } from "../../src/sessions/registry.ts";
 
 let db: AppDatabase;
-let registry: SessionRegistry;
 let store: TelegramMessageStore;
 
 beforeEach(async () => {
   const dir = await mkdtemp(join(tmpdir(), "tachi-tg-store-"));
   db = createDatabase(join(dir, "test.db"));
   runMigrations(db);
-  registry = new SessionRegistry(db);
   store = new TelegramMessageStore(db);
 });
 
 describe("TelegramMessageStore", () => {
-  it("records a mapping and resolves the owning session by message id", () => {
-    const session = registry.create("telegram", "/tmp/s.jsonl");
-    store.record("m-1", session.id, "incoming");
+  it("records a mapping and resolves the routing by message id", () => {
+    store.record("m-1", { treeEntryId: "entry-1", branchId: "topic-3" }, "incoming");
 
-    expect(store.findSessionId("m-1")).toBe(session.id);
+    expect(store.resolve("m-1")).toEqual({ treeEntryId: "entry-1", branchId: "topic-3" });
   });
 
-  it("upserts the mapping on conflict, repointing it to the latest session", () => {
-    const first = registry.create("telegram", "/tmp/a.jsonl");
-    const second = registry.create("telegram", "/tmp/b.jsonl");
+  it("upserts the mapping on conflict, repointing it to the latest routing", () => {
+    store.record("m-1", { treeEntryId: "entry-1", branchId: "topic-1" }, "incoming");
+    store.record("m-1", { treeEntryId: "entry-9", branchId: "topic-2" }, "outgoing");
 
-    store.record("m-1", first.id, "incoming");
-    store.record("m-1", second.id, "outgoing");
-
-    expect(store.findSessionId("m-1")).toBe(second.id);
+    expect(store.resolve("m-1")).toEqual({ treeEntryId: "entry-9", branchId: "topic-2" });
   });
 
   it("returns null when no mapping exists for the message id", () => {
-    expect(store.findSessionId("missing")).toBeNull();
+    expect(store.resolve("missing")).toBeNull();
   });
 
-  it("resolves a recorded message to its session, stored text, and latest flag", () => {
-    const session = registry.create("telegram", "/tmp/s.jsonl");
-    store.record("m-1", session.id, "outgoing", "Proceed?");
-    store.record("m-2", session.id, "incoming");
+  it("records the live-branch id, which equals the branch's eventual collapse id", () => {
+    // A message recorded mid-branch uses the same `topic-(count + 1)` formula collapse uses, so the
+    // id written here is the id the branch carries once it later collapses.
+    const liveBranchId = "topic-4";
+    store.record("m-1", { treeEntryId: "entry-1", branchId: liveBranchId }, "outgoing");
 
-    expect(store.findMessage("m-1")).toEqual({
-      sessionId: session.id,
-      text: "Proceed?",
-      isLatest: false,
-    });
-    expect(store.findMessage("m-2")).toEqual({
-      sessionId: session.id,
-      text: null,
-      isLatest: true,
-    });
-  });
-
-  it("returns null from findMessage for an unrecorded id", () => {
-    expect(store.findMessage("missing")).toBeNull();
-  });
-
-  it("preserves stored text when re-recorded without text", () => {
-    const session = registry.create("telegram", "/tmp/s.jsonl");
-    store.record("m-1", session.id, "outgoing", "Proceed?");
-    // A later exchange re-records the same id without text (e.g. routing refresh).
-    store.record("m-1", session.id, "outgoing");
-
-    expect(store.findMessage("m-1")?.text).toBe("Proceed?");
+    // A reply targeting that message later resolves to the same id the branch was assigned at collapse.
+    expect(store.resolve("m-1")?.branchId).toBe(liveBranchId);
   });
 });

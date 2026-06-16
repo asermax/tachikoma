@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionRecord } from "../../src/db/core-schema.ts";
 import {
   createTranscriptArchiveProcessor,
   pruneTranscripts,
@@ -13,7 +12,7 @@ import type { Logger } from "../../src/log.ts";
 
 const fakeLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
-const session = { id: 1 } as SessionRecord;
+const trunk = null;
 
 let workspace: string;
 
@@ -35,7 +34,7 @@ describe("transcript archive processor", () => {
     const processor = createTranscriptArchiveProcessor(workspace);
     expect(processor.phase).toBe("finalize");
 
-    await processor.process({ session, transcriptPath: src, log: fakeLog });
+    await processor.process({ trunk, transcriptPath: src, log: fakeLog });
 
     const dest = join(workspace, "memories", "transcripts", "sess-abc.jsonl");
     expect(await readFile(dest, "utf8")).toBe(content);
@@ -46,7 +45,7 @@ describe("transcript archive processor", () => {
     await writeFile(src, `${JSON.stringify({ type: "message", id: "1" })}\n`, "utf8");
 
     await createTranscriptArchiveProcessor(workspace).process({
-      session,
+      trunk,
       transcriptPath: src,
       log: fakeLog,
     });
@@ -60,7 +59,7 @@ describe("transcript archive processor", () => {
     await writeFile(src, `${JSON.stringify({ type: "session", id: "" })}\n`, "utf8");
 
     await createTranscriptArchiveProcessor(workspace).process({
-      session,
+      trunk,
       transcriptPath: src,
       log: fakeLog,
     });
@@ -74,7 +73,7 @@ describe("transcript archive processor", () => {
     await writeFile(src, `${JSON.stringify({ type: "session", id: 42 })}\n`, "utf8");
 
     await createTranscriptArchiveProcessor(workspace).process({
-      session,
+      trunk,
       transcriptPath: src,
       log: fakeLog,
     });
@@ -86,7 +85,7 @@ describe("transcript archive processor", () => {
   it("never throws when the source transcript is missing", async () => {
     await expect(
       createTranscriptArchiveProcessor(workspace).process({
-        session,
+        trunk,
         transcriptPath: join(workspace, "missing.jsonl"),
         log: fakeLog,
       }),
@@ -97,7 +96,7 @@ describe("transcript archive processor", () => {
 
   it("skips silently when there is no transcript", async () => {
     await createTranscriptArchiveProcessor(workspace).process({
-      session,
+      trunk,
       transcriptPath: null,
       log: fakeLog,
     });

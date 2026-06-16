@@ -7,7 +7,7 @@ export type Ask = (question: string) => Promise<boolean>;
 /**
  * Yes/no startup prompt. Interactive only on a TTY; otherwise every question
  * resolves to its safe default (no) with a warning. Prompts run before any
- * channel starts, so there is no stdin contention with the REPL.
+ * channel starts, so there is no stdin contention with a terminal channel.
  */
 export const createAsk = (log: Logger): Ask => {
   return async (question) => {
@@ -16,7 +16,7 @@ export const createAsk = (log: Logger): Ask => {
       return false;
     }
 
-    // Prompt on stderr so channel output on stdout (REPL) stays clean.
+    // Prompt on stderr so any channel writing to stdout stays clean.
     const readline = createInterface({ input: process.stdin, output: process.stderr });
 
     try {

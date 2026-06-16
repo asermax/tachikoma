@@ -32,12 +32,9 @@ rotateFrequency = "daily"
 retentionDays = 7
 
 [channels]
-# Channel started by default: "repl" or "telegram".
-default = "repl"
-
-[sessions]
-# How far back closed sessions are considered for topic resumption.
-resumeWindowSeconds = 86400
+# Channel started by default. Telegram is the only built-in channel; a local
+# terminal interface returns in a later delta.
+default = "telegram"
 
 [scheduler]
 # IANA timezone for cron schedules; defaults to the detected system timezone
@@ -54,8 +51,8 @@ resumeWindowSeconds = 86400
 # Per-extension settings live under [extensions.<name>], for example:
 #
 # [extensions.boundary]
-# # Seconds of conversation silence before the active session closes (0 disables).
-# idleCloseSeconds = 900
+# # Gate topic-shift detection. Forced shifts ("/new") are honored even when off.
+# enabled = true
 #
 # [extensions.telegram]
 # botToken = "..."

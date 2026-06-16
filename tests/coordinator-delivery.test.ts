@@ -5,49 +5,62 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentManager } from "../src/agent/manager.ts";
-import type { Channel, Delivery } from "../src/channels/types.ts";
+import type { Channel, Delivery, Exchange } from "../src/channels/types.ts";
 import { Coordinator } from "../src/coordinator.ts";
 import { type AppDatabase, createDatabase, runMigrations } from "../src/db/index.ts";
+import { KeyValueState } from "../src/db/state.ts";
 import { EventBus } from "../src/events.ts";
-import { createRegistrations } from "../src/extensions/registrations.ts";
+import { createRegistrations, type Registrations } from "../src/extensions/registrations.ts";
 import type { Logger } from "../src/log.ts";
-import { SessionRegistry } from "../src/sessions/registry.ts";
+import { TrunkState } from "../src/sessions/trunk.ts";
 
 const createFakeLog = () => {
-  const log = {
-    warn: vi.fn(),
-    info: vi.fn(),
-    debug: vi.fn(),
-    error: vi.fn(),
-  };
-
+  const log = { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() };
   return Object.assign(log, { child: () => log }) as unknown as Logger;
 };
 
 const createChannel = (delivered: Delivery[]): Channel => ({
   name: "test",
   start: vi.fn(),
-  respond: vi.fn(),
+  respond: vi.fn(async (exchange: Exchange) => {
+    for await (const _ of exchange.events) {
+      // drain
+    }
+  }),
   deliver: vi.fn(async (delivery: Delivery) => {
     delivered.push(delivery);
   }),
   stop: vi.fn(),
 });
 
+const fakeSession = () => ({
+  sessionFile: "/tmp/trunk.jsonl",
+  dispose: vi.fn(),
+  messages: [],
+  subscribe: () => () => {},
+  prompt: vi.fn().mockResolvedValue(undefined),
+  sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+});
+
 const noopAgent = { open: vi.fn() } as unknown as AgentManager;
 
-// A session mock just complete enough for streamPrompt (subscribe + prompt) so a wired
-// loop can process an injected turn without a real pi session.
 const createRunnableAgent = () =>
   ({
-    open: vi.fn().mockResolvedValue({
-      sessionFile: "/tmp/active.jsonl",
-      dispose: vi.fn(),
-      messages: [],
-      subscribe: () => () => {},
-      prompt: vi.fn().mockResolvedValue(undefined),
-    }),
+    open: vi.fn().mockResolvedValue(fakeSession()),
   }) as unknown as AgentManager;
+
+const makeCoordinator = (
+  db: AppDatabase,
+  agent: AgentManager,
+  regs: Registrations = createRegistrations(),
+  now: () => Date = () => new Date(),
+) => {
+  const log = createFakeLog();
+  const trunkState = new TrunkState(new KeyValueState(db, "trunk"));
+  const coordinator = new Coordinator(trunkState, agent, regs, new EventBus(log), log, "UTC", now);
+
+  return { coordinator, trunkState, log };
+};
 
 let db: AppDatabase;
 let dir: string;
@@ -64,98 +77,70 @@ afterEach(() => {
 
 describe("Coordinator background delivery", () => {
   it("renders an immediate command ack straight to the channel, bypassing the queue", () => {
-    const log = createFakeLog();
-    const coordinator = new Coordinator(
-      new SessionRegistry(db),
-      noopAgent,
-      createRegistrations(),
-      new EventBus(log),
-      log,
-    );
+    const { coordinator } = makeCoordinator(db, noopAgent);
 
     const delivered: Delivery[] = [];
     coordinator.attachChannel(createChannel(delivered));
     const submitSpy = vi.spyOn(coordinator, "submit");
 
-    coordinator.deliver({ text: "🆕 Started a fresh session.", immediate: true });
+    coordinator.deliver({ text: "🆕 Started a fresh topic.", immediate: true });
 
-    expect(delivered).toEqual([{ text: "🆕 Started a fresh session.", immediate: true }]);
+    expect(delivered).toEqual([{ text: "🆕 Started a fresh topic.", immediate: true }]);
     expect(submitSpy).not.toHaveBeenCalled();
   });
 
-  it("delivers an idle-deliverable notice as one system-origin turn, never a channel render", () => {
-    const log = createFakeLog();
-    const coordinator = new Coordinator(
-      new SessionRegistry(db),
-      noopAgent,
-      createRegistrations(),
-      new EventBus(log),
-      log,
-    );
-
-    const delivered: Delivery[] = [];
-    coordinator.attachChannel(createChannel(delivered));
-    const submitSpy = vi.spyOn(coordinator, "submit");
-
-    // No prior exchange → inherently idle → the queue drains immediately as a turn.
-    coordinator.deliver({ text: "task done", tier: "normal" });
-
-    expect(submitSpy).toHaveBeenCalledTimes(1);
-    const message = submitSpy.mock.calls[0]?.[0];
-    expect(message?.metadata).toMatchObject({ origin: "system", boundary: "skip" });
-    expect(message?.text).toContain("task done");
-    // System-origin injection, not a direct channel render.
-    expect(delivered).toEqual([]);
-  });
-
-  it("wakes the parked run loop to inject a queued notice as a turn", async () => {
-    const log = createFakeLog();
-    const coordinator = new Coordinator(
-      new SessionRegistry(db),
-      createRunnableAgent(),
-      createRegistrations(),
-      new EventBus(log),
-      log,
-    );
+  it("holds a delivery while no trunk is live, then drains once a trunk opens", async () => {
+    const { coordinator } = makeCoordinator(db, createRunnableAgent());
     coordinator.attachChannel(createChannel([]));
     const submitSpy = vi.spyOn(coordinator, "submit");
 
+    // No run loop started → no trunk live yet. The delivery must be held, not flushed.
+    coordinator.deliver({ text: "task done", tier: "normal" });
+    expect(submitSpy).not.toHaveBeenCalled();
+
+    // Start the loop: the first delivery is itself the first event of the day → opens a trunk and
+    // drains as one system-origin turn.
     const controller = new AbortController();
     const loop = coordinator.run(controller.signal);
 
-    // Let the loop reach its parked state (empty inbox) before the notice arrives.
-    await Promise.resolve();
-    expect(submitSpy).not.toHaveBeenCalled();
-
-    coordinator.deliver({ text: "background ping", tier: "normal" });
-
-    // The enqueue flushes (no prior exchange → inherently idle) and submit wakes the loop,
-    // which consumes the injected digest turn rather than re-parking with it stranded.
     await vi.waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(1));
-    expect(submitSpy.mock.calls[0]?.[0].text).toContain("background ping");
+    const message = submitSpy.mock.calls[0]?.[0];
+    expect(message?.metadata).toMatchObject({ origin: "system", boundary: "skip" });
+    expect(message?.text).toContain("task done");
 
     controller.abort();
     await loop;
   });
 
-  it("drains items queued during shutdown to the channel as one tier-ordered digest", async () => {
-    const log = createFakeLog();
-    const regs = createRegistrations();
-    const coordinator = new Coordinator(
-      new SessionRegistry(db),
-      noopAgent,
-      regs,
-      new EventBus(log),
-      log,
+  it("opens a new trunk for a background delivery arriving after a close", async () => {
+    const agent = createRunnableAgent();
+    const { coordinator } = makeCoordinator(db, agent);
+    coordinator.attachChannel(createChannel([]));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    // First delivery opens the trunk and drains.
+    coordinator.deliver({ text: "first", tier: "normal" });
+    await vi.waitFor(() =>
+      expect((agent.open as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(1),
     );
+
+    controller.abort();
+    await loop;
+
+    // After shutdown the trunk is closed; activeTrunkSession is null.
+    expect(coordinator.activeTrunkSession()).toBeNull();
+  });
+
+  it("drains items queued during shutdown to the channel as one tier-ordered digest", async () => {
+    const regs = createRegistrations();
+    const { coordinator } = makeCoordinator(db, noopAgent, regs);
 
     const delivered: Delivery[] = [];
     coordinator.attachChannel(createChannel(delivered));
     const submitSpy = vi.spyOn(coordinator, "submit");
 
-    // Mirrors the notifications router's onShutdown hook: it pushes pending notices into
-    // the queue during teardown, where the shutting-down flag holds them for the final
-    // awaited drain instead of an agent turn.
     regs.shutdownHooks.push({
       name: "emit",
       hook: () => {
@@ -170,7 +155,6 @@ describe("Coordinator background delivery", () => {
     controller.abort();
     await loop;
 
-    // One digest to the channel, never re-submitted to the dead inbox.
     expect(submitSpy).not.toHaveBeenCalled();
     expect(delivered).toHaveLength(1);
 

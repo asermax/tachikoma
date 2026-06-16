@@ -5,7 +5,7 @@ import { createGitResolver } from "../../git/resolve.ts";
 import { defineExtension } from "../api.ts";
 import { buildProjectsContext } from "./context-provider.ts";
 import { syncProjects } from "./hooks.ts";
-import { createProjectsProcessor } from "./processor.ts";
+import { createProjectsExchangeProcessor, createProjectsProcessor } from "./processor.ts";
 import { createProjectsToolsFactory } from "./tools.ts";
 
 interface ProjectsConfig {
@@ -46,6 +46,12 @@ export default defineExtension<ProjectsConfig>({
       {
         sessionScopes: ["main", "background"],
       },
+    );
+
+    // Per-exchange: commit dirty submodules deterministically (no push). Push
+    // stays at close in the pre-finalize processor below.
+    app.sessions.onExchange(
+      createProjectsExchangeProcessor({ workspaceRoot, git: app.git, log: app.log }),
     );
 
     app.sessions.registerProcessor(

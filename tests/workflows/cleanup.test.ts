@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { AppDatabase } from "../../src/db/index.ts";
 import {
   createStaleWorkflowCleanup,
@@ -53,7 +52,7 @@ const backdate = (id: string, hours: number): void => {
 };
 
 const processorContext = () => ({
-  session: { id: 1 } as SessionRecord,
+  trunk: null,
   transcriptPath: null,
   log: createFakeLog(),
 });
@@ -142,7 +141,7 @@ describe("stale workflow cleanup", () => {
     };
 
     await createStaleWorkflowCleanup(repo, 24).process({
-      session: { id: 1 } as SessionRecord,
+      trunk: null,
       transcriptPath: null,
       log,
     });

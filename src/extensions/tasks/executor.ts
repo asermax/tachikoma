@@ -291,7 +291,7 @@ export const executeBackgroundInstance = async (
         // session's pi JSONL feeds episodic/facts extraction (transcriptPath is now non-null).
         session.dispose();
         session = null;
-        await runPostProcessors({ session: null, transcriptPath, log });
+        await runPostProcessors({ trunk: null, transcriptPath, log });
         // No programmatic success notice: the agent surfaces results via notify_user at
         // its own discretion (per the task prompt).
         log.info({ instanceId: instance.id }, "background task completed");

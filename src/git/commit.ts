@@ -21,6 +21,43 @@ export interface CommitAllOptions {
 const subjectsSince = (cwd: string, head: string | null): Promise<string[]> =>
   commitSubjects(cwd, head != null ? `${head}..HEAD` : "HEAD");
 
+export interface CommitAllDeterministicOptions {
+  cwd: string;
+  /** Message for the single commit produced when the tree is dirty. */
+  message: string;
+  log: Logger;
+}
+
+/**
+ * Stage every change in `cwd` and commit it once with `message`. No agent, no
+ * grouping, no model call — the cheap deterministic path used by the
+ * per-exchange safety commit and reused by `commitAll`'s fallback. Returns the
+ * subjects of every commit made (read from git, oldest-first), or an empty
+ * array when there was nothing to commit.
+ */
+export const commitAllDeterministic = async ({
+  cwd,
+  message,
+  log,
+}: CommitAllDeterministicOptions): Promise<string[]> => {
+  if (!(await hasUncommittedChanges(cwd))) return [];
+
+  const headResult = await runGitCapture(cwd, ["rev-parse", "HEAD"]);
+  const head = headResult.code === 0 && headResult.stdout !== "" ? headResult.stdout : null;
+
+  await runGit(cwd, ["add", "-A"]);
+
+  const { stdout: diffStat } = await runGitCapture(cwd, ["diff", "--cached", "--stat"]);
+
+  if (diffStat === "") return subjectsSince(cwd, head);
+
+  await runGit(cwd, ["commit", "-m", message]);
+
+  log.debug({ path: cwd }, "deterministic commit made");
+
+  return subjectsSince(cwd, head);
+};
+
 /**
  * Commit every change in `cwd`. The agent runs first, grouping changes into
  * cohesive commits; if it throws, returns nothing usable, or leaves the tree
@@ -48,13 +85,9 @@ export const commitAll = async ({
   }
 
   // Fallback: one commit with the deterministic message for whatever remains.
-  await runGit(cwd, ["add", "-A"]);
-
-  const { stdout: diffStat } = await runGitCapture(cwd, ["diff", "--cached", "--stat"]);
-
-  if (diffStat === "") return subjectsSince(cwd, head);
-
-  await runGit(cwd, ["commit", "-m", fallbackMessage]);
+  // `head` is captured fresh inside the helper, so its returned subjects cover
+  // only the fallback commit; widen to everything since our own `head` instead.
+  await commitAllDeterministic({ cwd, message: fallbackMessage, log });
 
   return subjectsSince(cwd, head);
 };

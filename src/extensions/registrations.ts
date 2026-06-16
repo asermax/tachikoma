@@ -1,7 +1,6 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import type { Channel } from "../channels/types.ts";
-import type { SessionRecord } from "../db/core-schema.ts";
 import type { ExchangeProcessor, InboundMiddleware, PostProcessor } from "./api.ts";
 
 export interface BootstrapHook {
@@ -22,7 +21,8 @@ export interface Registrations {
   exchangeProcessors: ExchangeProcessor[];
   postProcessors: PostProcessor[];
   inboundMiddleware: InboundMiddleware[];
-  sessionOpenHooks: ((session: SessionRecord) => void | Promise<void>)[];
+  /** Fired once per day when the trunk opens (daily-trunk lifecycle). */
+  sessionOpenHooks: (() => void | Promise<void>)[];
   channels: Map<string, Channel>;
   bootstrapHooks: BootstrapHook[];
   shutdownHooks: { name: string; hook: () => void | Promise<void> }[];

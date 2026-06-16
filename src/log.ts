@@ -49,7 +49,7 @@ const FILES_PER_DAY: Record<string, number> = { hourly: 24, daily: 1 };
 export const retainedFiles = (retentionDays: number, frequency: string): number =>
   Math.max(1, Math.ceil(retentionDays * (FILES_PER_DAY[frequency] ?? 1)));
 
-// Logs always go to stderr so channel output on stdout (REPL) stays clean.
+// Logs always go to stderr so any channel writing to stdout stays clean.
 export const createRootLogger = async ({ level, pretty, file }: LogOptions): Promise<Logger> => {
   // Legacy configs used uppercase levels ("INFO"); pino requires lowercase,
   // and this runs before config migration gets a chance to translate.

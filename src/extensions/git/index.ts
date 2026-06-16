@@ -4,6 +4,7 @@ import { provideContext } from "../../agent/system-prompt-section.ts";
 import { createCommitAgent } from "../../git/commit-agent.ts";
 import { createGitResolver } from "../../git/resolve.ts";
 import { defineExtension } from "../api.ts";
+import { createGitExchangeProcessor } from "./exchange.ts";
 import { createGitGuardrailFactory } from "./guardrail.ts";
 import { initializeWorkspaceRepo } from "./hooks.ts";
 import { createGitProcessor } from "./processor.ts";
@@ -51,6 +52,18 @@ export default defineExtension<GitConfig>({
       sessionScopes: ["main", "background"],
     });
 
+    // Per-exchange: agent-grouped WIP commit (no push) so work is durable
+    // mid-day with a meaningful message. It runs a model call, so it is launched
+    // off the exchange path and never blocks the next turn.
+    app.sessions.onExchange(
+      createGitExchangeProcessor({ workspaceRoot, agent: commitAgent, log: app.log }),
+    );
+
+    // At trunk close: the agent groups whatever is still uncommitted (residual
+    // changes only — the day's per-exchange WIP commits are left as-is, no
+    // rebase/amend) and pushes once. This close-time agent commit and the
+    // parallel per-branch memory extraction both fire at close, so a trunk close
+    // drives a burst of side-runner load.
     app.sessions.registerProcessor(
       createGitProcessor({ workspaceRoot, agent: commitAgent, resolver }),
     );

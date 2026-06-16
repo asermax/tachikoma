@@ -1,27 +1,26 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
+import type { ShadowFork, ShadowForkOptions } from "../agent/manager.ts";
 import type { ModelTier, ModelTiers } from "../agent/models.ts";
 import type { SideRunner } from "../agent/side-run.ts";
 import type { Channel, Delivery } from "../channels/types.ts";
 import type { Config } from "../config/schema.ts";
-import type { SessionRecord } from "../db/core-schema.ts";
 import type { AppDatabase } from "../db/index.ts";
 import type { KeyValueState } from "../db/state.ts";
 import type { InboundMessage } from "../domain/message.ts";
 import type { EventBus } from "../events.ts";
-import type { CommitAllOptions } from "../git/commit.ts";
+import type { CommitAllDeterministicOptions, CommitAllOptions } from "../git/commit.ts";
 import type { CommitAgent } from "../git/commit-agent.ts";
 import type { PushResult, RebaseResolver, SyncResult } from "../git/sync.ts";
 import type { Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
+import type { BranchRecord } from "../sessions/trunk.ts";
 import type { Workspace } from "../workspace.ts";
 
 // ---- pipeline contracts -----------------------------------------------------
 
 export interface ExchangeContext {
-  session: SessionRecord;
   userText: string;
-  assistantText: string;
 }
 
 export type ExchangeProcessor = {
@@ -37,10 +36,19 @@ export const POST_PROCESSING_PHASES = {
 
 export type PostProcessingPhase = keyof typeof POST_PROCESSING_PHASES;
 
+/** The day's trunk handed to the close pipeline (daily-trunk model). */
+export interface TrunkPostContext {
+  session: AgentSession;
+  sessionFile: string;
+  /** Local calendar day (`YYYY-MM-DD`) the trunk belongs to. */
+  day: string;
+  branchRecords: BranchRecord[];
+}
+
 export interface PostProcessorContext {
-  /** Null for background runs that have no conversational session record. */
-  session: SessionRecord | null;
-  /** Path to the pi session JSONL transcript, when the session persisted one. */
+  /** The closing trunk, or null for background runs that have no conversational trunk. */
+  trunk: TrunkPostContext | null;
+  /** Path to the pi session JSONL transcript (the trunk session file), when one persisted. */
   transcriptPath: string | null;
   log: Logger;
 }
@@ -51,12 +59,22 @@ export interface PostProcessor {
   process(context: PostProcessorContext): Promise<void>;
 }
 
+/** The live trunk handed to inbound middleware so the boundary can drive collapse on it directly. */
+export interface TrunkInbound {
+  session: AgentSession;
+  sessionFile: string;
+  /** The base the live branch extends (latest collapse summary id), or null on a fresh trunk. */
+  currentBaseId: string | null;
+  branchRecords: BranchRecord[];
+  /** The id the live branch will carry if it collapses (matches the eventual `getBranchRecords` id). */
+  liveBranchId: string;
+  /** Whether the live branch has at least one assistant turn since its base (empty-branch guard). */
+  hasAssistantTurnSinceBase: boolean;
+}
+
 export interface InboundContext {
-  session: SessionRecord | null;
-  /** Close the active session (post-processing runs) before the message is handled. */
-  closeSession(): Promise<void>;
-  /** Resume a previously closed session and make it active. */
-  resumeSession(session: SessionRecord): Promise<void>;
+  /** The live trunk, or null when no trunk is active yet (e.g. a fully-handled command). */
+  trunk: TrunkInbound | null;
 }
 
 export type InboundMiddleware = (
@@ -68,20 +86,14 @@ export type InboundMiddleware = (
 // ---- app services exposed to extensions --------------------------------------
 
 export interface SessionsApi {
-  current(): SessionRecord | null;
-  get(id: number): SessionRecord | null;
-  update(
-    id: number,
-    patch: Partial<Pick<SessionRecord, "summary" | "lastExchange">>,
-  ): SessionRecord;
-  listResumable(): SessionRecord[];
-  /** Close the active session immediately — callers must know no exchange is streaming. */
+  /** Close the active trunk immediately — callers must know no exchange is streaming. */
   close(): Promise<void>;
-  /** Close the active session only when no exchange is in flight; returns whether it closed. */
-  closeIfIdle(): Promise<boolean>;
   /** Abort the in-flight agent run, if any (user-initiated stop). */
   abortExchange(): Promise<void>;
-  onOpen(hook: (session: SessionRecord) => void | Promise<void>): void;
+  /** The live daily-trunk pi session, or null when no trunk is active. */
+  activeTrunkSession(): AgentSession | null;
+  /** Fires once when the day's trunk opens (daily-trunk lifecycle). */
+  onOpen(hook: () => void | Promise<void>): void;
   onExchange(processor: ExchangeProcessor): void;
   registerProcessor(processor: PostProcessor): void;
   /**
@@ -147,6 +159,13 @@ export interface AgentApi {
    * post-processing forks; consult this to scope such per-turn work to genuine top-level turns.
    */
   isForking(): boolean;
+  /**
+   * Fork the current branch of `sourceSessionFile` into a throwaway headless session for
+   * non-invasive topic-shift classification — the source transcript is never mutated. The returned
+   * handle runs one classification turn and is disposed (which deletes the forked file). See the
+   * `session-tree` helpers for direct branch/tree access on a live session.
+   */
+  shadowFork(sourceSessionFile: string, options?: ShadowForkOptions): Promise<ShadowFork>;
 }
 
 export interface InboundApi {
@@ -169,6 +188,15 @@ export interface GitApi {
    * extension's logger when omitted.
    */
   commitAll(options: Omit<CommitAllOptions, "log"> & { log?: Logger }): Promise<string[]>;
+  /**
+   * Commit every change in `cwd` in one deterministic commit (`git add -A` +
+   * commit `message`) — no agent, no model call. Returns the subjects of every
+   * commit made, or an empty array when the tree was clean. `log` defaults to
+   * the extension's logger when omitted.
+   */
+  commitAllDeterministic(
+    options: Omit<CommitAllDeterministicOptions, "log"> & { log?: Logger },
+  ): Promise<string[]>;
   /**
    * Build a `CommitAgent` for a repo. `"workspace"` groups workspace changes by
    * area; `"project"` matches the target repo's own commit-message style.

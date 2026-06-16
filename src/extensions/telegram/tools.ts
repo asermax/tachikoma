@@ -6,7 +6,7 @@ import type { InlineKeyboardMarkup, MessageEntity, ReactionTypeEmoji } from "gra
 import { type Static, Type } from "typebox";
 
 import { buildInlineKeyboard, validateButtons } from "./buttons.ts";
-import type { ChannelMessageStore } from "./channel.ts";
+import type { ChannelMessageStore, MessageRouting } from "./channel.ts";
 import { toTelegramEntities } from "./entities.ts";
 import { sendEntitiesOrFallback } from "./sending.ts";
 
@@ -58,10 +58,10 @@ export interface ToolDeps {
   allowedRoots: string[];
   getLastInboundMessageId: () => number | null;
   getLastOutboundMessageId: () => number | null;
-  /** Record/lookup message↔session mappings for reply-to routing. */
+  /** Record/lookup message→branch mappings for reply-to routing. */
   store: ChannelMessageStore;
-  /** Id of the session currently receiving messages, for outbound recording. */
-  currentSessionId: () => number | null;
+  /** The current trunk routing (live leaf entry + branch), for outbound recording. */
+  currentRouting: () => MessageRouting | null;
 }
 
 // ---- send_telegram_file -------------------------------------------------------
@@ -232,7 +232,7 @@ const ButtonsParams = Type.Object({
 });
 
 export const handleSendMessageWithButtons = async (
-  deps: Pick<ToolDeps, "api" | "chatId" | "store" | "currentSessionId">,
+  deps: Pick<ToolDeps, "api" | "chatId" | "store" | "currentRouting">,
   params: Static<typeof ButtonsParams>,
 ): Promise<string> => {
   validateButtons(params.buttons);
@@ -249,13 +249,11 @@ export const handleSendMessageWithButtons = async (
     { reply_markup },
   );
 
-  // Map the prompt to the current session so a reply (or tap) routes back to
-  // the session that asked the question, mirroring regular outbound recording.
-  // The prompt text is stored too so a later tap on an older button message can
-  // recover the question it answers.
-  const sessionId = deps.currentSessionId();
-  if (sessionId != null) {
-    deps.store.record(String(messageId), sessionId, "outgoing", params.prompt);
+  // Map the button message to the current trunk routing so a later tap routes back to the branch
+  // that asked the question, mirroring regular outbound recording.
+  const routing = deps.currentRouting();
+  if (routing != null) {
+    deps.store.record(String(messageId), routing, "outgoing");
   }
 
   return `Buttons sent (message_id: ${messageId})`;

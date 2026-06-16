@@ -57,6 +57,13 @@
       "when": 1781547738054,
       "tag": "0007_sessions_error",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1781547739054,
+      "tag": "0008_dlt175_trunk_routing",
+      "breakpoints": true
     }
   ]
 }

@@ -213,8 +213,12 @@ describe("handleSendMessageWithButtons", () => {
   ) => ({
     api,
     chatId: 42,
-    store: { record: vi.fn(), findSessionId: vi.fn(() => null) },
-    currentSessionId: () => 100 as number | null,
+    store: { record: vi.fn(), resolve: vi.fn(() => null) },
+    currentRouting: () =>
+      ({ treeEntryId: "entry-1", branchId: "topic-1" }) as {
+        treeEntryId: string;
+        branchId: string;
+      } | null,
     ...overrides,
   });
 
@@ -304,26 +308,30 @@ describe("handleSendMessageWithButtons", () => {
     });
   });
 
-  it("records the prompt as an outgoing message for the current session", async () => {
+  it("records the button message against the current branch routing", async () => {
     const api = fakeApi();
     const record = vi.fn();
 
     await handleSendMessageWithButtons(
-      buttonDeps(api, { store: { record, findSessionId: vi.fn(() => null) } }),
+      buttonDeps(api, { store: { record, resolve: vi.fn(() => null) } }),
       { prompt: "Proceed?", buttons: [[{ label: "Yes", value: "yes" }]] },
     );
 
-    expect(record).toHaveBeenCalledWith("11", 100, "outgoing", "Proceed?");
+    expect(record).toHaveBeenCalledWith(
+      "11",
+      { treeEntryId: "entry-1", branchId: "topic-1" },
+      "outgoing",
+    );
   });
 
-  it("skips recording when no session is active", async () => {
+  it("skips recording when no trunk is active", async () => {
     const api = fakeApi();
     const record = vi.fn();
 
     await handleSendMessageWithButtons(
       buttonDeps(api, {
-        store: { record, findSessionId: vi.fn(() => null) },
-        currentSessionId: () => null,
+        store: { record, resolve: vi.fn(() => null) },
+        currentRouting: () => null,
       }),
       { prompt: "Proceed?", buttons: [[{ label: "Yes", value: "yes" }]] },
     );
@@ -412,8 +420,8 @@ describe("registerTelegramTools", () => {
     allowedRoots: ["/tmp/ws"],
     getLastInboundMessageId: () => 5,
     getLastOutboundMessageId: () => 7,
-    store: { record: vi.fn(), findSessionId: vi.fn(() => null) },
-    currentSessionId: () => 100,
+    store: { record: vi.fn(), resolve: vi.fn(() => null) },
+    currentRouting: () => ({ treeEntryId: "entry-1", branchId: "topic-1" }),
   });
 
   it("registers all five telegram tools", () => {

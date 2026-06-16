@@ -110,6 +110,21 @@ pi implements the **Agent Skills standard** (agentskills.io) — `SKILL.md` + YA
 - **Cross-session orchestration** — boundary detection, session registry/recovery, topic resume: ours, on top of `SessionManager`/`AgentSessionRuntime`.
 - **Database** — ours (drizzle + node:sqlite).
 
+## Daily-trunk session-tree seam
+
+The daily-trunk model (ADR-014) relies on these `SessionManager` primitives — re-verify each on a pi upgrade. They are wrapped in `src/agent/session-tree.ts` (tree ops) and `AgentManager.shadowFork` (classification fork):
+
+| Primitive | Signature | Used for |
+|---|---|---|
+| `branchWithSummary` | `(branchFromId: string \| null, summary: string, details?: unknown, fromHook?: boolean) => string` | Collapse the current branch into a `branch_summary` entry at the base; returns the new summary id (advanced base). Does NOT record the abandoned leaf — we store `originalLeafId` in `details`. |
+| `createBranchedSession` | `(leafId: string) => string \| undefined` | Write a new session file with only the root→leaf path. Backs the shadow-fork classifier (fork the live branch) and per-branch extraction (fork one branch's full conversation). Returns the new file path. |
+| `getBranch` | `(fromId?: string) => SessionEntry[]` | Walk an entry to root in path order — branch enumeration / extraction slicing. |
+| `appendCustomEntry` | `(customType: string, data?: unknown) => string` | Persist trunk/branch/boomerang state + idempotency markers out of LLM context. |
+| `appendCustomMessageEntry` | `(customType, content, display: boolean, details?) => string` | Inject the related-branch pointer into LLM context with `display: false`. |
+| `getEntries` / `getEntry` / `getLeafId` / `branch(id)` | as in the instance API above | Rebuild branch records on reload; re-seat the leaf onto the current base after `open` (pi sets the leaf to the LAST file entry, not the active tip). |
+
+`AgentManager.shadowFork(sourceFile, { systemPrompt, tier })` reuses the existing `open({ sessionFile, bare: true, tools: [] })` path rather than pi's lower-level `createAgentSessionServices`/`createAgentSessionFromServices` two-call construction — `bare` + empty `tools` already yields an extension-free, tool-free headless session, and `open` composes the loader/model/tier. The fork file is deleted on `dispose`. The source file is opened in a separate `SessionManager` and is never mutated (R6).
+
 ## Misc verified utilities
 
 `parseFrontmatter`, `withFileMutationQueue(path, fn)` (parallel tool calls mutating the same file MUST use it), `truncateHead/truncateTail/DEFAULT_MAX_BYTES (50KB)/DEFAULT_MAX_LINES (2000)`, `StringEnum` from pi-ai (use instead of `Type.Union` of literals — Google API compat), `isToolCallEventType`, `createCodingTools/createReadOnlyTools/create{Read,Bash,Edit,Write,Grep,Find,Ls}Tool` with pluggable `operations` (remote/sandbox exec) and bash `spawnHook`, `validateToolCall`, run modes (`InteractiveMode`, `runPrintMode`, `runRpcMode`).

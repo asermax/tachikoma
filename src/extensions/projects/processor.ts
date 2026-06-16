@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { CommitAgent } from "../../git/commit-agent.ts";
 import { PUSH_SUCCESS, type RebaseResolver } from "../../git/sync.ts";
 import type { Logger } from "../../log.ts";
-import type { GitApi, PostProcessor } from "../api.ts";
+import type { ExchangeProcessor, GitApi, PostProcessor } from "../api.ts";
 import { isAhead, isDirty, listSubmodules } from "./git.ts";
 
 export interface ProjectsProcessorDeps {
@@ -188,6 +188,71 @@ export const createProjectsProcessor = ({
     for (const [index, result] of pushResults.entries()) {
       if (result.status === "rejected") {
         log.warn({ path: aheadPaths[index], err: result.reason }, "failed to push ahead submodule");
+      }
+    }
+  },
+});
+
+export interface ProjectsExchangeProcessorDeps {
+  workspaceRoot: string;
+  git: GitApi;
+  log: Logger;
+}
+
+/**
+ * Per-exchange safety commit for submodules: after each exchange, commit any
+ * dirty registered project in one cheap deterministic commit — no agent, no
+ * model call, no push. The agent-grouped commit and push stay at trunk close
+ * (see `createProjectsProcessor`).
+ */
+export const createProjectsExchangeProcessor = ({
+  workspaceRoot,
+  git,
+  log,
+}: ProjectsExchangeProcessorDeps): ExchangeProcessor => ({
+  name: "projects-exchange-commit",
+
+  async process() {
+    const submodulePaths = await listSubmodules(workspaceRoot);
+
+    if (submodulePaths.length === 0) return;
+
+    const dirtyChecks = await Promise.allSettled(
+      submodulePaths.map((path) => isDirty(join(workspaceRoot, path))),
+    );
+
+    const dirtyPaths: string[] = [];
+
+    for (const [index, check] of dirtyChecks.entries()) {
+      const path = submodulePaths[index] as string;
+
+      if (check.status === "rejected") {
+        log.warn({ path, err: check.reason }, "failed to check submodule status");
+      } else if (check.value) {
+        dirtyPaths.push(path);
+      }
+    }
+
+    if (dirtyPaths.length === 0) return;
+
+    const results = await Promise.allSettled(
+      dirtyPaths.map((path) =>
+        git.commitAllDeterministic({
+          cwd: join(workspaceRoot, path),
+          message: projectFallbackMessage(path.split("/").at(-1) ?? path),
+          log,
+        }),
+      ),
+    );
+
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        log.warn({ path: dirtyPaths[index], err: result.reason }, "failed to commit submodule");
+      } else if (result.value.length > 0) {
+        log.debug(
+          { path: dirtyPaths[index], subjects: result.value },
+          "per-exchange project commit",
+        );
       }
     }
   },

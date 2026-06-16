@@ -1,117 +1,135 @@
 import { Type } from "typebox";
 
-import type { SessionRecord } from "../../db/core-schema.ts";
 import { defineExtension } from "../api.ts";
-import { detectBoundary } from "./detector.ts";
-import { registerIdleClose } from "./idle.ts";
-import { createSummaryProcessor } from "./summary.ts";
+import { createAskBranchFactory } from "./ask-branch.ts";
+import { classifyShift } from "./classifier.ts";
+import { collapseCurrentTopic } from "./collapse.ts";
+import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
 
 interface BoundaryConfig {
   enabled: boolean;
-  idleCloseSeconds: number;
 }
 
-// A session whose post-processing failed has incomplete derived state (summary,
-// memories), so resuming it would build on a broken foundation — exclude it.
-const hasFailedProcessing = (session: SessionRecord): boolean =>
-  Object.values(session.postProcessingState ?? {}).includes("failed");
-
 /**
- * Conversation boundaries, temporal and topical: closes sessions after a silence
- * window, keeps a rolling per-session summary after every exchange, and classifies
- * each incoming message as continuing the active session, starting a fresh one,
- * or resuming a recently closed one.
+ * Conversation boundaries on the daily trunk. On each idle user message a shadow-fork
+ * classifier decides whether the message continues the current topic or starts a new one; a shift
+ * collapses the current branch into a `branch_summary` on the trunk and may pull a related prior
+ * branch's context. The `ask_branch` tool answers focused questions from any prior branch. Detection
+ * is non-invasive (the live session is never mutated by the classifier) and fails open.
  */
 export default defineExtension<BoundaryConfig>({
   name: "boundary",
 
   configSchema: Type.Object({
-    // Gates topic-shift detection; the idle boundary is governed only by idleCloseSeconds.
+    // Gates topic-shift detection. Forced shifts ("/new") are honored even when detection is off.
     enabled: Type.Boolean({ default: true }),
-    // Seconds of conversation silence before the active session closes (0 disables).
-    idleCloseSeconds: Type.Number({ default: 900 }),
   }),
 
   setup(app) {
-    if (app.extensionConfig.idleCloseSeconds > 0) {
-      registerIdleClose(app.sessions, app.extensionConfig.idleCloseSeconds, app.log);
-    }
-
     const detectionEnabled = app.extensionConfig.enabled;
 
-    if (detectionEnabled) {
-      app.sessions.onExchange(createSummaryProcessor(app.agent.side, app.sessions, app.log));
-    } else {
+    if (!detectionEnabled) {
       app.log.info("boundary detection disabled by configuration");
     }
 
-    app.inbound.use(async (message, context, next) => {
-      // System-originated injections (session tasks, notices) never shift topics.
-      if (message.metadata.boundary === "skip") return next();
+    // `ask_branch` resolves its target on the live trunk session the coordinator owns.
+    app.agent.use(
+      createAskBranchFactory({
+        getTrunkSession: () => app.sessions.activeTrunkSession(),
+        shadowFork: app.agent.shadowFork,
+        log: app.log,
+      }),
+      { sessionScopes: ["main"] },
+    );
 
-      // "/new": force a fresh session by closing the active one. Honored even when
-      // topic detection is off, so the user can always start over explicitly.
-      if (message.metadata.forceNew === true) {
-        if (context.session != null) {
-          app.status("Starting a new conversation");
-          await context.closeSession();
+    app.inbound.use(async (message, context, next) => {
+      const trunk = context.trunk;
+
+      // System-origin injections (session tasks, notices) and turns with no live trunk never shift
+      // topics — they append to the current branch with detection skipped (R13).
+      if (message.metadata.boundary === "skip" || trunk == null) return next();
+
+      // Collapse the live branch into a `branch_summary`, unless it has no assistant turn yet
+      // (empty-branch guard: a shift off an empty branch starts the new branch without an empty summary).
+      const collapseLiveBranch = (
+        status: string,
+        reason?: string,
+      ): Promise<unknown> | undefined => {
+        if (!trunk.hasAssistantTurnSinceBase) return undefined;
+
+        app.status(status);
+
+        return collapseCurrentTopic(
+          { side: app.agent.side, log: app.log },
+          {
+            session: trunk.session,
+            currentBaseId: trunk.currentBaseId,
+            branchId: trunk.liveBranchId,
+            reason,
+          },
+        );
+      };
+
+      // Forced reply/reaction/button reference (Telegram resolves a referenced message to its branch).
+      // The reference is an explicit, deterministic signal of intent, so it bypasses the classifier:
+      // same branch → append; earlier branch → forced collapse + new branch + inject that branch's
+      // context. An unrecorded target carries no forced metadata and falls through to detection below.
+      if (typeof message.metadata.forcedBranchId === "string") {
+        const forcedBranchId = message.metadata.forcedBranchId;
+        const referenced = trunk.branchRecords.find((record) => record.branchId === forcedBranchId);
+
+        // A reference to the live (un-collapsed) branch is in the current conversation already → append.
+        if (forcedBranchId === trunk.liveBranchId) return next();
+
+        // A recorded id that resolves to a known earlier branch forces a shift + context injection;
+        // an id that no longer resolves to a record (e.g. a stale routing row) falls through to the
+        // classifier below rather than silently appending.
+        if (referenced != null) {
+          await collapseLiveBranch(
+            "Switching to an earlier topic",
+            `user referenced ${forcedBranchId}`,
+          );
+          injectRelatedBranchContext(trunk.session, referenced);
+
+          return next();
         }
+      }
+
+      // "/new": force a topic shift. Honored even when detection is off, so the user can always start over.
+      if (message.metadata.forceNew === true) {
+        await collapseLiveBranch("Starting a new topic", "user forced a new topic");
 
         return next();
       }
 
       if (!detectionEnabled) return next();
 
-      // An explicit reply-to target (e.g. a Telegram reply) force-routes to its
-      // owning session, bypassing topic classification entirely.
-      if (typeof message.metadata.resumeSessionId === "number") {
-        const target = app.sessions.get(message.metadata.resumeSessionId);
-
-        if (target != null && target.id !== context.session?.id) {
-          app.status("Switching to the conversation you replied to");
-          await context.resumeSession(target);
-        }
-
-        return next();
-      }
-
-      const active = context.session;
-      const candidates = app.sessions
-        .listResumable()
-        .filter(
-          (session) =>
-            session.summary != null && session.id !== active?.id && !hasFailedProcessing(session),
-        )
-        .map((session) => ({ id: session.id, summary: session.summary as string }));
-
-      // Nothing to compare against: first-ever message, or an active session that
-      // has not produced a summary yet and no resumable history.
-      if ((active == null || active.summary == null) && candidates.length === 0) {
-        return next();
-      }
-
       app.status("Checking conversation topic…");
 
-      const decision = await detectBoundary(
-        app.agent.side,
+      const decision = await classifyShift(
         {
-          message: message.text,
-          activeSummary: active?.summary ?? null,
-          lastExchange: active?.lastExchange ?? null,
-          candidates,
+          shadowFork: app.agent.shadowFork,
+          getSystemPrompt: () => trunk.session.systemPrompt,
+          log: app.log,
         },
-        app.log,
+        {
+          sessionFile: trunk.sessionFile,
+          currentBranchHasAssistantTurn: trunk.hasAssistantTurnSinceBase,
+          message: message.text,
+        },
       );
 
-      if (decision.decision === "new" && active != null) {
-        app.status("Topic shift — closing the previous session");
-        await context.closeSession();
-      } else if (decision.decision === "resume" && decision.resumeSessionId != null) {
-        const target = app.sessions.get(decision.resumeSessionId);
+      if (decision === "shift") {
+        const collapsed = await collapseLiveBranch("Topic shift — collapsing the previous branch");
 
-        if (target != null) {
-          app.status("Resuming a previous conversation");
-          await context.resumeSession(target);
+        // Pull a related prior branch's context onto the fresh branch (one pointer, no merge).
+        if (collapsed != null) {
+          const related = await findRelatedBranch(
+            { side: app.agent.side, log: app.log },
+            { session: trunk.session, branchRecords: trunk.branchRecords, message: message.text },
+          );
+
+          if (related != null) injectRelatedBranchContext(trunk.session, related);
         }
       }
 

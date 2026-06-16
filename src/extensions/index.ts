@@ -9,7 +9,6 @@ import git from "./git/index.ts";
 import memory from "./memory/index.ts";
 import notifications from "./notifications/index.ts";
 import projects from "./projects/index.ts";
-import repl from "./repl/index.ts";
 import selfUpdate from "./self-update/index.ts";
 import skills from "./skills/index.ts";
 import tasks from "./tasks/index.ts";
@@ -31,7 +30,6 @@ export const firstPartyExtensions = [
   detachedProcesses,
   notifications,
   selfUpdate,
-  repl,
   telegram,
   external,
 ] as TachikomaExtension<never>[];

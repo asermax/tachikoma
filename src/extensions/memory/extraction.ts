@@ -1,9 +1,6 @@
-import { FILE_EDIT_TOOLS } from "../../agent/file-tools.ts";
-import type { AgentManager } from "../../agent/manager.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
 import { localIsoDate } from "../../util/dates.ts";
-import type { PostProcessor } from "../api.ts";
-import { type MemoryStore, storeDir, sweepEmptyMarkdown } from "./layout.ts";
+import type { MemoryStore } from "./layout.ts";
 import {
   CLASSIFICATION_EXAMPLES_SECTION,
   CONTEXT_DEDUP_SECTION,
@@ -13,16 +10,8 @@ import {
   WORKSPACE_VALIDATION_SECTION,
 } from "./prompts.ts";
 
-/** Still used by the nightly maintenance ticks, which run bare headless side-runs. */
+/** Used by the maintenance ticks and the trunk-close pipeline, which run bare headless side-runs. */
 export type Runner = Pick<SideRunner, "run">;
-
-/** The slice of AgentManager memory extraction needs: fork the just-ended conversation. */
-export type Forker = Pick<AgentManager, "forkAndContinue">;
-
-export interface ExtractionDeps {
-  agent: Forker;
-  workspaceRoot: string;
-}
 
 const EPISODIC_BASE_PROMPT = `We just finished the conversation above. Using what you already know from it, create or update the episodic memory file for today.
 
@@ -234,35 +223,3 @@ export const storeInstruction = (store: MemoryStore, workspaceRoot: string): str
   STORE_INSTRUCTIONS[store]
     .replaceAll("$WORKSPACE", workspaceRoot)
     .replaceAll("{date}", localIsoDate());
-
-/**
- * Session-close extraction: forks the just-ended pi session (full history + persona live) and
- * hands the same assistant a single follow-up user instruction to fold the conversation into one
- * memory store. The source transcript is never mutated. Registered once per store, so the three
- * stores run as three parallel forks under the coordinator's phase:"main" Promise.allSettled.
- */
-export const createExtractionProcessor = (
-  store: MemoryStore,
-  { agent, workspaceRoot }: ExtractionDeps,
-): PostProcessor => ({
-  name: `memory-${store}`,
-  phase: "main",
-
-  async process({ transcriptPath, log }) {
-    if (transcriptPath == null) {
-      log.debug({ store }, "no transcript — skipping memory extraction");
-      return;
-    }
-
-    // Hard-limit the fork to file tools — belt-and-suspenders with SILENT_BACKGROUND_SECTION, so
-    // the extraction agent cannot message the user or fire tasks even though it reuses the session.
-    await agent.forkAndContinue(
-      transcriptPath,
-      storeInstruction(store, workspaceRoot),
-      "processor",
-      FILE_EDIT_TOOLS,
-    );
-
-    await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);
-  },
-});

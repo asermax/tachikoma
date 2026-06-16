@@ -5,7 +5,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { type AppDatabase, createDatabase, runMigrations } from "../src/db/index.ts";
 import { KeyValueState } from "../src/db/state.ts";
-import { SessionRegistry } from "../src/sessions/registry.ts";
 
 let db: AppDatabase;
 
@@ -28,35 +27,5 @@ describe("KeyValueState", () => {
 
     memory.delete("lastTick");
     expect(memory.get("lastTick")).toBeNull();
-  });
-});
-
-describe("SessionRegistry", () => {
-  it("creates, updates, closes and reopens sessions", () => {
-    const registry = new SessionRegistry(db);
-
-    const session = registry.create("repl", "/tmp/session.jsonl");
-    expect(session.id).toBeGreaterThan(0);
-    expect(session.closedAt).toBeNull();
-
-    registry.update(session.id, { summary: "talked about cats" });
-    const closed = registry.close(session.id);
-    expect(closed.closedAt).not.toBeNull();
-
-    const reopened = registry.reopen(session.id);
-    expect(reopened.closedAt).toBeNull();
-    expect(reopened.lastResumedAt).not.toBeNull();
-    expect(reopened.summary).toBe("talked about cats");
-  });
-
-  it("lists recently closed sessions as resumable", () => {
-    const registry = new SessionRegistry(db);
-
-    const recent = registry.create("repl", "/tmp/recent-session.jsonl");
-    registry.close(recent.id);
-
-    const resumable = registry.listResumable(3600);
-    expect(resumable.map((s) => s.id)).toContain(recent.id);
-    expect(registry.listResumable(0)).toHaveLength(0);
   });
 });

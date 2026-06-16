@@ -19,7 +19,7 @@ if (values.help === true) {
 Usage: tachikoma [options]
 
 Options:
-  -c, --channel <name>   Channel to run (default: from config, usually "repl")
+  -c, --channel <name>   Channel to run (default: from config, "telegram")
       --config <path>    Config file (default: ~/.config/tachikoma/config.toml)
   -h, --help             Show this help
 `);

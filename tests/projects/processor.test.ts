@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { GitApi, PostProcessorContext } from "../../src/extensions/api.ts";
 import { createProjectsProcessor } from "../../src/extensions/projects/processor.ts";
 import { handleRegisterProject } from "../../src/extensions/projects/tools.ts";
@@ -25,7 +24,7 @@ import {
 } from "./helpers.ts";
 
 const context = (): PostProcessorContext => ({
-  session: {} as SessionRecord,
+  trunk: null,
   transcriptPath: null,
   log: fakeLogger(),
 });

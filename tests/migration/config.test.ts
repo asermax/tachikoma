@@ -61,7 +61,8 @@ describe("adaptConfig", () => {
     expect(config?.logging.level).toBe("info");
     expect(config?.logging.pretty).toBe(true);
     expect(config?.channels.default).toBe("telegram");
-    expect(config?.sessions.resumeWindowSeconds).toBe(3600);
+    // session_resume_window is retired (DLT-175): dropped, not mapped to a `sessions` section.
+    expect(config).not.toHaveProperty("sessions");
     expect(config?.scheduler.timezone).toBe("America/Argentina/Buenos_Aires");
     expect(config?.extensions.telegram).toEqual({
       botToken: "123:abc",

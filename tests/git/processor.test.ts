@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { SessionRecord } from "../../src/db/core-schema.ts";
 import type { PostProcessorContext } from "../../src/extensions/api.ts";
 import { createGitProcessor } from "../../src/extensions/git/processor.ts";
 import type { CommitAgent } from "../../src/git/commit-agent.ts";
@@ -22,7 +21,7 @@ import {
 const ctxLog = (): PostProcessorContext["log"] => fakeLogger();
 
 const context = (log = ctxLog()): PostProcessorContext => ({
-  session: {} as SessionRecord,
+  trunk: null,
   transcriptPath: null,
   log,
 });

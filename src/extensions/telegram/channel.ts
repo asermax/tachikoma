@@ -33,24 +33,17 @@ import {
 } from "./sending.ts";
 import { StreamRenderer } from "./streaming.ts";
 
-/** Persists message id ↔ session mappings so a reply-to can be force-routed. */
+/** A Telegram message's place in the daily trunk: which tree entry and which branch produced it. */
+export interface MessageRouting {
+  treeEntryId: string;
+  branchId: string;
+}
+
+/** Persists message id → trunk routing so a reply/reaction/button can be force-routed to its branch. */
 export interface ChannelMessageStore {
-  record(
-    messageId: string,
-    sessionId: number,
-    direction: ChannelMessageDirection,
-    text?: string,
-  ): void;
-  findSessionId(messageId: string): number | null;
-  /**
-   * Resolves a recorded message to its owning session, stored text, and whether
-   * it is that session's most recent recorded message (null when unrecorded).
-   * Used to decide whether an inbound reply/reaction/button-tap references the
-   * live-latest message (no context needed) or an older one (context prepended).
-   */
-  findMessage(
-    messageId: string,
-  ): { sessionId: number; text: string | null; isLatest: boolean } | null;
+  record(messageId: string, routing: MessageRouting, direction: ChannelMessageDirection): void;
+  /** Resolve a recorded message to its trunk routing, or null when unrecorded. */
+  resolve(messageId: string): MessageRouting | null;
 }
 
 export interface TelegramChannelOptions {
@@ -62,12 +55,15 @@ export interface TelegramChannelOptions {
   mediaDir: string;
   /** Abort the in-flight agent run — wired from sessions.abortExchange. */
   stop: () => Promise<void>;
-  /** Record/lookup message↔session mappings for reply-to routing. */
+  /** Record/lookup message→branch mappings for reply-to routing. */
   store: ChannelMessageStore;
-  /** Id of the session currently receiving messages, for outbound recording. */
-  currentSessionId: () => number | null;
-  /** Read a session's last exchange (user/assistant), used as reaction context. */
-  lastExchangeOf: (sessionId: number) => string | null;
+  /**
+   * The trunk routing for the message just produced/received (live leaf entry + live branch id), or
+   * null when no trunk is active. Read post-append so the tree entry id exists.
+   */
+  currentRouting: () => MessageRouting | null;
+  /** The last user+assistant exchange of a recorded branch, used as reaction/reply context. */
+  branchLastExchange: (branchId: string) => string | null;
 }
 
 export const STOP_COMMAND = "/stop";
@@ -162,13 +158,11 @@ export class TelegramChannel implements Channel {
           .catch((error) => runtime.log.warn({ err: error }, "keyboard removal failed"));
       }
 
-      // Prepend the prompt only for an older button message; a tap on the
-      // session's latest message is already live in the agent's context.
-      const reference =
-        messageId != null ? this.options.store.findMessage(String(messageId)) : null;
-      const prompt = reference != null && !reference.isLatest ? reference.text : null;
+      // Resolve the tapped button message to its branch. A tap on an earlier branch forces a shift
+      // (stamped in metadata for the boundary); an unrecorded target falls through to normal handling.
+      const reference = messageId != null ? this.options.store.resolve(String(messageId)) : null;
 
-      runtime.submit(mapButtonTap(unpacked.value, messageId, { prompt }));
+      runtime.submit(this.applyForcedRouting(mapButtonTap(unpacked.value, messageId), reference));
     });
 
     this.bot.on("message_reaction", async (ctx) => {
@@ -183,27 +177,25 @@ export class TelegramChannel implements Channel {
 
       const event = ctx.messageReaction;
       const messageId = String(event.message_id);
-      // Prepend the owning session's last exchange only when the reaction targets
-      // an older recorded message; a reaction to the latest is already live in the
-      // agent's context. An unrecorded target is dropped by the handler below
-      // (routeReply returns it unresolved), so no context is prepared for it.
-      const reference = this.options.store.findMessage(messageId);
-      const owningSessionId = reference?.sessionId ?? null;
+
+      // A reaction's meaning is tied to its target: an unrecorded target is dropped with a notice.
+      const reference = this.options.store.resolve(messageId);
+      if (reference == null) {
+        await this.notifyUnresolvedReaction();
+        return;
+      }
+
+      // Prepend the referenced branch's last exchange only when the reaction targets an earlier
+      // branch; a reaction on the live branch is already in the agent's context.
       const lastExchange =
-        reference != null && !reference.isLatest && owningSessionId != null
-          ? this.options.lastExchangeOf(owningSessionId)
+        reference.branchId !== this.currentBranchId()
+          ? this.options.branchLastExchange(reference.branchId)
           : null;
 
       const inbound = mapReaction(event, { lastExchange });
       if (inbound == null) return;
 
-      const { message: routed, resolved } = this.routeReply(inbound);
-      if (!resolved) {
-        await this.notifyUnresolvedReaction();
-        return;
-      }
-
-      runtime.submit(routed);
+      runtime.submit(this.applyForcedRouting(inbound, reference));
     });
 
     this.bot.catch(({ error }) => {
@@ -244,45 +236,53 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * When a message replies to a known past message, stamp the owning session as
-   * an explicit resume target. A target that isn't recorded is returned
-   * unresolved so the caller can act by kind: a reaction is dropped with a
-   * notice (its meaning is tied to the referenced message), while a text/media
-   * reply still carries value and is annotated with a hint for normal routing.
+   * Stamp a referenced branch onto an inbound message so the boundary middleware can force the
+   * outcome (same branch → append, earlier branch → forced shift + context injection), bypassing the
+   * topic classifier. An unrecorded reply target carries no forced metadata and falls through to
+   * normal detection; a text/media reply to an unrecorded target is annotated with a hint.
    */
-  private routeReply(message: InboundMessage): { message: InboundMessage; resolved: boolean } {
-    const replyToMessageId = message.metadata.replyToMessageId;
-    if (typeof replyToMessageId !== "string") return { message, resolved: true };
-
-    const sessionId = this.options.store.findSessionId(replyToMessageId);
-    if (sessionId != null) {
+  private applyForcedRouting(
+    message: InboundMessage,
+    reference: MessageRouting | null,
+  ): InboundMessage {
+    if (reference != null) {
       return {
-        message: { ...message, metadata: { ...message.metadata, resumeSessionId: sessionId } },
-        resolved: true,
+        ...message,
+        metadata: {
+          ...message.metadata,
+          forcedBranchId: reference.branchId,
+          forcedTreeEntryId: reference.treeEntryId,
+        },
       };
     }
 
-    // Target not recorded. A reaction is returned unresolved for the handler to
-    // drop; a text/media reply proceeds under normal routing with a hint (leading
-    // separator trimmed when the reply carries no text, e.g. a captionless photo).
-    if (message.metadata.reaction === true) return { message, resolved: false };
+    // No recorded routing for the target. A reaction's meaning is tied to its target and is dropped
+    // upstream; a reply with no resolvable target still carries value, annotated with a hint so the
+    // agent knows it landed in the current conversation.
+    const replyToMessageId = message.metadata.replyToMessageId;
+    if (typeof replyToMessageId !== "string" || message.metadata.reaction === true) return message;
 
     const text = message.text
       ? `${message.text}${UNRESOLVED_REPLY_HINT}`
       : UNRESOLVED_REPLY_HINT.trim();
-    return { message: { ...message, text }, resolved: false };
+    return { ...message, text };
+  }
+
+  /** The branch id of the live trunk leaf, or null when no trunk is active. */
+  private currentBranchId(): string | null {
+    return this.options.currentRouting()?.branchId ?? null;
   }
 
   /**
-   * Whether to suppress the reply quote: only when the reply targets its
-   * session's latest message (already live in the agent's context). Routing is
-   * unaffected — `routeReply` still stamps `resumeSessionId` from the target.
-   * An unrecorded target resolves to false (treated as older — quote it) so a
-   * stale or foreign reference still gets context.
+   * Whether to suppress the reply quote: only when the reply targets the live branch (already in the
+   * agent's context). An unrecorded or earlier-branch target keeps the quote so context survives.
    */
   private shouldSkipQuote(message: Pick<Message, "reply_to_message">): boolean {
     const target = replyTargetId(message);
-    return target != null && (this.options.store.findMessage(target)?.isLatest ?? false);
+    if (target == null) return false;
+
+    const reference = this.options.store.resolve(target);
+    return reference != null && reference.branchId === this.currentBranchId();
   }
 
   async respond({ message, events }: Exchange): Promise<void> {
@@ -351,16 +351,16 @@ export class TelegramChannel implements Channel {
 
     const outboundId = await this.finalizeResponse(renderer, startedAt, notifyingToolUsed, log);
 
-    // Routing has settled by now: map both the user's message and the bot's
-    // reply to the receiving session so a future reply-to can resolve them.
-    const sessionId = this.options.currentSessionId();
-    if (sessionId != null) {
+    // Routing has settled by now: map both the user's message and the bot's reply to the trunk leaf
+    // entry + live branch so a future reply/reaction/button can resolve them to a branch.
+    const routing = this.options.currentRouting();
+    if (routing != null) {
       const inboundId = message.metadata.messageId;
       if (typeof inboundId === "number") {
-        this.recordMessage(String(inboundId), sessionId, "incoming");
+        this.recordMessage(String(inboundId), routing, "incoming");
       }
 
-      if (outboundId != null) this.recordMessage(String(outboundId), sessionId, "outgoing");
+      if (outboundId != null) this.recordMessage(String(outboundId), routing, "outgoing");
     }
   }
 
@@ -454,11 +454,11 @@ export class TelegramChannel implements Channel {
 
   private recordMessage(
     messageId: string,
-    sessionId: number,
+    routing: MessageRouting,
     direction: ChannelMessageDirection,
   ): void {
     try {
-      this.options.store.record(messageId, sessionId, direction);
+      this.options.store.record(messageId, routing, direction);
     } catch (error) {
       this.log().debug({ err: error, messageId }, "recording channel message failed");
     }
@@ -581,7 +581,15 @@ export class TelegramChannel implements Channel {
     this.lastInboundId = message.message_id;
     // Bridge the gap until respond()'s typing loop takes over.
     this.pingTyping();
-    this.runtimeOrThrow().submit(this.routeReply(inbound).message);
+    this.runtimeOrThrow().submit(
+      this.applyForcedRouting(inbound, this.resolveReplyTarget(message)),
+    );
+  }
+
+  /** The trunk routing for a message's reply target, or null when not a reply or unrecorded. */
+  private resolveReplyTarget(message: Pick<Message, "reply_to_message">): MessageRouting | null {
+    const target = replyTargetId(message);
+    return target != null ? this.options.store.resolve(target) : null;
   }
 
   /** Abort the in-flight run instead of submitting — "/stop" never reaches the agent. */
@@ -622,11 +630,12 @@ export class TelegramChannel implements Channel {
       await downloadMedia(this.bot.api, this.bot.token, resolved, destPath);
 
       this.runtimeOrThrow().submit(
-        this.routeReply(
+        this.applyForcedRouting(
           mapMediaMessage(message, buildAttachment(resolved, destPath), {
             skipQuote: this.shouldSkipQuote(message),
           }),
-        ).message,
+          this.resolveReplyTarget(message),
+        ),
       );
     } catch (error) {
       log.warn({ err: error }, "media download failed");

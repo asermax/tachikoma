@@ -26,7 +26,7 @@ const createLog = (): MockLog => {
   return log;
 };
 
-const context = (log: Logger) => ({ session: null, transcriptPath: null, log });
+const context = (log: Logger) => ({ trunk: null, transcriptPath: null, log });
 
 describe("POST_PROCESSING_PHASE_ORDER", () => {
   it("derives from the canonical phase map", () => {

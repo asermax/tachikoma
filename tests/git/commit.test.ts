@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { commitAll } from "../../src/git/commit.ts";
+import { commitAll, commitAllDeterministic } from "../../src/git/commit.ts";
 import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { runGit } from "../../src/git/git.ts";
 import { commitFile, fakeLogger, initRepo, makeTempDir, subjects } from "./helpers.ts";
@@ -141,6 +141,33 @@ describe("commitAll", () => {
     });
 
     expect(result).toEqual(["Add notes"]);
+    expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
+  });
+});
+
+describe("commitAllDeterministic", () => {
+  it("returns [] when the tree is clean", async () => {
+    const result = await commitAllDeterministic({
+      cwd: workspace,
+      message: "Snapshot",
+      log: fakeLogger(),
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it("commits everything in one commit with the given message", async () => {
+    await writeFile(join(workspace, "a.md"), "a\n", "utf8");
+    await writeFile(join(workspace, "b.md"), "b\n", "utf8");
+
+    const result = await commitAllDeterministic({
+      cwd: workspace,
+      message: "Snapshot",
+      log: fakeLogger(),
+    });
+
+    expect(result).toEqual(["Snapshot"]);
+    expect(await subjects(workspace)).toEqual(["Seed commit", "Snapshot"]);
     expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
   });
 });

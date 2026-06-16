@@ -4,9 +4,11 @@ import { autoRetry } from "@grammyjs/auto-retry";
 import { Bot } from "grammy";
 import { type Static, Type } from "typebox";
 
+import { getLeafId } from "../../agent/session-tree.ts";
+import { getBranchRecords, nextBranchId } from "../../sessions/trunk.ts";
 import { expandHome } from "../../workspace.ts";
 import { defineExtension } from "../api.ts";
-import { TelegramChannel } from "./channel.ts";
+import { type MessageRouting, TelegramChannel } from "./channel.ts";
 import { ensureMediaDir } from "./media.ts";
 import { TelegramMessageStore } from "./store.ts";
 import { registerTelegramTools } from "./tools.ts";
@@ -69,7 +71,27 @@ export default defineExtension<TelegramConfig>({
 
     const store = new TelegramMessageStore(app.db);
 
-    const currentSessionId = () => app.sessions.current()?.id ?? null;
+    // The routing for the message just produced/received: the live trunk leaf entry id (recorded post-
+    // append, so it exists) + the live branch id (`nextBranchId`, the same id the branch gets when it
+    // later collapses, so an id written mid-branch resolves to the same branch).
+    const currentRouting = (): MessageRouting | null => {
+      const trunk = app.sessions.activeTrunkSession();
+      if (trunk == null) return null;
+
+      const treeEntryId = getLeafId(trunk);
+      if (treeEntryId == null) return null;
+
+      return { treeEntryId, branchId: nextBranchId(getBranchRecords(trunk)) };
+    };
+
+    const branchLastExchange = (branchId: string): string | null => {
+      const trunk = app.sessions.activeTrunkSession();
+      if (trunk == null) return null;
+
+      return (
+        getBranchRecords(trunk).find((record) => record.branchId === branchId)?.lastExchange ?? null
+      );
+    };
 
     const channel = new TelegramChannel(bot, {
       chatId,
@@ -79,8 +101,8 @@ export default defineExtension<TelegramConfig>({
       mediaDir,
       stop: () => app.sessions.abortExchange(),
       store,
-      currentSessionId,
-      lastExchangeOf: (id) => app.sessions.get(id)?.lastExchange ?? null,
+      currentRouting,
+      branchLastExchange,
     });
 
     app.bootstrap("media-dir", () => ensureMediaDir(mediaDir, app.log));
@@ -103,7 +125,7 @@ export default defineExtension<TelegramConfig>({
         getLastInboundMessageId: () => channel.lastInboundMessageId,
         getLastOutboundMessageId: () => channel.lastOutboundMessageId,
         store,
-        currentSessionId,
+        currentRouting,
       });
     });
   },

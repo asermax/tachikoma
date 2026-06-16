@@ -43,14 +43,13 @@ const createServices = (overrides: Partial<HostServices> = {}): HostServices => 
   const regs = createRegistrations();
 
   return {
-    config: { extensions: {}, sessions: { resumeWindowSeconds: 60 } },
+    config: { extensions: {} },
     workspace: { dataDir: "/tmp", resolve: (p: string) => p },
     log,
     db: {},
     events: {},
     scheduler: {},
     agent: { tiers: {} },
-    registry: {},
     coordinator: {},
     regs,
     ...overrides,
@@ -115,7 +114,6 @@ describe("agent.use context-section registration", () => {
       events: {},
       scheduler: {},
       agent: { tiers: {} },
-      registry: {},
       coordinator: {},
       regs,
     } as unknown as HostServices;
@@ -317,40 +315,25 @@ describe("ExtensionHost context API delegation", () => {
     return captured;
   };
 
-  it("wires the sessions API onto the coordinator and registry", async () => {
+  it("wires the sessions API onto the coordinator", async () => {
+    const trunkSession = { sessionFile: "/tmp/trunk.jsonl" };
     const coordinator = {
-      current: vi.fn(() => ({ id: 1 })),
-      closeActiveSession: vi.fn(async () => {}),
-      closeActiveSessionIfIdle: vi.fn(async () => true),
+      closeTrunk: vi.fn(async () => {}),
       abortExchange: vi.fn(async () => {}),
-    };
-
-    const registry = {
-      get: vi.fn(() => ({ id: 2 })),
-      update: vi.fn(() => ({ id: 2 })),
-      listResumable: vi.fn(() => [{ id: 3 }]),
+      activeTrunkSession: vi.fn(() => trunkSession),
     };
 
     const services = createServices({
       coordinator: coordinator as unknown as HostServices["coordinator"],
-      registry: registry as unknown as HostServices["registry"],
     });
 
     const app = await captureApp(services);
 
-    expect(app.sessions.current()).toEqual({ id: 1 });
-    expect(app.sessions.get(2)).toEqual({ id: 2 });
-
-    app.sessions.update(2, { summary: "s" });
-    expect(registry.update).toHaveBeenCalledWith(2, { summary: "s" });
-
-    app.sessions.listResumable();
-    expect(registry.listResumable).toHaveBeenCalledWith(60);
+    expect(app.sessions.activeTrunkSession()).toBe(trunkSession);
 
     await app.sessions.close();
-    expect(coordinator.closeActiveSession).toHaveBeenCalled();
+    expect(coordinator.closeTrunk).toHaveBeenCalled();
 
-    expect(await app.sessions.closeIfIdle()).toBe(true);
     await app.sessions.abortExchange();
     expect(coordinator.abortExchange).toHaveBeenCalled();
   });
@@ -379,10 +362,10 @@ describe("ExtensionHost context API delegation", () => {
     });
 
     const app = await captureApp(services);
-    const channel = { name: "repl" } as never;
+    const channel = { name: "telegram" } as never;
 
     app.channels.register(channel);
-    expect(services.regs.channels.get("repl")).toBe(channel);
+    expect(services.regs.channels.get("telegram")).toBe(channel);
 
     const delivery = { text: "hi" } as never;
     app.channels.deliver(delivery);
@@ -477,7 +460,7 @@ describe("ExtensionHost context API delegation", () => {
     });
 
     await app.sessions.runPostProcessors({
-      session: null,
+      trunk: null,
       transcriptPath: null,
       log: log as unknown as PostProcessorContext["log"],
     });
@@ -511,7 +494,7 @@ describe("runPostProcessorsOnce error isolation", () => {
     captured.sessions.registerProcessor({ name: "survivor", process: survivor });
 
     await captured.sessions.runPostProcessors({
-      session: null,
+      trunk: null,
       transcriptPath: null,
       log: log as unknown as PostProcessorContext["log"],
     });

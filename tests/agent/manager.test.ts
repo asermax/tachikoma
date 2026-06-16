@@ -8,16 +8,24 @@ const h = vi.hoisted(() => {
   const capturedLoaderOptions: Array<Record<string, unknown>> = [];
   const sessionManagerCalls: Array<{ kind: string; args: unknown[] }> = [];
   const tiersInstances: Array<Record<string, ReturnType<typeof import("vitest").vi.fn>>> = [];
+  // Drives the SessionManager fakes for shadowFork: what getLeafId/createBranchedSession return.
+  const shadowState: { leafId: string | null; forkedFile: string | undefined } = {
+    leafId: "leaf-1",
+    forkedFile: "/ws/root/.tachikoma/pi/sessions/forked.jsonl",
+  };
 
   return {
     fsState,
     capturedLoaderOptions,
     sessionManagerCalls,
     tiersInstances,
+    shadowState,
     loaderReload: vi.fn(),
     createAgentSessionMock: vi.fn(),
     authStorageCreate: vi.fn((path?: string) => ({ kind: "auth", path })),
     getApiKeyMock: vi.fn(),
+    createBranchedSessionMock: vi.fn(),
+    rmMock: vi.fn(),
   };
 });
 
@@ -26,10 +34,13 @@ const {
   capturedLoaderOptions,
   sessionManagerCalls,
   tiersInstances,
+  shadowState,
   loaderReload,
   createAgentSessionMock,
   authStorageCreate,
   getApiKeyMock,
+  createBranchedSessionMock,
+  rmMock,
 } = h;
 
 vi.mock("node:fs", () => ({
@@ -37,11 +48,23 @@ vi.mock("node:fs", () => ({
   statSync: vi.fn(() => ({ size: h.fsState.size })),
 }));
 
+vi.mock("node:fs/promises", () => ({
+  rm: (...args: unknown[]) => h.rmMock(...args),
+}));
+
 vi.mock("@earendil-works/pi-coding-agent", () => {
   const fakeSessionManager = (kind: string) =>
     vi.fn((...args: unknown[]) => {
       h.sessionManagerCalls.push({ kind, args });
-      return { kind, args };
+      return {
+        kind,
+        args,
+        getLeafId: () => h.shadowState.leafId,
+        createBranchedSession: (leafId: string) => {
+          h.createBranchedSessionMock(leafId);
+          return h.shadowState.forkedFile;
+        },
+      };
     });
 
   return {
@@ -127,6 +150,11 @@ beforeEach(() => {
   loaderReload.mockClear();
   authStorageCreate.mockClear();
   getApiKeyMock.mockReset();
+  createBranchedSessionMock.mockClear();
+  rmMock.mockReset();
+  rmMock.mockResolvedValue(undefined);
+  shadowState.leafId = "leaf-1";
+  shadowState.forkedFile = "/ws/root/.tachikoma/pi/sessions/forked.jsonl";
   createAgentSessionMock.mockReset();
   createAgentSessionMock.mockResolvedValue({
     session: { prompt: vi.fn(), dispose: vi.fn() },
@@ -426,6 +454,63 @@ describe("AgentManager.forkAndContinue", () => {
       manager.forkAndContinue("/sessions/src.json", "continue", "processor"),
     ).rejects.toThrow("boom");
     expect(session.dispose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("AgentManager.shadowFork", () => {
+  const makeForkSession = (text: string) => ({
+    prompt: vi.fn().mockResolvedValue(undefined),
+    dispose: vi.fn(),
+    messages: [{ role: "assistant", content: [{ type: "text", text }] }],
+  });
+
+  it("forks the source branch into a bare, tool-free headless session (R6, S2)", async () => {
+    const session = makeForkSession('{"decision":"shift"}');
+    createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+
+    const fork = await manager.shadowFork("/sessions/live.jsonl", { systemPrompt: "live-prompt" });
+
+    // opened the source file, then branched its current leaf into a new file
+    expect(
+      sessionManagerCalls.some((c) => c.kind === "open" && c.args[0] === "/sessions/live.jsonl"),
+    ).toBe(true);
+    expect(createBranchedSessionMock).toHaveBeenCalledWith("leaf-1");
+    // the headless session opened the forked file, bare, with no tools and the live prompt
+    expect(sessionManagerCalls.at(-1)?.args[0]).toBe(
+      "/ws/root/.tachikoma/pi/sessions/forked.jsonl",
+    );
+    const sessionArgs = createAgentSessionMock.mock.calls.at(-1)?.[0];
+    expect(sessionArgs.tools).toEqual([]);
+    expect((capturedLoaderOptions.at(-1)?.systemPromptOverride as () => string)()).toBe(
+      "live-prompt",
+    );
+
+    const reply = await fork.prompt("classify");
+    expect(session.prompt).toHaveBeenCalledWith("classify");
+    expect(reply).toBe('{"decision":"shift"}');
+  });
+
+  it("deletes the forked file and disposes the session on dispose", async () => {
+    const session = makeForkSession("ok");
+    createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+
+    const fork = await manager.shadowFork("/sessions/live.jsonl");
+    await fork.dispose();
+
+    expect(session.dispose).toHaveBeenCalledOnce();
+    expect(rmMock).toHaveBeenCalledWith("/ws/root/.tachikoma/pi/sessions/forked.jsonl", {
+      force: true,
+    });
+  });
+
+  it("throws when the source session has no entries to fork", async () => {
+    shadowState.leafId = null;
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+
+    await expect(manager.shadowFork("/sessions/empty.jsonl")).rejects.toThrow(/no entries/);
+    expect(createAgentSessionMock).not.toHaveBeenCalled();
   });
 });
 

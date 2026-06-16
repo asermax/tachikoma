@@ -125,25 +125,14 @@ export const mapReaction = (
 };
 
 /**
- * Frame a button tap so the agent can distinguish it from typed input. When
- * `context.prompt` is supplied (the tap targets an older button message), the
- * original prompt is prepended so the agent sees the question its tap answers;
- * a tap on the session's latest button message is left bare (already live).
+ * Frame a button tap so the agent can distinguish it from typed input. A tap on an earlier branch's
+ * button is routed to that branch by the channel (forced shift + context injection), so no inline
+ * prompt recovery is needed here.
  */
-export const mapButtonTap = (
-  value: string,
-  messageId: number | null,
-  context?: { prompt: string | null },
-): InboundMessage => {
-  const prose = `The user tapped the option \`${value}\` out of the options you displayed.`;
-  const prompt = context?.prompt?.trim();
-  const text = prompt != null && prompt.length > 0 ? `${prompt}\n\n${prose}` : prose;
-
-  return {
-    text,
-    channel: CHANNEL_NAME,
-    receivedAt: new Date(),
-    media: [],
-    metadata: { buttonValue: value, ...(messageId != null ? { messageId } : {}) },
-  };
-};
+export const mapButtonTap = (value: string, messageId: number | null): InboundMessage => ({
+  text: `The user tapped the option \`${value}\` out of the options you displayed.`,
+  channel: CHANNEL_NAME,
+  receivedAt: new Date(),
+  media: [],
+  metadata: { buttonValue: value, ...(messageId != null ? { messageId } : {}) },
+});

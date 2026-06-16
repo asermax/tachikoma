@@ -6,15 +6,11 @@ import type { ExtensionContext, ExtensionFactory } from "@earendil-works/pi-codi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseWithSchema } from "../../src/config/parse.ts";
-import type { AppContext, GitApi } from "../../src/extensions/api.ts";
+import type { AppContext, GitApi, PostProcessor } from "../../src/extensions/api.ts";
 import memory, {
   type MemoryConfig,
   MemoryConfigSchema,
 } from "../../src/extensions/memory/index.ts";
-import { commitAll } from "../../src/git/commit.ts";
-import { type AgentRunner, createCommitAgent } from "../../src/git/commit-agent.ts";
-import { runGit } from "../../src/git/git.ts";
-import { commitFile, initRepo } from "../git/helpers.ts";
 
 const config = (overrides: unknown = {}): MemoryConfig =>
   parseWithSchema(MemoryConfigSchema, overrides, "memory config");
@@ -26,11 +22,11 @@ interface CronCall {
 }
 
 interface SetupResult {
-  cron: ReturnType<typeof vi.fn>;
   cronCalls: CronCall[];
+  cron: ReturnType<typeof vi.fn>;
+  processors: PostProcessor[];
   useFactory: ExtensionFactory;
   log: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
-  run: ReturnType<typeof vi.fn>;
 }
 
 const tempDirs: string[] = [];
@@ -41,30 +37,22 @@ afterEach(async () => {
   }
 });
 
-const setupWith = (
-  extensionConfig: MemoryConfig,
-  workspaceDir: string,
-  side: Record<string, unknown>,
-  commitAllImpl?: (options: Parameters<GitApi["commitAll"]>[0]) => Promise<string[]>,
-): SetupResult => {
+const setupWith = (extensionConfig: MemoryConfig, workspaceDir: string): SetupResult => {
   const cronCalls: CronCall[] = [];
   const cron = vi.fn((name: string, schedule: string, run: () => Promise<void>) => {
     cronCalls.push({ name, schedule, run });
   });
 
+  const processors: PostProcessor[] = [];
   const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
   let useFactory: ExtensionFactory = (() => undefined) as unknown as ExtensionFactory;
   const use = vi.fn((factory: ExtensionFactory) => {
     useFactory = factory;
   });
 
-  const defaultCommitAll = ({ log: callLog, ...options }: Parameters<GitApi["commitAll"]>[0]) =>
-    commitAll({ ...options, log: callLog ?? (log as never) });
-
   const git = {
-    commitAll: commitAllImpl ?? defaultCommitAll,
-    createCommitAgent: (mode: "workspace" | "project") =>
-      createCommitAgent(side as unknown as AgentRunner, mode),
+    commitAll: vi.fn().mockResolvedValue([]),
+    createCommitAgent: vi.fn(),
     smartPush: vi.fn(),
     smartPull: vi.fn(),
   } as unknown as GitApi;
@@ -74,20 +62,20 @@ const setupWith = (
     log,
     workspace: { root: workspaceDir, dataDir: join(workspaceDir, ".tachikoma") },
     bootstrap: vi.fn(),
-    agent: { use, side },
-    sessions: { registerProcessor: vi.fn() },
+    agent: { use, side: { run: vi.fn() } },
+    sessions: { registerProcessor: (p: PostProcessor) => processors.push(p) },
     scheduler: { cron },
     git,
   } as unknown as AppContext<MemoryConfig>);
 
-  return { cron, cronCalls, useFactory, log, run: side.run as ReturnType<typeof vi.fn> };
+  return { cronCalls, cron, processors, useFactory, log };
 };
 
-const setup = async (extensionConfig: MemoryConfig): Promise<ReturnType<typeof vi.fn>> => {
+const setup = async (extensionConfig: MemoryConfig): Promise<SetupResult> => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-memory-ext-"));
   tempDirs.push(workspaceDir);
 
-  return setupWith(extensionConfig, workspaceDir, { run: vi.fn() }).cron;
+  return setupWith(extensionConfig, workspaceDir);
 };
 
 describe("memory extension setup", () => {
@@ -96,35 +84,48 @@ describe("memory extension setup", () => {
     expect(config().maintenance.transcriptsSchedule).toBe("50 3 * * *");
   });
 
-  it("registers the transcript prune cron when maintenance is enabled", async () => {
-    const cron = await setup(config());
+  it("registers ONLY the deterministic transcript-prune cron — no agent maintenance crons", async () => {
+    const { cron, cronCalls } = await setup(config());
 
-    expect(cron).toHaveBeenCalledTimes(5);
-    expect(cron).toHaveBeenCalledWith(
+    expect(cron).toHaveBeenCalledTimes(1);
+    expect(cronCalls.map((call) => call.name)).toEqual(["memory-transcripts-prune"]);
+    expect(cronCalls[0]?.schedule).toBe("50 3 * * *");
+
+    // The five former nightly maintenance crons folded into the trunk-close pipeline.
+    for (const name of [
+      "memory-episodic-maintenance",
+      "memory-facts-maintenance",
+      "memory-preferences-maintenance",
       "memory-context-maintenance",
-      "0 4 * * *",
-      expect.any(Function),
-    );
-    expect(cron).toHaveBeenCalledWith(
       "memory-transcripts-maintenance",
-      "50 3 * * *",
-      expect.any(Function),
-    );
+    ]) {
+      expect(cronCalls.some((call) => call.name === name)).toBe(false);
+    }
   });
 
-  it("registers no maintenance crons when maintenance is disabled", async () => {
-    const cron = await setup(config({ maintenance: { enabled: false } }));
+  it("registers the trunk-close pipeline + transcript archive post-processors", async () => {
+    const { processors } = await setup(config());
 
-    expect(cron).not.toHaveBeenCalled();
+    expect(processors.map((p) => p.name)).toEqual(["memory-trunk-close", "transcript-archive"]);
+    expect(processors[0]?.phase).toBe("main");
+    expect(processors[1]?.phase).toBe("finalize");
+  });
+
+  it("registers no trunk-close pipeline when maintenance is disabled (archive + prune stay)", async () => {
+    const { processors, cronCalls } = await setup(config({ maintenance: { enabled: false } }));
+
+    expect(processors.map((p) => p.name)).toEqual(["transcript-archive"]);
+    expect(cronCalls.map((call) => call.name)).toEqual(["memory-transcripts-prune"]);
   });
 
   it("does nothing when the extension is disabled", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-memory-ext-"));
     tempDirs.push(workspaceDir);
 
-    const result = setupWith(config({ enabled: false }), workspaceDir, { run: vi.fn() });
+    const result = setupWith(config({ enabled: false }), workspaceDir);
 
     expect(result.cron).not.toHaveBeenCalled();
+    expect(result.processors).toEqual([]);
     expect(result.log.info).toHaveBeenCalledWith("memory extension disabled by configuration");
   });
 
@@ -133,7 +134,7 @@ describe("memory extension setup", () => {
     tempDirs.push(workspaceDir);
     await mkdir(join(workspaceDir, "memories"));
 
-    const { useFactory } = setupWith(config(), workspaceDir, { run: vi.fn() });
+    const { useFactory } = setupWith(config(), workspaceDir);
 
     const handlers: Record<string, (event: unknown, ctx: ExtensionContext) => Promise<unknown>> =
       {};
@@ -151,80 +152,5 @@ describe("memory extension setup", () => {
     };
 
     expect(injection.message.content).toContain("memories/");
-  });
-});
-
-describe("memory maintenance commitChanges", () => {
-  const runMaintenanceCron = async (
-    name: string,
-    workspaceDir: string,
-    commitAllImpl?: (options: Parameters<GitApi["commitAll"]>[0]) => Promise<string[]>,
-  ): Promise<SetupResult> => {
-    const result = setupWith(
-      config(),
-      workspaceDir,
-      { run: vi.fn().mockResolvedValue(undefined) },
-      commitAllImpl,
-    );
-    const call = result.cronCalls.find((entry) => entry.name === name) as CronCall;
-
-    await call.run();
-
-    return result;
-  };
-
-  it("commits the changes the maintenance tick left behind", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-memory-commit-"));
-    tempDirs.push(workspaceDir);
-    await initRepo(workspaceDir);
-    await commitFile(workspaceDir, "seed.txt", "seed\n", "Seed");
-    await runGit(workspaceDir, ["mv", "seed.txt", "renamed.txt"]);
-
-    const result = await runMaintenanceCron("memory-context-maintenance", workspaceDir);
-
-    expect(result.run).toHaveBeenCalledTimes(2);
-    expect(result.log.info).toHaveBeenCalledWith(
-      { message: "chore(memory): scheduled context file maintenance" },
-      "committed memory maintenance changes",
-    );
-    expect(result.log.info).toHaveBeenCalledWith(
-      { message: "chore(memory): scheduled context file maintenance" },
-      "committed memory maintenance changes",
-    );
-    expect(await runGit(workspaceDir, ["log", "-1", "--format=%s"])).toBe(
-      "chore(memory): scheduled context file maintenance",
-    );
-  });
-
-  it("skips the committed log when the tree is already clean", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-memory-clean-"));
-    tempDirs.push(workspaceDir);
-    await initRepo(workspaceDir);
-    await commitFile(workspaceDir, "seed.txt", "seed\n", "Seed");
-
-    const result = await runMaintenanceCron("memory-context-maintenance", workspaceDir);
-
-    expect(result.log.info).not.toHaveBeenCalledWith(
-      { message: "chore(memory): scheduled context file maintenance" },
-      "committed memory maintenance changes",
-    );
-  });
-
-  it("warns instead of throwing when the commit fails", async () => {
-    const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-memory-nogit-"));
-    tempDirs.push(workspaceDir);
-
-    const result = await runMaintenanceCron(
-      "memory-episodic-maintenance",
-      workspaceDir,
-      async () => {
-        throw new Error("disk full");
-      },
-    );
-
-    expect(result.log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ err: expect.anything() }),
-      "memory maintenance commit failed",
-    );
   });
 });

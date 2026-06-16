@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FILE_EDIT_TOOLS } from "../../src/agent/file-tools.ts";
 import type { AgentManager } from "../../src/agent/manager.ts";
-import type { SessionRecord } from "../../src/db/core-schema.ts";
 import {
   cleanPendingSignals,
   createCoreContextProcessor,
@@ -18,7 +17,7 @@ import { localIsoDate } from "../../src/util/dates.ts";
 
 const fakeLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
-const session = { id: 1 } as SessionRecord;
+const trunk = null;
 
 const fakeForker = () => {
   const forkAndContinue: AgentManager["forkAndContinue"] = vi.fn().mockResolvedValue(undefined);
@@ -48,7 +47,7 @@ describe("core context processor", () => {
     expect(processor.name).toBe("core-context");
     expect(processor.phase).toBe("preFinalize");
 
-    await processor.process({ session, transcriptPath, log: fakeLog });
+    await processor.process({ trunk, transcriptPath, log: fakeLog });
 
     expect(forkAndContinue).toHaveBeenCalledTimes(1);
     const [source, instruction, tier, tools] = forkAndContinue.mock.calls[0] ?? [];
@@ -77,7 +76,7 @@ describe("core context processor", () => {
 
     const { agent, forkAndContinue } = fakeForker();
     await createCoreContextProcessor({ agent, workspaceRoot: workspace, dataDir }).process({
-      session,
+      trunk,
       transcriptPath,
       log: fakeLog,
     });
@@ -98,7 +97,7 @@ describe("core context processor", () => {
 
     const { agent, forkAndContinue } = fakeForker();
     await createCoreContextProcessor({ agent, workspaceRoot: workspace, dataDir }).process({
-      session,
+      trunk,
       transcriptPath,
       log: fakeLog,
     });
@@ -125,7 +124,7 @@ describe("core context processor", () => {
       agent: { forkAndContinue },
       workspaceRoot: workspace,
       dataDir,
-    }).process({ session, transcriptPath, log });
+    }).process({ trunk, transcriptPath, log });
 
     expect(info).toHaveBeenCalledWith({ file: "AGENTS.md" }, "context file created");
     expect(info).toHaveBeenCalledWith({ file: "USER.md" }, "context file updated");
@@ -136,7 +135,7 @@ describe("core context processor", () => {
     const { agent, forkAndContinue } = fakeForker();
 
     await createCoreContextProcessor({ agent, workspaceRoot: workspace, dataDir }).process({
-      session,
+      trunk,
       transcriptPath: null,
       log: fakeLog,
     });

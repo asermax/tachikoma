@@ -4,6 +4,7 @@ import { applyConfigEnv } from "./config/env.ts";
 import { loadConfig } from "./config/load.ts";
 import { Coordinator } from "./coordinator.ts";
 import { createDatabase, runMigrations } from "./db/index.ts";
+import { KeyValueState } from "./db/state.ts";
 import { EventBus } from "./events.ts";
 import { ExtensionHost } from "./extensions/host.ts";
 import { firstPartyExtensions } from "./extensions/index.ts";
@@ -11,7 +12,7 @@ import { createRegistrations } from "./extensions/registrations.ts";
 import { componentLogger, createRootLogger, retainedFiles } from "./log.ts";
 import { adaptConfig, adaptWorkspace, adaptWorkspaceData } from "./migration/index.ts";
 import { Scheduler } from "./scheduler.ts";
-import { SessionRegistry } from "./sessions/registry.ts";
+import { TrunkState } from "./sessions/trunk.ts";
 import { ShutdownController } from "./shutdown.ts";
 import { Workspace } from "./workspace.ts";
 
@@ -65,16 +66,17 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
   const regs = createRegistrations();
 
   const agent = new AgentManager(workspace, config, regs, componentLogger(log, "agent"));
-  const registry = new SessionRegistry(db);
+  // The coordinator owns a daily trunk via a STABLE `app_state` namespace ("trunk") rather than a
+  // session record — the `sessions` table and registry were dropped under the daily-trunk model.
+  const trunkState = new TrunkState(new KeyValueState(db, "trunk"));
   const coordinator = new Coordinator(
-    registry,
+    trunkState,
     agent,
     regs,
     events,
     componentLogger(log, "coordinator"),
+    config.scheduler.timezone,
   );
-
-  regs.piFactories.push(coordinator.hostFactory());
 
   const host = new ExtensionHost({
     config,
@@ -84,14 +86,20 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
     events,
     scheduler,
     agent,
-    registry,
     coordinator,
     regs,
   });
 
   await host.load(firstPartyExtensions);
   await host.bootstrap();
-  await coordinator.recoverUnprocessedSessions();
+  await coordinator.recoverStaleTrunks();
+
+  // Nightly trunk close in the scheduler timezone: fires the close pipeline only when no
+  // exchange is in flight. The lazy stale-day backstop in `ensureTrunk` remains the correctness path
+  // if the process is down at this hour.
+  scheduler.cron("trunk-nightly-close", `0 ${config.scheduler.nightlyCloseHour} * * *`, () =>
+    coordinator.closeTrunkIfDue(),
+  );
 
   const channelName = options.channel ?? config.channels.default;
   const channel = regs.channels.get(channelName);

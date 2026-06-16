@@ -7,25 +7,26 @@ export const CHANNEL_MESSAGE_DIRECTIONS = {
 
 export type ChannelMessageDirection = keyof typeof CHANNEL_MESSAGE_DIRECTIONS;
 
-// Maps a channel's message ids back to the session that produced or received
-// them, so a reply-to can be force-routed to its owning session.
+// Maps a channel's message ids to the trunk tree entry + branch they produced or
+// received (daily-trunk model), so a reply/reaction/button can be
+// force-routed to its owning branch (same branch → append, earlier branch →
+// forced shift + context injection).
 export const channelMessages = sqliteTable(
   "channel_messages",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     channel: text("channel").notNull(),
     messageId: text("message_id").notNull(),
-    sessionId: integer("session_id").notNull(),
+    /** The pi session-tree entry id this channel message corresponds to. */
+    treeEntryId: text("tree_entry_id").notNull(),
+    /** The deterministic `topic-N` branch id the entry belonged to when recorded. */
+    branchId: text("branch_id").notNull(),
     direction: text("direction").$type<ChannelMessageDirection>().notNull(),
-    // Outgoing message text, populated only where a later inbound needs to
-    // recover it (e.g. the prompt of a button message a user taps). Nullable so
-    // incoming messages and streamed-exchange recordings leave it empty.
-    text: text("text"),
     createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   },
   (table) => [
     uniqueIndex("ux_channel_messages_channel_message").on(table.channel, table.messageId),
-    index("ix_channel_messages_session").on(table.sessionId),
+    index("ix_channel_messages_branch").on(table.branchId),
   ],
 );
 

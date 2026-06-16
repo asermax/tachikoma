@@ -218,21 +218,6 @@ describe("mapButtonTap", () => {
   it("omits the message id from metadata when none is given", () => {
     expect(mapButtonTap("no", null).metadata).toEqual({ buttonValue: "no" });
   });
-
-  it("prepends the original prompt when context is supplied", () => {
-    const inbound = mapButtonTap("yes", 9, { prompt: "Proceed?" });
-
-    expect(inbound.text).toBe(
-      "Proceed?\n\nThe user tapped the option `yes` out of the options you displayed.",
-    );
-    expect(inbound.metadata).toEqual({ buttonValue: "yes", messageId: 9 });
-  });
-
-  it("omits the prompt when it is blank", () => {
-    const inbound = mapButtonTap("yes", 9, { prompt: "  " });
-
-    expect(inbound.text).toBe("The user tapped the option `yes` out of the options you displayed.");
-  });
 });
 
 describe("resolveMedia", () => {
