@@ -304,7 +304,6 @@ export class TelegramChannel implements Channel {
     if (initResult == null) return;
 
     const { renderer, remainingEvents, stopTyping } = initResult;
-    this.activeRenderer = renderer;
 
     try {
       for await (const event of remainingEvents) {
