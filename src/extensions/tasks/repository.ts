@@ -43,7 +43,10 @@ const ACTIVE_STATUSES: TaskStatus[] = ["pending", "running", "waiting"];
 // Failed is excluded so a retry within the same period stays possible.
 const PERIOD_COVERING_STATUSES: TaskStatus[] = ["pending", "running", "waiting", "completed"];
 
-export const TERMINAL_STATUSES: TaskStatus[] = ["completed", "failed"];
+const TERMINAL_STATUSES: TaskStatus[] = ["completed", "failed"];
+
+/** Whether a status is a terminal state (`completed` or `failed`). */
+export const isTerminalStatus = (status: TaskStatus): boolean => TERMINAL_STATUSES.includes(status);
 
 export class TaskRepository {
   private readonly db: AppDatabase;
@@ -323,9 +326,7 @@ export class TaskRepository {
         .where(eq(taskInstances.definitionId, definition.id))
         .all();
 
-      const allTerminal = instances.every((instance) =>
-        TERMINAL_STATUSES.includes(instance.status),
-      );
+      const allTerminal = instances.every((instance) => isTerminalStatus(instance.status));
 
       if (!allTerminal) continue;
 

@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
-import { type DefinitionPatch, type TaskRepository, TERMINAL_STATUSES } from "./repository.ts";
+import { type DefinitionPatch, isTerminalStatus, type TaskRepository } from "./repository.ts";
 import { formatInTimezone, formatSchedule, parseSchedule } from "./schedule.ts";
 import type { TaskDefinitionRecord } from "./schema.ts";
 
@@ -366,7 +366,7 @@ export const handleStopTask = async (
 
   const previousStatus = instance.status;
 
-  if (TERMINAL_STATUSES.includes(instance.status)) {
+  if (isTerminalStatus(instance.status)) {
     throw new Error(
       `Task instance '${args.task_instance_id}' is already finished (status: ${instance.status}).`,
     );

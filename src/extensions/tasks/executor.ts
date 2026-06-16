@@ -338,10 +338,13 @@ export const executeBackgroundInstance = async (
  */
 export class BackgroundRunner {
   private readonly deps: ExecutorDeps;
-  private readonly inFlight = new Map<string, Promise<void>>();
-  // One abort handle per dispatched instance so a running run can be cancelled:
-  // aborting the controller interrupts the evaluator loop's live session.
-  private readonly abortControllers = new Map<string, AbortController>();
+  // One entry per dispatched instance, pairing its in-flight run with the
+  // AbortController that cancels it. Binding them in a single map (rather than
+  // two kept in lockstep) makes the controller/promise pairing structural.
+  private readonly runs = new Map<
+    string,
+    { controller: AbortController; promise: Promise<void> }
+  >();
 
   constructor(deps: ExecutorDeps) {
     this.deps = deps;
@@ -354,26 +357,21 @@ export class BackgroundRunner {
     ];
 
     for (const instance of dispatchable) {
-      if (this.inFlight.size >= this.deps.maxConcurrent) break;
+      if (this.runs.size >= this.deps.maxConcurrent) break;
 
-      if (this.inFlight.has(instance.id)) continue;
+      if (this.runs.has(instance.id)) continue;
 
       const controller = new AbortController();
-      this.abortControllers.set(instance.id, controller);
-
-      const run = executeBackgroundInstance(this.deps, instance, controller.signal)
+      const promise = executeBackgroundInstance(this.deps, instance, controller.signal)
         .catch((error) =>
           this.deps.log.error(
             { instanceId: instance.id, err: error },
             "background executor crashed",
           ),
         )
-        .finally(() => {
-          this.abortControllers.delete(instance.id);
-          this.inFlight.delete(instance.id);
-        });
+        .finally(() => this.runs.delete(instance.id));
 
-      this.inFlight.set(instance.id, run);
+      this.runs.set(instance.id, { controller, promise });
     }
   }
 
@@ -384,16 +382,18 @@ export class BackgroundRunner {
    * whole effect).
    */
   async cancel(instanceId: string): Promise<boolean> {
-    const controller = this.abortControllers.get(instanceId);
-    if (controller == null) return false;
+    const run = this.runs.get(instanceId);
+    if (run == null) return false;
 
-    controller.abort();
-    await this.inFlight.get(instanceId)?.catch(() => {});
+    run.controller.abort();
+    // `run.promise` already swallows its own errors via the `.catch` in `tick`,
+    // so awaiting it never throws — it just waits for the run to unwind.
+    await run.promise;
     return true;
   }
 
   /** Await in-flight executions (tests and shutdown). */
   async drain(): Promise<void> {
-    await Promise.allSettled(this.inFlight.values());
+    await Promise.allSettled([...this.runs.values()].map((r) => r.promise));
   }
 }
