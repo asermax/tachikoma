@@ -42,6 +42,16 @@ export const hasUncommittedChanges = async (cwd: string): Promise<boolean> =>
 export const hasRemote = async (cwd: string, remote: string): Promise<boolean> =>
   (await runGitCapture(cwd, ["remote", "get-url", remote])).code === 0;
 
+/** Subjects of the commits in `range` (a git-log revision range, default all of `HEAD`), oldest-first. */
+export const commitSubjects = async (cwd: string, range = "HEAD"): Promise<string[]> => {
+  const { stdout } = await runGitCapture(cwd, ["log", range, "--format=%s"]);
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .reverse();
+};
+
 /** List all registered submodule paths (e.g. ["projects/my-app"]) from git state. */
 export const listSubmodules = async (workspaceRoot: string): Promise<string[]> => {
   const result = await runGitCapture(workspaceRoot, ["submodule", "status", "--recursive"]);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { vi } from "vitest";
 
 import type { CommitAgent } from "../../src/git/commit-agent.ts";
-import { runGit } from "../../src/git/git.ts";
+import { commitSubjects, runGit } from "../../src/git/git.ts";
 import type { RebaseResolver } from "../../src/git/sync.ts";
 import type { Logger } from "../../src/log.ts";
 
@@ -71,14 +71,7 @@ export const lastSubject = (repo: string): Promise<string> =>
   runGit(repo, ["log", "-1", "--format=%s"]);
 
 /** Subjects of every commit on the repo, oldest-first. */
-export const subjects = async (repo: string): Promise<string[]> => {
-  const log = await runGit(repo, ["log", "--format=%s"]);
-  return log
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "")
-    .reverse();
-};
+export const subjects = (repo: string): Promise<string[]> => commitSubjects(repo);
 
 // ---- fake CommitAgent helpers ----------------------------------------------
 

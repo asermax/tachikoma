@@ -1,6 +1,6 @@
 import type { Logger } from "../log.ts";
 import type { CommitAgent } from "./commit-agent.ts";
-import { hasUncommittedChanges, runGit, runGitCapture } from "./git.ts";
+import { commitSubjects, hasUncommittedChanges, runGit, runGitCapture } from "./git.ts";
 
 export interface CommitAllOptions {
   /**
@@ -18,16 +18,8 @@ export interface CommitAllOptions {
 }
 
 /** Subjects of every commit made since `head`, oldest-first. `null` head = all commits. */
-const subjectsSince = async (cwd: string, head: string | null): Promise<string[]> => {
-  const range = head != null ? `${head}..HEAD` : "HEAD";
-  const { stdout } = await runGitCapture(cwd, ["log", range, "--format=%s"]);
-  const subjects = stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "");
-
-  return subjects.reverse();
-};
+const subjectsSince = (cwd: string, head: string | null): Promise<string[]> =>
+  commitSubjects(cwd, head != null ? `${head}..HEAD` : "HEAD");
 
 /**
  * Commit every change in `cwd`. The agent runs first, grouping changes into
@@ -47,21 +39,12 @@ export const commitAll = async ({
   const headResult = await runGitCapture(cwd, ["rev-parse", "HEAD"]);
   const head = headResult.code === 0 && headResult.stdout !== "" ? headResult.stdout : null;
 
-  let agentRan = false;
-
   try {
     await agent(cwd, log);
-    agentRan = true;
+    if (!(await hasUncommittedChanges(cwd))) return subjectsSince(cwd, head);
+    log.warn({ path: cwd }, "commit agent left the tree dirty — committing the remainder");
   } catch (error) {
     log.warn({ err: error }, "commit agent failed — falling back to a single commit");
-  }
-
-  if (agentRan && !(await hasUncommittedChanges(cwd))) {
-    return subjectsSince(cwd, head);
-  }
-
-  if (agentRan) {
-    log.warn({ path: cwd }, "commit agent left the tree dirty — committing the remainder");
   }
 
   // Fallback: one commit with the deterministic message for whatever remains.
