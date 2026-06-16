@@ -1,3 +1,15 @@
+# [3.20.0](https://github.com/asermax/tachikoma/compare/v3.19.0...v3.20.0) (2026-06-16)
+
+
+### Bug Fixes
+
+* **projects:** use agent API in processor-mocked tests after rebase ([5a56256](https://github.com/asermax/tachikoma/commit/5a562563474912501d8d42320bc1f7bcae1d9caa))
+
+
+### Features
+
+* **git:** group commits via a headless agent with fallback ([19636e2](https://github.com/asermax/tachikoma/commit/19636e2f976d03a6506a41b5ee8535ccb5588b62))
+
 # [3.19.0](https://github.com/asermax/tachikoma/compare/v3.18.0...v3.19.0) (2026-06-16)
 
 
