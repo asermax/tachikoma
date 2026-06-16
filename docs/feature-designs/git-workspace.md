@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains how the workspace stays version-tracked unattended: why commits are a single staged pass with an LLM-generated subject line, why sync helpers return result enums instead of throwing, how the same primitives serve both the workspace and registered projects, and why destructive history operations are funneled through one explicit tool while the agent's raw bash path is gated against them.
+This document explains how the workspace stays version-tracked unattended: why commits are an agent-driven grouped pass with a deterministic fallback, why sync helpers return result enums instead of throwing, how the same primitives serve both the workspace and registered projects, and why destructive history operations are funneled through one explicit tool while the agent's raw bash path is gated against them.
 
 ## Problem Context
 
@@ -30,7 +30,7 @@ The extension (`src/extensions/git/index.ts`) wires a bootstrap hook, two pi ext
 
 ```
 session close ─► git-commit (finalize)
-                   ├─ commitAll: add -A → diffstat → side.complete → commit
+                   ├─ commitAll: commit agent (group → add+commit per group) → still dirty? add -A + commit fallback
                    └─ smartPush: abort stale rebase → fetch → detectDivergence
                         ├─ AHEAD     → push → PUSHED
                         ├─ DIVERGED  → rebase --autostash
@@ -51,7 +51,8 @@ Note: a rebase that succeeds (clean or agent-resolved) followed by a *push* fail
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/git/git.ts` *(core module)* | Subprocess primitives: `runGit` (throws), `runGitCapture` (never throws), `hasUncommittedChanges`, `hasRemote`, `listSubmodules` | `execFile`-based, no shell strings (DES-002); capture variant returns `{code, stdout, stderr}` so callers branch on exit codes. Core utility — any extension may import it directly for low-level ops |
-| `src/git/commit.ts` *(core module)* | `commitAll`: stage everything, generate message from diffstat, commit | `Completer = Pick<SideRunner, "complete">` for fakeable tests; sanitization + 100-char cap; explicit `message` skips generation. Exposed to extensions via `app.git.commitAll` |
+| `src/git/commit.ts` *(core module)* | `commitAll`: run the commit agent, then fall back to one staged commit on failure | Agent-first with a deterministic fallback; subjects read from git (disk-trust, not the agent's report); returns `string[]`. Exposed to extensions via `app.git.commitAll` |
+| `src/git/commit-agent.ts` *(core module)* | `CommitAgent` type, `createCommitAgent`: a headless side agent that groups changes into cohesive commits via cwd-scoped tools | Two modes — `"workspace"` groups by area, `"project"` matches the repo's own commit style (`git log` + CONTRIBUTING/CLAUDE/AGENTS); the `git` tool is an allowlist (`status`/`diff`/`log`/`add`/`commit`/`show`) so the agent can only add commits; commits run with `core.editor=true`/`commit.gpgsign=false`. `createCommitAgent` exposed via `app.git`; the git extension imports it directly for workspace mode |
 | `src/git/sync.ts` *(core module)* | `detectDivergence`, `smartPush`, `smartPull`, the `RebaseResolver` type, result const maps | merge-base ancestor checks; stale-rebase abort on entry; gitlink and `HEAD`-name resolution; optional `RebaseResolver` for conflicts with a bounded attempt loop; never throws. `smartPush`/`smartPull` exposed via `app.git` |
 | `src/git/resolve.ts` *(core module)* | `createGitResolver`: the agent-backed `RebaseResolver` (type from `src/git/sync.ts`), with cwd-scoped `read_conflict`/`write_resolved`/`git` custom tools | One side-agent pass per call; tools bound to the target repo so the agent can't touch the wrong tree; `git` tool rejects push/fetch/reset/remote/filter-repo; swallows agent errors so a sync is never aborted by a throw |
 | `src/extensions/git/index.ts` | `defineExtension` wiring; honors `enabled` flag | Hook + tools factory + processor; no logic |
@@ -63,19 +64,19 @@ Note: a rebase that succeeds (clean or agent-resolved) followed by a *push* fail
 
 ## Key Decisions
 
-### Single diffstat completion instead of a commit agent
+### Agent-driven grouped commits, with a deterministic fallback
 
-**Choice**: One `git add -A`, one `side.complete` call over the staged diffstat producing a single subject line, one commit.
-**Why**: A plain completion is cheaper, faster, fully fakeable in tests, and exposes no tool surface to constrain — and a per-session bulk commit is granular enough for a workspace whose history exists for review and rollback.
+**Choice**: `commitAll` runs a headless side agent first (`createCommitAgent`, `src/git/commit-agent.ts`) — the same `side.run` + cwd-scoped custom-tool shape as the rebase resolver — that inspects the diff, groups changes into cohesive sets, and creates one descriptive commit per group. The agent ALWAYS runs when there are changes; only if it throws, commits nothing, or leaves the tree dirty does `commitAll` fall back to one `git add -A` + `git commit -m <fallbackMessage>` with a deterministic dated message. The subjects returned are read from git (`git log head..HEAD`), never from the agent's self-report, so partial commits survive an agent failure.
+**Why**: A workspace session touches several unrelated areas at once (episodic memories, topic notes, context files, config), and a single diffstat summary lumps them into one undifferentiated commit that is hard to review or revert. Grouping mirrors what a person would do and matches the legacy behavior. The agent's tools are an allowlist (`status`/`diff`/`log`/`add`/`commit`/`show`) bound to the target repo, so it can only add commits — never push, reset, rebase, or rewrite — making a full agent safe on the commit path. The deterministic fallback guarantees a session close never leaves changes uncommitted even if the model is down.
 **Alternatives Considered**:
-- Headless agent run (`app.agent.side.run`) grouping commits: better commit granularity, but slower, costlier, and needs git-command guardrails
+- Single diffstat completion (`side.complete` over `git diff --cached --stat`): cheaper and faster, but one commit per session with a message bounded by what a diffstat conveys
 - Static messages only: free, but history becomes unreadable
 
 **Consequences**:
-- Pro: Deterministic flow; `Completer` is one mocked method in tests
-- Pro: The commit path itself runs only `add`/`commit`/`fetch`/`rebase`/`push`; destructive operations the agent might attempt via bash are caught separately by the guardrail (below)
-- Con: One commit per session, no per-topic grouping
-- Con: Message quality is bounded by what a diffstat conveys
+- Pro: Per-topic grouping; descriptive, area-specific messages; project commits match each project's own style
+- Pro: Both the agent path and the fallback leave the tree clean; subjects are read from git so a partial agent run is still reported accurately
+- Con: A `processor`-tier agent run per session close (and per dirty project) is costlier and slower than a one-shot completion; the deterministic fallback message is generic when the agent fails
+- Con: The commit agent's `git`-tool allowlist must be maintained alongside the agent bash guardrail's denylist
 
 ### Result enums instead of exceptions for sync outcomes
 
