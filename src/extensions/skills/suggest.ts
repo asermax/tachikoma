@@ -31,8 +31,10 @@ export const SkillSelectionSchema = Type.Object({
 
 export type SkillSelection = Static<typeof SkillSelectionSchema>;
 
-// Bail out of a slow classify rather than stalling the user-visible response.
-export const SKILL_CLASSIFY_TIMEOUT_MS = 30_000;
+// Bail out of a slow classify rather than stalling the user-visible response. The deadline aborts
+// the underlying request, so this is a hard ceiling — a capped, temperature-0 classify normally
+// settles in well under this, and a hung call is cancelled here rather than left racing.
+export const SKILL_CLASSIFY_TIMEOUT_MS = 10_000;
 
 // Recent conversation messages serialized as context for the selection — bounded so a long
 // conversation does not bloat the classifier call.
@@ -53,21 +55,20 @@ const renderInput = (conversation: string, latestMessage: string): string =>
     `<latest-user-message>\n${latestMessage}\n</latest-user-message>`,
   ].join("\n\n");
 
-// Race a classify against a timeout that rejects, so a slow/hung call degrades to no-injection via
-// the handler's try/catch. The classify promise gets its own catch so a post-timeout settlement
-// never surfaces as an unhandled rejection, and the timer is cleared once the race resolves.
-const classifyWithTimeout = async <T>(work: Promise<T>, ms: number): Promise<T> => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  work.catch(() => {});
-
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error("skill classify timed out")), ms);
-  });
-
+// Run classify against a deadline that aborts the underlying request — not a Promise.race that
+// rejects while leaving the HTTP call in flight. Aborting cancels the provider stream (no dangling
+// request, no late settlement to leak), and the timer is cleared once classify settles. Any
+// rejection (timeout abort or otherwise) degrades to no-injection via the handler's try/catch.
+const classifyWithDeadline = async <T>(
+  classify: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+): Promise<T> => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
   try {
-    return await Promise.race([work, timeout]);
+    return await classify(controller.signal);
   } finally {
-    if (timer != null) clearTimeout(timer);
+    clearTimeout(timer);
   }
 };
 
@@ -118,13 +119,15 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
         convertToLlm(resolved.messages.slice(-RECENT_MESSAGES)),
       );
 
-      const selection = await classifyWithTimeout(
-        classifier.classify({
-          system: `${SYSTEM}\n\n<available-skills>\n${renderCatalog(candidates)}\n</available-skills>`,
-          user: renderInput(conversation, event.prompt),
-          schema: SkillSelectionSchema,
-          tier: "classifier",
-        }),
+      const selection = await classifyWithDeadline(
+        (signal) =>
+          classifier.classify({
+            system: `${SYSTEM}\n\n<available-skills>\n${renderCatalog(candidates)}\n</available-skills>`,
+            user: renderInput(conversation, event.prompt),
+            schema: SkillSelectionSchema,
+            tier: "classifier",
+            signal,
+          }),
         SKILL_CLASSIFY_TIMEOUT_MS,
       );
 

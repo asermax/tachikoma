@@ -3,7 +3,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentManager } from "../../src/agent/manager.ts";
-import { lastAssistantText, SideRunner } from "../../src/agent/side-run.ts";
+import { extractJson, lastAssistantText, SideRunner } from "../../src/agent/side-run.ts";
 import type { Logger } from "../../src/log.ts";
 
 const completeSimpleMock = vi.fn();
@@ -138,6 +138,28 @@ describe("SideRunner.complete", () => {
     const [, context, options] = completeSimpleMock.mock.calls[0];
     expect(context.systemPrompt).toBeUndefined();
     expect(options).toBeUndefined();
+  });
+
+  it("forwards maxTokens, temperature, and an abort signal to the provider", async () => {
+    completeSimpleMock.mockResolvedValue(assistantMessage("ok"));
+
+    const { manager } = makeManager({ apiKey: "secret-key" });
+    const runner = new SideRunner(manager, makeLogger());
+    const controller = new AbortController();
+
+    await runner.complete({
+      user: "u",
+      maxTokens: 128,
+      temperature: 0.2,
+      signal: controller.signal,
+    });
+
+    expect(completeSimpleMock.mock.calls[0][2]).toEqual({
+      apiKey: "secret-key",
+      maxTokens: 128,
+      temperature: 0.2,
+      signal: controller.signal,
+    });
   });
 
   it("logs a debug line when the tier falls back to a pi default", async () => {
@@ -347,5 +369,61 @@ describe("SideRunner.classify", () => {
 
     await expect(runner.classify({ system: "s", user: "u", schema })).rejects.toBeInstanceOf(Error);
     expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies classification defaults (maxTokens 256, temperature 0) to the provider call", async () => {
+    completeSimpleMock.mockResolvedValue(assistantMessage('{"label":"a"}'));
+
+    const { manager } = makeManager();
+    const runner = new SideRunner(manager, makeLogger());
+
+    await runner.classify({ system: "s", user: "u", schema });
+
+    expect(completeSimpleMock.mock.calls[0][2]).toMatchObject({ maxTokens: 256, temperature: 0 });
+  });
+
+  it("forwards an abort signal and skips the retry once already aborted", async () => {
+    completeSimpleMock.mockResolvedValue(assistantMessage("not json"));
+
+    const { manager } = makeManager();
+    const runner = new SideRunner(manager, makeLogger());
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      runner.classify({ system: "s", user: "u", schema, signal: controller.signal }),
+    ).rejects.toBeInstanceOf(Error);
+    // Aborted → no second attempt.
+    expect(completeSimpleMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe("extractJson", () => {
+  it("returns the contents of a fenced json block", () => {
+    expect(extractJson('```json\n{"a":1}\n```')).toBe('{"a":1}');
+  });
+
+  it("extracts the first balanced object, ignoring trailing prose", () => {
+    expect(extractJson('{"skills":[]} no skills needed here')).toBe('{"skills":[]}');
+  });
+
+  it("extracts only the first of two concatenated objects", () => {
+    expect(extractJson('{"a":1}{"b":2}')).toBe('{"a":1}');
+  });
+
+  it("ignores braces that appear inside string values", () => {
+    expect(extractJson('{"a":"}{"}')).toBe('{"a":"}{"}');
+  });
+
+  it("handles nested objects with surrounding prose", () => {
+    expect(extractJson('prefix {"a":{"b":1}} suffix')).toBe('{"a":{"b":1}}');
+  });
+
+  it("falls back to the remainder when braces are unbalanced", () => {
+    expect(extractJson('{"a":1')).toBe('{"a":1');
+  });
+
+  it("returns trimmed text when there is no object at all", () => {
+    expect(extractJson("  no json here  ")).toBe("no json here");
   });
 });

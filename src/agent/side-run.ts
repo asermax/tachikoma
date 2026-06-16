@@ -12,12 +12,24 @@ export interface ClassifyOptions<S extends TSchema> {
   user: string;
   schema: S;
   tier?: ModelTier;
+  /** Aborts the underlying provider request; a classify that times out passes its signal here. */
+  signal?: AbortSignal;
+  /** Output token cap (default 256 — classifications are tiny JSON objects). */
+  maxTokens?: number;
+  /** Sampling temperature (default 0 for deterministic classification). */
+  temperature?: number;
 }
 
 export interface CompleteOptions {
   system?: string;
   user: string;
   tier?: ModelTier;
+  /** Cap output tokens, forwarded to the provider. */
+  maxTokens?: number;
+  /** Sampling temperature, forwarded to the provider. */
+  temperature?: number;
+  /** Aborts the underlying provider request. */
+  signal?: AbortSignal;
 }
 
 export interface HeadlessRunOptions {
@@ -67,15 +79,44 @@ export const lastAssistantText = (messages: readonly { role: string }[]): string
   return "";
 };
 
-const extractJson = (text: string): string => {
+/**
+ * Pull the first complete top-level JSON object out of model output. A fenced
+ * block wins; otherwise a string-aware brace scan from the first `{` to its
+ * match ignores any trailing prose or a second concatenated object — exactly the
+ * shapes that surfaced as `Unexpected non-whitespace character after JSON`.
+ */
+export const extractJson = (text: string): string => {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenced?.[1] != null) return fenced[1].trim();
 
   const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start >= 0 && end > start) return text.slice(start, end + 1);
+  if (start === -1) return text.trim();
 
-  return text.trim();
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, index + 1);
+    }
+  }
+
+  // Unbalanced — fall back to everything from the first brace so JSON.parse
+  // surfaces a precise error rather than silently swallowing the mismatch.
+  return text.slice(start).trim();
 };
 
 /** Side-channel LLM work outside the conversational session: classification and one-shot completions. */
@@ -88,7 +129,14 @@ export class SideRunner {
     this.log = log;
   }
 
-  async complete({ system, user, tier = "processor" }: CompleteOptions): Promise<string> {
+  async complete({
+    system,
+    user,
+    tier = "processor",
+    maxTokens,
+    temperature,
+    signal,
+  }: CompleteOptions): Promise<string> {
     const { model, fromPiDefaults } = this.manager.tiers.resolve(tier);
 
     if (fromPiDefaults) {
@@ -104,10 +152,25 @@ export class SideRunner {
       { role: "user", content: [{ type: "text", text: user }], timestamp: Date.now() },
     ];
 
+    // Build the provider options only from what was given, passing `undefined` when
+    // nothing is set (so the provider sees no options object at all, matching prior
+    // behavior). maxTokens/temperature/signal are honored by pi-ai's OpenAI-compatible
+    // providers (e.g. the GLM/ZAI classifier), including a signal-driven cancellation.
+    const options: {
+      apiKey?: string;
+      maxTokens?: number;
+      temperature?: number;
+      signal?: AbortSignal;
+    } = {};
+    if (apiKey != null) options.apiKey = apiKey;
+    if (maxTokens != null) options.maxTokens = maxTokens;
+    if (temperature != null) options.temperature = temperature;
+    if (signal != null) options.signal = signal;
+
     const result = await completeSimple(
       model,
       { ...(system != null ? { systemPrompt: system } : {}), messages },
-      apiKey != null ? { apiKey } : undefined,
+      Object.keys(options).length > 0 ? options : undefined,
     );
 
     if (result.stopReason === "error" || result.stopReason === "aborted") {
@@ -180,23 +243,39 @@ export class SideRunner {
     });
   }
 
-  /** Structured classification: instructs JSON output matching the schema, parses, retries once. */
+  /**
+   * Structured classification: instructs JSON output matching the schema, parses, retries once.
+   * Output is capped and sampled at temperature 0 (overridable), and an abort signal is forwarded
+   * so a slow classify is cancelled at its deadline rather than left racing.
+   */
   async classify<S extends TSchema>({
     system,
     user,
     schema,
     tier = "classifier",
+    signal,
+    maxTokens = 256,
+    temperature = 0,
   }: ClassifyOptions<S>): Promise<Static<S>> {
     const instruction = `${system}\n\nRespond with a single JSON object matching this JSON Schema — no prose:\n${JSON.stringify(schema)}`;
 
     const attempt = async (extra: string): Promise<Static<S>> => {
-      const text = await this.complete({ system: instruction, user: `${user}${extra}`, tier });
+      const text = await this.complete({
+        system: instruction,
+        user: `${user}${extra}`,
+        tier,
+        maxTokens,
+        temperature,
+        signal,
+      });
       return parseWithSchema(schema, JSON.parse(extractJson(text)), "classification output");
     };
 
     try {
       return await attempt("");
     } catch (error) {
+      // A deadline abort should not burn a second, already-aborted attempt.
+      if (signal?.aborted) throw error;
       this.log.debug({ err: error }, "classification parse failed — retrying once");
       return attempt("\n\n(Reminder: output ONLY the JSON object, nothing else.)");
     }

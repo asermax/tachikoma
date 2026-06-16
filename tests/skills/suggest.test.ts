@@ -147,17 +147,28 @@ describe("registerSkillSuggestion", () => {
     expect(fakeLog.warn).toHaveBeenCalled();
   });
 
-  it("returns undefined when classify exceeds the timeout (AC7)", async () => {
+  it("returns undefined when classify exceeds the deadline, aborting the request (AC7)", async () => {
     vi.useFakeTimers();
     try {
       const pdf = makeSkill("pdf-tools", "Work with PDFs");
-      const classify = vi.fn(() => new Promise(() => {}));
+      // A classify that never settles on its own — it must be cancelled via the deadline signal.
+      const classify = vi.fn(
+        ({ signal }: { signal?: AbortSignal }) =>
+          new Promise<never>((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          }),
+      );
       const { handler } = register({ classifier: { classify } });
 
       const pending = handler(event("merge pdfs", [pdf]), emptyCtx());
       await vi.advanceTimersByTimeAsync(SKILL_CLASSIFY_TIMEOUT_MS);
 
       await expect(pending).resolves.toBeUndefined();
+
+      // The deadline aborted the underlying request — no Promise.race loser left in flight.
+      const signal = classify.mock.calls[0]?.[0]?.signal as AbortSignal | undefined;
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal?.aborted).toBe(true);
     } finally {
       vi.useRealTimers();
     }
