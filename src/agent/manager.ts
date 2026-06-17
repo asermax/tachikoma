@@ -224,6 +224,11 @@ export class AgentManager {
       this.log.warn({ modelFallbackMessage }, "model fallback on session open");
     }
 
+    // Fire bindExtensions so pi emits resources_discover, which lets the skills extension
+    // contribute the workspace skills/ directory. Without this, only npm-packaged skills
+    // (like context7) are visible to the proactive classifier.
+    await session.bindExtensions({});
+
     return session;
   }
 
