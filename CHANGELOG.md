@@ -1,3 +1,10 @@
+## [3.28.1](https://github.com/asermax/tachikoma/compare/v3.28.0...v3.28.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **skills:** surface detected skills at info, quiet disabled config ([76aa5ca](https://github.com/asermax/tachikoma/commit/76aa5ca315ddf69950cd10cd47f4c1da1237d543))
+
 # [3.28.0](https://github.com/asermax/tachikoma/compare/v3.27.1...v3.28.0) (2026-06-17)
 
 
