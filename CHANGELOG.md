@@ -1,3 +1,15 @@
+# [3.27.0](https://github.com/asermax/tachikoma/compare/v3.26.0...v3.27.0) (2026-06-17)
+
+
+### Bug Fixes
+
+* **skills:** treat empty proactive selection as valid result ([e54f57f](https://github.com/asermax/tachikoma/commit/e54f57fcfcbb5b25bfb3598fc3e3308c7b30a237))
+
+
+### Features
+
+* **logging:** apply action-coverage conventions across the app ([1aface6](https://github.com/asermax/tachikoma/commit/1aface6f1911da3a45461e48af93df52d97fe605))
+
 # [3.26.0](https://github.com/asermax/tachikoma/compare/v3.25.0...v3.26.0) (2026-06-17)
 
 
