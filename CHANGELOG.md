@@ -1,3 +1,10 @@
+# [3.28.0](https://github.com/asermax/tachikoma/compare/v3.27.1...v3.28.0) (2026-06-17)
+
+
+### Features
+
+* **memory:** add one-time facts/preferences → topics migration ([6697d8c](https://github.com/asermax/tachikoma/commit/6697d8cf5a6c33a724105e45b6524b19e75b3920))
+
 ## [3.27.1](https://github.com/asermax/tachikoma/compare/v3.27.0...v3.27.1) (2026-06-17)
 
 
