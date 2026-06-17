@@ -1,3 +1,10 @@
+## [3.24.2](https://github.com/asermax/tachikoma/compare/v3.24.1...v3.24.2) (2026-06-17)
+
+
+### Bug Fixes
+
+* **skills:** abort classify request at deadline instead of racing ([e219f3f](https://github.com/asermax/tachikoma/commit/e219f3f56b1d08ee760cf1495421cfef9d660940))
+
 ## [3.24.1](https://github.com/asermax/tachikoma/compare/v3.24.0...v3.24.1) (2026-06-16)
 
 
