@@ -1,3 +1,10 @@
+# [3.25.0](https://github.com/asermax/tachikoma/compare/v3.24.2...v3.25.0) (2026-06-17)
+
+
+### Features
+
+* **sessions:** daily trunk session with collapsible topic branches ([f8a8e35](https://github.com/asermax/tachikoma/commit/f8a8e355423f16ff46637ab4f4fe21d3c8ace5f8))
+
 ## [3.24.2](https://github.com/asermax/tachikoma/compare/v3.24.1...v3.24.2) (2026-06-17)
 
 
