@@ -40,7 +40,7 @@ export default defineExtension<NotificationsConfig>({
     app.onShutdown("flush", () => router.flushNow());
 
     app.agent.use(
-      createNotifyToolFactory((event, payload) => app.events.emit(event, payload)),
+      createNotifyToolFactory((event, payload) => app.events.emit(event, payload), app.log),
       {
         // Background runs only: in the main conversation the agent replies directly,
         // so out-of-band notification is meaningless there.

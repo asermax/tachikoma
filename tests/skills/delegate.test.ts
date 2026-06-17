@@ -6,7 +6,10 @@ import { BUILTIN_AGENTS } from "../../src/extensions/skills/builtins.ts";
 import { type AgentRunner, createDelegateTool } from "../../src/extensions/skills/delegate.ts";
 import type { Logger } from "../../src/log.ts";
 
-const fakeLog = { debug: vi.fn() } as unknown as Logger;
+const fakeLog = Object.assign(
+  { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  { child: () => fakeLog },
+) as unknown as Logger;
 const fakeCtx = {} as ExtensionContext;
 
 const agents: SkillAgent[] = [

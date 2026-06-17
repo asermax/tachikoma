@@ -396,7 +396,9 @@ export const buildCrossStoreManifest = async (
       files = (await readdir(storeDir(workspaceRoot, store)))
         .filter((name) => name.endsWith(".md"))
         .sort();
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+
       continue;
     }
 
@@ -480,7 +482,9 @@ export const buildStoreManifestForContext = async (
       files = (await readdir(storeDir(workspaceRoot, store)))
         .filter((name) => name.endsWith(".md"))
         .sort();
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+
       continue;
     }
 
@@ -527,7 +531,9 @@ export const runContextMaintenanceTick = async (
 ): Promise<void> => {
   deps.log.info("context maintenance tick started");
 
-  await deps.side.run({
+  const start = Date.now();
+
+  const result = await deps.side.run({
     tools: FILE_EDIT_TOOLS,
     system: await contextMaintenanceSystemPrompt(deps.workspaceRoot),
     prompt: "Perform the context file cleanup pass now, following your instructions.",
@@ -536,7 +542,10 @@ export const runContextMaintenanceTick = async (
 
   await deps.commitChanges?.("chore(memory): scheduled context file maintenance");
 
-  deps.log.info("context maintenance tick completed");
+  deps.log.info(
+    { producedOutput: result.text.length > 0, durationMs: Date.now() - start },
+    "context maintenance tick completed",
+  );
 };
 
 /** Daily maintenance pass over one memory store: consolidate, prune, keep indexes in sync. */
@@ -546,7 +555,9 @@ export const runMaintenanceTick = async (
 ): Promise<void> => {
   deps.log.info({ store }, "memory maintenance tick started");
 
-  await deps.side.run({
+  const start = Date.now();
+
+  const result = await deps.side.run({
     tools: FILE_EDIT_TOOLS,
     system: await maintenanceSystemPrompt(store, deps),
     prompt: "Perform the maintenance pass now, following your instructions.",
@@ -557,5 +568,8 @@ export const runMaintenanceTick = async (
 
   await deps.commitChanges?.(`chore(memory): scheduled ${store} maintenance`);
 
-  deps.log.info({ store }, "memory maintenance tick completed");
+  deps.log.info(
+    { store, producedOutput: result.text.length > 0, durationMs: Date.now() - start },
+    "memory maintenance tick completed",
+  );
 };

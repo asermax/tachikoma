@@ -146,6 +146,10 @@ export class SideRunner {
       );
     }
 
+    this.log.debug({ tier, model: `${model.provider}/${model.id}` }, "side completion starting");
+
+    const startedAt = Date.now();
+
     const apiKey = await this.manager.apiKeyFor(model.provider);
 
     const messages: Message[] = [
@@ -174,8 +178,23 @@ export class SideRunner {
     );
 
     if (result.stopReason === "error" || result.stopReason === "aborted") {
+      this.log.warn(
+        {
+          tier,
+          model: `${model.provider}/${model.id}`,
+          stopReason: result.stopReason,
+          errorMessage: result.errorMessage,
+        },
+        "side completion failed",
+      );
+
       throw new Error(`side completion failed: ${result.errorMessage ?? result.stopReason}`);
     }
+
+    this.log.debug(
+      { tier, model: `${model.provider}/${model.id}`, durationMs: Date.now() - startedAt },
+      "side completion finished",
+    );
 
     return textOf(result);
   }
@@ -194,6 +213,10 @@ export class SideRunner {
     isolatePrompt,
     backgroundExtensions,
   }: HeadlessRunOptions): Promise<HeadlessRunResult> {
+    this.log.debug({ tier, model, tools, backgroundExtensions }, "headless run starting");
+
+    const startedAt = Date.now();
+
     const session = await this.manager.open({
       inMemory: true,
       bare: true,
@@ -215,7 +238,16 @@ export class SideRunner {
     try {
       await session.prompt(prompt);
 
+      this.log.debug({ tier, durationMs: Date.now() - startedAt }, "headless run finished");
+
       return { text: lastAssistantText(session.messages) };
+    } catch (error) {
+      this.log.warn(
+        { err: error instanceof Error ? error.message : String(error), tier },
+        "headless run failed",
+      );
+
+      throw error;
     } finally {
       session.dispose();
     }
@@ -276,8 +308,19 @@ export class SideRunner {
     } catch (error) {
       // A deadline abort should not burn a second, already-aborted attempt.
       if (signal?.aborted) throw error;
+
       this.log.debug({ err: error }, "classification parse failed — retrying once");
-      return attempt("\n\n(Reminder: output ONLY the JSON object, nothing else.)");
+
+      try {
+        return await attempt("\n\n(Reminder: output ONLY the JSON object, nothing else.)");
+      } catch (retryError) {
+        this.log.warn(
+          { err: retryError instanceof Error ? retryError.message : String(retryError), tier },
+          "classification failed after retry",
+        );
+
+        throw retryError;
+      }
     }
   }
 }

@@ -11,7 +11,12 @@ import { LEGACY_BACKUP_DB } from "../../src/migration/database.ts";
 import { adaptLegacyTasks } from "../../src/migration/tasks.ts";
 import { Workspace } from "../../src/workspace.ts";
 
-const fakeLog = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+const fakeLog = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+} as unknown as Logger;
 
 interface LegacyDef {
   id: string;
@@ -224,7 +229,12 @@ describe("adaptLegacyTasks", () => {
 
     const db = createDatabase(workspace.databaseFile);
     runMigrations(db);
-    const log = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+    const log = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    } as unknown as Logger;
 
     await adaptLegacyTasks(db, workspace, log);
 
@@ -237,7 +247,12 @@ describe("adaptLegacyTasks", () => {
 
   it("does not warn when there are no legacy rows to report", async () => {
     const { workspace, db } = await setup([]);
-    const log = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+    const log = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    } as unknown as Logger;
 
     await adaptLegacyTasks(db, workspace, log);
 

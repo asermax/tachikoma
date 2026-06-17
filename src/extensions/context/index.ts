@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
+import type { Logger } from "../../log.ts";
 import { defineExtension } from "../api.ts";
 import { createCoreContextProcessor } from "./processor.ts";
 
@@ -21,13 +22,15 @@ Nothing is known about the user yet. This file accumulates durable knowledge abo
 who they are, extracted from conversations.
 `;
 
-const readOrCreate = async (path: string, template: string): Promise<string> => {
+const readOrCreate = async (path: string, template: string, log: Logger): Promise<string> => {
   try {
     return await readFile(path, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 
     await writeFile(path, template, "utf8");
+    log.info({ file: path }, "created context file from template");
+
     return template;
   }
 };
@@ -57,8 +60,8 @@ export default defineExtension({
     let user = "";
 
     app.bootstrap("load-context-files", async () => {
-      soul = await readOrCreate(app.workspace.resolve("SOUL.md"), SOUL_TEMPLATE);
-      user = await readOrCreate(app.workspace.resolve("USER.md"), USER_TEMPLATE);
+      soul = await readOrCreate(app.workspace.resolve("SOUL.md"), SOUL_TEMPLATE, app.log);
+      user = await readOrCreate(app.workspace.resolve("USER.md"), USER_TEMPLATE, app.log);
     });
 
     // Re-read on every session build so core-context updates from the previous
@@ -67,7 +70,14 @@ export default defineExtension({
     const fresh = (path: string, fallback: string): string => {
       try {
         return readFileSync(path, "utf8");
-      } catch {
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          app.log.warn(
+            { err: error, file: path },
+            "context file read failed, using cached snapshot",
+          );
+        }
+
         return fallback;
       }
     };

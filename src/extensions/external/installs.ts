@@ -81,6 +81,11 @@ export class InstallManager {
     if ((await loadExtensionModule(path, this.log)) == null) {
       if (fromGit) await rm(path, { recursive: true, force: true });
 
+      this.log.warn(
+        { alias, source, path },
+        "install rejected: source has no valid extension module",
+      );
+
       throw new Error(
         `Source '${source}' does not contain a valid Tachikoma extension module ` +
           "(expected a .ts/.js file or an index.ts/index.js whose default export has 'name' and 'setup').",
@@ -101,9 +106,12 @@ export class InstallManager {
     await mkdir(this.extensionsDir, { recursive: true });
     await rm(target, { recursive: true, force: true });
 
+    this.log.debug({ alias, source, target }, "cloning external extension source");
+
     try {
       await execFileAsync("git", ["clone", source, target]);
     } catch (error) {
+      this.log.warn({ alias, source, err: error }, "git clone failed");
       throw new Error(`git clone failed for '${source}': ${error}`);
     }
 
@@ -129,6 +137,7 @@ export class InstallManager {
       this.log.info({ alias }, "external extension updated");
       return { status: "updated", detail: stdout.trim() };
     } catch (error) {
+      this.log.warn({ alias, source: record.source, err: error }, "git pull failed");
       throw new Error(`git pull failed for '${alias}': ${error}`);
     }
   }

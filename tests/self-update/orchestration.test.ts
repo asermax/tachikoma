@@ -365,7 +365,10 @@ describe("createRestartToolFactory", () => {
     let captured: CapturedTool | null = null;
     const pi = { registerTool: (tool: CapturedTool) => (captured = tool) };
 
-    createRestartToolFactory(() => restarter)(pi as unknown as Parameters<ExtensionFactory>[0]);
+    createRestartToolFactory(
+      () => restarter,
+      fakeLog,
+    )(pi as unknown as Parameters<ExtensionFactory>[0]);
 
     expect(captured).not.toBeNull();
     const tool = captured as unknown as CapturedTool;

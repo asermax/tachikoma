@@ -13,7 +13,10 @@ import {
 } from "../../src/migration/drop-sessions-table.ts";
 import { Workspace } from "../../src/workspace.ts";
 
-const fakeLog = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+const fakeLog = Object.assign(
+  { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  { child: () => fakeLog },
+) as unknown as Logger;
 
 const makeWorkspace = async (): Promise<Workspace> => {
   const dir = await mkdtemp(join(tmpdir(), "tachi-drop-sessions-"));
@@ -44,7 +47,7 @@ const preRefactorMigrationsFolder = (): string => {
 /** Seed a database at the pre-DLT-175 schema (sessions present, old channel_messages shape). */
 const seedOldSchema = (file: string): void => {
   const db = createDatabase(file);
-  runMigrations(db, preRefactorMigrationsFolder());
+  runMigrations(db, undefined, preRefactorMigrationsFolder());
 
   const raw = new Database(file);
   raw.prepare("INSERT INTO sessions (channel, created_at, error) VALUES ('telegram', 0, 0)").run();

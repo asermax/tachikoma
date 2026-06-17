@@ -82,36 +82,51 @@ export class ExtensionHost {
   async load(extensions: TachikomaExtension<never>[]): Promise<void> {
     this.queue.push(...extensions.map((extension) => ({ extension, external: false })));
 
+    this.services.log.debug({ count: extensions.length }, "loading extensions");
+
+    let loaded = 0;
+    let skipped = 0;
+
     // Extensions may enqueue further extensions (third-party) while loading.
     for (let index = 0; index < this.queue.length; index += 1) {
       const { extension, external, setupTimeoutMs } = this.queue[index] as QueuedExtension;
-      const app = this.buildContext(extension, external);
 
       // First-party setups fail hard — a core bug must surface, not be swallowed.
       // External (third-party) setups are isolated: a throw or hang skips that one
       // extension and lets startup continue (see external-extensions design).
       if (!external) {
-        await extension.setup(app as AppContext<never>);
+        await extension.setup(this.buildContext(extension, external) as AppContext<never>);
+        loaded += 1;
         this.services.log.debug({ extension: extension.name }, "extension loaded");
         continue;
       }
 
+      // buildContext parses the external config and can itself throw — keep it inside the
+      // isolation boundary so a bad third-party config is skipped, not fatal.
       try {
+        const app = this.buildContext(extension, external);
+
         await withTimeout(
           Promise.resolve(extension.setup(app as AppContext<never>)),
           setupTimeoutMs ?? DEFAULT_EXTERNAL_SETUP_TIMEOUT_MS,
         );
+        loaded += 1;
         this.services.log.debug({ extension: extension.name }, "external extension loaded");
       } catch (error) {
+        skipped += 1;
         this.services.log.warn(
           { extension: extension.name, err: error },
           "external extension setup failed or timed out — skipping",
         );
       }
     }
+
+    this.services.log.info({ loaded, skipped }, "extensions loaded");
   }
 
   async bootstrap(): Promise<void> {
+    let skipped = 0;
+
     for (const { name, hook, external } of this.services.regs.bootstrapHooks) {
       this.services.log.debug({ hook: name }, "bootstrap hook");
 
@@ -125,12 +140,18 @@ export class ExtensionHost {
       try {
         await hook();
       } catch (error) {
+        skipped += 1;
         this.services.log.warn(
           { hook: name, err: error },
           "external bootstrap hook failed — skipping",
         );
       }
     }
+
+    this.services.log.info(
+      { count: this.services.regs.bootstrapHooks.length, skipped },
+      "bootstrap hooks run",
+    );
   }
 
   private buildContext(extension: TachikomaExtension<never>, external = false): AppContext {

@@ -92,6 +92,8 @@ export const extractBranches = async (
       continue;
     }
 
+    const start = Date.now();
+
     try {
       for (const store of MEMORY_STORES) {
         // Hard-limit the fork to file tools — the extraction agent reuses the session's persona but
@@ -110,6 +112,8 @@ export const extractBranches = async (
     }
 
     markBranchExtracted(session, record.branchId);
+
+    log.info({ branchId: record.branchId, durationMs: Date.now() - start }, "branch extracted");
   }
 };
 
@@ -181,7 +185,9 @@ export const coreContextStep = async (
 const runStoreMaintenance = async (store: MemoryStore, deps: ClosePhaseDeps): Promise<void> => {
   deps.log.info({ store }, "close-pipeline store maintenance started");
 
-  await deps.side.run({
+  const start = Date.now();
+
+  const result = await deps.side.run({
     tools: FILE_EDIT_TOOLS,
     system: await maintenanceSystemPrompt(store, deps),
     prompt: "Perform the maintenance pass now, following your instructions.",
@@ -192,13 +198,18 @@ const runStoreMaintenance = async (store: MemoryStore, deps: ClosePhaseDeps): Pr
 
   await deps.commitChanges?.(`chore(memory): ${store} maintenance`);
 
-  deps.log.info({ store }, "close-pipeline store maintenance completed");
+  deps.log.info(
+    { store, producedOutput: result.text.length > 0, durationMs: Date.now() - start },
+    "close-pipeline store maintenance completed",
+  );
 };
 
 const runContextMaintenance = async (deps: ClosePhaseDeps): Promise<void> => {
   deps.log.info("close-pipeline context maintenance started");
 
-  await deps.side.run({
+  const start = Date.now();
+
+  const result = await deps.side.run({
     tools: FILE_EDIT_TOOLS,
     system: await contextMaintenanceSystemPrompt(deps.workspaceRoot),
     prompt: "Perform the context file cleanup pass now, following your instructions.",
@@ -207,7 +218,10 @@ const runContextMaintenance = async (deps: ClosePhaseDeps): Promise<void> => {
 
   await deps.commitChanges?.("chore(memory): context file maintenance");
 
-  deps.log.info("close-pipeline context maintenance completed");
+  deps.log.info(
+    { producedOutput: result.text.length > 0, durationMs: Date.now() - start },
+    "close-pipeline context maintenance completed",
+  );
 };
 
 export interface TrunkClosePipelineDeps {
@@ -231,11 +245,23 @@ export const createTrunkClosePipeline = (deps: TrunkClosePipelineDeps): PostProc
       return;
     }
 
+    log.info(
+      { day: trunk.day, branches: trunk.branchRecords.length },
+      "trunk-close memory pipeline started",
+    );
+
+    const start = Date.now();
+
     const phases = { ...deps.phases, log };
 
     await extractBranches(trunk.session, trunk.branchRecords, deps.extraction, log);
     await prunePhase(trunk.session, phases);
     await consolidatePhase(trunk.session, phases);
     await coreContextStep(trunk.session, phases);
+
+    log.info(
+      { day: trunk.day, branches: trunk.branchRecords.length, durationMs: Date.now() - start },
+      "trunk-close memory pipeline completed",
+    );
   },
 });

@@ -49,7 +49,7 @@ export default defineExtension<MemoryConfig>({
     app.bootstrap("init-memory-layout", () => ensureMemoryLayout(workspaceRoot, app.log));
 
     app.agent.use(
-      provideContext(() => buildMemoryContext(workspaceRoot), "memories"),
+      provideContext(() => buildMemoryContext(workspaceRoot, app.log), "memories"),
       { sessionScopes: ["main", "background"] },
     );
 
@@ -65,6 +65,7 @@ export default defineExtension<MemoryConfig>({
           });
 
           if (committed.length > 0) app.log.info({ message }, "committed memory pipeline changes");
+          else app.log.debug({ message }, "memory pipeline produced nothing to commit");
         } catch (error) {
           app.log.warn({ err: error }, "memory pipeline commit failed");
         }

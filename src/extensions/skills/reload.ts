@@ -1,17 +1,30 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import type { Logger } from "../../log.ts";
+
 /**
  * Mid-session resource reload, pi-style: a /reload command (reload must run in
  * command context) plus a tool that queues it, so the agent can refresh skills
  * itself when the user mentions adding or editing one. New sessions always
  * rediscover skills regardless — this covers the live session.
  */
-export const registerReload = (pi: ExtensionAPI): void => {
+export const registerReload = (pi: ExtensionAPI, log: Logger): void => {
   pi.registerCommand("reload", {
     description: "Reload skills, prompts, and extensions from disk",
     handler: async (_args, ctx) => {
-      await ctx.reload();
+      log.info("reloading skills/prompts/extensions from disk");
+
+      const start = Date.now();
+      try {
+        await ctx.reload();
+      } catch (error) {
+        log.warn({ err: error, durationMs: Date.now() - start }, "resource reload failed");
+
+        throw error;
+      }
+
+      log.info({ durationMs: Date.now() - start }, "resource reload completed");
     },
   });
 

@@ -12,7 +12,10 @@ const { BRANCH_SUMMARY, BOOMERANG_STATE } = await import("../../src/sessions/tru
 
 import type { Logger } from "../../src/log.ts";
 
-const fakeLog = { warn: vi.fn(), error: vi.fn() } as unknown as Logger;
+const fakeLog = Object.assign(
+  { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  { child: () => fakeLog },
+) as unknown as Logger;
 
 const branchSummary = (
   id: string,

@@ -53,14 +53,20 @@ export const runUpgrade = async ({
   });
 
   if (gate === UPGRADE_GATES.registryUnavailable) {
+    log.warn({ gate, current: currentVersion, latest: latestVersion }, "upgrade gated");
+
     return { status: "registry-unavailable", detail: "Could not reach the npm registry." };
   }
 
   if (gate === UPGRADE_GATES.upToDate) {
+    log.info({ gate, current: currentVersion, latest: latestVersion }, "upgrade gated");
+
     return { status: "up-to-date", detail: `Already on the latest version (${currentVersion}).` };
   }
 
   if (gate === UPGRADE_GATES.blockedFailed) {
+    log.warn({ gate, current: currentVersion, latest: latestVersion }, "upgrade gated");
+
     return {
       status: "blocked-failed",
       detail: `Version ${latestVersion} previously failed and rolled back; refusing to retry it until a newer version is published.`,

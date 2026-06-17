@@ -40,7 +40,11 @@ export const cleanPendingSignals = async (
   let content: string;
   try {
     content = await readFile(filePath, "utf8");
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn({ err: error, file: filePath }, "failed to read pending signals file");
+    }
+
     return;
   }
 
@@ -262,19 +266,26 @@ const logContextChanges = (
   before: Record<string, number | null>,
   after: Record<string, number | null>,
   log: Logger,
-): void => {
+): boolean => {
+  let changed = false;
+
   for (const name of CONTEXT_FILENAMES) {
     const wasPresent = before[name] != null;
     const isPresent = after[name] != null;
 
     if (!wasPresent && isPresent) {
       log.info({ file: name }, "context file created");
+      changed = true;
     } else if (wasPresent && !isPresent) {
       log.info({ file: name }, "context file deleted");
+      changed = true;
     } else if (wasPresent && isPresent && before[name] !== after[name]) {
       log.info({ file: name }, "context file updated");
+      changed = true;
     }
   }
+
+  return changed;
 };
 
 /** The slice of AgentManager core-context needs: fork the just-ended conversation. */
@@ -326,8 +337,19 @@ export const createCoreContextProcessor = ({
 
     const before = await snapshotMtimes(workspaceRoot);
 
-    await agent.forkAndContinue(transcriptPath, instruction, "processor", FILE_EDIT_TOOLS);
+    log.debug({ transcriptPath, signalCount: snapshot.length }, "core-context fork starting");
 
-    logContextChanges(before, await snapshotMtimes(workspaceRoot), log);
+    const startedAt = Date.now();
+
+    try {
+      await agent.forkAndContinue(transcriptPath, instruction, "processor", FILE_EDIT_TOOLS);
+    } catch (error) {
+      log.error({ err: error, transcriptPath }, "core-context update fork failed");
+      throw error;
+    }
+
+    if (!logContextChanges(before, await snapshotMtimes(workspaceRoot), log)) {
+      log.debug({ durationMs: Date.now() - startedAt }, "core-context fork made no file changes");
+    }
   },
 });

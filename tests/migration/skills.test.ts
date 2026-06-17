@@ -7,7 +7,10 @@ import type { Logger } from "../../src/log.ts";
 import { adaptSkillsFrontmatter, stripLegacyFrontmatter } from "../../src/migration/skills.ts";
 import { Workspace } from "../../src/workspace.ts";
 
-const fakeLog = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+const fakeLog = Object.assign(
+  { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  { child: () => fakeLog },
+) as unknown as Logger;
 
 const LEGACY_SKILL = `---
 description: Research assistant

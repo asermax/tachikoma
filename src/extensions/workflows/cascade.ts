@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 
+import type { Logger } from "../../log.ts";
 import {
   type BreadcrumbPart,
   type CascadeOutcome,
@@ -17,6 +18,7 @@ export type UpdateAction = "start" | "complete" | "skip";
 export interface CascadeDeps {
   repository: Pick<WorkflowStateRepository, "getActiveChain">;
   findWorkflow: (skillName: string, workflowName: string) => WorkflowDefinition | null;
+  log?: Logger;
 }
 
 export interface CascadeResult {
@@ -331,6 +333,11 @@ export const runCascade = (
 
   const guardDepth = (): void => {
     if (chainOrder.length >= MAX_CASCADE_DEPTH) {
+      deps.log?.error(
+        { workflowId, depth: chainOrder.length },
+        "cascade depth limit hit — possible composition cycle",
+      );
+
       throw new Error(
         "Composition nesting exceeded the safe depth (possible cycle). Abort the workflow.",
       );
@@ -338,6 +345,18 @@ export const runCascade = (
   };
 
   const descendInto = (child: SpawnedChild): void => {
+    deps.log?.debug(
+      {
+        workflowId,
+        parentId: child.layer.parentWorkflowId,
+        childId: child.layer.id,
+        parentStepId: child.layer.parentStepId,
+        target: `${child.layer.skillName}/${child.layer.workflowName}`,
+        item: child.layer.currentItem,
+      },
+      "spawned workflow child",
+    );
+
     batch.push({
       kind: "create",
       childId: child.layer.id,

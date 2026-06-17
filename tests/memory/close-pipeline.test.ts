@@ -117,7 +117,7 @@ const extractionDeps = (): {
   return { deps: { agent: { forkAndContinue }, workspaceRoot: workspace }, forkAndContinue };
 };
 
-const phaseDeps = (run = vi.fn().mockResolvedValue(undefined)): ClosePhaseDeps => ({
+const phaseDeps = (run = vi.fn().mockResolvedValue({ text: "done" })): ClosePhaseDeps => ({
   side: { run },
   workspaceRoot: workspace,
   settings: { recentDays: 15, weeklyThresholdMonths: 3, monthlyThresholdMonths: 12 },
@@ -183,6 +183,8 @@ describe("ordered phases + step markers", () => {
 
     const run = vi.fn().mockImplementation(async ({ system }: { system: string }) => {
       order.push(system.includes("foundational context") ? "context" : "store");
+
+      return { text: "ok" };
     });
     const deps = phaseDeps(run);
 
@@ -201,14 +203,17 @@ describe("ordered phases + step markers", () => {
     const session = threeBranchTrunk();
 
     // First attempt: the prune body throws AFTER mutating but BEFORE the marker is written.
-    const failing = vi.fn().mockRejectedValueOnce(new Error("boom")).mockResolvedValue(undefined);
+    const failing = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValue({ text: "done" });
     await expect(prunePhase(session, phaseDeps(failing))).rejects.toThrow("boom");
 
     // No marker was written — the staged result is not committed without it (marker/staging machinery).
     expect(isStepDone(session, CLOSE_STEPS.prune)).toBe(false);
 
     // Recovery re-runs the phase cleanly and now writes the marker.
-    const run = vi.fn().mockResolvedValue(undefined);
+    const run = vi.fn().mockResolvedValue({ text: "done" });
     await prunePhase(session, phaseDeps(run));
     expect(run).toHaveBeenCalledTimes(3);
     expect(isStepDone(session, CLOSE_STEPS.prune)).toBe(true);
@@ -231,6 +236,8 @@ describe("createTrunkClosePipeline", () => {
     });
     const run = vi.fn().mockImplementation(async ({ system }: { system: string }) => {
       events.push(system.includes("foundational context") ? "context" : "store");
+
+      return { text: "done" };
     });
 
     const processor = createTrunkClosePipeline({

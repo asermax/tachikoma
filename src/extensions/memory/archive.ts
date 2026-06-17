@@ -7,7 +7,7 @@ import { transcriptsDir } from "./layout.ts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const headerSessionId = (raw: string): string | null => {
+const headerSessionId = (raw: string, log: Logger): string | null => {
   const newline = raw.indexOf("\n");
   const firstLine = newline === -1 ? raw : raw.slice(0, newline);
 
@@ -17,7 +17,9 @@ const headerSessionId = (raw: string): string | null => {
     if (header.type === "session" && typeof header.id === "string" && header.id !== "") {
       return header.id;
     }
-  } catch {
+  } catch (error) {
+    log.debug({ err: error }, "transcript header unparseable — using source filename");
+
     return null;
   }
 
@@ -42,7 +44,7 @@ export const createTranscriptArchiveProcessor = (workspaceRoot: string): PostPro
 
     try {
       const raw = await readFile(transcriptPath, "utf8");
-      const sessionId = headerSessionId(raw);
+      const sessionId = headerSessionId(raw, log);
       const name = sessionId != null ? `${sessionId}.jsonl` : basename(transcriptPath);
       const dest = join(transcriptsDir(workspaceRoot), name);
 
@@ -77,7 +79,11 @@ export const pruneTranscripts = async (
 
   try {
     names = await readdir(dir);
-  } catch {
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.warn({ err: error, dir }, "failed to read transcripts dir for pruning");
+    }
+
     return;
   }
 

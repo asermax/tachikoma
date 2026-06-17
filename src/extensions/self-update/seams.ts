@@ -187,7 +187,7 @@ export class NpmGlobalDevInstallDetector implements DevInstallDetector {
  * Reads the running package's own version from its package.json, resolved
  * relative to this module so it reflects the installed copy, not the cwd.
  */
-export const readInstalledVersion = async (): Promise<string> => {
+export const readInstalledVersion = async (log: Logger): Promise<string> => {
   const here = dirname(fileURLToPath(import.meta.url));
 
   // src/extensions/self-update -> package root is three levels up in dist too.
@@ -196,14 +196,21 @@ export const readInstalledVersion = async (): Promise<string> => {
     join(here, "..", "..", "package.json"),
   ];
 
+  let lastError: unknown;
+
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(await readFile(candidate, "utf8")) as { version?: string };
       if (typeof parsed.version === "string") return parsed.version;
-    } catch {
-      // try the next candidate
+    } catch (error) {
+      lastError = error;
     }
   }
+
+  log.warn(
+    { candidates, err: lastError },
+    "could not read installed version from any package.json; falling back to 0.0.0",
+  );
 
   return "0.0.0";
 };

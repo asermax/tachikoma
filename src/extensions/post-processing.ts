@@ -39,11 +39,20 @@ export const runPhasedPostProcessors = async ({
     );
     if (phaseProcessors.length === 0) continue;
 
+    log.debug({ phase, count: phaseProcessors.length }, "post-processing phase starting");
+
+    const startedAt = Date.now();
+
     const results = await Promise.allSettled(
       phaseProcessors.map((processor) => {
         onProcessorStart?.(processor);
         return processor.process({ ...context, log: log.child({ processor: processor.name }) });
       }),
+    );
+
+    log.debug(
+      { phase, count: phaseProcessors.length, durationMs: Date.now() - startedAt },
+      "post-processing phase finished",
     );
 
     results.forEach((result, index) => {

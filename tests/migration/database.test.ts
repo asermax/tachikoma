@@ -9,7 +9,10 @@ import type { Logger } from "../../src/log.ts";
 import { adaptLegacyDatabase, LEGACY_BACKUP_DB } from "../../src/migration/database.ts";
 import { Workspace } from "../../src/workspace.ts";
 
-const fakeLog = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
+const fakeLog = Object.assign(
+  { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  { child: () => fakeLog },
+) as unknown as Logger;
 
 const makeWorkspace = async (): Promise<Workspace> => {
   const dir = await mkdtemp(join(tmpdir(), "tachi-migration-db-"));

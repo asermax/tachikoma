@@ -119,6 +119,11 @@ export const collapseCurrentTopic = async (
       relatedBranchId: null,
     });
 
+    deps.log.info(
+      { branchId: args.branchId, newBaseId, originalLeafId, summaryLen: summary.length },
+      "branch collapsed",
+    );
+
     return { newBaseId };
   } catch (error) {
     deps.log.error(

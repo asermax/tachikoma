@@ -1,6 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import type { Logger } from "../../log.ts";
 import type { Restarter } from "./seams.ts";
 import { runUpgrade, type UpgradeDeps } from "./upgrade.ts";
 
@@ -29,7 +30,10 @@ export const createUpgradeToolFactory =
       ],
       parameters: UpgradeSelfParams,
       async execute() {
-        const outcome = await runUpgrade(deps());
+        const resolved = deps();
+        resolved.log.info({ current: resolved.currentVersion }, "upgrade_self invoked");
+
+        const outcome = await runUpgrade(resolved);
 
         return {
           content: [{ type: "text", text: outcome.detail }],
@@ -45,7 +49,7 @@ export const createUpgradeToolFactory =
  * success; the agent should treat any returned text as "did not restart".
  */
 export const createRestartToolFactory =
-  (restarter: () => Restarter): ExtensionFactory =>
+  (restarter: () => Restarter, log: Logger): ExtensionFactory =>
   (pi) => {
     pi.registerTool({
       name: "restart_self",
@@ -59,6 +63,8 @@ export const createRestartToolFactory =
       ],
       parameters: RestartSelfParams,
       async execute() {
+        log.info("restart_self invoked");
+
         return restarter().restart();
       },
     });

@@ -39,24 +39,68 @@ Bindings object first, message second. Never interpolate data into the message s
 log.warn({ err: error, skill, agent: file }, "failed to load skill agent — skipped");
 ```
 
-- Errors always go under the `err` key (pino serializes stack traces from it).
+- Errors always go under the `err` key (pino serializes stack traces from it). Captured subprocess
+  output is a string, not an `Error` — log it under `stderr`/`stdout`, never `err` (e.g. a failed
+  `git` invocation logs `{ stderr: result.stderr }`, reserving `err` for thrown `Error` objects).
 - Identifiers (session id, task id, job name) go in the bindings object so they are filterable.
-- Never log secrets: bot tokens, API keys, auth material.
+- Never log secrets: bot tokens, API keys, auth material. When logging a raw provider/LLM error whose
+  metadata may carry an auth header or key, log `err.message`/`err.code` rather than the whole error
+  object, so nothing slips past the central `REDACT_PATHS`.
 
 ### 5. Level discipline
 
 | Level | Use |
 |---|---|
-| `debug` | internal detail invisible to operators (pipeline status echoes, queue movements) |
-| `info` | normal lifecycle: startup, session open/close, job runs, deliveries |
-| `warn` | unexpected but handled — the error-isolation paths (a failing context provider, processor, or event handler) log here and continue |
+| `debug` | internal detail invisible to operators (pipeline status echoes, queue movements, action start lines, classifier decisions, per-item loop steps) |
+| `info` | normal lifecycle: startup, session open/close, job runs, deliveries, state-mutating tool invocations, and one-time-but-normal milestones (e.g. a successful legacy-data import) |
+| `warn` | unexpected but handled — the error-isolation paths (a failing context provider, processor, or event handler) log here and continue, **and any user-visible degradation** (a dropped status render, a lost message-routing record, a missed push notification) even when the code recovers |
 | `error` | an operation failed in a way that affects behavior (exchange failed, delivery failed) |
 
 The dominant pattern is `warn`: pipelines isolate per-item failures (DES-001), and isolation without a `warn` line is a silent failure.
 
+Two level calls are easy to get wrong, so they are called out explicitly: a **user-visible
+degradation** belongs at `warn` even when the code recovers (it is not chatty internal detail), and a
+**normal successful milestone** belongs at `info`, not `warn` (`warn` is for the unexpected — a
+one-time successful import is expected).
+
 ### 6. `app.status()` vs logs
 
 `app.status(text)` is **user-facing progress**, not logging: the coordinator emits a `status` event on the app bus for channels to consume (e.g. `Gathering context: memory-index…`, `Post-processing: episodic…` in `src/coordinator.ts`; no channel renders these yet — see DLT-043). Use it for steps a user is actively waiting on; keep it short, present tense, one line. Every status is also echoed at `debug`, so logs remain the complete record — never use `status()` as a substitute for a log call, and never use `log.info` to talk to the user. (The `status`-kind `AgentEvent`s from `src/agent/adapter.ts` — compaction, provider retries — are a separate, in-exchange surface that the REPL does render.)
+
+### 7. Action coverage
+
+Failure logging alone leaves the logs able to show *what broke* but not *what the system did on a
+successful run*. Consequential actions therefore log both a start and a result, and never fail
+silently.
+
+- **Start + result.** Any consequential action — an LLM call, a session open/fork, a lifecycle
+  transition, a scheduled tick, a background task run, a state-mutating tool call, a network/DB/git
+  operation — logs a `debug` "X starting" with its inputs and an `info`/`debug` "X finished" with the
+  outcome. Use `info` for notable lifecycle (exchange, session open/close, task run, delivery, process
+  spawn/exit, workflow start/end) and `debug` for chatty internals (forks, classifier decisions,
+  per-item loop steps).
+
+- **Fail-soft visibility.** When a call has a fail-soft surface — it returns empty text on an error
+  `stopReason`, or sanitizes a failure into a user-facing string — the failure is logged *inside the
+  function that owns that surface*, before the fallback, and the function still behaves as before
+  (log-and-rethrow / log-before-throw — logging is not a behavior change). The caller that wraps the
+  call owns only the start/result envelope; it does not try to re-derive a failure the callee already
+  swallowed. (Example: `SideRunner.complete`/`run` and `forkAndContinue` log the failure and rethrow;
+  `streamPrompt` logs the raw error at `error` before mapping it to a sanitized event.)
+
+- **Tool boundary.** A state-mutating agent tool logs a semantic `info` line on entry (with key
+  params) and a `warn({ err, …params })` before re-throwing. The adapter's generic
+  tool-start/tool-end events are for correlation only — they do not carry the tool's semantics, so the
+  tool still logs its own action. (pi has no MCP layer; tools are in-process — see DES-001.)
+
+- **Correlation + duration.** Start and result lines for a long-running action carry the joining id
+  (`sessionId`/`trunkId`/`branchId`/`instanceId`/`toolCallId`) and the result line a `durationMs`
+  (`Date.now()` delta), so one operation is greppable end-to-end. Agent exchanges additionally log
+  token usage and `costUsd`.
+
+- **No blanket catches.** A catch that swallows an expected error code (`ENOENT`, a missing dir) must
+  check `err.code` and re-log/rethrow anything else; an empty `catch(() => {})` that hides a real
+  IO/permission/parse failure is a silent failure and is not allowed.
 
 ## Rationale
 

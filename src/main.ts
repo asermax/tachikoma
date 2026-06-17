@@ -26,6 +26,8 @@ Options:
   process.exit(0);
 }
 
+// console.error (not the pino logger) because a startup failure may precede logger
+// creation; once the logger exists, ShutdownController routes failures through pino.
 runApp({ channel: values.channel, configPath: values.config }).catch((error) => {
   console.error(error instanceof Error ? (error.stack ?? error.message) : error);
   process.exit(1);

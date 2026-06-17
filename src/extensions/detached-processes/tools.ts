@@ -120,6 +120,8 @@ export const handleDispatchProcess = async (
   deps: ProcessToolDeps,
   args: Static<typeof DispatchProcessParams>,
 ): Promise<string> => {
+  deps.log.debug({ name: args.name, command: args.command }, "dispatch_detached_process invoked");
+
   if (args.memory_limit_mb != null) {
     if (args.memory_limit_mb < 1) {
       throw new Error(`Invalid memory_limit_mb: ${args.memory_limit_mb}. Minimum value is 1.`);
@@ -156,6 +158,11 @@ export const handleQueryProcess = async (
   args: Static<typeof QueryProcessParams>,
 ): Promise<string> => {
   const { repository } = deps;
+
+  deps.log.debug(
+    { process_id: args.process_id ?? null, archived: args.archived ?? false },
+    "query_process invoked",
+  );
 
   if (args.process_id != null) {
     let record = repository.get(args.process_id);
@@ -229,6 +236,11 @@ export const handleReadProcessOutput = async (
   deps: ProcessToolDeps,
   args: Static<typeof ReadProcessOutputParams>,
 ): Promise<string> => {
+  deps.log.debug(
+    { process_id: args.process_id, stream: args.stream },
+    "read_process_output invoked",
+  );
+
   const record = deps.repository.get(args.process_id);
 
   if (record == null) throw notFound(args.process_id);
@@ -268,6 +280,8 @@ export const handleRenameProcess = async (
   deps: ProcessToolDeps,
   args: Static<typeof RenameProcessParams>,
 ): Promise<string> => {
+  deps.log.debug({ process_id: args.process_id, name: args.name }, "rename_process invoked");
+
   if (args.name.trim() === "") throw new Error("Name must not be empty or whitespace.");
 
   const record = deps.repository.get(args.process_id);
@@ -283,6 +297,8 @@ export const handleDeleteProcess = async (
   deps: ProcessToolDeps,
   args: Static<typeof DeleteProcessParams>,
 ): Promise<string> => {
+  deps.log.debug({ process_id: args.process_id }, "delete_process invoked");
+
   const record = deps.repository.get(args.process_id);
 
   if (record == null) throw notFound(args.process_id);
@@ -304,6 +320,11 @@ export const handleTerminateProcess = async (
 ): Promise<string> => {
   const { repository, log } = deps;
   const graceSeconds = args.grace_seconds ?? 10;
+
+  log.debug(
+    { process_id: args.process_id, signal: args.signal ?? "SIGTERM", graceSeconds },
+    "terminate_process invoked",
+  );
 
   let record = repository.get(args.process_id);
 
@@ -330,7 +351,7 @@ export const handleTerminateProcess = async (
   try {
     repository.markStopInitiated(record.id);
   } catch (error) {
-    log.error({ id: record.id, err: error }, "failed to mark stop initiated — signalling anyway");
+    log.warn({ id: record.id, err: error }, "failed to mark stop initiated — signalling anyway");
   }
 
   try {

@@ -108,7 +108,7 @@ export const scrubPaths = async (
   const filter = await runGitCapture(cwd, filterArgs);
 
   if (filter.code !== 0) {
-    log.warn({ err: filter.stderr, code: filter.code }, "git filter-repo failed");
+    log.warn({ stderr: filter.stderr, code: filter.code }, "git filter-repo failed");
 
     return {
       code: SCRUB_RESULT.failed,
@@ -127,13 +127,15 @@ export const scrubPaths = async (
 
   // filter-repo strips the remote after a rewrite; restore it before pushing.
   if (!(await hasRemote(cwd, "origin"))) {
+    log.debug({ cwd }, "re-adding origin remote stripped by filter-repo");
+
     await runGit(cwd, ["remote", "add", "origin", originUrl]);
   }
 
   const push = await runGitCapture(cwd, ["push", "--force", "origin", "HEAD"]);
 
   if (push.code !== 0) {
-    log.warn({ err: push.stderr }, "force push failed after scrub");
+    log.warn({ stderr: push.stderr, paths }, "force push failed after scrub");
 
     return {
       code: SCRUB_RESULT.scrubbedPushFailed,

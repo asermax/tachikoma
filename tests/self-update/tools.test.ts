@@ -1,14 +1,24 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-
 import type { Restarter } from "../../src/extensions/self-update/seams.ts";
 import {
   createRestartToolFactory,
   createUpgradeToolFactory,
 } from "../../src/extensions/self-update/tools.ts";
 import type { UpgradeDeps } from "../../src/extensions/self-update/upgrade.ts";
+import type { Logger } from "../../src/log.ts";
 
 const runUpgradeMock = vi.hoisted(() => vi.fn());
+
+const createFakeLog = () => {
+  const log = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  return Object.assign(log, { child: () => log }) as unknown as Logger;
+};
 
 vi.mock("../../src/extensions/self-update/upgrade.ts", () => ({
   runUpgrade: runUpgradeMock,
@@ -32,7 +42,7 @@ describe("createUpgradeToolFactory", () => {
   it("registers upgrade_self and returns the upgrade outcome detail", async () => {
     runUpgradeMock.mockResolvedValue({ detail: "already up to date" });
 
-    const deps = vi.fn(() => ({}) as UpgradeDeps);
+    const deps = vi.fn(() => ({ log: createFakeLog() }) as unknown as UpgradeDeps);
     const tools = registerInto(createUpgradeToolFactory(deps));
 
     expect(tools.map((tool) => tool.name)).toEqual(["upgrade_self"]);
@@ -50,7 +60,7 @@ describe("createRestartToolFactory", () => {
     const restart = vi.fn(() => "unreachable" as never);
     const restarter = vi.fn((): Restarter => ({ restart }));
 
-    const tools = registerInto(createRestartToolFactory(restarter));
+    const tools = registerInto(createRestartToolFactory(restarter, createFakeLog()));
 
     expect(tools.map((tool) => tool.name)).toEqual(["restart_self"]);
 

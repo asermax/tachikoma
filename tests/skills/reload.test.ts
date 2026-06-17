@@ -2,6 +2,17 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import { registerReload } from "../../src/extensions/skills/reload.ts";
+import type { Logger } from "../../src/log.ts";
+
+const createFakeLog = () => {
+  const log = {
+    warn: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+    error: vi.fn(),
+  };
+  return Object.assign(log, { child: () => log }) as unknown as Logger;
+};
 
 interface Captured {
   commands: Map<string, { handler: (args: string, ctx: unknown) => Promise<unknown> }>;
@@ -30,7 +41,7 @@ const fakePi = (): { pi: ExtensionAPI; captured: Captured } => {
 describe("skills reload", () => {
   it("registers a /reload command that runs ctx.reload", async () => {
     const { pi, captured } = fakePi();
-    registerReload(pi);
+    registerReload(pi, createFakeLog());
 
     const reload = vi.fn();
     await captured.commands.get("reload")?.handler("", { reload });
@@ -40,7 +51,7 @@ describe("skills reload", () => {
 
   it("registers a tool that queues /reload as a follow-up", async () => {
     const { pi, captured } = fakePi();
-    registerReload(pi);
+    registerReload(pi, createFakeLog());
 
     const result = await captured.tools.get("reload_resources")?.execute();
 

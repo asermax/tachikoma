@@ -5,7 +5,10 @@ import { collapseCurrentTopic } from "../../src/extensions/boundary/collapse.ts"
 import type { Logger } from "../../src/log.ts";
 import { BOOMERANG_STATE, BRANCH_SUMMARY } from "../../src/sessions/trunk.ts";
 
-const fakeLog = { error: vi.fn(), warn: vi.fn() } as unknown as Logger;
+const fakeLog: Logger = Object.assign(
+  { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  { child: () => fakeLog },
+) as unknown as Logger;
 
 const message = (id: string, role: "user" | "assistant", text: string) => ({
   type: "message" as const,

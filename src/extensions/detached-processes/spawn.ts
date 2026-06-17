@@ -77,6 +77,8 @@ export const spawnProcess = async (
   const id = randomUUID();
   const dir = processDir(processesDir, id);
 
+  log.debug({ id, name: options.name }, "spawning detached process");
+
   await mkdir(dir, { recursive: true });
 
   const stdoutPath = join(dir, "stdout.log");
@@ -131,7 +133,7 @@ export const spawnProcess = async (
   child.unref();
 
   try {
-    return repository.create({
+    const record = repository.create({
       id,
       name: options.name,
       command: options.command,
@@ -142,6 +144,20 @@ export const spawnProcess = async (
       memoryLimitMb: wrapped.limited ? (options.memoryLimitMb ?? null) : null,
       startedAt: now(),
     });
+
+    log.info(
+      {
+        id,
+        pid,
+        name: options.name,
+        command: options.command,
+        memoryLimitMb: wrapped.limited ? (options.memoryLimitMb ?? null) : null,
+        limited: wrapped.limited,
+      },
+      "spawned detached process",
+    );
+
+    return record;
   } catch (error) {
     log.error({ pid, err: error }, "db write failed after spawn — killing process group");
     killGroup(pid, "SIGKILL");
@@ -172,6 +188,8 @@ export const terminate = async (
   log: Logger,
   { signal = "SIGTERM", graceSeconds = 10 }: TerminateOptions = {},
 ): Promise<void> => {
+  log.info({ pid: record.pid, signal, graceSeconds }, "terminating detached process");
+
   if (killGroup(record.pid, signal) === "gone") return;
 
   if (graceSeconds <= 0) return;

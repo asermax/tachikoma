@@ -2,6 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+import type { Logger } from "../../log.ts";
 import { NOTIFY_EVENT, type NotifyPayload, SEVERITIES } from "./payload.ts";
 
 export type NotifyEmitter = (event: string, payload: NotifyPayload) => void;
@@ -20,13 +21,21 @@ export const NotifyUserParams = Type.Object({
 export const handleNotifyUser = (
   emit: NotifyEmitter,
   args: Static<typeof NotifyUserParams>,
+  log: Logger,
 ): string => {
-  if (args.text.trim() === "") throw new Error("Notification text cannot be empty.");
+  const severity = args.severity ?? SEVERITIES.info;
+
+  log.info({ severity, hasTitle: args.title != null }, "notify_user tool invoked");
+
+  if (args.text.trim() === "") {
+    log.warn({ severity }, "notify_user rejected — empty notification text");
+    throw new Error("Notification text cannot be empty.");
+  }
 
   emit(NOTIFY_EVENT, {
     title: args.title,
     text: args.text,
-    severity: args.severity ?? SEVERITIES.info,
+    severity,
     source: "agent",
   });
 
@@ -35,7 +44,7 @@ export const handleNotifyUser = (
 
 /** pi extension factory exposing the notify_user tool to the agent. */
 export const createNotifyToolFactory =
-  (emit: NotifyEmitter): ExtensionFactory =>
+  (emit: NotifyEmitter, log: Logger): ExtensionFactory =>
   (pi) => {
     pi.registerTool({
       name: "notify_user",
@@ -49,7 +58,7 @@ export const createNotifyToolFactory =
       parameters: NotifyUserParams,
       async execute(_toolCallId, params) {
         return {
-          content: [{ type: "text", text: handleNotifyUser(emit, params) }],
+          content: [{ type: "text", text: handleNotifyUser(emit, params, log) }],
           details: undefined,
         };
       },

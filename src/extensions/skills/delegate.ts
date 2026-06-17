@@ -66,27 +66,52 @@ export const createDelegateTool = ({
 
   parameters: DelegateParams,
 
-  async execute(_toolCallId, params) {
+  async execute(toolCallId, params) {
     const agents = discover();
     const agent = agents.find((candidate) => candidate.name === params.agent);
 
     if (agent == null) {
+      log.warn({ toolCallId, agent: params.agent }, "delegate_to_agent called with unknown agent");
+
       throw new Error(
         `Unknown agent "${params.agent}". Available agents:\n${renderAgentList(agents)}`,
       );
     }
 
-    log.debug({ agent: agent.name }, "delegating task to skill agent");
+    log.debug({ toolCallId, agent: agent.name }, "delegating task to skill agent");
 
-    const result = await runner.run({
-      system: agent.systemPrompt,
-      tools: agent.tools ?? DEFAULT_AGENT_TOOLS,
-      prompt: params.task,
-      isolatePrompt: true,
-      ...(agent.model != null ? { model: agent.model } : {}),
-    });
+    const start = Date.now();
+
+    let result: Awaited<ReturnType<AgentRunner["run"]>>;
+    try {
+      result = await runner.run({
+        system: agent.systemPrompt,
+        tools: agent.tools ?? DEFAULT_AGENT_TOOLS,
+        prompt: params.task,
+        isolatePrompt: true,
+        ...(agent.model != null ? { model: agent.model } : {}),
+      });
+    } catch (error) {
+      log.warn(
+        { err: error, toolCallId, agent: agent.name, durationMs: Date.now() - start },
+        "skill agent delegation failed",
+      );
+
+      throw error;
+    }
 
     const { content, truncated } = truncateTail(result.text);
+
+    log.debug(
+      {
+        toolCallId,
+        agent: agent.name,
+        chars: result.text.length,
+        truncated,
+        durationMs: Date.now() - start,
+      },
+      "skill agent delegation completed",
+    );
 
     return {
       content: [{ type: "text", text: truncated ? `${content}\n\n[output truncated]` : content }],

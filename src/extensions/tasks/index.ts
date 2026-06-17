@@ -82,6 +82,7 @@ export default defineExtension<TasksConfig>({
         timezone,
         now,
         cancelRunningInstance: (id) => runner.cancel(id),
+        log: app.log,
       }),
       {
         sessionScopes: ["main", "background"],
@@ -94,7 +95,7 @@ export default defineExtension<TasksConfig>({
 
     // respond_to_task is conversational-only: a background run must never answer
     // another instance's waiting question, so it stays out of background toolsets.
-    app.agent.use(createTaskInteractiveToolsFactory({ repository, timezone, now }));
+    app.agent.use(createTaskInteractiveToolsFactory({ repository, timezone, now, log: app.log }));
 
     app.scheduler.every("tasks-tick", TICK_INTERVAL_SECONDS, () => {
       generateDueInstances({ repository, timezone, now, log: app.log });

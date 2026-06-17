@@ -139,6 +139,15 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
         .map((name) => candidates.find((candidate) => candidate.name === name))
         .filter((skill): skill is Skill => skill != null && !injected.has(skill.name));
 
+      log.debug(
+        {
+          candidates: candidates.length,
+          selected: selection.skills.length,
+          matched: matched.length,
+        },
+        "proactive skill classify completed",
+      );
+
       if (matched.length === 0) return undefined;
 
       // Read each matched skill's full content and inject it directly, so the model has the

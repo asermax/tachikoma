@@ -157,10 +157,14 @@ export const createCommitAgent =
 
     log.info({ path: cwd, mode }, "spawning commit agent");
 
+    const startedAt = Date.now();
+
     await side.run({
       system,
       prompt,
       customTools: buildCommitTools(cwd),
       tier: "processor",
     });
+
+    log.debug({ path: cwd, mode, durationMs: Date.now() - startedAt }, "commit agent finished");
   };

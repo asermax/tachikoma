@@ -49,6 +49,7 @@ export const handleAskBranch = async (
   const record = records.find((entry) => entry.branchId === args.branchId);
 
   if (record == null) {
+    deps.log.debug({ branchId: args.branchId }, "ask_branch unresolved — unknown branch");
     return `No such branch '${args.branchId}' exists.`;
   }
 
@@ -63,10 +64,20 @@ export const handleAskBranch = async (
   const branchFile = createBranchFile(trunk, record.originalLeafId);
 
   if (branchFile == null) {
+    deps.log.debug({ branchId: args.branchId }, "ask_branch unresolved — branch file unavailable");
     return `Could not open branch '${args.branchId}' for lookup.`;
   }
 
-  const fork = await deps.shadowFork(branchFile, { tier: "searcher" });
+  let fork: Awaited<ReturnType<AgentApi["shadowFork"]>>;
+
+  try {
+    fork = await deps.shadowFork(branchFile, { tier: "searcher" });
+  } catch (error) {
+    deps.log.warn({ err: error, branchId: args.branchId }, "ask_branch fork failed");
+    await rm(branchFile, { force: true });
+
+    return `Could not open branch '${args.branchId}' for lookup.`;
+  }
 
   try {
     const answer = await fork.prompt(

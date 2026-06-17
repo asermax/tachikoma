@@ -243,13 +243,25 @@ export const executeBackgroundInstance = async (
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       // Covers a cancel that landed before this iteration (between turns, or
       // before the first prompt ever runs).
-      if (signal?.aborted) break;
+      if (signal?.aborted) {
+        log.info(
+          { instanceId: instance.id, iteration },
+          "background task aborted between iterations",
+        );
+        break;
+      }
 
       await session.prompt(prompt);
 
       // Covers a cancel that interrupted the prompt itself (session.abort()
       // resolved it mid-flight). Bail before persisting any waiting transition.
-      if (signal?.aborted) break;
+      if (signal?.aborted) {
+        log.info(
+          { instanceId: instance.id, iteration },
+          "background task aborted between iterations",
+        );
+        break;
+      }
 
       const text = lastAssistantText(session.messages);
 
@@ -357,7 +369,17 @@ export class BackgroundRunner {
     ];
 
     for (const instance of dispatchable) {
-      if (this.runs.size >= this.deps.maxConcurrent) break;
+      if (this.runs.size >= this.deps.maxConcurrent) {
+        this.deps.log.debug(
+          {
+            instanceId: instance.id,
+            active: this.runs.size,
+            maxConcurrent: this.deps.maxConcurrent,
+          },
+          "background dispatch deferred — concurrency cap reached",
+        );
+        break;
+      }
 
       if (this.runs.has(instance.id)) continue;
 

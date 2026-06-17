@@ -57,7 +57,13 @@ export const adaptLegacyDatabase = async (workspace: Workspace, log: Logger): Pr
 
   // Sidecar journals move with the main file so the backup stays recoverable.
   for (const suffix of ["", "-wal", "-shm"]) {
-    if (await pathExists(file + suffix)) await rename(file + suffix, backup + suffix);
+    if (await pathExists(file + suffix)) {
+      await rename(file + suffix, backup + suffix);
+      log.debug(
+        { from: file + suffix, to: backup + suffix },
+        "moved legacy database file to backup",
+      );
+    }
   }
 
   log.warn(

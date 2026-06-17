@@ -5,6 +5,7 @@ import { InputFile } from "grammy";
 import type { InlineKeyboardMarkup, MessageEntity, ReactionTypeEmoji } from "grammy/types";
 import { type Static, Type } from "typebox";
 
+import type { Logger } from "../../log.ts";
 import { buildInlineKeyboard, validateButtons } from "./buttons.ts";
 import type { ChannelMessageStore, MessageRouting } from "./channel.ts";
 import { toTelegramEntities } from "./entities.ts";
@@ -52,6 +53,7 @@ export interface ToolApi {
 
 export interface ToolDeps {
   api: ToolApi;
+  log: Logger;
   chatId: number;
   workspaceRoot: string;
   /** Resolved, deduplicated roots that send_telegram_file accepts. */
@@ -126,14 +128,18 @@ const SendFileParams = Type.Object({
 });
 
 export const handleSendFile = async (
-  deps: Pick<ToolDeps, "api" | "chatId" | "workspaceRoot" | "allowedRoots">,
+  deps: Pick<ToolDeps, "api" | "log" | "chatId" | "workspaceRoot" | "allowedRoots">,
   params: Static<typeof SendFileParams>,
 ): Promise<string> => {
+  deps.log.info({ tool: "send_telegram_file", filePath: params.filePath }, "telegram tool invoked");
+
   const resolved = await validateFilePath(params.filePath, deps.workspaceRoot, deps.allowedRoots);
   const file = new InputFile(resolved);
   const other = params.caption != null ? { caption: params.caption } : {};
 
-  switch (detectMediaType(resolved)) {
+  const mediaType = detectMediaType(resolved);
+
+  switch (mediaType) {
     case "photo":
       await deps.api.sendPhoto(deps.chatId, file, other);
       break;
@@ -147,6 +153,8 @@ export const handleSendFile = async (
       await deps.api.sendDocument(deps.chatId, file, other);
       break;
   }
+
+  deps.log.debug({ tool: "send_telegram_file", path: resolved, mediaType }, "telegram file sent");
 
   return `File sent: ${basename(resolved)}`;
 };
@@ -165,9 +173,14 @@ const ReactParams = Type.Object({
 });
 
 export const handleReactToMessage = async (
-  deps: Pick<ToolDeps, "api" | "chatId" | "getLastInboundMessageId">,
+  deps: Pick<ToolDeps, "api" | "log" | "chatId" | "getLastInboundMessageId">,
   params: Static<typeof ReactParams>,
 ): Promise<string> => {
+  deps.log.info(
+    { tool: "react_to_message", emoji: params.emoji, messageId: params.messageId },
+    "telegram tool invoked",
+  );
+
   const messageId = params.messageId ?? deps.getLastInboundMessageId();
 
   if (messageId == null) throw new Error("No message available to react to");
@@ -178,20 +191,26 @@ export const handleReactToMessage = async (
     { type: "emoji", emoji: params.emoji as ReactionTypeEmoji["emoji"] },
   ]);
 
+  deps.log.debug({ tool: "react_to_message", messageId }, "telegram reaction applied");
+
   return `Reacted to message ${messageId} with ${params.emoji}`;
 };
 
 // ---- pin_message / unpin_message ------------------------------------------------
 
 export const handlePinMessage = async (
-  deps: Pick<ToolDeps, "api" | "chatId" | "getLastOutboundMessageId">,
+  deps: Pick<ToolDeps, "api" | "log" | "chatId" | "getLastOutboundMessageId">,
 ): Promise<string> => {
+  deps.log.info({ tool: "pin_message" }, "telegram tool invoked");
+
   const messageId = deps.getLastOutboundMessageId();
 
   if (messageId == null) throw new Error("No message available to pin");
 
   // An audible pin is the point: it delivers the push notification.
   await deps.api.pinChatMessage(deps.chatId, messageId, { disable_notification: false });
+
+  deps.log.debug({ tool: "pin_message", messageId }, "telegram message pinned");
 
   return `Message pinned (ID: ${messageId})`;
 };
@@ -201,10 +220,17 @@ const UnpinParams = Type.Object({
 });
 
 export const handleUnpinMessage = async (
-  deps: Pick<ToolDeps, "api" | "chatId">,
+  deps: Pick<ToolDeps, "api" | "log" | "chatId">,
   params: Static<typeof UnpinParams>,
 ): Promise<string> => {
+  deps.log.info({ tool: "unpin_message", messageId: params.messageId }, "telegram tool invoked");
+
   await deps.api.unpinChatMessage(deps.chatId, params.messageId);
+
+  deps.log.debug(
+    { tool: "unpin_message", messageId: params.messageId },
+    "telegram message unpinned",
+  );
 
   return `Message unpinned (ID: ${params.messageId})`;
 };
@@ -232,9 +258,14 @@ const ButtonsParams = Type.Object({
 });
 
 export const handleSendMessageWithButtons = async (
-  deps: Pick<ToolDeps, "api" | "chatId" | "store" | "currentRouting">,
+  deps: Pick<ToolDeps, "api" | "log" | "chatId" | "store" | "currentRouting">,
   params: Static<typeof ButtonsParams>,
 ): Promise<string> => {
+  deps.log.info(
+    { tool: "send_message_with_buttons", rows: params.buttons.length },
+    "telegram tool invoked",
+  );
+
   validateButtons(params.buttons);
 
   // Convert the prompt to a Telegram entity payload so agent markdown in the
@@ -247,6 +278,7 @@ export const handleSendMessageWithButtons = async (
     (text, other) => deps.api.sendMessage(deps.chatId, text, other),
     toTelegramEntities(params.prompt),
     { reply_markup },
+    deps.log,
   );
 
   // Map the button message to the current trunk routing so a later tap routes back to the branch
@@ -255,6 +287,8 @@ export const handleSendMessageWithButtons = async (
   if (routing != null) {
     deps.store.record(String(messageId), routing, "outgoing");
   }
+
+  deps.log.debug({ tool: "send_message_with_buttons", messageId }, "telegram buttons sent");
 
   return `Buttons sent (message_id: ${messageId})`;
 };
@@ -312,6 +346,21 @@ const textResult = (text: string) => ({
   details: undefined,
 });
 
+/** Run a tool handler, logging a warn with the failure before re-throwing so the tool boundary is traceable. */
+const runTool = async (
+  log: Logger,
+  tool: string,
+  params: unknown,
+  handler: () => Promise<string>,
+) => {
+  try {
+    return textResult(await handler());
+  } catch (error) {
+    log.warn({ err: error, tool, params }, "telegram tool failed");
+    throw error;
+  }
+};
+
 export const registerTelegramTools = (pi: ExtensionAPI, deps: ToolDeps): void => {
   pi.registerTool({
     name: "send_telegram_file",
@@ -323,7 +372,7 @@ export const registerTelegramTools = (pi: ExtensionAPI, deps: ToolDeps): void =>
     ],
     parameters: SendFileParams,
     async execute(_toolCallId, params) {
-      return textResult(await handleSendFile(deps, params));
+      return runTool(deps.log, "send_telegram_file", params, () => handleSendFile(deps, params));
     },
   });
 
@@ -337,7 +386,9 @@ export const registerTelegramTools = (pi: ExtensionAPI, deps: ToolDeps): void =>
     ],
     parameters: ReactParams,
     async execute(_toolCallId, params) {
-      return textResult(await handleReactToMessage(deps, params));
+      return runTool(deps.log, "react_to_message", params, () =>
+        handleReactToMessage(deps, params),
+      );
     },
   });
 
@@ -351,7 +402,7 @@ export const registerTelegramTools = (pi: ExtensionAPI, deps: ToolDeps): void =>
     ],
     parameters: Type.Object({}),
     async execute() {
-      return textResult(await handlePinMessage(deps));
+      return runTool(deps.log, "pin_message", {}, () => handlePinMessage(deps));
     },
   });
 
@@ -363,7 +414,7 @@ export const registerTelegramTools = (pi: ExtensionAPI, deps: ToolDeps): void =>
     promptGuidelines: ["Use unpin_message when a pinned message is no longer relevant."],
     parameters: UnpinParams,
     async execute(_toolCallId, params) {
-      return textResult(await handleUnpinMessage(deps, params));
+      return runTool(deps.log, "unpin_message", params, () => handleUnpinMessage(deps, params));
     },
   });
 
@@ -377,7 +428,9 @@ export const registerTelegramTools = (pi: ExtensionAPI, deps: ToolDeps): void =>
     ],
     parameters: ButtonsParams,
     async execute(_toolCallId, params) {
-      return textResult(await handleSendMessageWithButtons(deps, params));
+      return runTool(deps.log, "send_message_with_buttons", params, () =>
+        handleSendMessageWithButtons(deps, params),
+      );
     },
   });
 };

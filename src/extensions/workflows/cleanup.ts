@@ -35,7 +35,7 @@ export const createStaleWorkflowCleanup = (
     for (const state of stale) {
       try {
         if (repository.abortCascade(state.id).length > 0) {
-          deleteScratchpad(state.scratchpadPath);
+          deleteScratchpad(state.scratchpadPath, log);
           cleaned += 1;
         }
       } catch (error) {

@@ -77,7 +77,14 @@ export const reconcileExit = async (
       oomKilled ? STOP_REASON_OOM_KILLED : undefined,
     );
 
-    if (!won || !dispatchNotification) return;
+    if (!won) return;
+
+    log.info(
+      { id: record.id, exitCode, oomKilled, stopReason: record.stopReason },
+      "detached process exited",
+    );
+
+    if (!dispatchNotification) return;
 
     if (record.stopReason === STOP_REASON_AGENT_STOPPED) {
       log.debug({ id: recordId }, "suppressing exit notification for agent-stopped process");
@@ -96,12 +103,20 @@ export const reconcileExit = async (
       message = `Process '${record.name}' (id: ${record.id}) exited with code ${exitCode ?? "unknown"}.`;
     }
 
+    const severity: ProcessNotification["severity"] = oomKilled
+      ? "urgent"
+      : exitCode === 0
+        ? "info"
+        : "warning";
+
+    log.debug({ id: record.id, severity, oomKilled }, "dispatching exit notification");
+
     notify({
       source: `Detached process: ${record.name}`,
       processId: record.id,
       // An OOM kill is operationally significant — surface it as urgent so it
       // interrupts rather than queueing behind ordinary completions.
-      severity: oomKilled ? "urgent" : exitCode === 0 ? "info" : "warning",
+      severity,
       message,
     });
   } catch (error) {

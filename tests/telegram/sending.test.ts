@@ -409,7 +409,7 @@ describe("forceNotification", () => {
     const copyMessage = vi.fn().mockResolvedValue({ message_id: 9 });
     const deleteMessage = vi.fn().mockResolvedValue(true);
 
-    const id = await forceNotification({ copyMessage, deleteMessage }, 42, 7);
+    const id = await forceNotification({ copyMessage, deleteMessage }, 42, 7, fakeLog);
 
     expect(id).toBe(9);
     expect(copyMessage).toHaveBeenCalledWith(42, 42, 7);
@@ -420,7 +420,7 @@ describe("forceNotification", () => {
     const copyMessage = vi.fn().mockResolvedValue({ message_id: 9 });
     const deleteMessage = vi.fn().mockRejectedValue(new Error("already gone"));
 
-    const id = await forceNotification({ copyMessage, deleteMessage }, 42, 7);
+    const id = await forceNotification({ copyMessage, deleteMessage }, 42, 7, fakeLog);
 
     expect(id).toBe(9);
   });
@@ -429,7 +429,7 @@ describe("forceNotification", () => {
     const copyMessage = vi.fn().mockRejectedValue(new Error("chat not found"));
     const deleteMessage = vi.fn();
 
-    await expect(forceNotification({ copyMessage, deleteMessage }, 42, 7)).rejects.toThrow(
+    await expect(forceNotification({ copyMessage, deleteMessage }, 42, 7, fakeLog)).rejects.toThrow(
       "chat not found",
     );
     expect(deleteMessage).not.toHaveBeenCalled();

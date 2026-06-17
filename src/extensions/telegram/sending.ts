@@ -90,12 +90,15 @@ export const sendEntitiesOrFallback = async <O>(
   send: (text: string, other: O) => Promise<{ message_id: number }>,
   payload: TelegramPayload,
   other: O,
+  log?: Logger,
 ): Promise<number> => {
   try {
     const sent = await send(payload.text, { ...other, entities: payload.entities } as O);
     return sent.message_id;
   } catch (error) {
     if (!isRenderError(error)) throw error;
+
+    log?.debug({ err: error }, "telegram render rejected; resent raw text");
 
     const sent = await send(payload.text, other);
     return sent.message_id;
@@ -132,12 +135,15 @@ export const editWithFallback = async (
   chatId: number,
   messageId: number,
   payload: TelegramPayload,
+  log?: Logger,
 ): Promise<void> => {
   try {
     await api.editMessageText(chatId, messageId, payload.text, { entities: payload.entities });
   } catch (error) {
     if (isMessageNotModifiedError(error)) return;
     if (!isRenderError(error)) throw error;
+
+    log?.debug({ err: error, messageId }, "telegram edit render rejected; resent raw text");
 
     try {
       await api.editMessageText(chatId, messageId, payload.text);
@@ -210,9 +216,16 @@ export const forceNotification = async (
   api: Pick<SendApi, "copyMessage" | "deleteMessage">,
   chatId: number,
   messageId: number,
+  log: Logger,
 ): Promise<number> => {
   const copied = await api.copyMessage(chatId, chatId, messageId);
-  await api.deleteMessage(chatId, messageId).catch(() => {});
+
+  await api
+    .deleteMessage(chatId, messageId)
+    .catch((error) =>
+      log.debug({ err: error, messageId }, "force-notification delete failed; duplicate left"),
+    );
+
   return copied.message_id;
 };
 

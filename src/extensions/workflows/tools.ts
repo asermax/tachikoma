@@ -46,24 +46,29 @@ const ACTION_PAST_TENSE: Record<UpdateAction, string> = {
 
 // ---- helpers ------------------------------------------------------------------
 
-export const deleteScratchpad = (path: string): void => {
+export const deleteScratchpad = (path: string, log?: Logger): void => {
   try {
     rmSync(path, { force: true });
-  } catch {
-    // Best-effort cleanup — a leftover scratchpad never blocks the workflow.
+  } catch (error) {
+    log?.debug({ path, err: error }, "scratchpad cleanup failed (best-effort)");
   }
 };
 
-const readStepInstructions = (step: StepSnapshot): string | null => {
+const readStepInstructions = (step: StepSnapshot, log: Logger): string | null => {
   try {
     return readFileSync(join(step.path, "instructions.md"), "utf8");
-  } catch {
+  } catch (error) {
+    log.warn(
+      { stepId: step.id, path: step.path, err: error },
+      "failed to read step instructions.md",
+    );
+
     return null;
   }
 };
 
-const buildStepResponse = (step: StepSnapshot, prefix: string): string => {
-  const instructions = readStepInstructions(step);
+const buildStepResponse = (step: StepSnapshot, prefix: string, log: Logger): string => {
+  const instructions = readStepInstructions(step, log);
 
   return [
     prefix,
@@ -95,9 +100,13 @@ export const handleStartWorkflow = (
   skillName: string,
   workflowName: string,
 ): string => {
+  deps.log.debug({ skillName, workflowName }, "start_workflow starting");
+
   const definition = deps.findWorkflow(skillName, workflowName);
 
   if (definition == null) {
+    deps.log.warn({ skillName, workflowName }, "start_workflow: workflow not found");
+
     throw new Error(
       `Workflow '${workflowName}' not found in skill '${skillName}'. ` +
         "Check that the skill exists and contains this workflow.",
@@ -105,6 +114,8 @@ export const handleStartWorkflow = (
   }
 
   if (definition.steps.length === 0) {
+    deps.log.warn({ skillName, workflowName }, "start_workflow: workflow has no steps");
+
     throw new Error(
       `Workflow '${workflowName}' has no steps. Add step directories with instructions.md files.`,
     );
@@ -113,6 +124,11 @@ export const handleStartWorkflow = (
   const existing = deps.repository.getActive(skillName, workflowName);
 
   if (existing != null) {
+    deps.log.warn(
+      { skillName, workflowName, existingId: existing.id },
+      "start_workflow: workflow already active",
+    );
+
     throw new Error(
       `Workflow '${workflowName}' is already active for skill '${skillName}'. ` +
         `Existing workflow ID: ${existing.id}. ` +
@@ -141,9 +157,19 @@ export const handleStartWorkflow = (
       scratchpadPath,
     });
   } catch (error) {
-    deleteScratchpad(scratchpadPath);
+    deps.log.warn(
+      { workflowId, skillName, workflowName, err: error },
+      "start_workflow: create failed",
+    );
+
+    deleteScratchpad(scratchpadPath, deps.log);
     throw error;
   }
+
+  deps.log.info(
+    { workflowId, skillName, workflowName, stepCount: definition.steps.length },
+    "workflow started",
+  );
 
   const stepLines = definition.steps.map(
     (step, index) => `${index + 1}. **${step.title}** (\`${step.id}\`)${stepListMarkers(step)}`,
@@ -179,6 +205,8 @@ export const handleUpdateWorkflowState = (
   action: UpdateAction,
   items?: string[],
 ): string => {
+  deps.log.debug({ workflowId, step, action }, "update_workflow_state starting");
+
   const result = runCascade(deps, workflowId, step, action, items);
 
   deps.repository.applyMutationBatch(result.batch);
@@ -186,8 +214,20 @@ export const handleUpdateWorkflowState = (
   const { outcome, breadcrumbParts, deepestSnapshot, scratchpadPath } = result;
   const past = ACTION_PAST_TENSE[action];
 
+  deps.log.info(
+    {
+      workflowId,
+      step,
+      action,
+      finalized: outcome.finalizedTopLevel,
+      haltedAt: outcome.haltedAtLoopStep ?? outcome.haltedAtConditionStep ?? null,
+      activeStepId: outcome.activeStepId ?? null,
+    },
+    "workflow step transitioned",
+  );
+
   if (outcome.finalizedTopLevel) {
-    deleteScratchpad(scratchpadPath);
+    deleteScratchpad(scratchpadPath, deps.log);
 
     return (
       "Workflow complete and finalized! " +
@@ -226,18 +266,26 @@ export const handleUpdateWorkflowState = (
 
   const activeStepId = outcome.activeStepId;
 
-  if (activeStepId == null) throw new Error("Cascade produced no active step.");
+  if (activeStepId == null) {
+    deps.log.error({ workflowId, step, action }, "cascade produced no active step");
+
+    throw new Error("Cascade produced no active step.");
+  }
 
   const stepInfo = getSnapshotStep(deepestSnapshot, activeStepId);
 
-  if (stepInfo == null) throw new Error(`Active step '${activeStepId}' missing from snapshot.`);
+  if (stepInfo == null) {
+    deps.log.error({ workflowId, activeStepId }, "active step missing from deepest snapshot");
+
+    throw new Error(`Active step '${activeStepId}' missing from snapshot.`);
+  }
 
   const prefix =
     action === "start" && activeStepId === step
       ? `Step **${stepInfo.title}** (\`${activeStepId}\`) started.`
       : `Step \`${step}\` ${past}. Next step **${stepInfo.title}** (\`${activeStepId}\`) started.`;
 
-  const response = buildStepResponse(stepInfo, prefix);
+  const response = buildStepResponse(stepInfo, prefix, deps.log);
   const breadcrumb = breadcrumbParts.length > 1 ? renderBreadcrumb(breadcrumbParts) : "";
 
   return breadcrumb.length > 0 ? `${breadcrumb}\n\n${response}` : response;
@@ -313,13 +361,27 @@ const detectCorruptedTargets = (
         const target = resolveComposes(stepDef.composes, layer.skillName);
 
         if (deps.findWorkflow(target.skillName, target.workflowName) == null) {
+          deps.log.warn(
+            {
+              workflowId: layer.id,
+              stepId: stepDef.id,
+              target: `${target.skillName}/${target.workflowName}`,
+            },
+            "workflow composition target corrupted",
+          );
+
           corrupted.push({
             workflowName: layer.workflowName,
             stepId: stepDef.id,
             target: `${target.skillName}/${target.workflowName}`,
           });
         }
-      } catch {
+      } catch (error) {
+        deps.log.warn(
+          { workflowId: layer.id, stepId: stepDef.id, target: stepDef.composes, err: error },
+          "workflow composition target corrupted",
+        );
+
         corrupted.push({
           workflowName: layer.workflowName,
           stepId: stepDef.id,
@@ -382,7 +444,11 @@ export const handleQueryWorkflow = (deps: WorkflowToolDeps, workflowId?: string)
   const chain = deps.repository.getActiveChain(workflowId);
   const head = chain[0];
 
-  if (head == null) throw new Error(`Workflow '${workflowId}' not found or no longer active.`);
+  if (head == null) {
+    deps.log.warn({ workflowId }, "query_workflow: workflow not found or inactive");
+
+    throw new Error(`Workflow '${workflowId}' not found or no longer active.`);
+  }
 
   if (head.parentWorkflowId != null) {
     return [
@@ -435,11 +501,22 @@ export const handleEndWorkflow = (
   workflowId: string,
   action: EndAction,
 ): string => {
+  deps.log.debug({ workflowId, action }, "end_workflow starting");
+
   const state = deps.repository.get(workflowId);
 
-  if (state == null) throw new Error(`Workflow '${workflowId}' not found or no longer active.`);
+  if (state == null) {
+    deps.log.warn({ workflowId, action }, "end_workflow: workflow not found or inactive");
+
+    throw new Error(`Workflow '${workflowId}' not found or no longer active.`);
+  }
 
   if (state.parentWorkflowId != null) {
+    deps.log.warn(
+      { workflowId, action, parentWorkflowId: state.parentWorkflowId },
+      "end_workflow: refused on composed child",
+    );
+
     throw new Error(
       `Workflow '${workflowId}' is a composed child. End its top-level workflow instead.`,
     );
@@ -447,9 +524,15 @@ export const handleEndWorkflow = (
 
   const ids = deps.repository.abortCascade(workflowId);
 
-  if (ids.length === 0) throw new Error(`Failed to end workflow '${workflowId}'.`);
+  if (ids.length === 0) {
+    deps.log.error({ workflowId, action }, "end_workflow: abortCascade removed no records");
 
-  deleteScratchpad(state.scratchpadPath);
+    throw new Error(`Failed to end workflow '${workflowId}'.`);
+  }
+
+  deleteScratchpad(state.scratchpadPath, deps.log);
+
+  deps.log.info({ workflowId, action, recordsCleaned: ids.length }, "workflow ended");
 
   const label = action === "complete" ? "completed" : "aborted";
   const count = ids.length > 1 ? ` (${ids.length} records cleaned up)` : "";

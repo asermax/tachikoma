@@ -69,7 +69,7 @@ export default defineExtension<TelegramConfig>({
 
     const mediaDir = join(app.workspace.dataDir, "media");
 
-    const store = new TelegramMessageStore(app.db);
+    const store = new TelegramMessageStore(app.db, app.log);
 
     // The routing for the message just produced/received: the live trunk leaf entry id (recorded post-
     // append, so it exists) + the live branch id (`nextBranchId`, the same id the branch gets when it
@@ -119,6 +119,7 @@ export default defineExtension<TelegramConfig>({
     app.agent.use((pi) => {
       registerTelegramTools(pi, {
         api: bot.api,
+        log: app.log,
         chatId,
         workspaceRoot: app.workspace.root,
         allowedRoots,

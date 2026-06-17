@@ -38,16 +38,28 @@ export const createGitExchangeProcessor = ({
       if (inFlight != null) return;
       if (!(await hasUncommittedChanges(workspaceRoot))) return;
 
+      log.debug({ cwd: workspaceRoot }, "per-exchange workspace commit starting");
+
+      const startedAt = Date.now();
+
       inFlight = commitAll({
         agent,
         cwd: workspaceRoot,
         fallbackMessage: workspaceFallbackMessage(),
         log,
       })
-        .then((subjects) => {
-          if (subjects.length > 0) log.debug({ subjects }, "per-exchange workspace commit");
-        })
-        .catch((err) => log.error({ err }, "per-exchange workspace commit failed"))
+        .then((subjects) =>
+          log.debug(
+            { subjects, count: subjects.length, durationMs: Date.now() - startedAt },
+            "per-exchange workspace commit finished",
+          ),
+        )
+        .catch((err) =>
+          log.error(
+            { err, durationMs: Date.now() - startedAt },
+            "per-exchange workspace commit failed",
+          ),
+        )
         .finally(() => {
           inFlight = null;
         });

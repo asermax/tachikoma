@@ -2,10 +2,18 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type AppDatabase, createDatabase, runMigrations } from "../../src/db/index.ts";
 import { TelegramMessageStore } from "../../src/extensions/telegram/store.ts";
+import type { Logger } from "../../src/log.ts";
+
+const fakeLog = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+} as unknown as Logger;
 
 let db: AppDatabase;
 let store: TelegramMessageStore;
@@ -14,7 +22,7 @@ beforeEach(async () => {
   const dir = await mkdtemp(join(tmpdir(), "tachi-tg-store-"));
   db = createDatabase(join(dir, "test.db"));
   runMigrations(db);
-  store = new TelegramMessageStore(db);
+  store = new TelegramMessageStore(db, fakeLog);
 });
 
 describe("TelegramMessageStore", () => {

@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 
+import type { Logger } from "../log.ts";
 import { appState } from "./core-schema.ts";
 import type { AppDatabase } from "./index.ts";
 
@@ -7,10 +8,12 @@ import type { AppDatabase } from "./index.ts";
 export class KeyValueState {
   private readonly db: AppDatabase;
   private readonly namespace: string;
+  private readonly log?: Logger;
 
-  constructor(db: AppDatabase, namespace: string) {
+  constructor(db: AppDatabase, namespace: string, log?: Logger) {
     this.db = db;
     this.namespace = namespace;
+    this.log = log;
   }
 
   get<T>(key: string): T | null {
@@ -32,6 +35,8 @@ export class KeyValueState {
         set: { value, updatedAt: new Date() },
       })
       .run();
+
+    this.log?.debug({ namespace: this.namespace, key }, "state set");
   }
 
   delete(key: string): void {
@@ -39,5 +44,7 @@ export class KeyValueState {
       .delete(appState)
       .where(and(eq(appState.namespace, this.namespace), eq(appState.key, key)))
       .run();
+
+    this.log?.debug({ namespace: this.namespace, key }, "state deleted");
   }
 }

@@ -126,5 +126,7 @@ export const discoverSkillAgents = (skillsRoot: string, log: Logger): SkillAgent
     }
   }
 
+  log.debug({ count: agents.length }, "discovered skill agents");
+
   return agents;
 };

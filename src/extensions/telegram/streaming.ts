@@ -110,7 +110,7 @@ export class StreamRenderer {
     for (const [index, payload] of convertAndSplit(text).entries()) {
       if (index === 0 && this.messageId != null) {
         try {
-          await editWithFallback(this.api, this.chatId, this.messageId, payload);
+          await editWithFallback(this.api, this.chatId, this.messageId, payload, this.log);
           lastId = this.messageId;
           continue;
         } catch (error) {
@@ -156,7 +156,13 @@ export class StreamRenderer {
       if (this.messageId == null) {
         this.messageId = await this.sendText(display);
       } else {
-        await editWithFallback(this.api, this.chatId, this.messageId, toTelegramEntities(display));
+        await editWithFallback(
+          this.api,
+          this.chatId,
+          this.messageId,
+          toTelegramEntities(display),
+          this.log,
+        );
       }
 
       this.lastRendered = display;
@@ -186,7 +192,7 @@ export class StreamRenderer {
     for (const chunk of chunks.slice(0, -1)) {
       const payload = toTelegramEntities(chunk);
       if (this.messageId != null) {
-        await editWithFallback(this.api, this.chatId, this.messageId, payload);
+        await editWithFallback(this.api, this.chatId, this.messageId, payload, this.log);
         this.messageId = null;
       } else {
         await sendWithFallback(this.api, this.chatId, payload, { silent: this.silent });

@@ -17,6 +17,7 @@ import {
   handleUpdateTask,
   type ToolDeps,
 } from "../../src/extensions/tasks/tools.ts";
+import type { Logger } from "../../src/log.ts";
 import { createTasksTestDb } from "./setup.ts";
 
 const registeredToolNames = (factory: ExtensionFactory): string[] => {
@@ -28,6 +29,13 @@ const registeredToolNames = (factory: ExtensionFactory): string[] => {
   return names;
 };
 
+const fakeLog = {
+  error: vi.fn(),
+  warn: vi.fn(),
+  info: vi.fn(),
+  debug: vi.fn(),
+} as unknown as Logger;
+
 let db: AppDatabase;
 let current: Date;
 let repository: TaskRepository;
@@ -37,7 +45,7 @@ beforeEach(async () => {
   db = await createTasksTestDb();
   current = new Date("2026-06-12T10:00:00Z");
   repository = new TaskRepository(db, () => current);
-  deps = { repository, timezone: "UTC", now: () => current };
+  deps = { repository, timezone: "UTC", now: () => current, log: fakeLog };
 });
 
 describe("handleCreateTask", () => {

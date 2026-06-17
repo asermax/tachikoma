@@ -2,9 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildMemoryContext, formatMemoryIndex } from "../../src/extensions/memory/indexes.ts";
+import type { Logger } from "../../src/log.ts";
+
+const fakeLog = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
 let workspace: string;
 
@@ -52,7 +55,7 @@ describe("formatMemoryIndex", () => {
 
 describe("buildMemoryContext", () => {
   it("returns empty content when the memories directory does not exist", async () => {
-    expect(await buildMemoryContext(workspace)).toBe("");
+    expect(await buildMemoryContext(workspace, fakeLog)).toBe("");
   });
 
   it("includes the layout instructions plus parsed indexes", async () => {
@@ -69,7 +72,7 @@ describe("buildMemoryContext", () => {
       "utf8",
     );
 
-    const content = await buildMemoryContext(workspace);
+    const content = await buildMemoryContext(workspace, fakeLog);
 
     expect(content).toContain("memories/episodic/");
     expect(content).toContain("grep or read");
@@ -84,7 +87,7 @@ describe("buildMemoryContext", () => {
   it("still includes the layout instructions when no index files exist", async () => {
     await mkdir(join(workspace, "memories"), { recursive: true });
 
-    const content = await buildMemoryContext(workspace);
+    const content = await buildMemoryContext(workspace, fakeLog);
 
     expect(content).toContain("## Memory");
     expect(content).not.toContain("## Facts Index");

@@ -47,14 +47,22 @@ const buildClassifierPrompt = (message: string): string =>
  * Tolerant JSON parse: extract the first balanced object and read `decision`. Anything that is not an
  * explicit "shift" — including unparseable output — degrades to "continue" (fail-open).
  */
-const parseDecision = (text: string): ShiftDecision => {
+const parseDecision = (text: string, log: Logger): ShiftDecision => {
   const match = text.match(/\{[\s\S]*\}/);
 
   if (match == null) return "continue";
 
-  const parsed = JSON.parse(match[0]) as { decision?: unknown };
-
-  return parsed.decision === "shift" ? "shift" : "continue";
+  try {
+    return (JSON.parse(match[0]) as { decision?: unknown }).decision === "shift"
+      ? "shift"
+      : "continue";
+  } catch (error) {
+    log.debug(
+      { err: error },
+      "topic-shift classifier output unparseable — continuing current topic",
+    );
+    return "continue";
+  }
 };
 
 export const classifyShift = async (deps: ShiftDeps, input: ShiftInput): Promise<ShiftDecision> => {
@@ -70,7 +78,7 @@ export const classifyShift = async (deps: ShiftDeps, input: ShiftInput): Promise
       tier: "classifier",
     });
 
-    return parseDecision(await fork.prompt(buildClassifierPrompt(input.message)));
+    return parseDecision(await fork.prompt(buildClassifierPrompt(input.message)), deps.log);
   } catch (error) {
     deps.log.error({ err: error }, "topic-shift classification failed — continuing current topic");
     return "continue";

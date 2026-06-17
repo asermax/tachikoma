@@ -126,8 +126,11 @@ export const adaptLegacyTasks = async (
     return;
   }
 
+  log.debug({ rowCount: rows.length }, "importing legacy task definitions");
+
   let imported = 0;
   let skipped = 0;
+  let conflicts = 0;
 
   for (const row of rows) {
     const schedule = parseSchedule(row.schedule);
@@ -157,14 +160,23 @@ export const adaptLegacyTasks = async (
       .onConflictDoNothing({ target: taskDefinitions.id })
       .run();
 
-    if (result.changes > 0) imported += 1;
+    if (result.changes > 0) {
+      imported += 1;
+    } else {
+      conflicts += 1;
+    }
   }
 
   state.set(IMPORTED_FLAG, true);
 
-  if (imported > 0 || skipped > 0) {
+  if (skipped > 0) {
     log.warn(
-      { imported, skipped },
+      { imported, skipped, conflicts },
+      "imported legacy task definitions with skips (schedules preserved; instances and skill pins not carried over)",
+    );
+  } else if (imported > 0 || conflicts > 0) {
+    log.info(
+      { imported, skipped, conflicts },
       "imported legacy task definitions (schedules preserved; instances and skill pins not carried over)",
     );
   }

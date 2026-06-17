@@ -75,6 +75,11 @@ export const findRelatedBranch = async (
       ].join("\n"),
     });
 
+    deps.log.debug(
+      { matchedBranchId: result.branchId, reason: result.reason },
+      "related-branch match",
+    );
+
     if (result.branchId == null) return null;
 
     return args.branchRecords.find((record) => record.branchId === result.branchId) ?? null;
@@ -97,11 +102,17 @@ const buildPointer = (record: BranchRecord, summaryText: string): string =>
     summaryText !== "" ? `\nBranch summary:\n${summaryText}` : "",
   ].join("\n");
 
-export const injectRelatedBranchContext = (session: AgentSession, record: BranchRecord): void => {
+export const injectRelatedBranchContext = (
+  session: AgentSession,
+  record: BranchRecord,
+  log: Logger,
+): void => {
   appendInContextEntry(
     session,
     RELATED_BRANCH_CUSTOM_TYPE,
     buildPointer(record, summaryTextOf(session, record)),
     { branchId: record.branchId },
   );
+
+  log.debug({ branchId: record.branchId }, "injected related-branch pointer");
 };

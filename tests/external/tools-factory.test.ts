@@ -1,12 +1,18 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-
 import type { InstallManager, InstallRecord } from "../../src/extensions/external/installs.ts";
 import {
   createExternalToolsFactory,
   handleListInstalledPlugins,
   handleUpdateExternalExtension,
 } from "../../src/extensions/external/tools.ts";
+import type { Logger } from "../../src/log.ts";
+
+const createFakeLog = (): Logger => {
+  const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+
+  return Object.assign(log, { child: () => log }) as unknown as Logger;
+};
 
 interface CapturedTool {
   name: string;
@@ -17,7 +23,10 @@ const captureTools = (manager: InstallManager): CapturedTool[] => {
   const tools: CapturedTool[] = [];
   const pi = { registerTool: (tool: CapturedTool) => tools.push(tool) };
 
-  createExternalToolsFactory(manager)(pi as unknown as Parameters<ExtensionFactory>[0]);
+  createExternalToolsFactory(
+    manager,
+    createFakeLog(),
+  )(pi as unknown as Parameters<ExtensionFactory>[0]);
 
   return tools;
 };

@@ -45,6 +45,11 @@ export const runCheck = async ({
   );
 
   if (decision.outcome === CHECK_OUTCOMES.notify && decision.latestVersion != null) {
+    log.info(
+      { current: currentVersion, latest: decision.latestVersion },
+      "emitting update-available notification",
+    );
+
     emit(NOTIFY_EVENT, {
       title: "Update available",
       text: `A new version of tachikoma is available: ${currentVersion} → ${decision.latestVersion}. Ask me to upgrade when you're ready.`,

@@ -28,7 +28,10 @@ const assistantMessage = (
     ...overrides,
   }) as AssistantMessage;
 
-const makeLogger = (): Logger => ({ debug: vi.fn() }) as unknown as Logger;
+const makeLogger = (): Logger => {
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return Object.assign(logger, { child: () => logger }) as unknown as Logger;
+};
 
 interface ManagerStub {
   manager: AgentManager;

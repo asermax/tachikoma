@@ -56,7 +56,7 @@ export default defineExtension<SelfUpdateConfig>({
       return;
     }
 
-    const currentVersion = await readInstalledVersion();
+    const currentVersion = await readInstalledVersion(app.log);
     const state = new SelfUpdateState(app.state);
     const registry = new NpmRegistryClient(app.log);
     const installer = new CommandInstaller(app.extensionConfig.installCommand, app.log);
@@ -81,7 +81,7 @@ export default defineExtension<SelfUpdateConfig>({
     });
 
     app.agent.use(createUpgradeToolFactory(upgradeDeps));
-    app.agent.use(createRestartToolFactory(() => restarter));
+    app.agent.use(createRestartToolFactory(() => restarter, app.log));
 
     app.agent.use(provideContext(SELF_UPDATE_USAGE, "self-update-usage"));
 

@@ -1,20 +1,26 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-
 import {
   createNotifyToolFactory,
   handleNotifyUser,
 } from "../../src/extensions/notifications/tools.ts";
+import type { Logger } from "../../src/log.ts";
+
+const fakeLog = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
 describe("handleNotifyUser", () => {
   it("emits a notify event with the agent as source", () => {
     const emit = vi.fn();
 
-    const message = handleNotifyUser(emit, {
-      title: "Heads up",
-      text: "the deploy finished",
-      severity: "urgent",
-    });
+    const message = handleNotifyUser(
+      emit,
+      {
+        title: "Heads up",
+        text: "the deploy finished",
+        severity: "urgent",
+      },
+      fakeLog,
+    );
 
     expect(message).toBe("Notification sent.");
     expect(emit).toHaveBeenCalledExactlyOnceWith("notify", {
@@ -28,7 +34,7 @@ describe("handleNotifyUser", () => {
   it("defaults severity to info", () => {
     const emit = vi.fn();
 
-    handleNotifyUser(emit, { text: "fyi" });
+    handleNotifyUser(emit, { text: "fyi" }, fakeLog);
 
     expect(emit.mock.calls[0]?.[1]).toMatchObject({ severity: "info" });
   });
@@ -36,7 +42,7 @@ describe("handleNotifyUser", () => {
   it("rejects empty text", () => {
     const emit = vi.fn();
 
-    expect(() => handleNotifyUser(emit, { text: "   " })).toThrow(/cannot be empty/);
+    expect(() => handleNotifyUser(emit, { text: "   " }, fakeLog)).toThrow(/cannot be empty/);
     expect(emit).not.toHaveBeenCalled();
   });
 });
@@ -52,7 +58,7 @@ describe("createNotifyToolFactory", () => {
     const tools: RegisteredTool[] = [];
     const pi = { registerTool: (tool: RegisteredTool) => tools.push(tool) };
 
-    createNotifyToolFactory(emit)(pi as unknown as Parameters<ExtensionFactory>[0]);
+    createNotifyToolFactory(emit, fakeLog)(pi as unknown as Parameters<ExtensionFactory>[0]);
 
     expect(tools.map((tool) => tool.name)).toEqual(["notify_user"]);
 

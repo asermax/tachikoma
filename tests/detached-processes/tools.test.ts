@@ -350,7 +350,7 @@ describe("handleTerminateProcess edge cases", () => {
     const record = await spawnProcess(ctx.spawnDeps, { name: "stubborn", command: "sleep 30" });
 
     const markError = new Error("db locked");
-    const logError = vi.fn();
+    const logWarn = vi.fn();
     const repository = Object.assign(Object.create(Object.getPrototypeOf(ctx.repository)), {
       get: ctx.repository.get.bind(ctx.repository),
       markStopInitiated: () => {
@@ -359,11 +359,11 @@ describe("handleTerminateProcess edge cases", () => {
     }) as typeof ctx.repository;
 
     const message = await handleTerminateProcess(
-      { ...ctx.toolDeps, repository, log: { ...ctx.log, error: logError } },
+      { ...ctx.toolDeps, repository, log: { ...ctx.log, warn: logWarn } },
       { process_id: record.id, grace_seconds: 3 },
     );
 
-    expect(logError).toHaveBeenCalledWith(
+    expect(logWarn).toHaveBeenCalledWith(
       { id: record.id, err: markError },
       "failed to mark stop initiated — signalling anyway",
     );

@@ -1,6 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+import type { Logger } from "../../log.ts";
 import { type InstallManager, isGitSource } from "./installs.ts";
 
 const RESTART_NOTE = "The change takes effect after Tachikoma restarts.";
@@ -83,7 +84,7 @@ const textResult = (text: string) => ({
 
 /** pi extension factory exposing the extension install management tools to the agent. */
 export const createExternalToolsFactory =
-  (manager: InstallManager): ExtensionFactory =>
+  (manager: InstallManager, log: Logger): ExtensionFactory =>
   (pi) => {
     pi.registerTool({
       name: "install_extension",
@@ -96,7 +97,20 @@ export const createExternalToolsFactory =
       ],
       parameters: InstallPluginParams,
       async execute(_toolCallId, params) {
-        return textResult(await handleInstallExternalExtension(manager, params));
+        log.info(
+          { tool: "install_extension", alias: params.alias, source: params.source },
+          "extension tool invoked",
+        );
+
+        try {
+          return textResult(await handleInstallExternalExtension(manager, params));
+        } catch (err) {
+          log.warn(
+            { alias: params.alias, source: params.source, err },
+            "install_extension tool failed",
+          );
+          throw err;
+        }
       },
     });
 
@@ -111,7 +125,14 @@ export const createExternalToolsFactory =
       ],
       parameters: PluginAliasParams,
       async execute(_toolCallId, params) {
-        return textResult(await handleUpdateExternalExtension(manager, params));
+        log.info({ tool: "update_extension", alias: params.alias }, "extension tool invoked");
+
+        try {
+          return textResult(await handleUpdateExternalExtension(manager, params));
+        } catch (err) {
+          log.warn({ alias: params.alias, err }, "update_extension tool failed");
+          throw err;
+        }
       },
     });
 
@@ -126,6 +147,8 @@ export const createExternalToolsFactory =
       ],
       parameters: ListInstalledPluginsParams,
       async execute() {
+        log.info({ tool: "list_installed_extensions" }, "extension tool invoked");
+
         return textResult(handleListInstalledPlugins(manager));
       },
     });
@@ -141,7 +164,14 @@ export const createExternalToolsFactory =
       ],
       parameters: PluginAliasParams,
       async execute(_toolCallId, params) {
-        return textResult(await handleUninstallExtension(manager, params));
+        log.info({ tool: "uninstall_extension", alias: params.alias }, "extension tool invoked");
+
+        try {
+          return textResult(await handleUninstallExtension(manager, params));
+        } catch (err) {
+          log.warn({ alias: params.alias, err }, "uninstall_extension tool failed");
+          throw err;
+        }
       },
     });
   };

@@ -2,6 +2,7 @@ import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type { AgentSession, AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 
 import type { AgentEvent, ResultUsage } from "../domain/agent-events.ts";
+import type { Logger } from "../log.ts";
 import { classifyError } from "./errors.ts";
 import { sanitizeText } from "./sanitize.ts";
 
@@ -47,6 +48,10 @@ const collectUsage = (messages: AgentEndEvent["messages"]): ResultUsage => {
 
   return { costUsd: usage.cost.total, usage };
 };
+
+/** Usage/cost log bindings for a finished exchange (empty when pi surfaced no totals). */
+const usageBindings = (result: ResultUsage | null) =>
+  result != null ? { usage: result.usage, costUsd: result.costUsd } : {};
 
 const mapSessionEvent = (event: SessionEvent): AgentEvent | null => {
   switch (event.type) {
@@ -95,12 +100,20 @@ const mapSessionEvent = (event: SessionEvent): AgentEvent | null => {
  * The iterator completes only after pi's prompt() promise settles, so consumers
  * can treat iteration end as exchange end.
  */
-export const streamPrompt = (session: AgentSession, text: string): AsyncIterable<AgentEvent> => {
+export const streamPrompt = (
+  session: AgentSession,
+  text: string,
+  log: Logger,
+): AsyncIterable<AgentEvent> => {
   const queue: AgentEvent[] = [];
   let wake: (() => void) | null = null;
   let finished = false;
   let failure: unknown = null;
   let lastResult: ResultUsage | null = null;
+
+  const startedAt = Date.now();
+
+  log.debug({ sessionId: session.sessionId }, "agent exchange starting");
 
   const push = (event: AgentEvent | null) => {
     if (event != null) queue.push(event);
@@ -121,6 +134,14 @@ export const streamPrompt = (session: AgentSession, text: string): AsyncIterable
   const run = session
     .prompt(text)
     .catch((error) => {
+      log.error(
+        {
+          err: error instanceof Error ? error.message : String(error),
+          sessionId: session.sessionId,
+        },
+        "agent prompt failed",
+      );
+
       failure = error;
     })
     .finally(() => {
@@ -145,6 +166,15 @@ export const streamPrompt = (session: AgentSession, text: string): AsyncIterable
 
         yield { kind: "error", message, ...classifyError(message) };
       } else {
+        log.info(
+          {
+            sessionId: session.sessionId,
+            durationMs: Date.now() - startedAt,
+            ...usageBindings(lastResult),
+          },
+          "agent exchange finished",
+        );
+
         yield {
           kind: "result",
           stopReason: "done",

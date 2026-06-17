@@ -107,11 +107,21 @@ export class Coordinator {
     ) {
       const session = this.active.session;
 
+      this.log.debug(
+        { origin: normalized.metadata.origin, channel: normalized.channel },
+        "message steered into live run",
+      );
+
       void session
         .steer(renderPrompt(normalized))
         .catch((error) => this.log.error({ err: error }, "steering failed — message dropped"));
       return;
     }
+
+    this.log.debug(
+      { origin: normalized.metadata.origin, channel: normalized.channel, queued, forceNew },
+      "message enqueued",
+    );
 
     this.inbox.push(normalized);
     this.wake?.();
@@ -120,6 +130,8 @@ export class Coordinator {
 
   /** Abort the in-flight agent run, if any (user-initiated stop). */
   async abortExchange(): Promise<void> {
+    this.log.info("exchange aborted by user");
+
     await this.active?.session.abort();
   }
 
@@ -146,7 +158,7 @@ export class Coordinator {
         this.channel?.status?.(text);
       }
     } catch (error) {
-      this.log.debug({ err: error }, "channel status rendering failed");
+      this.log.warn({ err: error }, "channel status rendering failed");
     }
   }
 
@@ -406,6 +418,13 @@ export class Coordinator {
   private async handle(message: InboundMessage): Promise<void> {
     this.exchanging = true;
 
+    const startedAt = Date.now();
+
+    this.log.info(
+      { origin: message.metadata.origin, channel: message.channel },
+      "exchange started",
+    );
+
     try {
       // Ensure the trunk BEFORE the inbound middleware so the boundary middleware can drive collapse on
       // the live trunk. A command middleware that sets `handled` still short-circuits before streaming.
@@ -416,13 +435,24 @@ export class Coordinator {
       // A middleware (e.g. the commands extension) fully handled the message.
       if (message.metadata.handled === true) return;
 
-      const events = streamPrompt(active.session, renderPrompt(message));
+      const events = streamPrompt(active.session, renderPrompt(message), this.log);
       await this.channel?.respond({ message, events });
 
       await this.runExchangeProcessors(message);
     } finally {
       this.exchanging = false;
       this.lastExchangeAt = this.now();
+
+      this.log.info(
+        {
+          origin: message.metadata.origin,
+          channel: message.channel,
+          handled: message.metadata.handled === true,
+          durationMs: Date.now() - startedAt,
+        },
+        "exchange finished",
+      );
+
       this.scheduleDelivery();
     }
   }
@@ -477,6 +507,11 @@ export class Coordinator {
         );
       }
     });
+
+    this.log.debug(
+      { total: results.length, failed: results.filter((r) => r.status === "rejected").length },
+      "exchange processors finished",
+    );
   }
 
   private async runPostProcessing(trunk: ActiveTrunk, silent = false): Promise<void> {
@@ -549,6 +584,8 @@ export class Coordinator {
   private flushQueue(): void {
     const items = this.heldDeliveries.splice(0);
     if (items.length === 0) return;
+
+    this.log.info({ count: items.length }, "delivery queue flushed");
 
     this.submit({
       text: buildDigest(items),

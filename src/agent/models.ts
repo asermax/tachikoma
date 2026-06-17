@@ -1,6 +1,7 @@
 import type { ModelRegistry, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 import type { Config, ThinkingLevel } from "../config/schema.ts";
+import type { Logger } from "../log.ts";
 
 export const MODEL_TIERS = {
   /** Main conversational agent. */
@@ -74,11 +75,18 @@ export class ModelTiers {
   private readonly agentConfig: Config["agent"];
   private readonly registry: ModelRegistry;
   private readonly settings: SettingsManager;
+  private readonly log: Logger | undefined;
 
-  constructor(agentConfig: Config["agent"], registry: ModelRegistry, settings: SettingsManager) {
+  constructor(
+    agentConfig: Config["agent"],
+    registry: ModelRegistry,
+    settings: SettingsManager,
+    log?: Logger,
+  ) {
     this.agentConfig = agentConfig;
     this.registry = registry;
     this.settings = settings;
+    this.log = log;
   }
 
   /** The configured reference for a tier after applying the fallback chain, if any. */
@@ -143,6 +151,11 @@ export class ModelTiers {
           "a default model in pi's settings.json, or provider credentials",
       );
     }
+
+    this.log?.warn(
+      { tier, model: `${first.provider}/${first.id}` },
+      "no configured or default model — falling back to first available",
+    );
 
     return { model: first, ...(thinkingLevel != null ? { thinkingLevel } : {}) };
   }

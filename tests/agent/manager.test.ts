@@ -131,6 +131,7 @@ const makeLog = () =>
     warn: vi.fn(),
     info: vi.fn(),
     debug: vi.fn(),
+    error: vi.fn(),
   }) as unknown as import("../../src/log.ts").Logger;
 
 const makeSources = (

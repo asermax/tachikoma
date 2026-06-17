@@ -65,7 +65,10 @@ const exists = async (path: string): Promise<boolean> =>
     () => false,
   );
 
-export const handleQueryGitStatus = async ({ workspaceRoot }: GitToolDeps): Promise<string> => {
+export const handleQueryGitStatus = async ({
+  workspaceRoot,
+  log,
+}: GitToolDeps): Promise<string> => {
   const branch = await runGitCapture(workspaceRoot, ["symbolic-ref", "--short", "HEAD"]);
   const header =
     branch.code === 0 && branch.stdout !== ""
@@ -75,6 +78,8 @@ export const handleQueryGitStatus = async ({ workspaceRoot }: GitToolDeps): Prom
   const status = await runGitCapture(workspaceRoot, ["status", "--porcelain"]);
 
   if (status.code !== 0) {
+    log.warn({ code: status.code, stderr: status.stderr }, "query_git_status failed");
+
     throw new Error(`git status failed: ${status.stderr || `exit code ${status.code}`}`);
   }
 
@@ -183,6 +188,8 @@ export const handleCommitWorkspace = async (
   { workspaceRoot, agent, log, resolver }: GitToolDeps,
   args: Static<typeof CommitWorkspaceParams>,
 ): Promise<string> => {
+  log.info({ push: args.push ?? true }, "commit_workspace invoked");
+
   const subjects = await commitAll({
     agent,
     cwd: workspaceRoot,
@@ -216,7 +223,11 @@ export const handleScrubWorkspace = async (
 ): Promise<string> => {
   const project = args.project;
 
+  log.info({ project, paths: args.paths }, "scrub tool invoked");
+
   if (project === "") {
+    log.warn({ project }, "scrub rejected: empty project");
+
     throw new Error("'project' cannot be empty; omit it to scrub the workspace repository.");
   }
 
@@ -224,6 +235,8 @@ export const handleScrubWorkspace = async (
   const target = isProject ? join(workspaceRoot, "projects", project) : workspaceRoot;
 
   if (isProject && !(await exists(target))) {
+    log.warn({ project }, "scrub rejected: project not found");
+
     throw new Error(`Project '${project}' not found under projects/`);
   }
 

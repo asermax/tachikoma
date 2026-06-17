@@ -7,11 +7,21 @@ import { isAlive } from "./spawn.ts";
  * stopping the sweep.
  */
 export const createWatcherTick = (deps: ReconcileDeps) => async (): Promise<void> => {
+  let checked = 0;
+  let reconciled = 0;
+
   for (const record of deps.repository.listRunning()) {
+    checked += 1;
+
     try {
-      if (!isAlive(record.pid)) await reconcileExit(deps, record.id);
+      if (!isAlive(record.pid)) {
+        await reconcileExit(deps, record.id);
+        reconciled += 1;
+      }
     } catch (error) {
       deps.log.error({ id: record.id, err: error }, "watcher: error checking record");
     }
   }
+
+  deps.log.debug({ checked, reconciled }, "detached watcher tick finished");
 };

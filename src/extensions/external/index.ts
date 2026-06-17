@@ -45,15 +45,23 @@ export default defineExtension<ExternalConfig>({
     });
     const installed = Object.values(manager.list()).map((record) => record.path);
 
+    let registered = 0;
+
     for (const source of new Set([...configured, ...installed])) {
       const extension = await loadExtensionModule(source, app.log);
 
       if (extension != null) {
         app.registerExtension(extension, { setupTimeoutMs: app.extensionConfig.setupTimeoutMs });
         app.log.info({ source, extension: extension.name }, "external extension registered");
+        registered += 1;
       }
     }
 
-    app.agent.use(createExternalToolsFactory(manager));
+    app.log.info(
+      { configured: configured.length, installed: installed.length, registered },
+      "external extensions loaded",
+    );
+
+    app.agent.use(createExternalToolsFactory(manager, app.log));
   },
 });

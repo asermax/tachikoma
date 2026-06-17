@@ -9,7 +9,10 @@ import {
 import type { Logger } from "../../src/log.ts";
 import type { BranchRecord } from "../../src/sessions/trunk.ts";
 
-const fakeLog = { error: vi.fn(), warn: vi.fn() } as unknown as Logger;
+const fakeLog = Object.assign(
+  { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  { child: () => fakeLog },
+) as unknown as Logger;
 
 const records: BranchRecord[] = [
   {
@@ -117,7 +120,7 @@ describe("injectRelatedBranchContext", () => {
     const session = makeSession();
     const append = vi.mocked(session.sessionManager.appendCustomMessageEntry);
 
-    injectRelatedBranchContext(session, records[0], "Planning a trip to Japan");
+    injectRelatedBranchContext(session, records[0], fakeLog);
 
     expect(append).toHaveBeenCalledOnce();
     const [customType, content, display, details] = append.mock.calls[0];

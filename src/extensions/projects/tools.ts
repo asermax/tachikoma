@@ -71,8 +71,12 @@ export const handleRegisterProject = async (
     if (await exists(projectPath)) {
       try {
         await removeSubmodule(workspaceRoot, args.name);
-      } catch {
+      } catch (cleanupError) {
         // Partial-state cleanup is best-effort; the original error matters more.
+        log.debug(
+          { name: args.name, err: cleanupError },
+          "partial-state cleanup failed after registration error",
+        );
       }
     }
 
@@ -101,6 +105,8 @@ export const handleDeregisterProject = async (
     );
   }
 
+  log.info({ name: args.name, force }, "deregistering project");
+
   await removeSubmodule(workspaceRoot, args.name);
 
   log.info({ name: args.name, force }, "project deregistered");
@@ -111,8 +117,13 @@ export const handleDeregisterProject = async (
   );
 };
 
-export const handleListProjects = async ({ workspaceRoot }: ProjectToolDeps): Promise<string> => {
+export const handleListProjects = async ({
+  workspaceRoot,
+  log,
+}: ProjectToolDeps): Promise<string> => {
   const submodulePaths = await listSubmodules(workspaceRoot);
+
+  log.debug({ count: submodulePaths.length }, "listed projects");
 
   if (submodulePaths.length === 0) {
     return "No projects registered. Use register_project to add one.";

@@ -56,8 +56,9 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
 
   await adaptWorkspace(workspace, migrationLog);
 
-  const db = createDatabase(workspace.databaseFile);
-  runMigrations(db);
+  const dbLog = componentLogger(log, "db");
+  const db = createDatabase(workspace.databaseFile, dbLog);
+  runMigrations(db, dbLog);
 
   await adaptWorkspaceData(db, workspace, migrationLog);
 
@@ -68,7 +69,7 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
   const agent = new AgentManager(workspace, config, regs, componentLogger(log, "agent"));
   // The coordinator owns a daily trunk via a STABLE `app_state` namespace ("trunk") rather than a
   // session record — the `sessions` table and registry were dropped under the daily-trunk model.
-  const trunkState = new TrunkState(new KeyValueState(db, "trunk"));
+  const trunkState = new TrunkState(new KeyValueState(db, "trunk", dbLog));
   const coordinator = new Coordinator(
     trunkState,
     agent,
@@ -90,8 +91,13 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
     regs,
   });
 
+  log.debug("loading extensions");
   await host.load(firstPartyExtensions);
+
+  log.debug("running bootstrap hooks");
   await host.bootstrap();
+
+  log.debug("recovering stale trunks");
   await coordinator.recoverStaleTrunks();
 
   // Nightly trunk close in the scheduler timezone: fires the close pipeline only when no

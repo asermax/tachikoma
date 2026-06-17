@@ -54,7 +54,7 @@ export default defineExtension<BoundaryConfig>({
       const collapseLiveBranch = (
         status: string,
         reason?: string,
-      ): Promise<unknown> | undefined => {
+      ): Promise<{ newBaseId: string } | null> | undefined => {
         if (!trunk.hasAssistantTurnSinceBase) return undefined;
 
         app.status(status);
@@ -84,12 +84,17 @@ export default defineExtension<BoundaryConfig>({
         // A recorded id that resolves to a known earlier branch forces a shift + context injection;
         // an id that no longer resolves to a record (e.g. a stale routing row) falls through to the
         // classifier below rather than silently appending.
+        app.log.debug(
+          { forcedBranchId, resolved: referenced != null, liveBranchId: trunk.liveBranchId },
+          "forced branch reference",
+        );
+
         if (referenced != null) {
           await collapseLiveBranch(
             "Switching to an earlier topic",
             `user referenced ${forcedBranchId}`,
           );
-          injectRelatedBranchContext(trunk.session, referenced);
+          injectRelatedBranchContext(trunk.session, referenced, app.log);
 
           return next();
         }
@@ -97,6 +102,8 @@ export default defineExtension<BoundaryConfig>({
 
       // "/new": force a topic shift. Honored even when detection is off, so the user can always start over.
       if (message.metadata.forceNew === true) {
+        app.log.info({ branchId: trunk.liveBranchId }, "forced new topic (/new)");
+
         await collapseLiveBranch("Starting a new topic", "user forced a new topic");
 
         return next();
@@ -119,18 +126,34 @@ export default defineExtension<BoundaryConfig>({
         },
       );
 
+      app.log.debug(
+        { branchId: trunk.liveBranchId, decision, messageLen: message.text.length },
+        "topic-shift classification",
+      );
+
       if (decision === "shift") {
         const collapsed = await collapseLiveBranch("Topic shift — collapsing the previous branch");
 
         // Pull a related prior branch's context onto the fresh branch (one pointer, no merge).
+        let related: Awaited<ReturnType<typeof findRelatedBranch>> = null;
+
         if (collapsed != null) {
-          const related = await findRelatedBranch(
+          related = await findRelatedBranch(
             { side: app.agent.side, log: app.log },
             { session: trunk.session, branchRecords: trunk.branchRecords, message: message.text },
           );
 
-          if (related != null) injectRelatedBranchContext(trunk.session, related);
+          if (related != null) injectRelatedBranchContext(trunk.session, related, app.log);
         }
+
+        app.log.info(
+          {
+            collapsedBranchId: trunk.liveBranchId,
+            newBaseId: collapsed?.newBaseId ?? null,
+            relatedBranchId: related?.branchId ?? null,
+          },
+          "topic shifted",
+        );
       }
 
       return next();

@@ -130,7 +130,7 @@ export class AgentManager {
       join(workspace.piDir, "models.json"),
     );
     this.settingsManager = SettingsManager.create(workspace.root, workspace.piDir);
-    this.tiers = new ModelTiers(config.agent, this.modelRegistry, this.settingsManager);
+    this.tiers = new ModelTiers(config.agent, this.modelRegistry, this.settingsManager, log);
   }
 
   async apiKeyFor(provider: string): Promise<string | undefined> {
@@ -148,6 +148,23 @@ export class AgentManager {
    */
   async open(options: OpenSessionOptions = {}): Promise<AgentSession> {
     const workspace = this.workspace;
+
+    this.log.debug(
+      {
+        mode:
+          options.inMemory === true
+            ? "inMemory"
+            : options.forkFromFile != null
+              ? "forkFrom"
+              : options.sessionFile != null
+                ? "open"
+                : "create",
+        tier: options.tier,
+        model: options.model,
+        bare: options.bare === true,
+      },
+      "opening session",
+    );
 
     const bare = options.bare === true;
     // The main base prompt (identity + hygiene + workspace root) is core-owned: it replaces pi's
@@ -231,6 +248,10 @@ export class AgentManager {
     // releases the counter even if open() throws.
     this.forkDepth += 1;
 
+    const startedAt = Date.now();
+
+    this.log.debug({ sourceSessionFile, tier, tools }, "fork-and-continue starting");
+
     try {
       const session = await this.open({
         forkFromFile: sourceSessionFile,
@@ -240,9 +261,21 @@ export class AgentManager {
 
       try {
         await session.prompt(prompt);
+      } catch (error) {
+        this.log.error(
+          { err: error instanceof Error ? error.message : String(error), sourceSessionFile },
+          "fork-and-continue prompt failed",
+        );
+
+        throw error;
       } finally {
         session.dispose();
       }
+
+      this.log.debug(
+        { sourceSessionFile, tier, durationMs: Date.now() - startedAt },
+        "fork-and-continue finished",
+      );
     } finally {
       this.forkDepth -= 1;
     }
@@ -277,17 +310,31 @@ export class AgentManager {
     const forkedFile = source.createBranchedSession(leafId);
     if (forkedFile == null) throw new Error("shadow fork did not persist a branched session file");
 
+    const tier = options.tier ?? "classifier";
+
     const session = await this.open({
       sessionFile: forkedFile,
       bare: true,
-      tier: options.tier ?? "classifier",
+      tier,
       tools: [],
       ...(options.systemPrompt != null ? { systemPrompt: options.systemPrompt } : {}),
     });
 
+    this.log.debug({ sourceSessionFile, forkedFile, tier }, "shadow fork created");
+
     return {
       prompt: async (text) => {
-        await session.prompt(text);
+        try {
+          await session.prompt(text);
+        } catch (error) {
+          this.log.warn(
+            { err: error instanceof Error ? error.message : String(error), forkedFile },
+            "shadow fork prompt failed",
+          );
+
+          throw error;
+        }
+
         return lastAssistantText(session.messages);
       },
       dispose: async () => {

@@ -21,6 +21,14 @@ import {
   type ToolApi,
   type ToolDeps,
 } from "../../src/extensions/telegram/tools.ts";
+import type { Logger } from "../../src/log.ts";
+
+const fakeLog = {
+  debug: vi.fn(),
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+} as unknown as Logger;
 
 const fakeApi = () =>
   ({
@@ -66,6 +74,7 @@ describe("handleSendFile", () => {
 
   const deps = (api: ToolApi) => ({
     api,
+    log: fakeLog,
     chatId: 42,
     workspaceRoot: workspace,
     allowedRoots: [workspace],
@@ -120,7 +129,13 @@ describe("handleSendFile", () => {
     const api = fakeApi();
 
     await handleSendFile(
-      { api, chatId: 42, workspaceRoot: workspace, allowedRoots: [`${workspace}${sep}`] },
+      {
+        api,
+        log: fakeLog,
+        chatId: 42,
+        workspaceRoot: workspace,
+        allowedRoots: [`${workspace}${sep}`],
+      },
       { filePath: "notes.txt" },
     );
 
@@ -151,7 +166,7 @@ describe("handleReactToMessage", () => {
     const api = fakeApi();
 
     const result = await handleReactToMessage(
-      { api, chatId: 42, getLastInboundMessageId: () => 5 },
+      { api, log: fakeLog, chatId: 42, getLastInboundMessageId: () => 5 },
       { emoji: "👍", messageId: 9 },
     );
 
@@ -163,7 +178,7 @@ describe("handleReactToMessage", () => {
     const api = fakeApi();
 
     await handleReactToMessage(
-      { api, chatId: 42, getLastInboundMessageId: () => 5 },
+      { api, log: fakeLog, chatId: 42, getLastInboundMessageId: () => 5 },
       { emoji: "🔥" },
     );
 
@@ -173,7 +188,7 @@ describe("handleReactToMessage", () => {
   it("fails when no message is available", async () => {
     await expect(
       handleReactToMessage(
-        { api: fakeApi(), chatId: 42, getLastInboundMessageId: () => null },
+        { api: fakeApi(), log: fakeLog, chatId: 42, getLastInboundMessageId: () => null },
         { emoji: "👍" },
       ),
     ).rejects.toThrow("No message available to react to");
@@ -184,7 +199,12 @@ describe("pinning", () => {
   it("pins the last outbound message audibly", async () => {
     const api = fakeApi();
 
-    const result = await handlePinMessage({ api, chatId: 42, getLastOutboundMessageId: () => 7 });
+    const result = await handlePinMessage({
+      api,
+      log: fakeLog,
+      chatId: 42,
+      getLastOutboundMessageId: () => 7,
+    });
 
     expect(result).toBe("Message pinned (ID: 7)");
     expect(api.pinChatMessage).toHaveBeenCalledWith(42, 7, { disable_notification: false });
@@ -192,14 +212,19 @@ describe("pinning", () => {
 
   it("fails to pin when nothing was sent yet", async () => {
     await expect(
-      handlePinMessage({ api: fakeApi(), chatId: 42, getLastOutboundMessageId: () => null }),
+      handlePinMessage({
+        api: fakeApi(),
+        log: fakeLog,
+        chatId: 42,
+        getLastOutboundMessageId: () => null,
+      }),
     ).rejects.toThrow("No message available to pin");
   });
 
   it("unpins by message id", async () => {
     const api = fakeApi();
 
-    const result = await handleUnpinMessage({ api, chatId: 42 }, { messageId: 7 });
+    const result = await handleUnpinMessage({ api, log: fakeLog, chatId: 42 }, { messageId: 7 });
 
     expect(result).toBe("Message unpinned (ID: 7)");
     expect(api.unpinChatMessage).toHaveBeenCalledWith(42, 7);
@@ -212,6 +237,7 @@ describe("handleSendMessageWithButtons", () => {
     overrides: Partial<Parameters<typeof handleSendMessageWithButtons>[0]> = {},
   ) => ({
     api,
+    log: fakeLog,
     chatId: 42,
     store: { record: vi.fn(), resolve: vi.fn(() => null) },
     currentRouting: () =>
@@ -415,6 +441,7 @@ describe("registerTelegramTools", () => {
 
   const baseDeps = (api: ToolApi): ToolDeps => ({
     api,
+    log: fakeLog,
     chatId: 42,
     workspaceRoot: "/tmp/ws",
     allowedRoots: ["/tmp/ws"],

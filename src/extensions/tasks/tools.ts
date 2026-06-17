@@ -2,6 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
+import type { Logger } from "../../log.ts";
 import { type DefinitionPatch, isTerminalStatus, type TaskRepository } from "./repository.ts";
 import { formatInTimezone, formatSchedule, parseSchedule } from "./schedule.ts";
 import type { TaskDefinitionRecord } from "./schema.ts";
@@ -16,6 +17,7 @@ export interface ToolDeps {
    * live-abort step is skipped when absent, leaving the DB write as the effect.
    */
   cancelRunningInstance?: (instanceId: string) => Promise<boolean>;
+  log: Logger;
 }
 
 const SCHEDULE_DESCRIPTION =
@@ -132,7 +134,7 @@ const describeDefinition = (
 };
 
 export const handleCreateTask = (
-  { repository, timezone, now }: ToolDeps,
+  { repository, timezone, now, log }: ToolDeps,
   args: Static<typeof CreateTaskParams>,
 ): string => {
   const schedule = parseSchedule(args.schedule, timezone, now());
@@ -145,6 +147,11 @@ export const handleCreateTask = (
     enabled: args.enabled ?? true,
   });
 
+  log.info(
+    { definitionId: created.id, name: created.name, taskType: created.taskType },
+    "task definition created",
+  );
+
   return [
     `Task '${created.name}' created successfully.`,
     `- ID: ${created.id}`,
@@ -155,7 +162,7 @@ export const handleCreateTask = (
 };
 
 export const handleUpdateTask = (
-  { repository, timezone, now }: ToolDeps,
+  { repository, timezone, now, log }: ToolDeps,
   args: Static<typeof UpdateTaskParams>,
 ): string => {
   const existing = repository.getDefinition(args.task_id);
@@ -179,6 +186,8 @@ export const handleUpdateTask = (
   if (Object.keys(patch).length === 0) return "No updates provided.";
 
   repository.updateDefinition(args.task_id, patch);
+
+  log.info({ definitionId: args.task_id, fields: Object.keys(patch) }, "task definition updated");
 
   return `Task '${args.task_id}' updated successfully.`;
 };
@@ -270,7 +279,7 @@ export const handleGetTask = (
 };
 
 export const handleDeleteTask = (
-  { repository }: ToolDeps,
+  { repository, log }: ToolDeps,
   args: Static<typeof DeleteTaskParams>,
 ): string => {
   const definition = repository.resolveDefinition(args.task);
@@ -279,11 +288,16 @@ export const handleDeleteTask = (
 
   repository.deleteDefinition(definition.id);
 
+  log.info(
+    { definitionId: definition.id, name: definition.name, taskType: definition.taskType },
+    "task definition deleted",
+  );
+
   return `Task '${definition.name}' deleted.`;
 };
 
 export const handleRunTaskNow = (
-  { repository, now }: ToolDeps,
+  { repository, now, log }: ToolDeps,
   args: Static<typeof RunTaskNowParams>,
 ): string => {
   const byReference = args.task != null;
@@ -314,6 +328,11 @@ export const handleRunTaskNow = (
       scheduledFor: now(),
     });
 
+    log.info(
+      { instanceId: instance.id, taskType: definition.taskType, byReference: true },
+      "task run-now queued",
+    );
+
     return `${definition.taskType} task '${definition.name}' queued. Instance ID: ${instance.id}`;
   }
 
@@ -328,11 +347,13 @@ export const handleRunTaskNow = (
 
   const label = args.name ?? (args.prompt as string).slice(0, 80);
 
+  log.info({ instanceId: instance.id, taskType, byReference: false }, "task run-now queued");
+
   return `${taskType} task '${label}' queued. Instance ID: ${instance.id}`;
 };
 
 export const handleRespondToTask = (
-  { repository }: ToolDeps,
+  { repository, log }: ToolDeps,
   args: Static<typeof RespondToTaskParams>,
 ): string => {
   const response = args.response.trim();
@@ -353,11 +374,13 @@ export const handleRespondToTask = (
   // next tick once it sees a userResponse, injecting the reply into the run.
   repository.updateInstance(instance.id, { userResponse: response });
 
+  log.info({ instanceId: instance.id }, "user response relayed to waiting task");
+
   return "Response sent. The task will resume with your reply.";
 };
 
 export const handleStopTask = async (
-  { repository, cancelRunningInstance }: ToolDeps,
+  { repository, cancelRunningInstance, log }: ToolDeps,
   args: Static<typeof StopTaskParams>,
 ): Promise<string> => {
   const instance = repository.getInstance(args.task_instance_id);
@@ -377,7 +400,9 @@ export const handleStopTask = async (
   // to abort (the executor's abort path writes nothing, so there is no race).
   repository.cancelInstance(instance.id, "Task cancelled by user");
 
-  await cancelRunningInstance?.(args.task_instance_id);
+  const aborted = (await cancelRunningInstance?.(args.task_instance_id)) ?? false;
+
+  log.info({ instanceId: instance.id, previousStatus, aborted }, "task instance cancelled by user");
 
   return `Task instance '${args.task_instance_id}' cancelled (was ${previousStatus}).`;
 };

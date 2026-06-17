@@ -31,5 +31,9 @@ export const adaptContextFiles = async (workspace: Workspace, log: Logger): Prom
   }
 
   // Tidy up the old directory when nothing is left; rmdir refuses non-empty dirs.
-  await rmdir(oldDir).catch(() => undefined);
+  await rmdir(oldDir).catch((err) => {
+    if (err?.code !== "ENOTEMPTY" && err?.code !== "ENOENT") {
+      log.debug({ oldDir, err }, "could not remove legacy context dir");
+    }
+  });
 };

@@ -22,7 +22,7 @@ export class Scheduler {
     const job = new Cron(
       pattern,
       { timezone: this.timezone, protect: true, catch: this.onError(name) },
-      fn,
+      this.ticking(name, fn),
     );
 
     const handle: ScheduledJob = {
@@ -49,7 +49,7 @@ export class Scheduler {
         catch: this.onError(name),
         unref: true,
       },
-      fn,
+      this.ticking(name, fn),
     );
 
     const handle: ScheduledJob = {
@@ -75,6 +75,20 @@ export class Scheduler {
 
   private onError(name: string): (error: unknown) => void {
     return (error) => this.log.error({ job: name, err: error }, "scheduled job failed");
+  }
+
+  // Logs each scheduled tick's start and successful completion (with duration) at debug; a throwing
+  // tick rejects to croner's `catch`, which routes to onError — so no finish line on failure.
+  private ticking(name: string, fn: () => void | Promise<void>): () => Promise<void> {
+    return async () => {
+      this.log.debug({ job: name }, "scheduled job fired");
+
+      const startedAt = Date.now();
+
+      await fn();
+
+      this.log.debug({ job: name, durationMs: Date.now() - startedAt }, "scheduled job finished");
+    };
   }
 
   // Manual-trigger wrapper: errors are logged here since this path bypasses

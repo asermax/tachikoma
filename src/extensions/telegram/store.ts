@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 
 import type { AppDatabase } from "../../db/index.ts";
+import type { Logger } from "../../log.ts";
 import type { ChannelMessageStore, MessageRouting } from "./channel.ts";
 import { CHANNEL_NAME } from "./inbound.ts";
 import { type ChannelMessageDirection, channelMessages } from "./schema.ts";
@@ -13,9 +14,11 @@ import { type ChannelMessageDirection, channelMessages } from "./schema.ts";
  */
 export class TelegramMessageStore implements ChannelMessageStore {
   private readonly db: AppDatabase;
+  private readonly log: Logger;
 
-  constructor(db: AppDatabase) {
+  constructor(db: AppDatabase, log: Logger) {
     this.db = db;
+    this.log = log;
   }
 
   record(messageId: string, routing: MessageRouting, direction: ChannelMessageDirection): void {
@@ -49,6 +52,11 @@ export class TelegramMessageStore implements ChannelMessageStore {
       )
       .get();
 
-    return row ?? null;
+    if (row == null) {
+      this.log.debug({ messageId }, "no channel routing for telegram message");
+      return null;
+    }
+
+    return row;
   }
 }

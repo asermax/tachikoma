@@ -1,9 +1,12 @@
 import type { AssistantMessage, Usage } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { streamPrompt } from "../src/agent/adapter.ts";
 import type { AgentEvent } from "../src/domain/agent-events.ts";
+import type { Logger } from "../src/log.ts";
+
+const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() } as unknown as Logger;
 
 type Listener = (event: unknown) => void;
 
@@ -64,7 +67,7 @@ describe("streamPrompt", () => {
       emit({ type: "tool_execution_end", toolCallId: "t1", toolName: "read", isError: false });
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events).toEqual([
       { kind: "text", text: "Hel" },
@@ -102,7 +105,7 @@ describe("streamPrompt", () => {
       });
     }, "session-cost");
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
     const result = events.at(-1);
 
     expect(result).toMatchObject({
@@ -127,7 +130,7 @@ describe("streamPrompt", () => {
       });
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events.at(-1)).toEqual({ kind: "result", stopReason: "done", sessionId: "session-1" });
   });
@@ -137,7 +140,7 @@ describe("streamPrompt", () => {
       throw new Error("the provider is overloaded right now");
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events).toEqual([
       {
@@ -154,7 +157,7 @@ describe("streamPrompt", () => {
       throw "plain string failure";
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events[0]).toMatchObject({ kind: "error", message: "plain string failure" });
   });
@@ -164,7 +167,7 @@ describe("streamPrompt", () => {
       throw new Error("authentication failed: invalid api key");
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events).toEqual([
       {
@@ -188,7 +191,7 @@ describe("streamPrompt", () => {
       });
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events).toEqual([
       { kind: "thinking", text: "pondering" },
@@ -202,7 +205,7 @@ describe("streamPrompt", () => {
       emit({ type: "auto_retry_start" });
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events).toEqual([
       { kind: "status", text: "Compacting conversation…" },
@@ -216,7 +219,7 @@ describe("streamPrompt", () => {
       emit({ type: "queue_update" });
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events).toEqual([{ kind: "result", stopReason: "done", sessionId: "session-1" }]);
   });
@@ -226,7 +229,7 @@ describe("streamPrompt", () => {
       emit({ type: "tool_execution_start", toolCallId: "t9", toolName: "noop" });
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events[0]).toEqual({
       kind: "tool-start",
@@ -244,7 +247,7 @@ describe("streamPrompt", () => {
       });
     });
 
-    const events = await collect(streamPrompt(session, "hi"));
+    const events = await collect(streamPrompt(session, "hi", log));
 
     expect(events[0]).toEqual({ kind: "text", text: "okdone" });
   });

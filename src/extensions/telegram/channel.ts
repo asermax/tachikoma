@@ -437,9 +437,9 @@ export class TelegramChannel implements Channel {
       let outboundId = id;
       if (shouldPush && id != null) {
         try {
-          outboundId = await forceNotification(this.bot.api, this.options.chatId, id);
+          outboundId = await forceNotification(this.bot.api, this.options.chatId, id, log);
         } catch (error) {
-          log.debug(
+          log.warn(
             { err: error },
             "push notification copy-delete failed; delivered without a push",
           );
@@ -460,7 +460,7 @@ export class TelegramChannel implements Channel {
     try {
       this.options.store.record(messageId, routing, direction);
     } catch (error) {
-      this.log().debug({ err: error, messageId }, "recording channel message failed");
+      this.log().warn({ err: error, messageId, direction }, "recording channel message failed");
     }
   }
 
@@ -527,6 +527,7 @@ export class TelegramChannel implements Channel {
       this.options.chatId,
       messageId,
       toTelegramEntities(display),
+      this.log(),
     );
     return messageId;
   }
@@ -578,6 +579,11 @@ export class TelegramChannel implements Channel {
     const inbound = mapTextMessage(message, { skipQuote: this.shouldSkipQuote(message) });
     if (inbound == null) return;
 
+    this.log().debug(
+      { messageId: message.message_id, isReply: message.reply_to_message != null },
+      "telegram text message received",
+    );
+
     this.lastInboundId = message.message_id;
     // Bridge the gap until respond()'s typing loop takes over.
     this.pingTyping();
@@ -627,6 +633,12 @@ export class TelegramChannel implements Channel {
 
     try {
       const destPath = join(this.options.mediaDir, generateMediaFilename(resolved));
+
+      log.debug(
+        { messageId: message.message_id, kind: resolved.kind, destPath },
+        "downloading telegram media",
+      );
+
       await downloadMedia(this.bot.api, this.bot.token, resolved, destPath);
 
       this.runtimeOrThrow().submit(

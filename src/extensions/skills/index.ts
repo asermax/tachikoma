@@ -50,7 +50,7 @@ export default defineExtension<SkillsConfig>({
       (pi) => {
         pi.on("resources_discover", () => ({ skillPaths: [skillsDir, builtinSkillsDir] }));
 
-        registerReload(pi);
+        registerReload(pi, app.log);
 
         if (app.extensionConfig.proactiveLoading) {
           registerSkillSuggestion(pi, {

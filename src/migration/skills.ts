@@ -68,7 +68,10 @@ export const adaptSkillsFrontmatter = async (
   ask: Ask,
 ): Promise<void> => {
   const skillsDir = workspace.resolve("skills");
-  const entries = await readdir(skillsDir, { withFileTypes: true }).catch(() => []);
+  const entries = await readdir(skillsDir, { withFileTypes: true }).catch((err) => {
+    log.debug({ skillsDir, err }, "skills dir unreadable — skipping frontmatter adaptation");
+    return [];
+  });
   const affected: { path: string; scan: FrontmatterScan }[] = [];
 
   for (const entry of entries) {
@@ -79,7 +82,8 @@ export const adaptSkillsFrontmatter = async (
     let source: string;
     try {
       source = await readFile(skillFile, "utf8");
-    } catch {
+    } catch (err) {
+      log.debug({ skillFile, err }, "could not read SKILL.md — skipping");
       continue;
     }
 

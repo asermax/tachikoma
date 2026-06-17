@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { Logger } from "../../log.ts";
 import {
   fileExists,
   INDEXED_STORES,
@@ -61,7 +62,7 @@ export const formatMemoryIndex = (store: MemoryStore, rawContent: string): strin
  * files on demand instead of getting everything inlined. Returns "" when no memory store
  * exists yet (no section injected).
  */
-export const buildMemoryContext = async (workspaceRoot: string): Promise<string> => {
+export const buildMemoryContext = async (workspaceRoot: string, log: Logger): Promise<string> => {
   if (!(await fileExists(memoriesRoot(workspaceRoot)))) return "";
 
   const sections = [LAYOUT_SECTION];
@@ -71,7 +72,11 @@ export const buildMemoryContext = async (workspaceRoot: string): Promise<string>
 
     try {
       raw = await readFile(join(storeDir(workspaceRoot, store), MEMORY_INDEX_FILENAME), "utf8");
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        log.debug({ err: error, store }, "memory index unreadable — skipping store");
+      }
+
       continue;
     }
 
