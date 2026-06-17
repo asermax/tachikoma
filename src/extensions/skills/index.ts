@@ -36,7 +36,7 @@ export default defineExtension<SkillsConfig>({
 
   setup(app) {
     if (!app.extensionConfig.enabled) {
-      app.log.info("skills disabled by configuration");
+      app.log.debug("skills disabled by configuration");
       return;
     }
 

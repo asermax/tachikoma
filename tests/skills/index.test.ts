@@ -149,7 +149,7 @@ describe("skills extension", () => {
   it("does nothing but log when disabled by configuration", async () => {
     const { on, registerTool, useOptions, log } = await setup({ enabled: false });
 
-    expect(log.info).toHaveBeenCalledWith("skills disabled by configuration");
+    expect(log.debug).toHaveBeenCalledWith("skills disabled by configuration");
     expect(on).not.toHaveBeenCalled();
     expect(registerTool).not.toHaveBeenCalled();
     expect(useOptions).toBeUndefined();

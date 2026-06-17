@@ -155,6 +155,7 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
       // unreadable (or empty) file skips only that skill rather than aborting the whole injection;
       // skipped skills are not added to `injected`, so a transient failure can retry next turn.
       const sections: string[] = [];
+      const injectedNames: string[] = [];
       for (const skill of matched) {
         try {
           // Strip the YAML frontmatter and trim — matching how pi renders a skill loaded via
@@ -170,6 +171,7 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
             continue;
           }
           injected.add(skill.name);
+          injectedNames.push(skill.name);
           sections.push(`<injected-skill name="${skill.name}">\n${body}\n</injected-skill>`);
         } catch (error) {
           log.warn(
@@ -181,7 +183,7 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
 
       if (sections.length === 0) return undefined;
 
-      log.debug({ skills: sections.length }, "injecting proactive skill content");
+      log.info({ skills: injectedNames }, "injected proactive skill content");
 
       return {
         message: {
