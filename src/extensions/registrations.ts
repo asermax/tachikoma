@@ -1,7 +1,10 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-
 import type { Channel } from "../channels/types.ts";
-import type { ExchangeProcessor, InboundMiddleware, PostProcessor } from "./api.ts";
+import type {
+  AgentExtensionFactory,
+  ExchangeProcessor,
+  InboundMiddleware,
+  PostProcessor,
+} from "./api.ts";
 
 export interface BootstrapHook {
   name: string;
@@ -12,12 +15,12 @@ export interface BootstrapHook {
 
 /** Mutable registries filled by extensions during setup and read by core at runtime. */
 export interface Registrations {
-  piFactories: ExtensionFactory[];
+  piFactories: AgentExtensionFactory[];
   /**
    * Factories whose tools/resources are bound into background task runs. Independent of
    * piFactories — a factory scoped to `"background"` only lives here without being a main factory.
    */
-  backgroundFactories: ExtensionFactory[];
+  backgroundFactories: AgentExtensionFactory[];
   exchangeProcessors: ExchangeProcessor[];
   postProcessors: PostProcessor[];
   inboundMiddleware: InboundMiddleware[];

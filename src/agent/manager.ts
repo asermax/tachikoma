@@ -6,14 +6,15 @@ import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
+  type ExtensionAPI,
   type ExtensionFactory,
   ModelRegistry,
   SessionManager,
   SettingsManager,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-
 import type { Config } from "../config/schema.ts";
+import type { AgentExtensionFactory } from "../extensions/api.ts";
 import type { Logger } from "../log.ts";
 import type { Workspace } from "../workspace.ts";
 import { type ModelTier, ModelTiers } from "./models.ts";
@@ -36,9 +37,9 @@ export interface ShadowForkOptions {
 }
 
 export interface AgentSessionSources {
-  piFactories: ExtensionFactory[];
+  piFactories: AgentExtensionFactory[];
   /** Factories bound into background task runs (scoped via `app.agent.use(f, { sessionScopes: [..., "background"] })`). */
-  backgroundFactories: ExtensionFactory[];
+  backgroundFactories: AgentExtensionFactory[];
 }
 
 export interface OpenSessionOptions {
@@ -78,17 +79,23 @@ export interface OpenSessionOptions {
 
 /**
  * Which extension factories a session binds: the background subset for autonomous task runs, none
- * for other bare side work, all of them otherwise. Pure so the selection is unit-testable.
+ * for other bare side work, all of them otherwise. Each factory is wrapped to receive its binding
+ * session type ({@link FactorySessionContext}), so it can adapt — e.g. a background-scoped factory can
+ * suppress user-facing status that would orphan without a streaming renderer. Pure so the selection
+ * (and the scope it hands each factory) is unit-testable.
  */
 export const selectExtensionFactories = (
   options: Pick<OpenSessionOptions, "bindBackgroundFactories" | "bare">,
   sources: Pick<AgentSessionSources, "piFactories" | "backgroundFactories">,
-): ExtensionFactory[] =>
-  options.bindBackgroundFactories === true
-    ? [...sources.backgroundFactories]
-    : options.bare === true
-      ? []
-      : [...sources.piFactories];
+): ExtensionFactory[] => {
+  if (options.bindBackgroundFactories === true) {
+    return sources.backgroundFactories.map(
+      (factory) => (pi: ExtensionAPI) => factory(pi, { scope: "background" }),
+    );
+  }
+  if (options.bare === true) return [];
+  return sources.piFactories.map((factory) => (pi: ExtensionAPI) => factory(pi, { scope: "main" }));
+};
 
 /**
  * Loader options that strip everything pi would otherwise graft onto a custom system prompt.

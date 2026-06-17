@@ -3,10 +3,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
-import type { AppContext, UseFactoryOptions } from "../../src/extensions/api.ts";
+import type {
+  AgentExtensionFactory,
+  AppContext,
+  SessionScope,
+  UseFactoryOptions,
+} from "../../src/extensions/api.ts";
 import skills from "../../src/extensions/skills/index.ts";
 
 const repoSkillsDir = resolve(import.meta.dirname, "../../src/extensions/skills/builtin-skills");
@@ -16,40 +21,48 @@ const setup = async (
     enabled: true,
     proactiveLoading: true,
   },
+  scope: SessionScope = "main",
 ): Promise<{
   workspaceDir: string;
   workspaceSkillsDir: string;
   on: ReturnType<typeof vi.fn>;
   registerTool: ReturnType<typeof vi.fn>;
   useOptions: UseFactoryOptions | undefined;
+  status: ReturnType<typeof vi.fn>;
+  classify: ReturnType<typeof vi.fn>;
   log: {
     info: ReturnType<typeof vi.fn>;
     warn: ReturnType<typeof vi.fn>;
     debug: ReturnType<typeof vi.fn>;
   };
   runBootstrap: (name: string) => Promise<void>;
+  fireSkillSuggestion: (
+    skills: { name: string; description: string; filePath: string }[],
+  ) => Promise<void>;
 }> => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-skills-ext-"));
-  let factory: ExtensionFactory | null = null;
+  let factory: AgentExtensionFactory | null = null;
   let useOptions: UseFactoryOptions | undefined;
   const bootstrapHooks = new Map<string, () => void | Promise<void>>();
 
   const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
+  const status = vi.fn();
+  const classify = vi.fn().mockResolvedValue({ skills: [] });
 
   const app = {
     extensionConfig: config,
     log,
-    status: vi.fn(),
+    status,
     workspace: { resolve: (...segments: string[]) => join(workspaceDir, ...segments) },
     bootstrap: vi.fn((name: string, hook: () => void | Promise<void>) => {
       bootstrapHooks.set(name, hook);
     }),
     agent: {
-      use: (registered: ExtensionFactory, options?: UseFactoryOptions) => {
+      use: (registered: AgentExtensionFactory, options?: UseFactoryOptions) => {
         factory = registered;
         useOptions = options;
       },
-      side: { classify: vi.fn() },
+      side: { classify },
       isForking: () => false,
     },
   } as unknown as AppContext<{ enabled: boolean; proactiveLoading?: boolean }>;
@@ -58,12 +71,30 @@ const setup = async (
 
   const on = vi.fn();
   const registerTool = vi.fn();
-  await (factory as ExtensionFactory | null)?.({
-    on,
-    registerTool,
-    registerCommand: vi.fn(),
-    sendUserMessage: vi.fn(),
-  } as unknown as ExtensionAPI);
+  await (factory as AgentExtensionFactory | null)?.(
+    {
+      on,
+      registerTool,
+      registerCommand: vi.fn(),
+      sendUserMessage: vi.fn(),
+    } as unknown as ExtensionAPI,
+    { scope },
+  );
+
+  const fireSkillSuggestion = async (
+    skillCatalog: { name: string; description: string; filePath: string }[],
+  ): Promise<void> => {
+    const handler = on.mock.calls.find(([event]) => event === "before_agent_start")?.[1] as
+      | ((
+          event: { prompt: string; systemPromptOptions: { skills: unknown[] } },
+          ctx: { sessionManager: { getEntries: () => unknown[]; getLeafId: () => string | null } },
+        ) => Promise<unknown>)
+      | undefined;
+    await handler?.(
+      { prompt: "do a thing", systemPromptOptions: { skills: skillCatalog } },
+      { sessionManager: { getEntries: () => [], getLeafId: () => null } },
+    );
+  };
 
   return {
     workspaceDir,
@@ -71,10 +102,13 @@ const setup = async (
     on,
     registerTool,
     useOptions,
+    status,
+    classify,
     log,
     runBootstrap: async (name: string) => {
       await bootstrapHooks.get(name)?.();
     },
+    fireSkillSuggestion,
   };
 };
 
@@ -128,6 +162,35 @@ describe("skills extension", () => {
     const handlers = on.mock.calls.filter(([event]) => event === "before_agent_start");
 
     expect(handlers).toHaveLength(1);
+  });
+
+  it("surfaces the skill-suggestion status for a main session", async () => {
+    const { status, fireSkillSuggestion } = await setup(
+      { enabled: true, proactiveLoading: true },
+      "main",
+    );
+
+    await fireSkillSuggestion([
+      { name: "pdf-tools", description: "Work with PDFs", filePath: "/skills/pdf-tools/SKILL.md" },
+    ]);
+
+    expect(status).toHaveBeenCalledWith("Checking for relevant skills…");
+  });
+
+  it("keeps the classifier but suppresses the skill-suggestion status for a background session (no stray)", async () => {
+    const { status, classify, fireSkillSuggestion } = await setup(
+      { enabled: true, proactiveLoading: true },
+      "background",
+    );
+
+    await fireSkillSuggestion([
+      { name: "pdf-tools", description: "Work with PDFs", filePath: "/skills/pdf-tools/SKILL.md" },
+    ]);
+
+    // A background task session has no user-facing surface, so the status must not surface (no stray
+    // lead-in) — but the proactive classifier still runs so background tasks keep skill injection.
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(status).not.toHaveBeenCalled();
   });
 
   it("registers no skill-suggestion handler when proactiveLoading is off", async () => {

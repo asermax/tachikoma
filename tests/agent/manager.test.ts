@@ -1,7 +1,8 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { isolatedLoaderOptions, selectExtensionFactories } from "../../src/agent/manager.ts";
+import type { AgentExtensionFactory } from "../../src/extensions/api.ts";
 
 const h = vi.hoisted(() => {
   const fsState = { exists: true, size: 100 };
@@ -180,22 +181,50 @@ describe("isolatedLoaderOptions", () => {
 });
 
 describe("selectExtensionFactories", () => {
-  const all = [{ id: "a" }, { id: "b" }, { id: "c" }] as unknown as ExtensionFactory[];
-  const background = [all[0], all[2]] as ExtensionFactory[];
-  const sources = { piFactories: all, backgroundFactories: background };
+  // A named spy factory: when the wrapped form pi calls is invoked, it records the session context it
+  // was handed, so the tests assert the scope each selected factory is bound with.
+  const factory = (id: string): AgentExtensionFactory =>
+    Object.assign(vi.fn(), { id }) as unknown as AgentExtensionFactory;
+  const invoke = (selected: ExtensionFactory[]): void => {
+    for (const wrapped of selected) wrapped({} as ExtensionAPI);
+  };
 
-  it("binds the background subset for background task runs", () => {
-    expect(
-      selectExtensionFactories({ bindBackgroundFactories: true, bare: true }, sources),
-    ).toEqual(background);
+  it("binds the background subset, each with the background scope, for background task runs", () => {
+    const a = factory("a");
+    const b = factory("b");
+    const c = factory("c");
+    const sources = { piFactories: [a, b, c], backgroundFactories: [a, c] };
+
+    const selected = selectExtensionFactories(
+      { bindBackgroundFactories: true, bare: true },
+      sources,
+    );
+
+    expect(selected).toHaveLength(2);
+    invoke(selected);
+    expect(a).toHaveBeenCalledWith(expect.anything(), { scope: "background" });
+    expect(c).toHaveBeenCalledWith(expect.anything(), { scope: "background" });
+    expect(b).not.toHaveBeenCalled();
   });
 
   it("binds nothing for other bare side runs", () => {
+    const a = factory("a");
+    const sources = { piFactories: [a], backgroundFactories: [a] };
+
     expect(selectExtensionFactories({ bare: true }, sources)).toEqual([]);
   });
 
-  it("binds every factory for a normal (non-bare) session", () => {
-    expect(selectExtensionFactories({ bare: false }, sources)).toEqual(all);
+  it("binds every factory, each with the main scope, for a normal (non-bare) session", () => {
+    const a = factory("a");
+    const b = factory("b");
+    const sources = { piFactories: [a, b], backgroundFactories: [] };
+
+    const selected = selectExtensionFactories({ bare: false }, sources);
+
+    expect(selected).toHaveLength(2);
+    invoke(selected);
+    expect(a).toHaveBeenCalledWith(expect.anything(), { scope: "main" });
+    expect(b).toHaveBeenCalledWith(expect.anything(), { scope: "main" });
   });
 });
 

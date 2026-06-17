@@ -1,4 +1,4 @@
-import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
 import type { ShadowFork, ShadowForkOptions } from "../agent/manager.ts";
 import type { ModelTier, ModelTiers } from "../agent/models.ts";
@@ -118,6 +118,26 @@ export const SESSION_SCOPES = {
 
 export type SessionScope = (typeof SESSION_SCOPES)[keyof typeof SESSION_SCOPES];
 
+/**
+ * The session a factory is being bound into, handed to every factory so it can adapt to its binding
+ * context (e.g. suppress user-facing surfaces in a background session). The scope matches the
+ * `sessionScopes` membership the factory was registered with; `selectExtensionFactories` supplies it.
+ */
+export interface FactorySessionContext {
+  scope: SessionScope;
+}
+
+/**
+ * A Tachikoma extension factory: like pi's `ExtensionFactory` (`(pi) => void`) but receives the
+ * {@link FactorySessionContext} as a second argument. A factory written as `(pi) => …` (or returned by
+ * `provideContext` / a `createXxxFactory` helper) is still valid — the session argument is optional at the
+ * call site, so existing factories bind unchanged and simply ignore it.
+ */
+export type AgentExtensionFactory = (
+  pi: ExtensionAPI,
+  session: FactorySessionContext,
+) => void | Promise<void>;
+
 export interface UseFactoryOptions {
   /**
    * Which session contexts this factory binds into (default `["main"]`). Each scope is
@@ -132,11 +152,14 @@ export interface UseFactoryOptions {
 
 export interface AgentApi {
   /**
-   * Contribute a pi extension factory, scoped to the given sessions. Context sections use this same
-   * form via `provideContext(provide, customType?)` as the factory: with no `customType` the content
-   * is appended to the system prompt, with a `customType` it is injected as a hidden message.
+   * Contribute a pi extension factory, scoped to the given sessions. The factory receives the
+   * {@link FactorySessionContext} (its binding session type) so it can adapt — e.g. a background-scoped
+   * factory can suppress user-facing status that would orphan without a streaming renderer. Context
+   * sections use this same form via `provideContext(provide, customType?)` as the factory: with no
+   * `customType` the content is appended to the system prompt, with a `customType` it is injected as a
+   * hidden message.
    */
-  use(factory: ExtensionFactory, options?: UseFactoryOptions): void;
+  use(factory: AgentExtensionFactory, options?: UseFactoryOptions): void;
   readonly models: ModelTiers;
   /** Side-channel LLM work: headless runs and structured classification. */
   readonly side: SideRunner;

@@ -1,5 +1,3 @@
-import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
-
 import type { AgentManager } from "../agent/manager.ts";
 import { SideRunner } from "../agent/side-run.ts";
 import { parseWithSchema } from "../config/parse.ts";
@@ -15,6 +13,7 @@ import { componentLogger, type Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
 import type { Workspace } from "../workspace.ts";
 import {
+  type AgentExtensionFactory,
   type AppContext,
   SESSION_SCOPES,
   type TachikomaExtension,
@@ -197,7 +196,7 @@ export class ExtensionHost {
       },
 
       agent: {
-        use: (factory: ExtensionFactory, options?: UseFactoryOptions) => {
+        use: (factory: AgentExtensionFactory, options?: UseFactoryOptions) => {
           const targets = factoryBindingTargets(options);
 
           if (targets.main) services.regs.piFactories.push(factory);

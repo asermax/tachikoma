@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 import { Type } from "typebox";
 
-import { defineExtension } from "../api.ts";
+import { defineExtension, SESSION_SCOPES } from "../api.ts";
 import { discoverSkillAgents } from "./agents.ts";
 import { BUILTIN_AGENTS } from "./builtins.ts";
 import { createDelegateTool } from "./delegate.ts";
@@ -47,7 +47,7 @@ export default defineExtension<SkillsConfig>({
     });
 
     app.agent.use(
-      (pi) => {
+      (pi, session) => {
         pi.on("resources_discover", () => ({ skillPaths: [skillsDir, builtinSkillsDir] }));
 
         registerReload(pi, app.log);
@@ -56,7 +56,11 @@ export default defineExtension<SkillsConfig>({
           registerSkillSuggestion(pi, {
             classifier: app.agent.side,
             isForking: app.agent.isForking,
-            status: app.status,
+            // A background task session has no user-facing streaming surface, so a "Checking for relevant
+            // skills…" status would orphan as a stray lead-in no main renderer reclaims. Keep the proactive
+            // classifier running (its injected skill content is hidden, display:false) but give it no status
+            // surface there — main sessions still surface the line through the channel.
+            status: session.scope === SESSION_SCOPES.main ? app.status : () => {},
             log: app.log,
           });
         }
