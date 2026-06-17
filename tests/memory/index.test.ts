@@ -21,11 +21,17 @@ interface CronCall {
   run: () => Promise<void>;
 }
 
+interface BootstrapCall {
+  name: string;
+  hook: () => void | Promise<void>;
+}
+
 interface SetupResult {
   cronCalls: CronCall[];
   cron: ReturnType<typeof vi.fn>;
   processors: PostProcessor[];
   useFactory: ExtensionFactory;
+  bootstrapCalls: BootstrapCall[];
   log: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
 }
 
@@ -44,6 +50,10 @@ const setupWith = (extensionConfig: MemoryConfig, workspaceDir: string): SetupRe
   });
 
   const processors: PostProcessor[] = [];
+  const bootstrapCalls: BootstrapCall[] = [];
+  const bootstrap = vi.fn((name: string, hook: () => void | Promise<void>) => {
+    bootstrapCalls.push({ name, hook });
+  });
   const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
   let useFactory: ExtensionFactory = (() => undefined) as unknown as ExtensionFactory;
   const use = vi.fn((factory: ExtensionFactory) => {
@@ -61,14 +71,14 @@ const setupWith = (extensionConfig: MemoryConfig, workspaceDir: string): SetupRe
     extensionConfig,
     log,
     workspace: { root: workspaceDir, dataDir: join(workspaceDir, ".tachikoma") },
-    bootstrap: vi.fn(),
+    bootstrap,
     agent: { use, side: { run: vi.fn() } },
     sessions: { registerProcessor: (p: PostProcessor) => processors.push(p) },
     scheduler: { cron },
     git,
   } as unknown as AppContext<MemoryConfig>);
 
-  return { cronCalls, cron, processors, useFactory, log };
+  return { cronCalls, cron, processors, useFactory, bootstrapCalls, log };
 };
 
 const setup = async (extensionConfig: MemoryConfig): Promise<SetupResult> => {
@@ -118,7 +128,31 @@ describe("memory extension setup", () => {
     expect(cronCalls.map((call) => call.name)).toEqual(["memory-transcripts-prune"]);
   });
 
-  it("does nothing when the extension is disabled", async () => {
+  it("registers migrate-memory-stores BEFORE init-memory-layout (bootstrap order matters)", async () => {
+    const { bootstrapCalls } = await setup(config());
+    const names = bootstrapCalls.map((call) => call.name);
+
+    expect(names).toContain("migrate-memory-stores");
+    expect(names).toContain("init-memory-layout");
+    // Bootstrap hooks run in registration order (host.ts), so the fold must register first so its
+    // topic files exist before the layout hook seeds/preserves their index.
+    expect(names.indexOf("migrate-memory-stores")).toBeLessThan(
+      names.indexOf("init-memory-layout"),
+    );
+  });
+
+  it("registers the migration hook even when maintenance is disabled (ungated by maintenance)", async () => {
+    const { bootstrapCalls } = await setup(config({ maintenance: { enabled: false } }));
+    const names = bootstrapCalls.map((call) => call.name);
+
+    expect(names).toContain("migrate-memory-stores");
+    expect(names).toContain("init-memory-layout");
+    expect(names.indexOf("migrate-memory-stores")).toBeLessThan(
+      names.indexOf("init-memory-layout"),
+    );
+  });
+
+  it("registers no bootstrap hooks when the extension is disabled", async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-memory-ext-"));
     tempDirs.push(workspaceDir);
 
@@ -126,6 +160,7 @@ describe("memory extension setup", () => {
 
     expect(result.cron).not.toHaveBeenCalled();
     expect(result.processors).toEqual([]);
+    expect(result.bootstrapCalls).toEqual([]);
     expect(result.log.info).toHaveBeenCalledWith("memory extension disabled by configuration");
   });
 

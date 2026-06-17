@@ -6,6 +6,7 @@ import { createTranscriptArchiveProcessor, pruneTranscripts } from "./archive.ts
 import { createTrunkClosePipeline } from "./close-pipeline.ts";
 import { buildMemoryContext } from "./indexes.ts";
 import { ensureMemoryLayout } from "./layout.ts";
+import { migrateMemoryStores } from "./migration.ts";
 
 export const MemoryConfigSchema = Type.Object({
   enabled: Type.Boolean({ default: true }),
@@ -46,6 +47,38 @@ export default defineExtension<MemoryConfig>({
     const workspaceRoot = app.workspace.root;
     const { maintenance } = app.extensionConfig;
 
+    // Shared commit helper for every workspace-mutating memory pass (the migration fold/sweep and,
+    // when maintenance is enabled, the trunk-close pipeline). Built from the workspace commit agent
+    // + grouped commitAll so every edit lands as a git commit — which is also the migration's
+    // backup/recovery mechanism. Defined at setup scope so the migration hook (which runs even when
+    // maintenance is disabled) can reach it.
+    const commitAgent = app.git.createCommitAgent("workspace");
+
+    const commitChanges = async (message: string): Promise<void> => {
+      try {
+        const committed = await app.git.commitAll({
+          agent: commitAgent,
+          cwd: workspaceRoot,
+          fallbackMessage: message,
+        });
+
+        if (committed.length > 0) app.log.info({ message }, "committed memory pipeline changes");
+        else app.log.debug({ message }, "memory pipeline produced nothing to commit");
+      } catch (error) {
+        app.log.warn({ err: error }, "memory pipeline commit failed");
+      }
+    };
+
+    // One-time fold of the legacy facts/ + preferences/ stores into topics/. Registered BEFORE
+    // init-memory-layout (bootstrap hooks run in registration order — see host.ts) so the fold
+    // creates topic files before the layout hook seeds/preserves their index, and ungated by
+    // maintenance since it must run even when maintenance is disabled. Self-detecting + idempotent:
+    // a no-op on fresh installs and already-migrated workspaces (empty legacy stores is the done
+    // signal — no persisted marker).
+    app.bootstrap("migrate-memory-stores", () =>
+      migrateMemoryStores({ side: app.agent.side, workspaceRoot, log: app.log, commitChanges }),
+    );
+
     app.bootstrap("init-memory-layout", () => ensureMemoryLayout(workspaceRoot, app.log));
 
     app.agent.use(
@@ -54,23 +87,6 @@ export default defineExtension<MemoryConfig>({
     );
 
     if (maintenance.enabled) {
-      const commitAgent = app.git.createCommitAgent("workspace");
-
-      const commitChanges = async (message: string): Promise<void> => {
-        try {
-          const committed = await app.git.commitAll({
-            agent: commitAgent,
-            cwd: workspaceRoot,
-            fallbackMessage: message,
-          });
-
-          if (committed.length > 0) app.log.info({ message }, "committed memory pipeline changes");
-          else app.log.debug({ message }, "memory pipeline produced nothing to commit");
-        } catch (error) {
-          app.log.warn({ err: error }, "memory pipeline commit failed");
-        }
-      };
-
       // The whole nightly memory pipeline now runs at trunk close: per-branch extraction,
       // prune, consolidation, and the once-daily core-context update — each guarded by an idempotent
       // marker on the session file. The phase bodies are a pluggable seam (close-pipeline.ts) reusing
