@@ -49,7 +49,7 @@ export default defineExtension({
 | Process | `setup(app)` + everything registered on `app` | once, from startup to shutdown |
 | Agent session | factories passed to `app.agent.use(factory)` | per pi `AgentSession`; re-instantiated when the coordinator replaces the session (topic boundary, resume) |
 
-Session factories receive pi's native `ExtensionAPI` — no wrapping, no renaming. Everything pi documents in its extensions guide applies verbatim. The host passes collected factories to `DefaultResourceLoader({ extensionFactories })` whenever it creates a session.
+Session factories receive pi's native `ExtensionAPI` (unmodified) plus their **binding session type**: the host wraps each factory to pass `{ scope }` — `"main"` or `"background"`, matching the `sessionScopes` the factory was registered with — so a factory can adapt to its context (e.g. a background-scoped factory suppresses a user-facing surface its session has no streaming renderer for). pi's `ExtensionAPI` itself is never wrapped or renamed, so everything pi documents in its extensions guide applies verbatim. The host passes the wrapped factories to `DefaultResourceLoader({ extensionFactories })` whenever it creates a session.
 
 ### AppContext services
 
