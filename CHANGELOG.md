@@ -1,3 +1,10 @@
+## [3.27.1](https://github.com/asermax/tachikoma/compare/v3.27.0...v3.27.1) (2026-06-17)
+
+
+### Bug Fixes
+
+* **log:** pass explicit level to multistreams so debug logging works ([de33e03](https://github.com/asermax/tachikoma/commit/de33e03b2e84bdc20721e010bc85d8b86058f819))
+
 # [3.27.0](https://github.com/asermax/tachikoma/compare/v3.26.0...v3.27.0) (2026-06-17)
 
 
