@@ -24,8 +24,12 @@ export interface SkillSuggestionDeps {
 }
 
 export const SkillSelectionSchema = Type.Object({
+  // `default: []` so a classifier that signals "no skills" by omitting the key (or returning `{}`)
+  // is treated as an empty selection rather than a parse failure — `parseWithSchema` applies the
+  // default before asserting, so the property is always present and stays typed as `string[]`.
   skills: Type.Array(Type.String(), {
     description: "Names of available skills (from the catalog) worth loading; empty if none.",
+    default: [],
   }),
 });
 

@@ -1,9 +1,11 @@
 import type { ExtensionAPI, ExtensionContext, Skill } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { parseWithSchema } from "../../src/config/parse.ts";
 import {
   registerSkillSuggestion,
   SKILL_CLASSIFY_TIMEOUT_MS,
+  SkillSelectionSchema,
   type SkillSuggestionDeps,
 } from "../../src/extensions/skills/suggest.ts";
 import type { Logger } from "../../src/log.ts";
@@ -71,6 +73,20 @@ const emptyCtx = (): Pick<ExtensionContext, "sessionManager"> =>
 const event = (prompt: string, skills: Skill[]) => ({
   prompt,
   systemPromptOptions: { skills },
+});
+
+describe("SkillSelectionSchema", () => {
+  it("defaults a classifier object with no skills key to an empty selection", () => {
+    expect(parseWithSchema(SkillSelectionSchema, {}, "classification output")).toEqual({
+      skills: [],
+    });
+  });
+
+  it("preserves an explicit selection", () => {
+    expect(
+      parseWithSchema(SkillSelectionSchema, { skills: ["pdf-tools"] }, "classification output"),
+    ).toEqual({ skills: ["pdf-tools"] });
+  });
 });
 
 describe("registerSkillSuggestion", () => {
