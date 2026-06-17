@@ -1,3 +1,10 @@
+# [3.26.0](https://github.com/asermax/tachikoma/compare/v3.25.0...v3.26.0) (2026-06-17)
+
+
+### Features
+
+* **deps:** bump pi SDK to 0.79.6 ([e0a6e7a](https://github.com/asermax/tachikoma/commit/e0a6e7a0487d808fc02a5adbfc64de179330d221))
+
 # [3.25.0](https://github.com/asermax/tachikoma/compare/v3.24.2...v3.25.0) (2026-06-17)
 
 
