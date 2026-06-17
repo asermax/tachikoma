@@ -1,10 +1,16 @@
-import { readdir, readFile, rmdir, stat } from "node:fs/promises";
+import { readdir, rmdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { FILE_EDIT_TOOLS } from "../../agent/file-tools.ts";
 import type { Logger } from "../../log.ts";
 import type { Runner } from "./extraction.ts";
-import { memoriesRoot, storeDir, sweepEmptyMarkdown } from "./layout.ts";
+import {
+  isBlankMarkdown,
+  listMarkdown,
+  memoriesRoot,
+  storeDir,
+  sweepEmptyMarkdown,
+} from "./layout.ts";
 import {
   CONTEXT_DEDUP_SECTION,
   INDEX_UPDATE_SECTION,
@@ -33,14 +39,6 @@ const LEGACY_STORES = ["facts", "preferences"] as const;
 
 const legacyStoreDir = (workspaceRoot: string, store: string): string =>
   join(memoriesRoot(workspaceRoot), store);
-
-/**
- * Whether a `.md` file counts as blank. Mirrors `sweepEmptyMarkdown`'s exact threshold
- * (`size === 0 || (size <= 64 && content.trim() === "")`) so "what counts as content" and
- * "what gets swept" can never drift — the detection gate and the final sweep agree by construction.
- */
-const isBlankMarkdown = async (path: string, info: { size: number }): Promise<boolean> =>
-  info.size === 0 || (info.size <= 64 && (await readFile(path, "utf8")).trim() === "");
 
 interface StoreScan {
   /** All `.md` filenames found (for the auditable summary). */
@@ -191,7 +189,7 @@ export const migrateMemoryStores = async (deps: MigrationDeps): Promise<void> =>
 
   await commitChanges("chore(memory): sweep emptied legacy memory stores");
 
-  const topicsProduced = await countTopicFiles(storeDir(workspaceRoot, "topics"));
+  const topicsProduced = (await listMarkdown(storeDir(workspaceRoot, "topics"))).length;
 
   log.info(
     {
@@ -202,14 +200,4 @@ export const migrateMemoryStores = async (deps: MigrationDeps): Promise<void> =>
     },
     "memory-store migration completed — legacy facts/preferences folded into topics",
   );
-};
-
-const countTopicFiles = async (dir: string): Promise<number> => {
-  try {
-    const names = await readdir(dir);
-    return names.filter((name) => name.endsWith(".md") && name !== "MEMORY.md").length;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return 0;
-    throw error;
-  }
 };

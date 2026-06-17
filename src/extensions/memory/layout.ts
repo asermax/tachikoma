@@ -35,8 +35,20 @@ const titleFromFilename = (filename: string): string =>
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
 
-const listMarkdown = async (dir: string): Promise<string[]> => {
-  const names = await readdir(dir);
+/**
+ * List the markdown files in a store dir, excluding the `MEMORY.md` index and
+ * tolerating a missing dir (ENOENT reads as empty). The single source for
+ * "which .md files live in this store", shared by layout seeding, the store
+ * manifests, and the legacy migration's topic count.
+ */
+export const listMarkdown = async (dir: string): Promise<string[]> => {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
 
   return names.filter((name) => name.endsWith(".md") && name !== MEMORY_INDEX_FILENAME).sort();
 };
@@ -71,6 +83,15 @@ export const ensureMemoryLayout = async (workspaceRoot: string, log: Logger): Pr
 };
 
 /**
+ * Whether a `.md` file counts as blank (no durable content). The single source
+ * of truth for "what counts as content" — shared by `sweepEmptyMarkdown` (what
+ * gets removed) and the legacy-store migration's detection gate, so the sweep
+ * and the detection gate can never drift apart.
+ */
+export const isBlankMarkdown = async (path: string, info: { size: number }): Promise<boolean> =>
+  info.size === 0 || (info.size <= 64 && (await readFile(path, "utf8")).trim() === "");
+
+/**
  * The extraction/maintenance agents have no delete tool — they empty files
  * instead, and the host removes those leftovers here after each run.
  */
@@ -90,10 +111,8 @@ export const sweepEmptyMarkdown = async (dir: string, log: Logger): Promise<void
 
     try {
       const info = await stat(path);
-      const blank =
-        info.size === 0 || (info.size <= 64 && (await readFile(path, "utf8")).trim() === "");
 
-      if (!blank) continue;
+      if (!(await isBlankMarkdown(path, info))) continue;
 
       await unlink(path);
       log.info({ path }, "removed emptied memory file");

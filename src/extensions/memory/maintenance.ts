@@ -305,15 +305,18 @@ If no changes are needed, exit with no changes.
 
 You can read files anywhere in the workspace (needed to validate claims against actual project state). Only modify \`$WORKSPACE/SOUL.md\`, \`$WORKSPACE/USER.md\`, and \`$WORKSPACE/AGENTS.md\`. Do not create, delete, or modify any other files.`;
 
-/** Names-only listing of the other stores so the maintenance agent can reconcile across them. */
-export const buildCrossStoreManifest = async (
+/**
+ * Build a `### <Label>` names-only bullet section for each store passing `include`,
+ * skipping stores whose dir is missing (ENOENT) or holds no markdown files.
+ */
+const buildStoreSections = async (
   workspaceRoot: string,
-  current: MemoryStore,
-): Promise<string | null> => {
+  include: (store: MemoryStore) => boolean,
+): Promise<string[]> => {
   const sections: string[] = [];
 
   for (const store of MEMORY_STORES) {
-    if (store === current) continue;
+    if (!include(store)) continue;
 
     let files: string[];
     try {
@@ -336,6 +339,16 @@ export const buildCrossStoreManifest = async (
       ].join("\n"),
     );
   }
+
+  return sections;
+};
+
+/** Names-only listing of the other stores so the maintenance agent can reconcile across them. */
+export const buildCrossStoreManifest = async (
+  workspaceRoot: string,
+  current: MemoryStore,
+): Promise<string | null> => {
+  const sections = await buildStoreSections(workspaceRoot, (store) => store !== current);
 
   const contextFiles: string[] = [];
   for (const name of CONTEXT_FILE_NAMES) {
@@ -397,30 +410,7 @@ export const maintenanceSystemPrompt = async (
 export const buildStoreManifestForContext = async (
   workspaceRoot: string,
 ): Promise<string | null> => {
-  const sections: string[] = [];
-
-  for (const store of MEMORY_STORES) {
-    let files: string[];
-    try {
-      files = (await readdir(storeDir(workspaceRoot, store)))
-        .filter((name) => name.endsWith(".md"))
-        .sort();
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-
-      continue;
-    }
-
-    if (files.length === 0) continue;
-
-    sections.push(
-      [
-        `### ${STORE_LABELS[store]}`,
-        "",
-        ...files.map((name) => `- \`memories/${store}/${name}\``),
-      ].join("\n"),
-    );
-  }
+  const sections = await buildStoreSections(workspaceRoot, () => true);
 
   if (sections.length === 0) return null;
 

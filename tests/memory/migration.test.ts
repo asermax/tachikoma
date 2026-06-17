@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { FILE_EDIT_TOOLS } from "../../src/agent/file-tools.ts";
-import { memoriesRoot } from "../../src/extensions/memory/layout.ts";
+import { fileExists, memoriesRoot } from "../../src/extensions/memory/layout.ts";
 import { type MigrationDeps, migrateMemoryStores } from "../../src/extensions/memory/migration.ts";
 
 const tempDirs: string[] = [];
@@ -41,15 +41,6 @@ const namesIn = async (dir: string): Promise<string[]> => {
     return await readdir(dir);
   } catch {
     return [];
-  }
-};
-
-const exists = async (path: string): Promise<boolean> => {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
   }
 };
 
@@ -142,7 +133,7 @@ describe("migrateMemoryStores — detection", () => {
 
     expect(side.run).not.toHaveBeenCalled();
     expect(commitChanges).not.toHaveBeenCalled();
-    expect(await exists(join(memoriesRoot(workspace), "topics", "blank.md"))).toBe(false);
+    expect(await fileExists(join(memoriesRoot(workspace), "topics", "blank.md"))).toBe(false);
   });
 
   it("does not count a .txt file or an empty .md as content (detection specificity)", async () => {
@@ -191,7 +182,7 @@ describe("migrateMemoryStores — happy path", () => {
     expect(await namesIn(legacyDir(workspace, "preferences"))).toEqual([]);
 
     // A topic file was produced.
-    expect(await exists(join(memoriesRoot(workspace), "topics", "work-info.md"))).toBe(true);
+    expect(await fileExists(join(memoriesRoot(workspace), "topics", "work-info.md"))).toBe(true);
   });
 
   it("makes exactly two commits in order — fold commit BEFORE the sweep, sweep commit after", async () => {
@@ -263,7 +254,7 @@ describe("migrateMemoryStores — idempotency & failure", () => {
     expect(crashingSide.run).toHaveBeenCalledTimes(1);
     expect(commitChanges).not.toHaveBeenCalled();
     // Legacy content is untouched — the old file is still there with its content.
-    expect(await exists(join(legacyDir(workspace, "facts"), "work-info.md"))).toBe(true);
+    expect(await fileExists(join(legacyDir(workspace, "facts"), "work-info.md"))).toBe(true);
 
     // On restart the check re-runs (old stores still hold content) and this time completes.
     const goodSide = createFoldSide(workspace);
@@ -271,7 +262,7 @@ describe("migrateMemoryStores — idempotency & failure", () => {
 
     expect(goodSide.run).toHaveBeenCalledTimes(1);
     expect(commitChanges).toHaveBeenCalledTimes(2);
-    expect(await exists(join(legacyDir(workspace, "facts"), "work-info.md"))).toBe(false);
+    expect(await fileExists(join(legacyDir(workspace, "facts"), "work-info.md"))).toBe(false);
   });
 
   it("on a hard side.run failure, sweeps nothing, commits nothing, leaves old files untouched, and does not throw", async () => {
@@ -291,7 +282,7 @@ describe("migrateMemoryStores — idempotency & failure", () => {
     expect(side.run).toHaveBeenCalledTimes(1);
     expect(commitChanges).not.toHaveBeenCalled();
     // No sweep happened — old files survive with their content.
-    expect(await exists(join(legacyDir(workspace, "facts"), "work-info.md"))).toBe(true);
-    expect(await exists(join(legacyDir(workspace, "preferences"), "comms.md"))).toBe(true);
+    expect(await fileExists(join(legacyDir(workspace, "facts"), "work-info.md"))).toBe(true);
+    expect(await fileExists(join(legacyDir(workspace, "preferences"), "comms.md"))).toBe(true);
   });
 });
