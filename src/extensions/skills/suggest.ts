@@ -38,7 +38,7 @@ export type SkillSelection = Static<typeof SkillSelectionSchema>;
 // Bail out of a slow classify rather than stalling the user-visible response. The deadline aborts
 // the underlying request, so this is a hard ceiling — a capped, temperature-0 classify normally
 // settles in well under this, and a hung call is cancelled here rather than left racing.
-export const SKILL_CLASSIFY_TIMEOUT_MS = 10_000;
+export const SKILL_CLASSIFY_TIMEOUT_MS = 30_000;
 
 // Recent conversation messages serialized as context for the selection — bounded so a long
 // conversation does not bloat the classifier call.

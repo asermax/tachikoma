@@ -77,7 +77,10 @@ export const createRootLogger = async ({ level, pretty, file }: LogOptions): Pro
 
   return pino(
     baseOptions(normalized),
-    pino.multistream([{ stream: stderr }, { stream: fileStream }]),
+    pino.multistream([
+      { stream: stderr, level: normalized },
+      { stream: fileStream, level: normalized },
+    ]),
   );
 };
 
