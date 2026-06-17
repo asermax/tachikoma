@@ -124,7 +124,7 @@ Today's date is {date}.
    - Broad interests and hobbies ("learning trumpet", "game development")
    - Active project NAMES with one-line descriptions — not status, specs, or progress
    - Communication preferences, learning style
-   DO NOT put in USER.md: project status updates, detailed specs, meeting prep, daily routine logs, game mechanics, implementation details. If a section is being rewritten more than once a week, it's too detailed for USER.md — that content belongs in memory files (facts or preferences).
+   DO NOT put in USER.md: project status updates, detailed specs, meeting prep, daily routine logs, game mechanics, implementation details. If a section is being rewritten more than once a week, it's too detailed for USER.md — that content belongs in topic memory files.
 
    **SOUL.md** — Personality and behavioral guidelines:
    - Tone and communication style feedback ("be more concise", "push back more")
@@ -182,7 +182,7 @@ Today's date is {date}.
    - **Read-first**: Always read a file before modifying it
    - **Preserve structure**: Keep existing formatting and organization
    - **Watch file size**: USER.md should stay under ~120 lines, AGENTS.md under ~400 lines. When a file exceeds its limit, prune actively:
-     - USER.md: summarize, remove stale sections, or omit details that belong in facts/preferences memory
+     - USER.md: summarize, remove stale sections, or omit details that belong in topics memory
      - AGENTS.md: remove entries about resolved bugs or completed work, and consolidate duplicated entries across sections
    - **Replace, don't append**: When updating a section, rewrite it cleanly rather than appending new paragraphs. Each section should read as a current snapshot, not a changelog.
 

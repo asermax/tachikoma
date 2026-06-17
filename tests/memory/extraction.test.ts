@@ -17,12 +17,19 @@ afterEach(async () => {
 });
 
 describe("storeInstruction", () => {
-  it("targets the store directory and instructs a silent background step", () => {
-    const instruction = storeInstruction("facts", workspace);
+  it("targets the topics store, folds both signal types, and has no classification self-check", () => {
+    const instruction = storeInstruction("topics", workspace);
 
-    expect(instruction).toContain(join(workspace, "memories", "facts"));
+    expect(instruction).toContain(join(workspace, "memories", "topics"));
     expect(instruction).toContain("SILENT background memory-maintenance step");
     expect(instruction).toContain("Do NOT");
+    // The unified topics instruction folds both signal types into one store.
+    expect(instruction).toContain("stable reference facts");
+    expect(instruction).toContain("preferences");
+    expect(instruction).toContain("memories/topics/");
+    // It contains no facts-vs-preferences classification self-check.
+    expect(instruction).not.toContain("Classification self-check");
+    expect(instruction).not.toContain("classification self-check");
   });
 
   it("stamps today's date and the conversation framing for episodic", () => {

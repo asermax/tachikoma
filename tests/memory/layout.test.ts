@@ -25,37 +25,36 @@ describe("ensureMemoryLayout", () => {
 
     expect((await readdir(join(workspace, "memories"))).sort()).toEqual([
       "episodic",
-      "facts",
-      "preferences",
+      "topics",
       "transcripts",
     ]);
-    expect(await readFile(join(workspace, "memories", "facts", "MEMORY.md"), "utf8")).toBe(
+    expect(await readFile(join(workspace, "memories", "topics", "MEMORY.md"), "utf8")).toBe(
       "# Memory Index\n",
     );
   });
 
   it("seeds placeholder entries for pre-existing files", async () => {
-    await mkdir(join(workspace, "memories", "facts"), { recursive: true });
-    await writeFile(join(workspace, "memories", "facts", "work-info.md"), "stuff", "utf8");
+    await mkdir(join(workspace, "memories", "topics"), { recursive: true });
+    await writeFile(join(workspace, "memories", "topics", "work-info.md"), "stuff", "utf8");
 
     await ensureMemoryLayout(workspace, fakeLog);
 
-    expect(await readFile(join(workspace, "memories", "facts", "MEMORY.md"), "utf8")).toBe(
+    expect(await readFile(join(workspace, "memories", "topics", "MEMORY.md"), "utf8")).toBe(
       "# Memory Index\n\n[Work Info](./work-info.md): Description pending update\n",
     );
   });
 
   it("leaves an existing index untouched", async () => {
-    await mkdir(join(workspace, "memories", "facts"), { recursive: true });
+    await mkdir(join(workspace, "memories", "topics"), { recursive: true });
     await writeFile(
-      join(workspace, "memories", "facts", "MEMORY.md"),
+      join(workspace, "memories", "topics", "MEMORY.md"),
       "# Memory Index\n\n[Custom](./custom.md): Hand-written entry\n",
       "utf8",
     );
 
     await ensureMemoryLayout(workspace, fakeLog);
 
-    expect(await readFile(join(workspace, "memories", "facts", "MEMORY.md"), "utf8")).toContain(
+    expect(await readFile(join(workspace, "memories", "topics", "MEMORY.md"), "utf8")).toContain(
       "Hand-written entry",
     );
   });
@@ -63,7 +62,7 @@ describe("ensureMemoryLayout", () => {
 
 describe("sweepEmptyMarkdown", () => {
   it("removes empty and whitespace-only markdown files, keeping the rest", async () => {
-    const dir = join(workspace, "memories", "facts");
+    const dir = join(workspace, "memories", "topics");
     await mkdir(dir, { recursive: true });
     await writeFile(join(dir, "emptied.md"), "", "utf8");
     await writeFile(join(dir, "blank.md"), "  \n\n", "utf8");

@@ -300,7 +300,7 @@ export const executeBackgroundInstance = async (
           resumeContext: null,
         });
         // Dispose before post-processing so memory extraction reads a flushed transcript; the
-        // session's pi JSONL feeds episodic/facts extraction (transcriptPath is now non-null).
+        // session's pi JSONL feeds episodic/topics extraction (transcriptPath is now non-null).
         session.dispose();
         session = null;
         await runPostProcessors({ trunk: null, transcriptPath, log });

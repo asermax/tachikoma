@@ -99,11 +99,11 @@ Before acting, check whether the work has already been done:
 - If daily files in Tier 1 are already clean and concise, do not re-edit.
 - If no files need processing, exit with no changes.`;
 
-const FACTS_MAINTENANCE_PROMPT = `You are a memory maintenance agent performing facts memory cleanup.
+const TOPICS_MAINTENANCE_PROMPT = `You are a memory maintenance agent performing topics memory cleanup.
 
 ## Directory
 
-\`$WORKSPACE/memories/facts/\`
+\`$WORKSPACE/memories/topics/\`
 
 ## Pre-check
 
@@ -116,7 +116,7 @@ If the directory is empty or contains no \`.md\` files, stop immediately — not
 
 ## Evaluation Criteria
 
-Read all fact files and evaluate each for three issues:
+Read all topic files and evaluate each for these issues. A topic file holds everything known about a subject — both stable reference facts and the user's subjective preferences — so evaluate the file as a whole, not by signal type.
 
 ### Staleness
 
@@ -124,6 +124,7 @@ An entry is stale when it describes a state that is no longer accurate:
 - References to past dates or completed projects (e.g., "currently working on X" when X shipped months ago).
 - Information contradicted by newer entries.
 - Technical details that reference outdated tools, versions, or configurations.
+- Reversed preferences (e.g., file says "prefers dark mode" but a newer entry says the user switched to light mode).
 
 For stale entries:
 - If the entry has a newer, accurate replacement: remove the stale version.
@@ -132,47 +133,47 @@ For stale entries:
 
 ### Redundancy
 
-Same information stated in different files:
+Same information stated in different files or restated within a file:
 - Keep the most complete and well-organized version.
 - Remove the duplicate entries.
 
 ### Overlap
 
-Related topics split across multiple files:
+Related subjects split across multiple files:
 - When files cover overlapping subject areas, merge them into a single consolidated file.
 - Choose the best filename from the originals, or create a more descriptive one.
 - Remove the original files after merging.
 
 #### Cluster Consolidation
 
-Beyond pairwise overlap, look for clusters of many small files that fragment a single broad topic into per-incident, per-bug, or per-date entries — this is the main driver of facts directory bloat:
+Beyond pairwise overlap, look for clusters of many small files that fragment a single broad subject into per-incident, per-bug, or per-date entries — this is the main driver of topics directory bloat:
 
-- List all files in \`$WORKSPACE/memories/facts/\` and group them by shared prefix or core topic (project, system, tool, or domain).
-- When 3 or more files share the same prefix or core topic, treat them as a cluster and consolidate aggressively:
+- List all files in \`$WORKSPACE/memories/topics/\` and group them by shared prefix or core subject (project, system, tool, or domain).
+- When 3 or more files share the same prefix or core subject, treat them as a cluster and consolidate aggressively:
   - Merge all of the cluster's content into a single broad-topic file named \`<project>.md\`, \`<system>.md\`, \`<tool>.md\`, or \`<domain>.md\` — the same broad-topic convention used at extraction time.
   - If a broad-topic file already exists in the cluster, merge the others into it. Otherwise, pick a broad name and create the consolidated file.
   - Delete the original narrow files after merging.
-- Generic examples of clusters to consolidate (patterns, not literal names): files matching \`<project>-<bug-description>-<YYYY-MM-DD>.md\`, \`<project>-patch-<issue-id>.md\`, \`<system>-<incident>-<date>.md\`, \`<topic>-session-<date>.md\` — all of these should fold into the broad \`<project>.md\`, \`<system>.md\`, or \`<topic>.md\` file.
-- Preserve substantive content during the merge; deduplicate restated information and discard incidental detail that does not belong in stable reference facts.
+- Generic examples of clusters to consolidate (patterns, not literal names): files matching \`<project>-<bug-description>-<YYYY-MM-DD>.md\`, \`<project>-patch-<issue-id>.md\`, \`<system>-incident-<date>.md\`, \`<topic>-session-<date>.md\` — all of these should fold into the broad \`<project>.md\`, \`<system>.md\`, or \`<topic>.md\` file.
+- Preserve substantive content during the merge — both the reference facts and the preferences; deduplicate restated information and discard incidental detail that does not belong in durable topics.
 
 ### Size Enforcement
 
-Flag any file exceeding 40 lines for consolidation:
-- If a file exceeds 40 lines, it likely contains implementation details or narrative that belongs in project docs or episodic memory rather than stable reference facts
-- Prune implementation details and transient information
-- Consolidate related entries within the file to eliminate restatement
+Flag any file exceeding ~50 lines for consolidation or pruning:
+- If a file exceeds ~50 lines, it likely contains implementation details, narrative, or one-time records that belong in project docs or episodic memory rather than durable topics.
+- Prune implementation details and transient information.
+- Consolidate related entries within the file to eliminate restatement.
 
 ### Context File Overlap
 
-Check whether facts are already covered by the context files at the workspace root:
-- Read \`$WORKSPACE/USER.md\` and \`$WORKSPACE/AGENTS.md\` for the same topic
-- If a context file already captures the information, trim the facts file to a brief reference (e.g., "See USER.md for details about X")
-- Context files are more authoritative for their respective categories; facts should supplement, not duplicate
+Check whether topic content is already covered by the context files at the workspace root:
+- Read \`$WORKSPACE/USER.md\` and \`$WORKSPACE/AGENTS.md\` for the same subject.
+- If a context file already captures the information, trim the topic file to a brief reference (e.g., "See USER.md for details about X").
+- Context files are less authoritative than topics for their respective subjects; topics supplement and detail, they should not duplicate context-file summaries.
 
 ## Deletion
 
-- If a fact file is entirely obsolete (all entries stale, no useful content), delete it.
-- Do NOT delete files that contain any useful or current information.
+- If a topic file is entirely obsolete (all entries stale, no useful content), delete it.
+- Do NOT delete files that contain any useful or current information — a file holding even one current preference or fact should be kept.
 
 ## Idempotency
 
@@ -184,83 +185,7 @@ When you see multiple narrow files about the same subject (per-date, per-inciden
 
 ### Aggressively prune resolved incidents
 
-Files whose content carries headers like "Status: Completed", "Status: Merged", "Status: Resolved", or "Status: Fixed" describe one-time events — that content belongs in episodic memory, not facts. Delete these files outright. If a fact file mixes durable content with a resolved-incident section, strip the resolved section and keep the rest.
-
-If no changes are needed, exit with no changes.`;
-
-const PREFERENCES_MAINTENANCE_PROMPT = `You are a memory maintenance agent performing preferences memory cleanup.
-
-## Directory
-
-\`$WORKSPACE/memories/preferences/\`
-
-## Pre-check
-
-If the directory is empty or contains no \`.md\` files, stop immediately — nothing to maintain.
-
-## File Handling
-
-- Skip empty (0-byte) or malformed files — do not attempt to process them.
-- Only process files with \`.md\` extension.
-
-## Evaluation Criteria
-
-Read all preference files and evaluate each for these issues:
-
-### Redundancy
-
-Same preference stated multiple times across or within files:
-- Keep the most complete and well-organized version.
-- Remove the duplicate entries.
-
-### Overlap
-
-Related preferences split across multiple files:
-- When files cover overlapping topics (e.g., coding style preferences split across "python-style.md" and "code-formatting.md"), merge them into a single consolidated file.
-- Choose the best filename from the originals, or create a more descriptive one.
-- Remove the original files after merging.
-
-#### Cluster Consolidation
-
-Beyond pairwise overlap, look for clusters of many small files that fragment a single broad preference topic into per-occasion, per-feedback, or per-date entries — this is the main driver of preferences directory bloat:
-
-- List all files in \`$WORKSPACE/memories/preferences/\` and group them by shared prefix or core topic (style, workflow, communication, tooling, project, system, or domain).
-- When 3 or more files share the same prefix or core topic, treat them as a cluster and consolidate aggressively:
-  - Merge all of the cluster's content into a single broad-topic file named \`<topic-area>-style.md\`, \`<topic-area>-workflow.md\`, \`<domain>.md\`, or \`<project>.md\` — the same broad-topic convention used at extraction time.
-  - If a broad-topic file already exists in the cluster, merge the others into it. Otherwise, pick a broad name and create the consolidated file.
-  - Delete the original narrow files after merging.
-- Generic examples of clusters to consolidate (patterns, not literal names): files matching \`<topic-area>-feedback-<YYYY-MM-DD>.md\`, \`<project>-preference-<issue-id>.md\`, \`<topic-area>-session-<date>.md\`, \`<one-off>-incident-<date>.md\` — all of these should fold into the broad \`<topic-area>-style.md\`, \`<topic-area>-workflow.md\`, or \`<topic>.md\` file.
-- Preserve substantive content during the merge; deduplicate restated preferences and keep only one clear statement per preference.
-
-### Misclassification
-
-Content that belongs in facts memory, not preferences:
-- Read each file and ask: "Does this describe a subjective choice (preference) or reference information (fact)?"
-- If the file describes how something works, technical specifications, financial structures, system configurations, or procedural workflows → it is misclassified
-- For misclassified files: delete the preferences file. The facts extraction processor will pick the content up on the next relevant conversation.
-
-### Size Enforcement
-
-Flag any file exceeding 30 lines for consolidation or pruning:
-- If a file exceeds 30 lines, it likely contains reference information that belongs in facts, or multiple preferences that could be expressed more concisely
-- Prune redundant statements within the file
-- If the excess is factual content, treat as misclassification (see above)
-
-### Cross-Store Overlap with Facts
-
-Check \`$WORKSPACE/memories/facts/\` for files covering the same topic:
-- If a facts file already covers the topic, the preferences file should only contain genuinely subjective aspects (how the user wants things done) — not the factual details already captured in facts
-- If a preferences file contains only factual content that a facts file already covers, delete the preferences file — it serves no purpose
-
-## Deletion
-
-- If a preference file is entirely superseded (its preferences are all present in a newer, more complete file), delete it.
-- If a preference file describes preferences the user no longer holds (e.g., contradicted by a newer entry), remove only the outdated entries — or delete the file if it becomes empty.
-- Do NOT delete files that contain any current, unique preferences.
-
-## Idempotency
-
-Treat absence of exact duplicates as insufficient grounds for skipping — semantic overlap and split topics are also triggers for action. Actively re-apply the Evaluation Criteria and Deletion sections above: merge overlapping files even when they aren't word-for-word duplicates, and remove reversed or superseded preferences even when they aren't explicitly contradicted in a newer file.
+Files whose content carries headers like "Status: Completed", "Status: Merged", "Status: Resolved", or "Status: Fixed" describe one-time events — that content belongs in episodic memory, not topics. Delete these files outright. If a topic file mixes durable content with a resolved-incident section, strip the resolved section and keep the rest.
 
 If no changes are needed, exit with no changes.`;
 
@@ -302,15 +227,14 @@ When reviewing files in this store, check for contradictions against other store
 1. Read the files listed in the cross-store visibility section above
 2. Compare their content against the files you're maintaining in this store
 3. If you find contradictory information:
-   - Determine which store is more authoritative per the authority hierarchy (Skills > Facts > Context)
+   - Determine which store is more authoritative per the authority hierarchy (Skills > Topics > Context)
    - If this store is LESS authoritative: update or remove the contradicting entry in this store to match the more authoritative source
    - If this store is MORE authoritative: leave this store's entry unchanged (the other store's maintenance tick will handle it)
-4. When information in this store duplicates detail from a more authoritative store: trim this store's entry to a brief pointer (e.g., "See memories/facts/X.md for details")`;
+4. When information in this store duplicates detail from a more authoritative store: trim this store's entry to a brief pointer (e.g., "See memories/topics/X.md for details")`;
 
 const STORE_LABELS: Record<MemoryStore, string> = {
   episodic: "Episodic Files",
-  facts: "Facts Files",
-  preferences: "Preferences Files",
+  topics: "Topics Files",
 };
 
 const CONTEXT_FILE_NAMES = ["SOUL.md", "USER.md", "AGENTS.md"];
@@ -360,7 +284,7 @@ Related topics split across sections within the same file:
 ## Size Limits
 
 Enforce these size limits by pruning actively:
-- **USER.md** must stay under ~120 lines. When it exceeds the limit: summarize verbose sections, remove stale sections, or omit details that belong in facts/preferences memory.
+- **USER.md** must stay under ~120 lines. When it exceeds the limit: summarize verbose sections, remove stale sections, or omit details that belong in topic memory.
 - **AGENTS.md** must stay under ~400 lines. When it exceeds the limit: remove entries about resolved bugs or completed work, and consolidate duplicated entries across sections.
 
 ## Constraints
@@ -373,7 +297,7 @@ Enforce these size limits by pruning actively:
 
 ## Idempotency
 
-Treat absence of obvious problems as insufficient grounds for skipping — actively re-apply the Evaluation Criteria and Size Limits above. Stale instructions added for resolved incidents and entries that belong in facts/preferences memory accumulate quietly between runs and won't always surface in a quick scan.
+Treat absence of obvious problems as insufficient grounds for skipping — actively re-apply the Evaluation Criteria and Size Limits above. Stale instructions added for resolved incidents and entries that belong in topic memory accumulate quietly between runs and won't always surface in a quick scan.
 
 If no changes are needed, exit with no changes.
 
@@ -443,8 +367,7 @@ export const buildCrossStoreManifest = async (
 
 const basePrompt = (store: MemoryStore, settings: MaintenanceThresholds): string => {
   if (store === "episodic") return episodicMaintenancePrompt(settings);
-  if (store === "facts") return FACTS_MAINTENANCE_PROMPT;
-  return PREFERENCES_MAINTENANCE_PROMPT;
+  return TOPICS_MAINTENANCE_PROMPT;
 };
 
 export const maintenanceSystemPrompt = async (
@@ -470,7 +393,7 @@ export const maintenanceSystemPrompt = async (
   return parts.join("\n\n").replaceAll("$WORKSPACE", workspaceRoot);
 };
 
-/** Names-only listing of the memory stores so the context tick can reconcile against more authoritative facts/preferences. */
+/** Names-only listing of the memory stores so the context tick can reconcile against more authoritative topics. */
 export const buildStoreManifestForContext = async (
   workspaceRoot: string,
 ): Promise<string | null> => {
@@ -508,7 +431,7 @@ export const buildStoreManifestForContext = async (
     "",
     sections.join("\n\n"),
     "",
-    'When a context-file section duplicates detail already captured in a more authoritative memory facts file, trim it to a brief pointer (e.g., "See memories/facts/X.md for details") rather than inlining the content.',
+    'When a context-file section duplicates detail already captured in a more authoritative topic file, trim it to a brief pointer (e.g., "See memories/topics/X.md for details") rather than inlining the content.',
   ].join("\n");
 };
 

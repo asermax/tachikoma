@@ -14,10 +14,8 @@ import {
 const INDEX_ENTRY_RE = /^\[([^\]]+)\]\(\.\/([^)]+\.md)\):\s*(.+)$/gm;
 
 const STORE_DESCRIPTIONS: Partial<Record<MemoryStore, string>> = {
-  facts:
-    "Stable reference information: personal details, key people, technical decisions.\nBrowse the entries below. When a file seems relevant to the current conversation,\nread it with the read tool to get the full content.",
-  preferences:
-    "Subjective choices about how things should be done.\nBrowse the entries below. When a file seems relevant to the current conversation,\nread it with the read tool to get the full content.",
+  topics:
+    "Everything known about a subject: stable reference facts and the user's subjective\npreferences together, one topic per file. Browse the entries below. When a file seems\nrelevant to the current conversation, read it with the read tool to get the full content.",
 };
 
 const LAYOUT_SECTION = `## Memory
@@ -25,8 +23,7 @@ const LAYOUT_SECTION = `## Memory
 The workspace keeps long-term memory as markdown files under \`memories/\`:
 
 - \`memories/episodic/\` — date-stamped conversation summaries (\`YYYY-MM-DD.md\`, plus weekly \`YYYY-WNN.md\` and monthly \`YYYY-MM.md\` rollups)
-- \`memories/facts/\` — stable reference information, one topic per file, indexed in \`MEMORY.md\`
-- \`memories/preferences/\` — the user's expressed preferences, one topic per file, indexed in \`MEMORY.md\`
+- \`memories/topics/\` — everything known about a subject (stable reference facts and the user's preferences together), one topic per file, indexed in \`MEMORY.md\`
 - \`memories/transcripts/\` — archived raw conversation transcripts
 
 None of these files are loaded automatically. When the conversation touches a topic that might be covered there, grep or read the relevant memory files on demand. You do not write to \`memories/\` directly — an automated post-processing pass maintains these files (creating, updating, and consolidating them) after each conversation ends.`;
@@ -58,9 +55,9 @@ export const formatMemoryIndex = (store: MemoryStore, rawContent: string): strin
 
 /**
  * Static memory context: the workspace layout (and read-only/post-processing note) plus the
- * parsed facts and preferences MEMORY.md indexes, so the agent knows what exists and reads
- * files on demand instead of getting everything inlined. Returns "" when no memory store
- * exists yet (no section injected).
+ * parsed topics MEMORY.md index, so the agent knows what exists and reads files on demand
+ * instead of getting everything inlined. Returns "" when no memory store exists yet (no
+ * section injected).
  */
 export const buildMemoryContext = async (workspaceRoot: string, log: Logger): Promise<string> => {
   if (!(await fileExists(memoriesRoot(workspaceRoot)))) return "";

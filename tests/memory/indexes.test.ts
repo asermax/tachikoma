@@ -29,16 +29,16 @@ describe("formatMemoryIndex", () => {
       "[Tech Stack](./tech-stack.md): Languages and tools",
     ].join("\n");
 
-    const formatted = formatMemoryIndex("facts", raw);
+    const formatted = formatMemoryIndex("topics", raw);
 
-    expect(formatted).toContain("## Facts Index");
+    expect(formatted).toContain("## Topics Index");
     expect(formatted).toContain("- [Work Info](./work-info.md): Job details and team structure");
     expect(formatted).toContain("- [Tech Stack](./tech-stack.md): Languages and tools");
     expect(formatted).not.toContain("Broken");
   });
 
   it("returns null when no entries parse", () => {
-    expect(formatMemoryIndex("facts", "# Memory Index\n")).toBeNull();
+    expect(formatMemoryIndex("topics", "# Memory Index\n")).toBeNull();
   });
 
   it("uses the generic description for a store without a tailored one", () => {
@@ -49,7 +49,7 @@ describe("formatMemoryIndex", () => {
 
     expect(formatted).toContain("## Episodic Index");
     expect(formatted).toContain("Browse the entries below. When a file seems relevant");
-    expect(formatted).not.toContain("Stable reference information");
+    expect(formatted).not.toContain("Everything known about a subject");
   });
 });
 
@@ -58,17 +58,11 @@ describe("buildMemoryContext", () => {
     expect(await buildMemoryContext(workspace, fakeLog)).toBe("");
   });
 
-  it("includes the layout instructions plus parsed indexes", async () => {
-    await mkdir(join(workspace, "memories", "facts"), { recursive: true });
-    await mkdir(join(workspace, "memories", "preferences"), { recursive: true });
+  it("includes the layout instructions plus parsed topics index", async () => {
+    await mkdir(join(workspace, "memories", "topics"), { recursive: true });
     await writeFile(
-      join(workspace, "memories", "facts", "MEMORY.md"),
+      join(workspace, "memories", "topics", "MEMORY.md"),
       "# Memory Index\n\n[Work Info](./work-info.md): Job details\n",
-      "utf8",
-    );
-    await writeFile(
-      join(workspace, "memories", "preferences", "MEMORY.md"),
-      "# Memory Index\n",
       "utf8",
     );
 
@@ -78,9 +72,10 @@ describe("buildMemoryContext", () => {
     expect(content).toContain("grep or read");
     // The read-only / post-processing behavioral note.
     expect(content).toContain("do not write to");
-    expect(content).toContain("## Facts Index");
+    expect(content).toContain("## Topics Index");
     expect(content).toContain("- [Work Info](./work-info.md): Job details");
-    // Header-only preferences index has no entries, so its section is omitted.
+    // INDEXED_STORES yields a single topics loop — no separate Facts/Preferences sections.
+    expect(content).not.toContain("## Facts Index");
     expect(content).not.toContain("## Preferences Index");
   });
 
@@ -90,6 +85,7 @@ describe("buildMemoryContext", () => {
     const content = await buildMemoryContext(workspace, fakeLog);
 
     expect(content).toContain("## Memory");
+    expect(content).not.toContain("## Topics Index");
     expect(content).not.toContain("## Facts Index");
     expect(content).not.toContain("## Preferences Index");
   });

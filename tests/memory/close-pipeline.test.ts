@@ -125,7 +125,7 @@ const phaseDeps = (run = vi.fn().mockResolvedValue({ text: "done" })): ClosePhas
 });
 
 describe("extractBranches", () => {
-  it("extracts only unmarked branches (3 stores each) and writes a per-branch marker", async () => {
+  it("extracts only unmarked branches (2 stores each) and writes a per-branch marker", async () => {
     const session = threeBranchTrunk();
     const records = getBranchRecords(session);
     const { deps, forkAndContinue } = extractionDeps();
@@ -138,8 +138,8 @@ describe("extractBranches", () => {
 
     await extractBranches(session, records, deps, fakeLog);
 
-    // Two unmarked branches × three stores.
-    expect(forkAndContinue).toHaveBeenCalledTimes(6);
+    // Two unmarked branches × two stores (episodic + topics).
+    expect(forkAndContinue).toHaveBeenCalledTimes(4);
     expect(session._branchedLeaves.sort()).toEqual(["leaf-1", "leaf-3"]);
 
     expect(isBranchExtracted(session, "topic-1")).toBe(true);
@@ -166,7 +166,7 @@ describe("extractBranches", () => {
     const { deps, forkAndContinue } = extractionDeps();
 
     await extractBranches(session, records, deps, fakeLog);
-    expect(forkAndContinue).toHaveBeenCalledTimes(9);
+    expect(forkAndContinue).toHaveBeenCalledTimes(6);
 
     forkAndContinue.mockClear();
 
@@ -192,8 +192,8 @@ describe("ordered phases + step markers", () => {
     await consolidatePhase(session, deps);
     await coreContextStep(session, deps);
 
-    // prune = three store passes; consolidate is an interim no-op (DLT-173 seam); core-context = one pass.
-    expect(order).toEqual(["store", "store", "store", "context"]);
+    // prune = two store passes (episodic + topics); consolidate is an interim no-op (DLT-173 seam); core-context = one pass.
+    expect(order).toEqual(["store", "store", "context"]);
     expect(isStepDone(session, CLOSE_STEPS.prune)).toBe(true);
     expect(isStepDone(session, CLOSE_STEPS.consolidate)).toBe(true);
     expect(isStepDone(session, CLOSE_STEPS.coreContext)).toBe(true);
@@ -215,7 +215,7 @@ describe("ordered phases + step markers", () => {
     // Recovery re-runs the phase cleanly and now writes the marker.
     const run = vi.fn().mockResolvedValue({ text: "done" });
     await prunePhase(session, phaseDeps(run));
-    expect(run).toHaveBeenCalledTimes(3);
+    expect(run).toHaveBeenCalledTimes(2);
     expect(isStepDone(session, CLOSE_STEPS.prune)).toBe(true);
 
     // A subsequent re-run skips the completed phase entirely.
@@ -254,9 +254,9 @@ describe("createTrunkClosePipeline", () => {
       log: fakeLog,
     });
 
-    // Nine extracts (3 branches × 3 stores), then prune (3 store), consolidate (no-op), core (context).
-    expect(events.slice(0, 9)).toEqual(Array(9).fill("extract"));
-    expect(events.slice(9)).toEqual(["store", "store", "store", "context"]);
+    // Six extracts (3 branches × 2 stores), then prune (2 store), consolidate (no-op), core (context).
+    expect(events.slice(0, 6)).toEqual(Array(6).fill("extract"));
+    expect(events.slice(6)).toEqual(["store", "store", "context"]);
   });
 
   it("no-ops for a background run with no trunk", async () => {

@@ -64,7 +64,7 @@ describe("runMaintenanceTick", () => {
   it("uses the light index consistency section on weekdays", async () => {
     const { side, run } = fakeRunner();
 
-    await runMaintenanceTick("facts", deps(side, monday));
+    await runMaintenanceTick("topics", deps(side, monday));
 
     const system = run.mock.calls[0]?.[0].system;
     expect(system).toContain("## Memory Index Consistency");
@@ -75,89 +75,107 @@ describe("runMaintenanceTick", () => {
     const { side } = fakeRunner();
     const commitChanges = vi.fn().mockResolvedValue(undefined);
 
-    await runMaintenanceTick("facts", { ...deps(side, monday), commitChanges });
+    await runMaintenanceTick("topics", { ...deps(side, monday), commitChanges });
 
-    expect(commitChanges).toHaveBeenCalledWith("chore(memory): scheduled facts maintenance");
+    expect(commitChanges).toHaveBeenCalledWith("chore(memory): scheduled topics maintenance");
   });
 
   it("uses the full index rebuild section on Sundays", async () => {
     const { side, run } = fakeRunner();
 
-    await runMaintenanceTick("preferences", deps(side, sunday));
+    await runMaintenanceTick("topics", deps(side, sunday));
 
     const system = run.mock.calls[0]?.[0].system;
     expect(system).toContain("## Memory Index Rebuild (full)");
-    expect(system).toContain(join(workspace, "memories", "preferences"));
+    expect(system).toContain(join(workspace, "memories", "topics"));
   });
 
   it("sweeps files the maintenance agent emptied", async () => {
-    const factsDir = join(workspace, "memories", "facts");
-    await mkdir(factsDir, { recursive: true });
-    await writeFile(join(factsDir, "keep.md"), "durable fact", "utf8");
-    await writeFile(join(factsDir, "obsolete.md"), "", "utf8");
+    const topicsDir = join(workspace, "memories", "topics");
+    await mkdir(topicsDir, { recursive: true });
+    await writeFile(join(topicsDir, "keep.md"), "durable topic", "utf8");
+    await writeFile(join(topicsDir, "obsolete.md"), "", "utf8");
 
     const { side } = fakeRunner();
-    await runMaintenanceTick("facts", deps(side, monday));
+    await runMaintenanceTick("topics", deps(side, monday));
 
-    expect((await readdir(factsDir)).sort()).toEqual(["keep.md"]);
+    expect((await readdir(topicsDir)).sort()).toEqual(["keep.md"]);
+  });
+
+  it("uses the unified topics maintenance prompt with no misclassification section", async () => {
+    const { side, run } = fakeRunner();
+
+    await runMaintenanceTick("topics", deps(side, monday));
+
+    const system = run.mock.calls[0]?.[0].system;
+    expect(system).toContain("topics memory cleanup");
+    // Folds both signal types into one store, consolidates clusters, ~50-line size guard.
+    expect(system).toContain("Cluster Consolidation");
+    expect(system).toContain("~50 lines");
+    // No second store to misclassify into — that section is gone.
+    expect(system).not.toContain("Misclassification");
   });
 });
 
 describe("buildCrossStoreManifest", () => {
-  it("lists the other stores and root context files", async () => {
+  it("lists the other stores and root context files, never the old store names", async () => {
     await mkdir(join(workspace, "memories", "episodic"), { recursive: true });
     await writeFile(join(workspace, "memories", "episodic", "2026-06-10.md"), "day", "utf8");
     await writeFile(join(workspace, "USER.md"), "# User", "utf8");
 
-    const manifest = await buildCrossStoreManifest(workspace, "facts");
+    const manifest = await buildCrossStoreManifest(workspace, "topics");
 
     expect(manifest).toContain("### Episodic Files");
     expect(manifest).toContain("- `memories/episodic/2026-06-10.md`");
     expect(manifest).toContain("### Context Files");
     expect(manifest).toContain("- `USER.md` (workspace root)");
+    // MEMORY_STORES is now episodic + topics only — the current store is excluded,
+    // and the old facts/preferences store names never appear.
+    expect(manifest).not.toContain("### Topics Files");
     expect(manifest).not.toContain("### Facts Files");
+    expect(manifest).not.toContain("### Preferences Files");
   });
 
   it("skips other stores whose directories hold no markdown files", async () => {
     await mkdir(join(workspace, "memories", "episodic"), { recursive: true });
     await writeFile(join(workspace, "memories", "episodic", "notes.txt"), "not md", "utf8");
-    await mkdir(join(workspace, "memories", "preferences"), { recursive: true });
-    await writeFile(join(workspace, "memories", "preferences", "style.md"), "x", "utf8");
+    await writeFile(join(workspace, "USER.md"), "# User", "utf8");
 
-    const manifest = await buildCrossStoreManifest(workspace, "facts");
+    const manifest = await buildCrossStoreManifest(workspace, "topics");
 
+    // Episodic holds no .md files, so it is skipped; only the context file is listed.
+    expect(manifest).toContain("### Context Files");
     expect(manifest).not.toContain("### Episodic Files");
-    expect(manifest).toContain("### Preferences Files");
   });
 
   it("returns null when nothing else exists", async () => {
-    expect(await buildCrossStoreManifest(workspace, "facts")).toBeNull();
+    expect(await buildCrossStoreManifest(workspace, "topics")).toBeNull();
   });
 });
 
 describe("maintenanceSystemPrompt", () => {
   it("falls back to the system clock when no clock is injected", async () => {
-    const prompt = await maintenanceSystemPrompt("facts", { workspaceRoot: workspace, settings });
+    const prompt = await maintenanceSystemPrompt("topics", { workspaceRoot: workspace, settings });
 
-    expect(prompt).toContain("facts memory cleanup");
+    expect(prompt).toContain("topics memory cleanup");
   });
 
   it("appends the cross-store manifest when another store has files", async () => {
-    await mkdir(join(workspace, "memories", "preferences"), { recursive: true });
-    await writeFile(join(workspace, "memories", "preferences", "style.md"), "x", "utf8");
+    await mkdir(join(workspace, "memories", "episodic"), { recursive: true });
+    await writeFile(join(workspace, "memories", "episodic", "2026-06-10.md"), "day", "utf8");
 
-    const prompt = await maintenanceSystemPrompt("facts", {
+    const prompt = await maintenanceSystemPrompt("topics", {
       workspaceRoot: workspace,
       settings,
       now: monday,
     });
 
     expect(prompt).toContain("## Cross-Store Visibility");
-    expect(prompt).toContain("- `memories/preferences/style.md`");
+    expect(prompt).toContain("- `memories/episodic/2026-06-10.md`");
   });
 
   it("omits the cross-store manifest when no other stores have files", async () => {
-    const prompt = await maintenanceSystemPrompt("facts", {
+    const prompt = await maintenanceSystemPrompt("topics", {
       workspaceRoot: workspace,
       settings,
       now: monday,
@@ -186,16 +204,16 @@ describe("runContextMaintenanceTick", () => {
     expect(options.system).not.toContain("Memory Index");
   });
 
-  it("includes a names-only memory store manifest so context can defer to facts", async () => {
-    await mkdir(join(workspace, "memories", "facts"), { recursive: true });
-    await writeFile(join(workspace, "memories", "facts", "tech-stack.md"), "stack", "utf8");
+  it("includes a names-only memory store manifest so context can defer to topics", async () => {
+    await mkdir(join(workspace, "memories", "topics"), { recursive: true });
+    await writeFile(join(workspace, "memories", "topics", "tech-stack.md"), "stack", "utf8");
 
     const { side, run } = fakeRunner();
     await runContextMaintenanceTick({ side, workspaceRoot: workspace, log: fakeLog });
 
     const system = run.mock.calls[0]?.[0].system;
     expect(system).toContain("## Memory Store Visibility");
-    expect(system).toContain("- `memories/facts/tech-stack.md`");
+    expect(system).toContain("- `memories/topics/tech-stack.md`");
   });
 
   it("does not write or delete files itself — edits are left to the side agent", async () => {
@@ -210,25 +228,27 @@ describe("runContextMaintenanceTick", () => {
 
 describe("buildStoreManifestForContext", () => {
   it("lists the memory stores by name only", async () => {
-    await mkdir(join(workspace, "memories", "preferences"), { recursive: true });
-    await writeFile(join(workspace, "memories", "preferences", "style.md"), "x", "utf8");
+    await mkdir(join(workspace, "memories", "topics"), { recursive: true });
+    await writeFile(join(workspace, "memories", "topics", "style.md"), "x", "utf8");
 
     const manifest = await buildStoreManifestForContext(workspace);
 
-    expect(manifest).toContain("### Preferences Files");
-    expect(manifest).toContain("- `memories/preferences/style.md`");
+    expect(manifest).toContain("### Topics Files");
+    expect(manifest).toContain("- `memories/topics/style.md`");
+    expect(manifest).not.toContain("### Facts Files");
+    expect(manifest).not.toContain("### Preferences Files");
   });
 
   it("skips store directories that hold no markdown files", async () => {
     await mkdir(join(workspace, "memories", "episodic"), { recursive: true });
     await writeFile(join(workspace, "memories", "episodic", "raw.txt"), "not md", "utf8");
-    await mkdir(join(workspace, "memories", "facts"), { recursive: true });
-    await writeFile(join(workspace, "memories", "facts", "tech.md"), "x", "utf8");
+    await mkdir(join(workspace, "memories", "topics"), { recursive: true });
+    await writeFile(join(workspace, "memories", "topics", "tech.md"), "x", "utf8");
 
     const manifest = await buildStoreManifestForContext(workspace);
 
     expect(manifest).not.toContain("### Episodic Files");
-    expect(manifest).toContain("### Facts Files");
+    expect(manifest).toContain("### Topics Files");
   });
 
   it("returns null when no stores have files", async () => {

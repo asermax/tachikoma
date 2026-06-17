@@ -3,10 +3,10 @@ import { join } from "node:path";
 
 import type { Logger } from "../../log.ts";
 
-export const MEMORY_STORES = ["episodic", "facts", "preferences"] as const;
+export const MEMORY_STORES = ["episodic", "topics"] as const;
 export type MemoryStore = (typeof MEMORY_STORES)[number];
 
-export const INDEXED_STORES = ["facts", "preferences"] as const satisfies readonly MemoryStore[];
+export const INDEXED_STORES = ["topics"] as const satisfies readonly MemoryStore[];
 
 export const MEMORY_INDEX_FILENAME = "MEMORY.md";
 
