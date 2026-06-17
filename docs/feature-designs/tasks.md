@@ -84,7 +84,7 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 - Pro: Background tasks reach skills, delegation, git, projects, and processes — parity with the interactive agent's relevant surface
 - Pro: Per-extension opt-in keeps the autonomous toolset curated and auditable
 - Con: No hard allowlist means a background run can use any built-in tool, not a restricted set — acceptable for an autonomous workspace agent, matching the main session
-- Pro: Episodic/facts memory of background tasks is now extracted — the persistent session writes a real pi transcript that completion post-processing feeds to memory extraction (see "Persistent pi session per background instance" below)
+- Pro: Episodic/topics memory of background tasks is now extracted — the persistent session writes a real pi transcript that completion post-processing feeds to memory extraction (see "Persistent pi session per background instance" below)
 
 ### Session tasks are injected as agent turns, completed at handoff
 
@@ -100,11 +100,11 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 ### Persistent pi session per background instance
 
 **Choice**: `executeBackgroundInstance` opens ONE persistent pi session per execution via `app.agent.side.openBackgroundSession({ system, customTools, sessionFile })` (a thin `SideRunner` method over `AgentManager.open` with `inMemory` off, `bindBackgroundFactories: true`, and no `tools` allowlist), records its `sessionFile` on the instance immediately, then prompts it once per iteration. The opening prompt is just the task (workspace context arrives via the background-scoped context sections); each continuation is a short nudge carrying only the evaluator's observation — the session retains its own tool-call and file-state history, so no excerpt replay is needed. A `try/finally` disposes the session on every exit path.
-**Why**: A real pi session is the same primitive the main conversation resumes (`Coordinator.resumeSession` → `AgentManager.open({ sessionFile })`), so background continuity is plumbing, not a pi limitation. Full session continuity preserves tool-call history and intermediate file knowledge across iterations (the old per-iteration ephemeral run replayed only a 4k-char text excerpt and lost everything else), and the session's pi JSONL transcript lets completion post-processing run episodic/facts memory extraction — previously impossible because no transcript existed.
+**Why**: A real pi session is the same primitive the main conversation resumes (`Coordinator.resumeSession` → `AgentManager.open({ sessionFile })`), so background continuity is plumbing, not a pi limitation. Full session continuity preserves tool-call history and intermediate file knowledge across iterations (the old per-iteration ephemeral run replayed only a 4k-char text excerpt and lost everything else), and the session's pi JSONL transcript lets completion post-processing run episodic/topics memory extraction — previously impossible because no transcript existed.
 **Alternatives Considered**: The original ephemeral in-memory `side.run` per iteration with prompt-replayed continuity (lost tool/file state and produced no transcript); keeping the session in memory only (no transcript for extraction, no crash-resumable file).
 **Consequences**:
 - Pro: Full continuity across iterations — tool-call history and file state survive, not just a text excerpt
-- Pro: Completion feeds a real transcript to memory extraction, so background work lands in episodic/facts memory
+- Pro: Completion feeds a real transcript to memory extraction, so background work lands in episodic/topics memory
 - Pro: The recorded `sessionFile` makes a mid-run crash resumable in principle, and powers `ask_user` resume with full continuity
 - Con: A session file is written to the workspace sessions dir per background run — these are not yet swept (see retention gap below)
 - Con: `BackgroundSide` widened from `run`/`classify` to `openBackgroundSession`/`classify`; tests now mock a fake persistent session

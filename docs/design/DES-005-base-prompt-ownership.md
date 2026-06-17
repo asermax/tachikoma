@@ -84,8 +84,7 @@ contexts and re-states the shared hygiene instead of reusing `OPERATIONAL_GUIDAN
 ## Exceptions
 
 Feature-local side-run task prompts stay inline with their feature — they are not base prompts:
-`EVALUATOR_SYSTEM` (`tasks/executor.ts`), `SUMMARY_SYSTEM` (`boundary/summary.ts`), the episodic /
-facts / preferences extraction prompts (`memory/extraction.ts`), and `COMMIT_MESSAGE_SYSTEM`
+`EVALUATOR_SYSTEM` (`tasks/executor.ts`), `SUMMARY_SYSTEM` (`boundary/summary.ts`), the episodic / topics extraction prompts (`memory/extraction.ts`), and `COMMIT_MESSAGE_SYSTEM`
 (`git/commit.ts`) all classify, extract, or write for one feature and never replace pi's base.
 
 A delegated run additionally suppresses pi's append (`APPEND_SYSTEM.md`), project context files, and
