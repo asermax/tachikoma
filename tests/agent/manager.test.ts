@@ -143,6 +143,21 @@ const makeSources = (
   ...overrides,
 });
 
+const makeSession = (
+  overrides: Partial<{
+    prompt: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+    messages: Array<{ role: string; content: Array<{ type: string; text: string }> }>;
+  }> = {},
+) => ({
+  prompt: vi.fn().mockResolvedValue(undefined),
+  dispose: vi.fn(),
+  // open() awaits session.bindExtensions({}) so pi fires resources_discover and the skills
+  // extension can contribute the workspace skills/ dir; the fake session must expose it too.
+  bindExtensions: vi.fn().mockResolvedValue(undefined),
+  ...overrides,
+});
+
 beforeEach(() => {
   fsState.exists = true;
   fsState.size = 100;
@@ -159,7 +174,7 @@ beforeEach(() => {
   shadowState.forkedFile = "/ws/root/.tachikoma/pi/sessions/forked.jsonl";
   createAgentSessionMock.mockReset();
   createAgentSessionMock.mockResolvedValue({
-    session: { prompt: vi.fn(), dispose: vi.fn() },
+    session: makeSession(),
     modelFallbackMessage: null,
   });
 });
@@ -427,7 +442,7 @@ describe("AgentManager.open", () => {
   it("logs a warning when pi reports a model fallback", async () => {
     const log = makeLog();
     createAgentSessionMock.mockResolvedValue({
-      session: { prompt: vi.fn(), dispose: vi.fn() },
+      session: makeSession(),
       modelFallbackMessage: "fell back to default",
     });
     const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), log);
@@ -450,7 +465,7 @@ describe("AgentManager.open", () => {
   });
 
   it("returns the created session", async () => {
-    const session = { prompt: vi.fn(), dispose: vi.fn() };
+    const session = makeSession();
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
     const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
 
@@ -460,7 +475,7 @@ describe("AgentManager.open", () => {
 
 describe("AgentManager.forkAndContinue", () => {
   it("forks, prompts, and disposes the session", async () => {
-    const session = { prompt: vi.fn().mockResolvedValue(undefined), dispose: vi.fn() };
+    const session = makeSession();
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
     const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
 
@@ -473,10 +488,9 @@ describe("AgentManager.forkAndContinue", () => {
   });
 
   it("disposes the session even when the prompt throws", async () => {
-    const session = {
+    const session = makeSession({
       prompt: vi.fn().mockRejectedValue(new Error("boom")),
-      dispose: vi.fn(),
-    };
+    });
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
     const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
 
@@ -488,11 +502,8 @@ describe("AgentManager.forkAndContinue", () => {
 });
 
 describe("AgentManager.shadowFork", () => {
-  const makeForkSession = (text: string) => ({
-    prompt: vi.fn().mockResolvedValue(undefined),
-    dispose: vi.fn(),
-    messages: [{ role: "assistant", content: [{ type: "text", text }] }],
-  });
+  const makeForkSession = (text: string) =>
+    makeSession({ messages: [{ role: "assistant", content: [{ type: "text", text }] }] });
 
   it("forks the source branch into a bare, tool-free headless session (R6, S2)", async () => {
     const session = makeForkSession('{"decision":"shift"}');
@@ -548,12 +559,11 @@ describe("AgentManager.isForking", () => {
   it("is true only while a fork run is in flight (AC15)", async () => {
     const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
     let duringPrompt: boolean | undefined;
-    const session = {
+    const session = makeSession({
       prompt: vi.fn(async () => {
         duringPrompt = manager.isForking();
       }),
-      dispose: vi.fn(),
-    };
+    });
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
 
     expect(manager.isForking()).toBe(false);
@@ -568,13 +578,12 @@ describe("AgentManager.isForking", () => {
     const observed: boolean[] = [];
     let depth = 0;
     createAgentSessionMock.mockImplementation(async () => ({
-      session: {
+      session: makeSession({
         prompt: vi.fn(async () => {
           if (depth++ === 0) await manager.forkAndContinue("/inner.json", "go", "processor");
           observed.push(manager.isForking());
         }),
-        dispose: vi.fn(),
-      },
+      }),
       modelFallbackMessage: null,
     }));
 
@@ -588,10 +597,9 @@ describe("AgentManager.isForking", () => {
     const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
     const gates: Array<() => void> = [];
     createAgentSessionMock.mockImplementation(async () => ({
-      session: {
+      session: makeSession({
         prompt: vi.fn(() => new Promise<void>((resolve) => gates.push(resolve))),
-        dispose: vi.fn(),
-      },
+      }),
       modelFallbackMessage: null,
     }));
 
