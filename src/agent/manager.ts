@@ -6,7 +6,6 @@ import {
   AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
-  type ExtensionAPI,
   type ExtensionFactory,
   ModelRegistry,
   SessionManager,
@@ -80,21 +79,20 @@ export interface OpenSessionOptions {
 /**
  * Which extension factories a session binds: the background subset for autonomous task runs, none
  * for other bare side work, all of them otherwise. Each factory is wrapped to receive its binding
- * session type ({@link FactorySessionContext}), so it can adapt — e.g. a background-scoped factory can
- * suppress user-facing status that would orphan without a streaming renderer. Pure so the selection
- * (and the scope it hands each factory) is unit-testable.
+ * session type ({@link FactorySessionContext}) so it can adapt to the session it runs in. Pure so
+ * the selection (and the scope it hands each factory) is unit-testable.
  */
 export const selectExtensionFactories = (
   options: Pick<OpenSessionOptions, "bindBackgroundFactories" | "bare">,
   sources: Pick<AgentSessionSources, "piFactories" | "backgroundFactories">,
 ): ExtensionFactory[] => {
-  if (options.bindBackgroundFactories === true) {
-    return sources.backgroundFactories.map(
-      (factory) => (pi: ExtensionAPI) => factory(pi, { scope: "background" }),
-    );
-  }
-  if (options.bare === true) return [];
-  return sources.piFactories.map((factory) => (pi: ExtensionAPI) => factory(pi, { scope: "main" }));
+  // A background task run opens a bare session yet still binds the background-scoped subset, so
+  // the background flag wins over `bare`; any other bare side run binds nothing.
+  if (options.bare === true && options.bindBackgroundFactories !== true) return [];
+  const background = options.bindBackgroundFactories === true;
+  const factories = background ? sources.backgroundFactories : sources.piFactories;
+  const scope = background ? "background" : "main";
+  return factories.map((factory) => (pi) => factory(pi, { scope }));
 };
 
 /**

@@ -152,12 +152,11 @@ export interface UseFactoryOptions {
 
 export interface AgentApi {
   /**
-   * Contribute a pi extension factory, scoped to the given sessions. The factory receives the
-   * {@link FactorySessionContext} (its binding session type) so it can adapt — e.g. a background-scoped
-   * factory can suppress user-facing status that would orphan without a streaming renderer. Context
+   * Contribute a pi extension factory, scoped to the given sessions. The factory receives its
+   * binding {@link FactorySessionContext} so it can adapt to the session it runs in. Context
    * sections use this same form via `provideContext(provide, customType?)` as the factory: with no
-   * `customType` the content is appended to the system prompt, with a `customType` it is injected as a
-   * hidden message.
+   * `customType` the content is appended to the system prompt, with a `customType` it is injected
+   * as a hidden message.
    */
   use(factory: AgentExtensionFactory, options?: UseFactoryOptions): void;
   readonly models: ModelTiers;
