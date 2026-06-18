@@ -27,7 +27,7 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 
 ## Design Overview
 
-`spawn.ts` launches `sh -c <command>` (optionally wrapped by the limiter) as a detached process-group leader with stdout/stderr appended to per-process files, persists the record, and — while the host lives — holds a Node `exit` listener that writes the exit code to an `exit-code` sidecar file. `reconcile.ts` owns the single running → exited transition: it reads the sidecar (one 100ms retry), performs a conditional UPDATE so concurrent reconcilers converge on one winner, and lets only the winner notify — unless the record carries `stop_reason="agent_stopped"`. Three paths feed the reconciler: the periodic watcher sweep (`watcher.ts`), lazy reconciliation inside the tool handlers (`tools.ts`), and crash recovery at bootstrap (`reconcileOnStartup`, notifications suppressed).
+`spawn.ts` launches the user command under `sh -c` (optionally wrapped by the limiter) as a detached process-group leader with stdout/stderr appended to per-process files, persists the record, and writes the exit code to an `exit-code` sidecar file from two writers: the spawned shell's EXIT trap — installed by wrapping the command — writes the code before it exits, so the code survives a host restart; and a Node `exit` listener, while the host lives, covers signal deaths (whose trap never fires) and triggers immediate reconciliation. `reconcile.ts` owns the single running → exited transition: it reads the sidecar (one 100ms retry), performs a conditional UPDATE so concurrent reconcilers converge on one winner, and lets only the winner notify — unless the record carries `stop_reason="agent_stopped"`. Three paths feed the reconciler: the periodic watcher sweep (`watcher.ts`), lazy reconciliation inside the tool handlers (`tools.ts`), and crash recovery at bootstrap (`reconcileOnStartup`, notifications suppressed).
 
 Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`), which makes the scope addressable after spawn. `cgroup.ts` (`SystemctlScopeInspector`) queries that scope through `systemctl --user show`: `MemoryCurrent` for a live usage read surfaced by `query_process`, and `Result` to tell an OOM kill apart from a plain SIGKILL when a process exits with code 137. The scope's own cgroup directory is already gone by reconcile time, but systemd retains the unit's `Result` long enough to attribute the kill; OOM attribution is then stamped onto the record's existing `stop_reason` column as `oom_killed`.
 
@@ -40,7 +40,7 @@ Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`),
 | `src/extensions/detached-processes/index.ts` | `defineExtension` wiring: repository, limiter, scope inspector, bootstrap hook, tool factory, watcher job | Config: `defaultMemoryLimitMb` (1024, `0` disables), `watchIntervalSeconds` (15); the single `SystemctlScopeInspector` is shared by the reconciler and the tools |
 | `src/extensions/detached-processes/schema.ts` | `detached_processes` drizzle table, `ProcessStatus` const map, `STOP_REASON_AGENT_STOPPED`, `STOP_REASON_OOM_KILLED` | Status index for the watcher's hot query; `memoryLimitMb` recorded only when actually enforced; OOM attribution reuses the `stop_reason` column (no new column) |
 | `src/extensions/detached-processes/repository.ts` | `ProcessRepository` CRUD: `create`, `get`, `listRunning`/`listExited`, `markStopInitiated`, `clearStopReason`, `rename`, `reconcileToExited` | `reconcileToExited` is a conditional UPDATE (`WHERE status='running'`) returning whether the caller won; an optional `stopReason` arg stamps OOM attribution atomically with the transition; `rename` updates only the `name` column (no migration — the column already exists) |
-| `src/extensions/detached-processes/spawn.ts` | `spawnProcess` (validation, detach, sidecar listener, persistence, DB-failure cleanup), `terminate` (group signalling + escalation), `isAlive` | `detached: true` makes the child a group leader so `kill(-pid)` reaches the whole tree; parent closes its fd copies after spawn; passes the record id to `limiter.wrap` so the scope can be named |
+| `src/extensions/detached-processes/spawn.ts` | `spawnProcess` (validation, detach, command wrapping, sidecar listener, persistence, DB-failure cleanup), `terminate` (group signalling + escalation), `isAlive` | `detached: true` makes the child a group leader so `kill(-pid)` reaches the whole tree; parent closes its fd copies after spawn; the command is wrapped with an EXIT trap (`wrapWithExitCapture`) before `limiter.wrap` so the shell self-reports its exit code; the host exit listener is retained as a second writer for signal deaths (whose trap never fires) and to trigger immediate reconciliation; passes the record id to `limiter.wrap` so the scope can be named |
 | `src/extensions/detached-processes/limits.ts` | `ProcessLimiter` seam + `SystemdRunLimiter` | `systemd-run --user --scope --unit=tachikoma-<id>.scope` puts the command in a *named* transient cgroup and exits with its status, so liveness and exit codes behave like an unwrapped spawn while leaving the scope addressable |
 | `src/extensions/detached-processes/cgroup.ts` | `scopeUnitName`, `ScopeInspector` seam + `SystemctlScopeInspector` (`readMemoryCurrentMb`, `wasOomKilled`) | Reads via `systemctl --user show <unit> -p MemoryCurrent\|Result --value` — agnostic of cgroup nesting and readable post-exit; degrades to null/false off systemd; injectable `show` runner for tests |
 | `src/extensions/detached-processes/output.ts` | `readOutputTail` — last 256KB of a log file; `readOutputWindow` — a 0-based `[offset, count)` line slice with total-line count and a past-EOF flag | Generous raw tail window; `truncateTail` trims both reads to pi's limits in the tool layer; the window splits on newlines (trailing newline treated as a terminator, not an empty line) |
@@ -51,15 +51,17 @@ Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`),
 
 ## Key Decisions
 
-### Host-side exit listener writing a sidecar, instead of a shell wrapper
+### Self-reporting shell wrapper plus a host-side exit listener
 
-**Choice**: Spawn the user's command directly under `sh -c`; a Node `child.on("exit")` listener in the host writes the exit code (128 + signal number for signal deaths) to `{id}/exit-code`, which `reconcileExit` reads later.
-**Why**: Node already reports child exit codes and signals precisely, including kills of the group leader, without rewriting the user's command line. The sidecar keeps the code available to whichever reconciler runs later (watcher, lazy, terminate).
-**Alternatives Considered**: Wrapping the command as `sh -c '<cmd>; echo $? > id.exit'`, which also captures codes when the host is down.
+**Choice**: Wrap the user command as `trap '<write $? to sidecar>' EXIT; <command>` so the spawned shell writes its own exit code to `{id}/exit-code` before it exits, and keep the Node `child.on("exit")` listener as a second writer (128 + signal number for signal deaths) and the trigger for immediate reconciliation. `reconcileExit` reads whichever wrote the sidecar.
+**Why**: The shell's EXIT trap fires on normal completion *and* on a user `exit N` (with `$? = N`) before the process dies, so the code is on disk even when the host was down at exit time — closing the gap a host-only listener leaves. The trap does not fire when a signal kills the shell, so signal deaths still depend on the host listener; keeping both covers every case except a signal kill that lands while the host is also down. The user command runs in the same shell as the trap (not a subshell), so signal traps the user installs stay on the process-group leader; the trap leaves the shell's exit status equal to the command's, so the host listener writes the same value the trap wrote. Only the sidecar path is quoted (single-quote with `'\''` escaping, applied to the path and again to the whole trap body); the user command passes through verbatim after `EXIT; `.
+**Alternatives Considered**: A host-only exit listener writing the sidecar — simple and quote-free, but a process that exits while the host is down records `null` ("unknown"). A subshell wrapper `( <cmd> ); echo $? > id.exit` — also captures codes when the host is down, but isolates the user's signal traps in the subshell so a command that traps SIGTERM no longer makes the leader stubborn (regression, rejected).
 **Consequences**:
-- Pro: `ps` shows the user's real command; signal deaths get faithful 128+n codes (SIGTERM → 143, asserted in `tests/detached-processes/terminate.test.ts`)
-- Pro: No quoting games around the user's command string
-- Con: A process that exits while the host is down has no listener; its code is recorded as `null` ("unknown") by crash recovery or the watcher
+- Pro: Exit codes survive a host restart for normal exits and explicit `exit N`
+- Pro: Signal deaths still get faithful 128+n codes (SIGTERM → 143, asserted in `tests/detached-processes/terminate.test.ts`) via the retained listener, and user signal traps keep working
+- Pro: No quoting games around the user's command string — only the sidecar path is quoted
+- Con: `ps` shows the wrapper (`sh -c "trap … EXIT; <command>"`) rather than the bare command, though the user command is still visible verbatim
+- Con: A signal kill that lands while the host is also down still records `null` (neither writer can run)
 
 ### Polling-only watcher
 
@@ -112,7 +114,7 @@ Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`),
 
 ### Scenario: Clean exit detected by the watcher
 
-**Given**: A dispatched process finishes with code 0; the exit listener wrote `0` to the sidecar.
+**Given**: A dispatched process finishes with code 0; the spawned shell's EXIT trap wrote `0` to the sidecar (the host listener redundantly writes the same).
 **When**: The next `detached-watch` tick runs.
 **Then**: Signal-0 fails, `reconcileExit` wins the conditional UPDATE, the record becomes `exited`/`exitCode=0`, and one `"notify"` event with severity `info` is emitted.
 
@@ -124,9 +126,9 @@ Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`),
 
 ### Scenario: Exit while Tachikoma is down
 
-**Given**: A process exits after the host was killed; no sidecar was written.
+**Given**: A process exits normally after the host was killed; the spawned shell's EXIT trap wrote the code to the sidecar before dying.
 **When**: Tachikoma restarts and the `reconcile` bootstrap hook runs.
-**Then**: The dead record is reconciled with `exitCode=null`, no notification fires, and `query_process(archived=true)` shows it on demand.
+**Then**: The dead record is reconciled with the recorded exit code (not `null`), no notification fires, and `query_process(archived=true)` shows it on demand. A process that was *signal-killed* while the host was also down has neither a trap that fires nor a live listener, so the sidecar is absent and it reconciles with `exitCode=null` (`readExitCode` returns `null` for a missing or non-numeric sidecar).
 
 ### Scenario: Limited process killed by the OOM killer
 

@@ -117,4 +117,21 @@ describe("spawnProcess internals (mocked child)", () => {
       "detached child emitted an error",
     );
   });
+
+  it("wraps the command so the child writes its own exit code to the sidecar", async () => {
+    const child = makeFakeChild(424246);
+    spawnWithFakeChild(child);
+
+    await spawnProcess(ctx.spawnDeps, { name: "wrapped", command: "the-user-command" });
+
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+    const [, args] = spawnMock.mock.calls[0] as [string, string[], unknown];
+    expect(args[0]).toBe("-c");
+    const script = args[1];
+    // The user command passes through verbatim after the EXIT trap…
+    expect(script).toContain("EXIT; the-user-command");
+    // …and the trap body writes the captured exit status to an absolute sidecar path.
+    expect(script).toContain('printf %s "$?"');
+    expect(script).toContain(ctx.processesDir);
+  });
 });
