@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, openSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { constants } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { Logger } from "../../log.ts";
@@ -71,31 +71,32 @@ const shSingleQuote = (value: string): string => `'${value.replace(/'/g, "'\\''"
  * sidecar before exiting — recovering the code even when the host was down at
  * exit time, which the host's exit listener cannot cover.
  *
- * An EXIT trap captures `$?` and writes the sidecar on normal completion *and*
- * on a user `exit N` (the trap fires with `$? = N`). It runs in the same shell
- * as the command — not a subshell — so any signal traps the user command
- * installs stay in effect on the process-group leader. The trap does not fire
- * when a signal kills the shell, so signal deaths are still captured only by
- * the host's exit listener (128 + signal). The shell's own exit status is the
- * command's code (the EXIT trap does not alter it), so the host listener writes
- * the same value the trap wrote. Only the sidecar path is quoted; the user
- * command passes through verbatim after `EXIT; `, with no escaping.
+ * An EXIT trap captures `$?` on normal completion *and* on a user `exit N`, and
+ * runs in the same shell as the command (not a subshell), so any signal traps
+ * the user installs stay in effect on the process-group leader. It does not fire
+ * when a signal kills the shell, so signal deaths are still captured only by the
+ * host's exit listener (128 + signal). The shell's own exit status equals the
+ * command's code, so both writers record the same value. Only the sidecar path is
+ * quoted; the user command passes through verbatim after `EXIT; `.
  *
- * `sidecarPath` must be absolute: the child may run with a different cwd, and a
- * relative path would be resolved against the child's cwd rather than the host's.
+ * `sidecarPath` must be absolute (enforced below): the child may run with a
+ * different cwd, and a relative path would be resolved against the child's.
  */
 export const wrapWithExitCapture = (command: string, sidecarPath: string): string => {
-  const body = `__tachikoma_rc=$?; printf %s "$__tachikoma_rc" > ${shSingleQuote(sidecarPath)}`;
+  if (!isAbsolute(sidecarPath)) {
+    throw new Error(`wrapWithExitCapture sidecarPath must be absolute, got: ${sidecarPath}`);
+  }
+  // `$?` is the shell's exit status at the moment the EXIT trap fires, so reading
+  // it inline as the body's first command captures the code without a named var.
+  const body = `printf %s "$?" > ${shSingleQuote(sidecarPath)}`;
   return `trap ${shSingleQuote(body)} EXIT; ${command}`;
 };
 
 /**
  * Spawn a detached shell command with stdout/stderr captured to files and
  * persist the record. The command is wrapped (see wrapWithExitCapture) so the
- * spawned shell writes its own exit code to the sidecar before exiting, making
- * the code recoverable even when the host was down at exit time. The host's
- * exit listener remains as a second writer for signal deaths (whose EXIT trap
- * never fires) and to trigger immediate reconciliation.
+ * child self-reports its exit code; the host exit listener is retained for
+ * signal deaths and immediate reconcile.
  */
 export const spawnProcess = async (
   deps: SpawnDeps,
@@ -155,10 +156,9 @@ export const spawnProcess = async (
     log.error({ pid, err: error }, "detached child emitted an error");
   });
 
-  // Fallback writer + immediate reconcile trigger. A signal that kills the
-  // shell does not run the wrapper's EXIT trap, so for signal deaths the code is
-  // only recoverable via this listener (128 + signal). For normal exits this
-  // write is redundant with the wrapper's own sidecar write.
+  // The EXIT trap never fires on a signal kill, so this listener is the only
+  // exit-code writer for signal deaths (128 + signal) and triggers immediate
+  // reconcile. Its sidecar write is redundant for normal exits (the trap wrote it).
   child.on("exit", (code, signal) => {
     const value = code ?? (signal != null ? signalExitCode(signal) : null);
 

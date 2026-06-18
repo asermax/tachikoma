@@ -130,9 +130,8 @@ describe("spawnProcess internals (mocked child)", () => {
     const script = args[1];
     // The user command passes through verbatim after the EXIT trap…
     expect(script).toContain("EXIT; the-user-command");
-    // …and the trap body writes the captured code to an absolute sidecar path.
-    expect(script).toContain("__tachikoma_rc=$?");
-    expect(script).toContain("printf %s");
+    // …and the trap body writes the captured exit status to an absolute sidecar path.
+    expect(script).toContain('printf %s "$?"');
     expect(script).toContain(ctx.processesDir);
   });
 });
