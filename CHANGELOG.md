@@ -1,3 +1,10 @@
+# [3.29.0](https://github.com/asermax/tachikoma/compare/v3.28.1...v3.29.0) (2026-06-18)
+
+
+### Features
+
+* **extensions:** hand extension factories their binding session scope ([2dd6c29](https://github.com/asermax/tachikoma/commit/2dd6c29450a0c80054be7e5e4e4c1e38cd875a8c))
+
 ## [3.28.1](https://github.com/asermax/tachikoma/compare/v3.28.0...v3.28.1) (2026-06-17)
 
 
