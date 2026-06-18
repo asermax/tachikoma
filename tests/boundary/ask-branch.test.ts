@@ -41,7 +41,7 @@ const boomerang = (currentTopicBaseId: string | null) => ({
  * Two collapsed branches: topic-1 (sum-1) and topic-2 (sum-2). The live branch extends sum-2, so the
  * boomerang base is sum-2 — making topic-2 the "active" branch and topic-1 a queryable prior branch.
  */
-const makeTrunk = (createBranchedSession = vi.fn(() => "/tmp/branch-topic-1.jsonl")) => {
+const makeTrunk = () => {
   const entries = [
     branchSummary("sum-1", "topic-1", "leaf-1", null),
     branchSummary("sum-2", "topic-2", "leaf-2", "sum-1"),
@@ -53,10 +53,10 @@ const makeTrunk = (createBranchedSession = vi.fn(() => "/tmp/branch-topic-1.json
   byId.set("leaf-2", { type: "message", id: "leaf-2" } as never);
 
   return {
+    sessionFile: "/tmp/trunk.jsonl",
     sessionManager: {
       getEntries: () => entries,
       getEntry: (id: string) => byId.get(id),
-      createBranchedSession,
     },
   } as unknown as AgentSession;
 };
@@ -74,32 +74,36 @@ describe("handleAskBranch", () => {
   it("reports no such branch for an unknown id without failing", async () => {
     const trunk = makeTrunk();
     const shadowFork = vi.fn();
+    const branchFile = vi.fn();
 
     const result = await handleAskBranch(
-      { getTrunkSession: () => trunk, shadowFork, log: fakeLog },
+      { getTrunkSession: () => trunk, shadowFork, branchFile, log: fakeLog },
       { branchId: "topic-99", question: "what happened?" },
     );
 
     expect(result).toContain("No such branch 'topic-99'");
+    expect(branchFile).not.toHaveBeenCalled();
     expect(shadowFork).not.toHaveBeenCalled();
   });
 
   it("rejects a request targeting the active (live) branch", async () => {
     const trunk = makeTrunk();
     const shadowFork = vi.fn();
+    const branchFile = vi.fn();
 
     const result = await handleAskBranch(
-      { getTrunkSession: () => trunk, shadowFork, log: fakeLog },
+      { getTrunkSession: () => trunk, shadowFork, branchFile, log: fakeLog },
       { branchId: "topic-2", question: "what happened?" },
     );
 
     expect(result).toContain("currently active branch");
+    expect(branchFile).not.toHaveBeenCalled();
     expect(shadowFork).not.toHaveBeenCalled();
   });
 
-  it("answers a prior branch by forking its originalLeafId, then deletes the temp file", async () => {
-    const createBranchedSession = vi.fn(() => "/tmp/branch-topic-1.jsonl");
-    const trunk = makeTrunk(createBranchedSession);
+  it("answers a prior branch by branching its originalLeafId off the trunk file, then deletes the temp file", async () => {
+    const trunk = makeTrunk();
+    const branchFile = vi.fn(() => "/tmp/branch-topic-1.jsonl");
     const fork = {
       prompt: vi.fn().mockResolvedValue("  the deploy succeeded  "),
       dispose: vi.fn().mockResolvedValue(undefined),
@@ -107,11 +111,12 @@ describe("handleAskBranch", () => {
     const shadowFork = vi.fn().mockResolvedValue(fork);
 
     const result = await handleAskBranch(
-      { getTrunkSession: () => trunk, shadowFork, log: fakeLog },
+      { getTrunkSession: () => trunk, shadowFork, branchFile, log: fakeLog },
       { branchId: "topic-1", question: "did the deploy work?" },
     );
 
-    expect(createBranchedSession).toHaveBeenCalledWith("leaf-1");
+    // Branched from the trunk's own file (never the live session) at topic-1's original leaf.
+    expect(branchFile).toHaveBeenCalledWith("/tmp/trunk.jsonl", "leaf-1");
     expect(shadowFork).toHaveBeenCalledWith("/tmp/branch-topic-1.jsonl", { tier: "searcher" });
     expect(fork.prompt).toHaveBeenCalledOnce();
     expect(result).toBe("the deploy succeeded");
@@ -121,7 +126,7 @@ describe("handleAskBranch", () => {
 
   it("reports no active trunk gracefully", async () => {
     const result = await handleAskBranch(
-      { getTrunkSession: () => null, shadowFork: vi.fn(), log: fakeLog },
+      { getTrunkSession: () => null, shadowFork: vi.fn(), branchFile: vi.fn(), log: fakeLog },
       { branchId: "topic-1", question: "?" },
     );
 

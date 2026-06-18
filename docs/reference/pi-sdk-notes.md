@@ -117,13 +117,15 @@ The daily-trunk model (ADR-014) relies on these `SessionManager` primitives — 
 | Primitive | Signature | Used for |
 |---|---|---|
 | `branchWithSummary` | `(branchFromId: string \| null, summary: string, details?: unknown, fromHook?: boolean) => string` | Collapse the current branch into a `branch_summary` entry at the base; returns the new summary id (advanced base). Does NOT record the abandoned leaf — we store `originalLeafId` in `details`. |
-| `createBranchedSession` | `(leafId: string) => string \| undefined` | Write a new session file with only the root→leaf path. Backs the shadow-fork classifier (fork the live branch) and per-branch extraction (fork one branch's full conversation). Returns the new file path. |
+| `createBranchedSession` | `(leafId: string) => string \| undefined` | Write a new session file with only the root→leaf path; returns the new file path. Backs the shadow-fork classifier and per-branch extraction. **DESTRUCTIVE IN PLACE:** it repoints the manager it runs on at the new branch file and rebuilds that manager's entry index from only the branch path — so it MUST run on a `SessionManager` loaded fresh from disk, NEVER on a live session's manager. Run on a live session it silently turns that session into the branch: other branches become unreachable (the next call throws `Entry <id> not found`) and later appends — including idempotency markers — land in the wrong file. Always go through `AgentManager.branchFile`/`shadowFork`, which load a detached manager. |
 | `getBranch` | `(fromId?: string) => SessionEntry[]` | Walk an entry to root in path order — branch enumeration / extraction slicing. |
 | `appendCustomEntry` | `(customType: string, data?: unknown) => string` | Persist trunk/branch/boomerang state + idempotency markers out of LLM context. |
 | `appendCustomMessageEntry` | `(customType, content, display: boolean, details?) => string` | Inject the related-branch pointer into LLM context with `display: false`. |
 | `getEntries` / `getEntry` / `getLeafId` / `branch(id)` | as in the instance API above | Rebuild branch records on reload; re-seat the leaf onto the current base after `open` (pi sets the leaf to the LAST file entry, not the active tip). |
 
 `AgentManager.shadowFork(sourceFile, { systemPrompt, tier })` reuses the existing `open({ sessionFile, bare: true, tools: [] })` path rather than pi's lower-level `createAgentSessionServices`/`createAgentSessionFromServices` two-call construction — `bare` + empty `tools` already yields an extension-free, tool-free headless session, and `open` composes the loader/model/tier. The fork file is deleted on `dispose`. The source file is opened in a separate `SessionManager` and is never mutated (R6).
+
+`AgentManager.branchFile(sourceFile, leafId)` is the non-fork sibling: it just cuts the root→leaf branch into a new file (for per-branch memory extraction and `ask_branch`) via the same detached-manager rule, returning the path (the caller opens/forks it separately). Both funnel `createBranchedSession` through `loadDetachedSession`, which is the single place that enforces "never branch a live session's manager."
 
 ## Misc verified utilities
 

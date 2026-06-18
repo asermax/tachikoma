@@ -37,6 +37,7 @@ export default defineExtension<BoundaryConfig>({
       createAskBranchFactory({
         getTrunkSession: () => app.sessions.activeTrunkSession(),
         shadowFork: app.agent.shadowFork,
+        branchFile: app.agent.branchFile,
         log: app.log,
       }),
       { sessionScopes: ["main"] },

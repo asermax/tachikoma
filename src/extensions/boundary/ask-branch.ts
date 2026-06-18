@@ -2,7 +2,6 @@ import { rm } from "node:fs/promises";
 
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-import { createBranchFile } from "../../agent/session-tree.ts";
 import type { Logger } from "../../log.ts";
 import { getBranchRecords, readBoomerangState } from "../../sessions/trunk.ts";
 import type { AgentApi } from "../api.ts";
@@ -27,6 +26,7 @@ export interface AskBranchDeps {
   /** The live trunk session, or null when no trunk is active yet. */
   getTrunkSession: () => AgentSession | null;
   shadowFork: AgentApi["shadowFork"];
+  branchFile: AgentApi["branchFile"];
   log: Logger;
 }
 
@@ -61,7 +61,12 @@ export const handleAskBranch = async (
     return `Branch '${args.branchId}' is the currently active branch — it is already in context.`;
   }
 
-  const branchFile = createBranchFile(trunk, record.originalLeafId);
+  // Cut the branch from a fresh-loaded manager (never the live trunk) so answering a lookup does not
+  // repoint the live session at the branch file mid-conversation (see AgentManager.branchFile).
+  const branchFile =
+    trunk.sessionFile != null
+      ? deps.branchFile(trunk.sessionFile, record.originalLeafId)
+      : undefined;
 
   if (branchFile == null) {
     deps.log.debug({ branchId: args.branchId }, "ask_branch unresolved — branch file unavailable");

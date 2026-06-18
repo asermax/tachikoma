@@ -297,6 +297,31 @@ export class AgentManager {
   }
 
   /**
+   * Load `sourceSessionFile` into a SEPARATE `SessionManager` — never a live session's manager — so
+   * that pi's in-place `createBranchedSession` rewrite cannot mutate a session the caller still holds.
+   * Centralizes the one rule that keeps branch-file creation non-destructive (see {@link branchFile}).
+   */
+  private loadDetachedSession(sourceSessionFile: string): SessionManager {
+    return SessionManager.open(sourceSessionFile, this.workspace.sessionsDir);
+  }
+
+  /**
+   * Write a throwaway session file holding only the root→`leafId` path of `sourceSessionFile`, and
+   * return its path (undefined if the source is not persisting). The source transcript is never
+   * mutated.
+   *
+   * FOOTGUN: pi's `SessionManager.createBranchedSession` is destructive IN PLACE — it repoints the
+   * manager it runs on at the new branch file and rebuilds that manager's entry index from only the
+   * branch path. Running it on a *live* session's manager therefore silently turns that session into
+   * the branch: every other branch becomes unreachable (the next `createBranchedSession` throws
+   * "Entry not found") and later appends — including idempotency markers — land in the wrong file.
+   * We always run it on a manager loaded fresh from disk. See `docs/reference/pi-sdk-notes.md`.
+   */
+  branchFile(sourceSessionFile: string, leafId: string): string | undefined {
+    return this.loadDetachedSession(sourceSessionFile).createBranchedSession(leafId);
+  }
+
+  /**
    * Fork the current branch of `sourceSessionFile` into a throwaway headless session for
    * non-invasive classification (topic-shift detection). We open the source file in a SEPARATE
    * `SessionManager` and `createBranchedSession(leafId)` a fresh file containing only the
@@ -313,7 +338,7 @@ export class AgentManager {
     sourceSessionFile: string,
     options: ShadowForkOptions = {},
   ): Promise<ShadowFork> {
-    const source = SessionManager.open(sourceSessionFile, this.workspace.sessionsDir);
+    const source = this.loadDetachedSession(sourceSessionFile);
     const leafId = source.getLeafId();
     if (leafId == null) throw new Error("cannot shadow-fork a session with no entries");
 

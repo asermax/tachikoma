@@ -20,7 +20,7 @@ export interface BranchSummaryDetails {
   /**
    * Leaf of the abandoned branch at collapse. `branchWithSummary` does NOT record the abandoned
    * leaf, so we store it ourselves — this is what makes the full branch reachable afterwards via
-   * `getBranchEntries`/`createBranchFile` for `ask_branch` and per-branch extraction.
+   * `getBranchEntries`/`AgentManager.branchFile` for `ask_branch` and per-branch extraction.
    */
   originalLeafId: string;
   /** The base (current trunk tip) the branch extended; extraction slices from here forward. */
@@ -121,10 +121,7 @@ export const appendInContextEntry = (
   details?: unknown,
 ): string => session.sessionManager.appendCustomMessageEntry(customType, content, false, details);
 
-/**
- * Create a new session file containing only the path from root to `leafId`, for extracting a single
- * branch's full conversation (not its summary). Returns the new file path, or undefined if the
- * session is not persisting.
- */
-export const createBranchFile = (session: AgentSession, leafId: string): string | undefined =>
-  session.sessionManager.createBranchedSession(leafId);
+// Branching a single topic's full conversation into a throwaway file lives on `AgentManager`
+// (`branchFile`/`shadowFork`), NOT here: pi's `createBranchedSession` rewrites the manager it runs
+// on IN PLACE, so it must run on a manager loaded fresh from disk (which needs the sessions dir the
+// manager owns), never on a live session's manager. See docs/reference/pi-sdk-notes.md.

@@ -57,14 +57,16 @@ const leafEntry = (id: string): SessionEntry =>
 
 /**
  * A fake trunk session: an append-only entries list with the SessionManager methods the close pipeline
- * + trunk markers touch (getEntries/getEntry/appendCustomEntry/createBranchedSession). No LLM.
+ * + trunk markers touch (getEntries/getEntry/appendCustomEntry). Branch-file creation now lives on the
+ * AgentManager (`branchFile`), not the live session, so the session no longer exposes
+ * `createBranchedSession`. No LLM.
  */
 const makeSession = (initial: SessionEntry[]) => {
   const entries = [...initial];
   let customCounter = 0;
-  const branchedLeaves: string[] = [];
 
   return {
+    sessionFile: join(workspace, "trunk.jsonl"),
     sessionManager: {
       getEntries: () => [...entries],
       getEntry: (id: string) => entries.find((entry) => entry.id === id),
@@ -74,13 +76,8 @@ const makeSession = (initial: SessionEntry[]) => {
         entries.push({ type: "custom", id, customType, data } as unknown as SessionEntry);
         return id;
       },
-      createBranchedSession: (leafId: string): string => {
-        branchedLeaves.push(leafId);
-        return join(workspace, `branch-${leafId}.jsonl`);
-      },
     },
-    _branchedLeaves: branchedLeaves,
-  } as unknown as AgentSession & { _branchedLeaves: string[] };
+  } as unknown as AgentSession;
 };
 
 /** A trunk with three collapsed branches; each leaf/base resolves so all three records survive. */
@@ -112,9 +109,22 @@ const threeBranchTrunk = () =>
 const extractionDeps = (): {
   deps: CloseExtractionDeps;
   forkAndContinue: ReturnType<typeof vi.fn>;
+  branchFile: ReturnType<typeof vi.fn>;
+  branchedLeaves: string[];
 } => {
   const forkAndContinue = vi.fn().mockResolvedValue(undefined);
-  return { deps: { agent: { forkAndContinue }, workspaceRoot: workspace }, forkAndContinue };
+  const branchedLeaves: string[] = [];
+  const branchFile = vi.fn((_sourceFile: string, leafId: string): string => {
+    branchedLeaves.push(leafId);
+    return join(workspace, `branch-${leafId}.jsonl`);
+  });
+
+  return {
+    deps: { agent: { forkAndContinue, branchFile }, workspaceRoot: workspace },
+    forkAndContinue,
+    branchFile,
+    branchedLeaves,
+  };
 };
 
 const phaseDeps = (run = vi.fn().mockResolvedValue({ text: "done" })): ClosePhaseDeps => ({
@@ -128,7 +138,7 @@ describe("extractBranches", () => {
   it("extracts only unmarked branches (2 stores each) and writes a per-branch marker", async () => {
     const session = threeBranchTrunk();
     const records = getBranchRecords(session);
-    const { deps, forkAndContinue } = extractionDeps();
+    const { deps, forkAndContinue, branchedLeaves } = extractionDeps();
 
     // Pre-mark topic-2 as already extracted (a prior run): it must be skipped.
     session.sessionManager.appendCustomEntry("tachikoma-completion-marker", {
@@ -140,7 +150,7 @@ describe("extractBranches", () => {
 
     // Two unmarked branches × two stores (episodic + topics).
     expect(forkAndContinue).toHaveBeenCalledTimes(4);
-    expect(session._branchedLeaves.sort()).toEqual(["leaf-1", "leaf-3"]);
+    expect(branchedLeaves.sort()).toEqual(["leaf-1", "leaf-3"]);
 
     expect(isBranchExtracted(session, "topic-1")).toBe(true);
     expect(isBranchExtracted(session, "topic-2")).toBe(true);
@@ -172,6 +182,43 @@ describe("extractBranches", () => {
 
     // A clean re-run (recovery / second close) extracts nothing — all markers present.
     await extractBranches(session, records, deps, fakeLog);
+    expect(forkAndContinue).not.toHaveBeenCalled();
+  });
+
+  it("isolates a failing branch: extracts the rest, marks only those, and throws for retry", async () => {
+    const session = threeBranchTrunk();
+    const records = getBranchRecords(session);
+    const { deps, forkAndContinue } = extractionDeps();
+
+    // topic-2's first store extraction blows up; topic-1 and topic-3 must still complete.
+    forkAndContinue.mockImplementation(async (sourceFile: string) => {
+      if (sourceFile.includes("leaf-2")) throw new Error("extraction boom");
+    });
+
+    await expect(extractBranches(session, records, deps, fakeLog)).rejects.toThrow("topic-2");
+
+    expect(isBranchExtracted(session, "topic-1")).toBe(true);
+    expect(isBranchExtracted(session, "topic-2")).toBe(false);
+    expect(isBranchExtracted(session, "topic-3")).toBe(true);
+
+    // A retry re-runs only the unmarked branch (topic-2); it succeeds this time, no more throw.
+    forkAndContinue.mockClear();
+    forkAndContinue.mockResolvedValue(undefined);
+
+    await extractBranches(session, records, deps, fakeLog);
+
+    expect(forkAndContinue).toHaveBeenCalledTimes(2); // topic-2 × two stores
+    expect(isBranchExtracted(session, "topic-2")).toBe(true);
+  });
+
+  it("returns without forking when the trunk session has no file", async () => {
+    const session = threeBranchTrunk();
+    (session as unknown as { sessionFile: string | null }).sessionFile = null;
+    const records = getBranchRecords(session);
+    const { deps, forkAndContinue } = extractionDeps();
+
+    await extractBranches(session, records, deps, fakeLog);
+
     expect(forkAndContinue).not.toHaveBeenCalled();
   });
 });
@@ -234,6 +281,9 @@ describe("createTrunkClosePipeline", () => {
     const forkAndContinue = vi.fn().mockImplementation(async () => {
       events.push("extract");
     });
+    const branchFile = vi.fn((_src: string, leafId: string) =>
+      join(workspace, `branch-${leafId}.jsonl`),
+    );
     const run = vi.fn().mockImplementation(async ({ system }: { system: string }) => {
       events.push(system.includes("foundational context") ? "context" : "store");
 
@@ -241,7 +291,7 @@ describe("createTrunkClosePipeline", () => {
     });
 
     const processor = createTrunkClosePipeline({
-      extraction: { agent: { forkAndContinue }, workspaceRoot: workspace },
+      extraction: { agent: { forkAndContinue, branchFile }, workspaceRoot: workspace },
       phases: phaseDeps(run),
     });
 
@@ -261,10 +311,11 @@ describe("createTrunkClosePipeline", () => {
 
   it("no-ops for a background run with no trunk", async () => {
     const forkAndContinue = vi.fn();
+    const branchFile = vi.fn();
     const run = vi.fn();
 
     const processor = createTrunkClosePipeline({
-      extraction: { agent: { forkAndContinue }, workspaceRoot: workspace },
+      extraction: { agent: { forkAndContinue, branchFile }, workspaceRoot: workspace },
       phases: phaseDeps(run),
     });
 

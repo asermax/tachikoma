@@ -40,6 +40,7 @@ const setup = (config: { enabled: boolean } = { enabled: true }): SetupResult =>
       },
       side: { complete, classify },
       shadowFork,
+      branchFile: vi.fn(),
     },
     sessions: { activeTrunkSession: () => null },
     status: vi.fn(),

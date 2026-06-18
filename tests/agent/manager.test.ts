@@ -555,6 +555,22 @@ describe("AgentManager.shadowFork", () => {
   });
 });
 
+describe("AgentManager.branchFile", () => {
+  it("cuts the branch from a manager loaded fresh off disk, never a live session", () => {
+    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+
+    const file = manager.branchFile("/sessions/trunk.jsonl", "leaf-7");
+
+    // The source file was opened in its OWN SessionManager (the destructive createBranchedSession
+    // must not run on a live session's manager), and that detached manager produced the branch file.
+    expect(
+      sessionManagerCalls.some((c) => c.kind === "open" && c.args[0] === "/sessions/trunk.jsonl"),
+    ).toBe(true);
+    expect(createBranchedSessionMock).toHaveBeenCalledWith("leaf-7");
+    expect(file).toBe("/ws/root/.tachikoma/pi/sessions/forked.jsonl");
+  });
+});
+
 describe("AgentManager.isForking", () => {
   it("is true only while a fork run is in flight (AC15)", async () => {
     const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());

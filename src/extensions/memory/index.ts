@@ -93,7 +93,10 @@ export default defineExtension<MemoryConfig>({
       // the existing maintenance logic; a later consolidation change replaces them behind the same functions.
       app.sessions.registerProcessor(
         createTrunkClosePipeline({
-          extraction: { agent: { forkAndContinue: app.agent.forkAndContinue }, workspaceRoot },
+          extraction: {
+            agent: { forkAndContinue: app.agent.forkAndContinue, branchFile: app.agent.branchFile },
+            workspaceRoot,
+          },
           phases: {
             side: app.agent.side,
             workspaceRoot,

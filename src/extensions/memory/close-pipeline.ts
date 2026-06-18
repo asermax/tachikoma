@@ -4,7 +4,6 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { FILE_EDIT_TOOLS } from "../../agent/file-tools.ts";
 import type { AgentManager } from "../../agent/manager.ts";
-import { createBranchFile } from "../../agent/session-tree.ts";
 import type { Logger } from "../../log.ts";
 import {
   type BranchRecord,
@@ -45,8 +44,8 @@ export const CLOSE_STEPS = {
 
 export type CloseStep = (typeof CLOSE_STEPS)[keyof typeof CLOSE_STEPS];
 
-/** The slice of AgentManager per-branch extraction needs: fork a single branch's conversation. */
-export type BranchForker = Pick<AgentManager, "forkAndContinue">;
+/** The slice of AgentManager per-branch extraction needs: cut a branch file, then fork its conversation. */
+export type BranchForker = Pick<AgentManager, "forkAndContinue" | "branchFile">;
 
 export interface CloseExtractionDeps {
   agent: BranchForker;
@@ -72,6 +71,11 @@ export interface ClosePhaseDeps {
  * branch's conversation (root → its original leaf, sliced conceptually from its base forward) and run
  * the three store extractions over it, then write the per-branch marker. Idempotent: a re-run skips
  * branches that already carry a marker. The temp branch file is deleted after the fork.
+ *
+ * A single branch's failure is isolated — it is logged and skipped (no marker, so it retries on the
+ * next close) rather than aborting the whole day. If ANY branch failed, the function throws after the
+ * loop so the pipeline does not advance to the downstream phases and the trunk stays unclosed for a
+ * retry (markers keep the already-extracted branches from being redone).
  */
 export const extractBranches = async (
   session: AgentSession,
@@ -79,13 +83,24 @@ export const extractBranches = async (
   { agent, workspaceRoot }: CloseExtractionDeps,
   log: Logger,
 ): Promise<void> => {
+  const sessionFile = session.sessionFile;
+
+  if (sessionFile == null) {
+    log.warn("trunk session has no file — cannot fork branches for extraction");
+    return;
+  }
+
+  const failed: string[] = [];
+
   for (const record of records) {
     if (isBranchExtracted(session, record.branchId)) {
       log.debug({ branchId: record.branchId }, "branch already extracted — skipping");
       continue;
     }
 
-    const branchFile = createBranchFile(session, record.originalLeafId);
+    // Cut the branch from a manager loaded fresh off disk — NOT the live trunk session — so this
+    // never mutates the session whose other branches we still need to walk (see AgentManager.branchFile).
+    const branchFile = agent.branchFile(sessionFile, record.originalLeafId);
 
     if (branchFile == null) {
       log.warn({ branchId: record.branchId }, "could not fork branch for extraction — skipping");
@@ -95,25 +110,36 @@ export const extractBranches = async (
     const start = Date.now();
 
     try {
-      for (const store of MEMORY_STORES) {
-        // Hard-limit the fork to file tools — the extraction agent reuses the session's persona but
-        // must not message the user or fire tasks (belt-and-suspenders with SILENT_BACKGROUND_SECTION).
-        await agent.forkAndContinue(
-          branchFile,
-          branchStoreInstruction(store, workspaceRoot, record),
-          "processor",
-          FILE_EDIT_TOOLS,
-        );
+      try {
+        for (const store of MEMORY_STORES) {
+          // Hard-limit the fork to file tools — the extraction agent reuses the session's persona but
+          // must not message the user or fire tasks (belt-and-suspenders with SILENT_BACKGROUND_SECTION).
+          await agent.forkAndContinue(
+            branchFile,
+            branchStoreInstruction(store, workspaceRoot, record),
+            "processor",
+            FILE_EDIT_TOOLS,
+          );
 
-        await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);
+          await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);
+        }
+      } finally {
+        await rm(branchFile, { force: true });
       }
-    } finally {
-      await rm(branchFile, { force: true });
+
+      markBranchExtracted(session, record.branchId);
+
+      log.info({ branchId: record.branchId, durationMs: Date.now() - start }, "branch extracted");
+    } catch (error) {
+      failed.push(record.branchId);
+      log.error({ err: error, branchId: record.branchId }, "branch extraction failed — skipping");
     }
+  }
 
-    markBranchExtracted(session, record.branchId);
-
-    log.info({ branchId: record.branchId, durationMs: Date.now() - start }, "branch extracted");
+  if (failed.length > 0) {
+    throw new Error(
+      `branch extraction failed for ${failed.length} branch(es): ${failed.join(", ")}`,
+    );
   }
 };
 

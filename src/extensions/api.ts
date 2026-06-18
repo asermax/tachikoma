@@ -188,6 +188,14 @@ export interface AgentApi {
    * `session-tree` helpers for direct branch/tree access on a live session.
    */
   shadowFork(sourceSessionFile: string, options?: ShadowForkOptions): Promise<ShadowFork>;
+  /**
+   * Write a throwaway session file holding only the root→`leafId` path of `sourceSessionFile` (the
+   * full conversation of one collapsed branch), returning its path or undefined if the source is not
+   * persisting. The source transcript — and any live session pointed at it — is never mutated: the
+   * branch is cut from a manager loaded fresh from disk. Used by per-branch memory extraction and
+   * `ask_branch` to fork one prior branch's own turns.
+   */
+  branchFile(sourceSessionFile: string, leafId: string): string | undefined;
 }
 
 export interface InboundApi {

@@ -209,6 +209,8 @@ export class ExtensionHost {
         isForking: () => services.agent.isForking(),
         shadowFork: (sourceSessionFile, options) =>
           services.agent.shadowFork(sourceSessionFile, options),
+        branchFile: (sourceSessionFile, leafId) =>
+          services.agent.branchFile(sourceSessionFile, leafId),
       },
 
       inbound: {

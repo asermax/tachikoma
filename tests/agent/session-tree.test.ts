@@ -6,7 +6,6 @@ import {
   appendState,
   type BranchSummaryDetails,
   branchWithSummary,
-  createBranchFile,
   enumerateEntries,
   getBranchEntries,
   getEntry,
@@ -24,7 +23,6 @@ const makeSession = () => {
     branch: vi.fn(),
     appendCustomEntry: vi.fn(() => "custom-1"),
     appendCustomMessageEntry: vi.fn(() => "msg-1"),
-    createBranchedSession: vi.fn(() => "/forked.jsonl"),
   };
   return { sessionManager } as unknown as AgentSession;
 };
@@ -79,11 +77,5 @@ describe("session-tree helpers", () => {
       false,
       { branchId: "topic-1" },
     );
-  });
-
-  it("creates a single-branch session file for extraction", () => {
-    const session = makeSession();
-    expect(createBranchFile(session, "leaf-9")).toBe("/forked.jsonl");
-    expect(session.sessionManager.createBranchedSession).toHaveBeenCalledWith("leaf-9");
   });
 });
