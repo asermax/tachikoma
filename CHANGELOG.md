@@ -1,3 +1,10 @@
+# [3.31.0](https://github.com/asermax/tachikoma/compare/v3.30.1...v3.31.0) (2026-06-18)
+
+
+### Features
+
+* **boundary:** broaden ask_branch guidance for proactive context recovery ([bfb8fa6](https://github.com/asermax/tachikoma/commit/bfb8fa612cf50fb5fd438fc08195c77124d0b05d))
+
 ## [3.30.1](https://github.com/asermax/tachikoma/compare/v3.30.0...v3.30.1) (2026-06-18)
 
 
