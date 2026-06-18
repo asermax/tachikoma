@@ -1,3 +1,10 @@
+# [3.30.0](https://github.com/asermax/tachikoma/compare/v3.29.0...v3.30.0) (2026-06-18)
+
+
+### Features
+
+* **telegram:** quote reacted-to message text on reactions ([c85b811](https://github.com/asermax/tachikoma/commit/c85b811a7837faa86887f3c7c93fdb2448aa0838))
+
 # [3.29.0](https://github.com/asermax/tachikoma/compare/v3.28.1...v3.29.0) (2026-06-18)
 
 
