@@ -52,13 +52,15 @@ describe("role system prompts", () => {
     expect(prompt).toContain("scheduled task");
   });
 
-  it("tells main and background to proactively evaluate skills, but not the skill-less subagent", () => {
+  it("keeps the core base prompts skill-agnostic — the skills extension owns that guidance", () => {
+    // Skill-following guidance moved to the skills extension (src/extensions/skills/usage.ts) so the
+    // core base prompt stays feature-agnostic and the guidance appears only when skills are enabled.
     const main = buildMainSystemPrompt({ workspaceRoot: "/ws" });
     const background = buildBackgroundSystemPrompt({ dateHeader: "Monday UTC" });
 
-    expect(main).toContain("evaluate the available skills");
-    expect(background).toContain("evaluate the available skills");
-    expect(SUBAGENT_SYSTEM_PROMPT).not.toContain("evaluate the available skills");
+    for (const prompt of [main, background, SUBAGENT_SYSTEM_PROMPT]) {
+      expect(prompt).not.toMatch(/skill/i);
+    }
   });
 
   it("frames the subagent as a read-only worker whose final message is the result (AC1)", () => {

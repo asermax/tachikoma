@@ -13,6 +13,7 @@ import type {
   UseFactoryOptions,
 } from "../../src/extensions/api.ts";
 import skills from "../../src/extensions/skills/index.ts";
+import { SKILLS_USAGE } from "../../src/extensions/skills/usage.ts";
 
 const repoSkillsDir = resolve(import.meta.dirname, "../../src/extensions/skills/builtin-skills");
 
@@ -41,8 +42,10 @@ const setup = async (
   ) => Promise<void>;
 }> => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-skills-ext-"));
-  let factory: AgentExtensionFactory | null = null;
-  let useOptions: UseFactoryOptions | undefined;
+  // An extension may register several factories (the skills extension registers its tool factory
+  // and a usage-context factory). Capture and invoke them all against a shared pi mock so the
+  // aggregated `on`/`registerTool` reflect every factory.
+  const factories: { factory: AgentExtensionFactory; options?: UseFactoryOptions }[] = [];
   const bootstrapHooks = new Map<string, () => void | Promise<void>>();
 
   const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
@@ -58,9 +61,8 @@ const setup = async (
       bootstrapHooks.set(name, hook);
     }),
     agent: {
-      use: (registered: AgentExtensionFactory, options?: UseFactoryOptions) => {
-        factory = registered;
-        useOptions = options;
+      use: (factory: AgentExtensionFactory, options?: UseFactoryOptions) => {
+        factories.push({ factory, options });
       },
       side: { classify },
       isForking: () => false,
@@ -71,29 +73,40 @@ const setup = async (
 
   const on = vi.fn();
   const registerTool = vi.fn();
-  await (factory as AgentExtensionFactory | null)?.(
-    {
-      on,
-      registerTool,
-      registerCommand: vi.fn(),
-      sendUserMessage: vi.fn(),
-    } as unknown as ExtensionAPI,
-    { scope },
-  );
+  for (const { factory } of factories) {
+    await factory(
+      {
+        on,
+        registerTool,
+        registerCommand: vi.fn(),
+        sendUserMessage: vi.fn(),
+      } as unknown as ExtensionAPI,
+      { scope },
+    );
+  }
 
   const fireSkillSuggestion = async (
     skillCatalog: { name: string; description: string; filePath: string }[],
   ): Promise<void> => {
-    const handler = on.mock.calls.find(([event]) => event === "before_agent_start")?.[1] as
-      | ((
-          event: { prompt: string; systemPromptOptions: { skills: unknown[] } },
-          ctx: { sessionManager: { getEntries: () => unknown[]; getLeafId: () => string | null } },
-        ) => Promise<unknown>)
-      | undefined;
-    await handler?.(
-      { prompt: "do a thing", systemPromptOptions: { skills: skillCatalog } },
-      { sessionManager: { getEntries: () => [], getLeafId: () => null } },
-    );
+    // Fire every before_agent_start handler (the proactive-suggestion handler plus the usage-context
+    // handler), so tests observe the union of their effects.
+    const handlers = on.mock.calls
+      .filter(([event]) => event === "before_agent_start")
+      .map(
+        ([, handler]) =>
+          handler as (
+            event: { prompt: string; systemPromptOptions: { skills: unknown[] } },
+            ctx: {
+              sessionManager: { getEntries: () => unknown[]; getLeafId: () => string | null };
+            },
+          ) => Promise<unknown>,
+      );
+    for (const handler of handlers) {
+      await handler(
+        { prompt: "do a thing", systemPromptOptions: { skills: skillCatalog } },
+        { sessionManager: { getEntries: () => [], getLeafId: () => null } },
+      );
+    }
   };
 
   return {
@@ -101,7 +114,9 @@ const setup = async (
     workspaceSkillsDir: join(workspaceDir, "skills"),
     on,
     registerTool,
-    useOptions,
+    // The first registered factory is the tool factory (resources_discover / delegation); its scope
+    // is what the background-opt-in assertion checks.
+    useOptions: factories[0]?.options,
     status,
     classify,
     log,
@@ -156,12 +171,18 @@ describe("skills extension", () => {
     await rm(workspaceSkillsDir, { recursive: true, force: true });
   });
 
-  it("registers the proactive skill-suggestion handler when proactiveLoading is on", async () => {
-    const { on } = await setup({ enabled: true, proactiveLoading: true });
+  it("runs the proactive classifier when proactiveLoading is on", async () => {
+    const { classify, fireSkillSuggestion } = await setup({
+      enabled: true,
+      proactiveLoading: true,
+    });
 
-    const handlers = on.mock.calls.filter(([event]) => event === "before_agent_start");
+    await fireSkillSuggestion([
+      { name: "pdf-tools", description: "Work with PDFs", filePath: "/skills/pdf-tools/SKILL.md" },
+    ]);
 
-    expect(handlers).toHaveLength(1);
+    // The suggestion handler runs classify when candidates exist; the usage-context handler does not.
+    expect(classify).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces the skill-suggestion status for a main session", async () => {
@@ -193,12 +214,26 @@ describe("skills extension", () => {
     expect(status).not.toHaveBeenCalled();
   });
 
-  it("registers no skill-suggestion handler when proactiveLoading is off", async () => {
-    const { on } = await setup({ enabled: true, proactiveLoading: false });
+  it("runs no proactive classifier when proactiveLoading is off", async () => {
+    const { classify, fireSkillSuggestion } = await setup({
+      enabled: true,
+      proactiveLoading: false,
+    });
 
-    const handlers = on.mock.calls.filter(([event]) => event === "before_agent_start");
+    await fireSkillSuggestion([
+      { name: "pdf-tools", description: "Work with PDFs", filePath: "/skills/pdf-tools/SKILL.md" },
+    ]);
 
-    expect(handlers).toHaveLength(0);
+    // The usage-context handler still fires, but it never calls classify — only the suggestion
+    // handler does, and it is not registered when proactiveLoading is off.
+    expect(classify).not.toHaveBeenCalled();
+  });
+
+  it("exposes skill-following guidance that treats injected skills as authoritative", () => {
+    // Authority framing moved here from the core base prompt; the catalog habit is retained too.
+    expect(SKILLS_USAGE).toContain("authoritative");
+    expect(SKILLS_USAGE).toContain("workflow");
+    expect(SKILLS_USAGE).toContain("no /skill load is needed");
   });
 
   it("defaults proactiveLoading to true in the config schema", () => {
