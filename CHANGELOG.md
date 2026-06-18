@@ -1,3 +1,10 @@
+# [3.33.0](https://github.com/asermax/tachikoma/compare/v3.32.0...v3.33.0) (2026-06-18)
+
+
+### Features
+
+* **detached-processes:** capture exit codes via a shell EXIT trap ([f88f049](https://github.com/asermax/tachikoma/commit/f88f049af59697f66d078296bed0025f87cb402e))
+
 # [3.32.0](https://github.com/asermax/tachikoma/compare/v3.31.2...v3.32.0) (2026-06-18)
 
 
