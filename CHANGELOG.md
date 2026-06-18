@@ -1,3 +1,10 @@
+## [3.30.1](https://github.com/asermax/tachikoma/compare/v3.30.0...v3.30.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **memory:** remove legacy stores outright after migration fold ([9661362](https://github.com/asermax/tachikoma/commit/9661362dbcf72f2dd890f9455365ddc59f37693b))
+
 # [3.30.0](https://github.com/asermax/tachikoma/compare/v3.29.0...v3.30.0) (2026-06-18)
 
 
