@@ -369,7 +369,18 @@ export class Coordinator {
     this.log.info({ sessionFile: trunk.sessionFile, day: trunk.day }, "trunk closed");
     this.events.emit("session:closed", { sessionFile: trunk.sessionFile, day: trunk.day });
 
-    await this.runPostProcessing(trunk, silent);
+    const failures = await this.runPostProcessing(trunk, silent);
+
+    // Retire only on a fully clean close. A post-processor failure (e.g. partial memory extraction)
+    // keeps the trunk in the unclosed index so the next recovery re-runs the pipeline; the per-phase
+    // and per-branch markers make that re-run skip the work that already completed.
+    if (failures > 0) {
+      this.log.warn(
+        { sessionFile: trunk.sessionFile, day: trunk.day, failures },
+        "trunk post-processing had failures — leaving trunk unclosed for retry",
+      );
+      return;
+    }
 
     this.trunkState.retireTrunk(trunk.sessionFile);
   }
@@ -514,7 +525,10 @@ export class Coordinator {
     );
   }
 
-  private async runPostProcessing(trunk: ActiveTrunk, silent = false): Promise<void> {
+  /** Run the trunk's post-processors; returns the number that rejected (0 ⇒ a clean close). */
+  private async runPostProcessing(trunk: ActiveTrunk, silent = false): Promise<number> {
+    let failures = 0;
+
     await runPhasedPostProcessors({
       processors: this.regs.postProcessors,
       context: {
@@ -529,9 +543,14 @@ export class Coordinator {
       },
       log: this.log,
       onProcessorStart: (processor) => this.status(`Post-processing: ${processor.name}…`, silent),
+      onProcessorSettled: (_processor, result) => {
+        if (result.status === "rejected") failures += 1;
+      },
     });
 
     this.events.emit("session:post-processed", { sessionFile: trunk.sessionFile });
+
+    return failures;
   }
 
   /**

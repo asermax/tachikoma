@@ -199,4 +199,35 @@ describe("Coordinator.recoverStaleTrunks", () => {
     await coordinator.recoverStaleTrunks();
     expect(runs).toBe(1);
   });
+
+  it("leaves a trunk unclosed when a post-processor fails, so the next recovery retries it", async () => {
+    const file = join(dir, "half-extracted.jsonl");
+    await writeFile(file, "");
+
+    const regs = createRegistrations();
+    let attempts = 0;
+    regs.postProcessors.push({
+      name: "extract",
+      // Fail the first close (a partial extraction), succeed on the retry.
+      process: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("partial extraction");
+      },
+    });
+
+    const now = () => new Date("2026-06-15T10:00:00Z");
+    const { coordinator, trunkState } = makeCoordinator(db, createAgent(), regs, now);
+
+    trunkState.addUnclosed(file);
+
+    await coordinator.recoverStaleTrunks();
+    // The failed close did NOT retire the trunk — it stays in the index for another pass.
+    expect(attempts).toBe(1);
+    expect(trunkState.listUnclosed()).toEqual([file]);
+
+    await coordinator.recoverStaleTrunks();
+    // The retry succeeds and the trunk is finally retired.
+    expect(attempts).toBe(2);
+    expect(trunkState.listUnclosed()).toEqual([]);
+  });
 });
