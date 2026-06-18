@@ -109,10 +109,14 @@ export const createAskBranchFactory =
       name: "ask_branch",
       label: "Ask Previous Branch",
       description:
-        "Ask a previous topic branch of today's conversation for context when a returned topic needs details not present in the current trunk context. Answered from that branch's full original conversation, not its summary.",
-      promptSnippet: "Ask a previous topic branch for missing context by branch id",
+        "Recover missing context from a previous topic branch of today's conversation. Answers come from that branch's FULL original conversation (its abandoned leaf), not its summary, so details that were never summarized are still reachable. Reach for it any time the current context seems incomplete — a reaction or reply that targets a message you can't identify, a reference to something 'earlier' or 'that other topic', or a topic that may belong to a prior branch. Branch ids are topic-1, topic-2, ... in the order branches started; if unsure which, try the likely candidate — an unknown id reports gracefully and a branch without the answer says so, so asking beats guessing. It refuses the branch currently live in context.",
+      promptSnippet:
+        "Recover missing context from a previous topic branch (topic-1, topic-2, ...) by asking it a focused question",
       promptGuidelines: [
-        "Use ask_branch when hidden related-branch context names a previous branch id and the user asks about details from that branch that are not in the current context.",
+        "Reach for ask_branch whenever context seems missing and might live in a prior branch: a reaction or reply targeting a message you can't identify, the user referencing something from 'earlier' or 'that other topic', or a topic that may belong to another branch.",
+        "It answers from the branch's FULL original conversation, not its summary — so details that were never summarized are still reachable.",
+        "Branch ids are topic-1, topic-2, ... in the order branches started. If unsure which, try the likely candidate; an unknown id reports gracefully and a branch without the answer says so, so asking is safer than guessing.",
+        "Also use it when hidden related-branch context names a branch id — but don't wait for that cue, and don't target the branch currently live in context (it refuses the active branch).",
       ],
       parameters: AskBranchParams,
       async execute(_toolCallId, params) {
