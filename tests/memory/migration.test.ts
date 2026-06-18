@@ -44,16 +44,11 @@ const namesIn = async (dir: string): Promise<string[]> => {
   }
 };
 
-/** A mocked fold agent: on each run it empties the legacy `.md` files (simulating the agent folding
- * their content away) and writes one representative topic file. Returns the side-run shape. */
+/** A mocked fold agent: it writes one representative topic file and leaves the legacy stores
+ * untouched (matching the real prompt, which forbids the agent from touching them). The host is
+ * responsible for removing the legacy stores after the fold commits. Returns the side-run shape. */
 const createFoldSide = (workspace: string) => ({
   run: vi.fn(async () => {
-    for (const store of ["facts", "preferences"]) {
-      const dir = legacyDir(workspace, store);
-      for (const name of (await namesIn(dir)).filter((n) => n.endsWith(".md"))) {
-        await writeFile(join(dir, name), "");
-      }
-    }
     const topics = join(memoriesRoot(workspace), "topics");
     await mkdir(topics, { recursive: true });
     await writeFile(
@@ -152,7 +147,7 @@ describe("migrateMemoryStores — detection", () => {
 });
 
 describe("migrateMemoryStores — happy path", () => {
-  it("folds legacy facts+preferences into topics in one side.run, then sweeps the old files away", async () => {
+  it("folds legacy facts+preferences into topics in one side.run, then removes the old stores", async () => {
     const workspace = await makeWorkspace();
     await writeLegacyFile(workspace, "facts", "work-info.md", "# Work Info\ncompany + role\n");
     await writeLegacyFile(
@@ -177,15 +172,15 @@ describe("migrateMemoryStores — happy path", () => {
     expect(system).toContain("memories/preferences/");
     expect(system).toContain("memories/topics/");
 
-    // Old files are swept away (the fold agent emptied them, the host removed the blanks).
-    expect(await namesIn(legacyDir(workspace, "facts"))).toEqual([]);
-    expect(await namesIn(legacyDir(workspace, "preferences"))).toEqual([]);
+    // The host removed the legacy stores outright, even though the fold agent left them untouched.
+    expect(await fileExists(legacyDir(workspace, "facts"))).toBe(false);
+    expect(await fileExists(legacyDir(workspace, "preferences"))).toBe(false);
 
     // A topic file was produced.
     expect(await fileExists(join(memoriesRoot(workspace), "topics", "work-info.md"))).toBe(true);
   });
 
-  it("makes exactly two commits in order — fold commit BEFORE the sweep, sweep commit after", async () => {
+  it("makes exactly two commits in order — fold commit BEFORE the removal, removal commit after", async () => {
     const workspace = await makeWorkspace();
     await writeLegacyFile(workspace, "facts", "work-info.md", "# Work Info\ndetail\n");
     await writeLegacyFile(workspace, "preferences", "comms.md", "# Comms\ndetail\n");
@@ -193,7 +188,7 @@ describe("migrateMemoryStores — happy path", () => {
     const side = createFoldSide(workspace);
 
     // Capture, at each commit, whether the legacy files are still on disk — proving whether the
-    // sweep (which removes them) has run yet. The fold commit must precede the sweep.
+    // removal has run yet. The fold commit must precede the removal so the fold is git-durable first.
     const traces: string[] = [];
     const legacyCountAtCommit: number[] = [];
     const commitChanges = vi.fn(async (message: string) => {
@@ -208,10 +203,10 @@ describe("migrateMemoryStores — happy path", () => {
 
     expect(commitChanges).toHaveBeenCalledTimes(2);
     expect(traces[0]).toBe("chore(memory): migrate facts+preferences into topics");
-    expect(traces[1]).toBe("chore(memory): sweep emptied legacy memory stores");
-    // At the fold commit the legacy files were still on disk (sweep had not run yet).
+    expect(traces[1]).toBe("chore(memory): remove legacy memory stores");
+    // At the fold commit the legacy files were still on disk (removal had not run yet).
     expect(legacyCountAtCommit[0]).toBeGreaterThan(0);
-    // At the sweep commit they were gone.
+    // At the removal commit they were gone.
     expect(legacyCountAtCommit[1]).toBe(0);
   });
 });

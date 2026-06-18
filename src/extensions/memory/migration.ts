@@ -1,16 +1,10 @@
-import { readdir, rmdir, stat } from "node:fs/promises";
+import { readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import { FILE_EDIT_TOOLS } from "../../agent/file-tools.ts";
 import type { Logger } from "../../log.ts";
 import type { Runner } from "./extraction.ts";
-import {
-  isBlankMarkdown,
-  listMarkdown,
-  memoriesRoot,
-  storeDir,
-  sweepEmptyMarkdown,
-} from "./layout.ts";
+import { isBlankMarkdown, listMarkdown, memoriesRoot, storeDir } from "./layout.ts";
 import {
   CONTEXT_DEDUP_SECTION,
   INDEX_UPDATE_SECTION,
@@ -29,7 +23,7 @@ export interface MigrationDeps {
   side: Runner;
   workspaceRoot: string;
   log: Logger;
-  /** Commit workspace changes (the fold and the sweep each commit, so git is the backup). */
+  /** Commit workspace changes (the fold and the removal each commit, so git is the backup). */
   commitChanges: (message: string) => Promise<void>;
 }
 
@@ -76,13 +70,12 @@ const scanLegacyStore = async (dir: string): Promise<StoreScan> => {
   return { files: markdown, nonEmpty };
 };
 
-// Best-effort tidy of a now-empty legacy dir; a non-empty dir (fold left content behind) survives.
-const removeIfEmpty = async (dir: string, log: Logger): Promise<void> => {
-  await rmdir(dir).catch((error) => {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT" && code !== "ENOTEMPTY") {
-      log.debug({ dir, err: error }, "could not remove legacy memory store dir");
-    }
+// Remove a legacy store outright (files and all). The fold is committed before this runs, so git
+// is the backup. A blank-only sweep would leave content-bearing files behind, and since detection
+// keys on legacy-content presence the migration would then re-run on every startup.
+const removeLegacyStore = async (dir: string, log: Logger): Promise<void> => {
+  await rm(dir, { recursive: true, force: true }).catch((error) => {
+    log.debug({ dir, err: error }, "could not remove legacy memory store dir");
   });
 };
 
@@ -128,10 +121,10 @@ const foldSystemPrompt = (workspaceRoot: string): string =>
 /**
  * Fold legacy `facts/` + `preferences/` into `topics/`, with no data loss. Detection is
  * state-based (no persisted marker): it runs iff a legacy store holds any non-empty `.md`,
- * and is a no-op once both are empty. Two commits bracket the sweep — fold → commit →
- * sweep → commit — so folded topics are durable in git before any legacy store is touched.
- * A hard agent-run error aborts WITHOUT sweeping, so the old stores still hold content and
- * the whole pass retries cleanly on the next startup (KD6).
+ * and is a no-op once both are gone. Two commits bracket the removal — fold → commit →
+ * remove → commit — so folded topics are durable in git before any legacy store is deleted.
+ * A hard agent-run error aborts WITHOUT removing anything, so the old stores still hold content
+ * and the whole pass retries cleanly on the next startup (KD6).
  */
 export const migrateMemoryStores = async (deps: MigrationDeps): Promise<void> => {
   const { side, workspaceRoot, log, commitChanges } = deps;
@@ -143,7 +136,7 @@ export const migrateMemoryStores = async (deps: MigrationDeps): Promise<void> =>
   const legacyNonEmpty = scans.facts.nonEmpty + scans.preferences.nonEmpty;
 
   if (legacyNonEmpty === 0) {
-    // Fresh install or already migrated (or interrupted-but-already-swept): no content to fold.
+    // Fresh install or already migrated (or interrupted-but-already-removed): no content to fold.
     log.debug(
       { facts: scans.facts.nonEmpty, preferences: scans.preferences.nonEmpty },
       "no legacy facts/preferences content — memory-store migration is a no-op",
@@ -167,7 +160,7 @@ export const migrateMemoryStores = async (deps: MigrationDeps): Promise<void> =>
       tier: "processor",
     });
   } catch (error) {
-    // Hard failure: abort WITHOUT sweeping or the sweep-commit. The legacy stores still hold
+    // Hard failure: abort WITHOUT removing or the removal-commit. The legacy stores still hold
     // content, so this whole pass re-runs on the next startup (the fold's dedup re-merges any
     // partial topic writes). No partial corruption is committed.
     log.warn(
@@ -177,17 +170,15 @@ export const migrateMemoryStores = async (deps: MigrationDeps): Promise<void> =>
     return;
   }
 
-  // Fold-before-empty (R7): commit the folded topics so they are durable in git BEFORE any
-  // legacy store is touched. Then sweep the now-blank legacy files and commit that cutover.
+  // Fold-before-remove (R7): commit the folded topics so they are durable in git BEFORE any
+  // legacy store is touched. Then remove the legacy stores outright and commit that cutover.
   await commitChanges("chore(memory): migrate facts+preferences into topics");
 
   for (const store of LEGACY_STORES) {
-    const dir = legacyStoreDir(workspaceRoot, store);
-    await sweepEmptyMarkdown(dir, log);
-    await removeIfEmpty(dir, log);
+    await removeLegacyStore(legacyStoreDir(workspaceRoot, store), log);
   }
 
-  await commitChanges("chore(memory): sweep emptied legacy memory stores");
+  await commitChanges("chore(memory): remove legacy memory stores");
 
   const topicsProduced = (await listMarkdown(storeDir(workspaceRoot, "topics"))).length;
 

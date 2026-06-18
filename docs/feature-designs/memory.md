@@ -51,7 +51,7 @@ Each extraction forks the branch (`forkAndContinue`), composes the store's instr
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
 | `src/extensions/memory/index.ts` | Wiring and config schema (`enabled`, `maintenance`) | `migrate-memory-stores` bootstrap registered before `init-memory-layout`; the whole extraction + maintenance pipeline is one `memory-trunk-close` processor; transcript-prune is the only cron |
-| `src/extensions/memory/migration.ts` | `migrateMemoryStores` — one-time fold of legacy `facts/`+`preferences/` into `topics/` | State-based detection (legacy-content presence), no persisted marker; two commits bracket the sweep; hard error aborts without sweeping |
+| `src/extensions/memory/migration.ts` | `migrateMemoryStores` — one-time fold of legacy `facts/`+`preferences/` into `topics/` | State-based detection (legacy-content presence), no persisted marker; two commits bracket the removal; the host removes the legacy stores outright after the fold commits; hard error aborts without removing |
 | `src/extensions/memory/layout.ts` | Store paths, `MEMORY_STORES`/`INDEXED_STORES` constants, `ensureMemoryLayout` (dirs + index seeding), `listMarkdown`, `sweepEmptyMarkdown`, `isBlankMarkdown` | The constant arrays are the single source of truth every module iterates; episodic stays in `MEMORY_STORES` but is not indexed; `isBlankMarkdown` is the single "what counts as content" threshold shared by the sweep and the migration detection gate |
 | `src/extensions/memory/indexes.ts` | `buildMemoryContext`, `formatMemoryIndex` | One topics loop over `INDEXED_STORES`; `formatMemoryIndex` capitalizes the store name → `## Topics Index`; strict entry regex — malformed lines vanish |
 | `src/extensions/memory/extraction.ts` | `storeInstruction(store)` — the per-store follow-up prompt; `TOPICS_BASE_PROMPT`; `EPISODIC_BASE_PROMPT`; `Runner` type | One unified topics prompt folds both signal types; the facts-vs-preferences classification self-check and the AGENTS.md-preference skip are gone |
@@ -66,7 +66,7 @@ Each extraction forks the branch (`forkAndContinue`), composes the store's instr
 
 - **Store set as the seam.** `MEMORY_STORES` and `INDEXED_STORES` in `layout.ts` are the single source of truth. The trunk-close pipeline's extraction + prune loops and the maintenance manifests (`buildCrossStoreManifest`, `buildStoreManifestForContext`) all iterate them, so the store set propagates everywhere without touching call sites.
 - **Headless-LLM seam.** Extraction (via `forkAndContinue` on a forked branch) and maintenance/migration (via `Runner.run`) all use the `SideRunner` with the shared `FILE_EDIT_TOOLS` allowlist and the `processor` tier. The migration reuses the same runner/tool/tier the maintenance phases use.
-- **Commit seam.** All workspace-mutating passes commit through the shared `commitChanges` helper (`app.git.createCommitAgent("workspace")` + `commitAll`). The migration uses the same helper so its fold and sweep land as git commits (which is also the backup/recovery mechanism).
+- **Commit seam.** All workspace-mutating passes commit through the shared `commitChanges` helper (`app.git.createCommitAgent("workspace")` + `commitAll`). The migration uses the same helper so its fold and removal land as git commits (which is also the backup/recovery mechanism).
 - **Index contract.** Every agent that creates/modifies/deletes a topic file also maintains `topics/MEMORY.md` per the `INDEX_UPDATE_SECTION` rules. `ensureMemoryLayout` is idempotent and only seeds an absent index.
 
 ## Key Decisions
@@ -137,8 +137,8 @@ Each extraction forks the branch (`forkAndContinue`), composes the store's instr
 
 ### One-time migration: state-based detection, no persisted marker
 
-**Choice**: A `migrate-memory-stores` bootstrap hook (registered before `init-memory-layout`) folds legacy `facts/`+`preferences/` into `topics/`. Detection is state-based: it runs iff a legacy store holds any non-empty `.md`, and is a no-op once both are empty (and on fresh installs, which never create them). No DB key, file sentinel, or migration record is written. The merge is fully agent-decided (one side-run over all old files plus existing topics). Two commits bracket the sweep (fold → commit → sweep → commit); a hard agent error aborts without sweeping so the pass retries next startup.
-**Why**: The empty-legacy-stores state is intrinsically the completion signal (reached only by the final sweep), so a separate marker is redundant — mirroring the legacy migration subsystem's convention of detecting work by state presence rather than persisted flags. Keying on legacy-content presence (not `topics/` presence) makes an interrupted fold re-run correctly: after a fold that created `topics/` but crashed before the sweep, the legacy stores still hold content, so the check correctly re-runs. The fold-before-empty ordering and the fold's merge/dedup guarantee no data loss, and the committed stores are git-recoverable.
+**Choice**: A `migrate-memory-stores` bootstrap hook (registered before `init-memory-layout`) folds legacy `facts/`+`preferences/` into `topics/`. Detection is state-based: it runs iff a legacy store holds any non-empty `.md`, and is a no-op once both are gone (and on fresh installs, which never create them). No DB key, file sentinel, or migration record is written. The merge is fully agent-decided (one side-run over all old files plus existing topics); the agent only writes under `topics/` and the host removes the legacy stores outright after the fold commits — a blank-only sweep would leave content-bearing files behind and re-trigger detection every startup. Two commits bracket the removal (fold → commit → remove → commit); a hard agent error aborts without removing so the pass retries next startup.
+**Why**: The removed-legacy-stores state is intrinsically the completion signal (reached only by the final removal), so a separate marker is redundant — mirroring the legacy migration subsystem's convention of detecting work by state presence rather than persisted flags. Keying on legacy-content presence (not `topics/` presence) makes an interrupted fold re-run correctly: after a fold that created `topics/` but crashed before the removal, the legacy stores still hold content, so the check correctly re-runs. The fold-before-remove ordering and the fold's merge/dedup guarantee no data loss, and the committed stores are git-recoverable.
 **Alternatives Considered**: `topics/` presence as the trigger (false "done" after a mid-fold crash); a DB `app_state` completion key (a second source of truth that can drift); a file sentinel (redundant, a hidden workspace artifact).
 **Consequences**: Pro: no marker state to manage or drift; the filesystem is the single source of truth. Con: a re-run after an interrupted fold relies on the agent's merge/dedup (mitigated by merge instructions + the next maintenance pass). This state-based, marker-free migration-detection idiom recurs across the migration subsystem — see [DES-006](../design/DES-006-state-based-migration-detection.md).
 
@@ -179,13 +179,13 @@ Each extraction forks the branch (`forkAndContinue`), composes the store's instr
 
 **Given**: A workspace with legacy `facts/`/`preferences/` files and no `topics/`
 **When**: Bootstrap runs
-**Then**: The migration hook detects legacy content; one agent run folds every old file into `topics/` (same-subject files across both old stores merge into one; distinct subjects stay distinct), the fold is committed, the host sweeps the old stores and commits, and the first session's injected index shows the migrated topics.
+**Then**: The migration hook detects legacy content; one agent run folds every old file into `topics/` (same-subject files across both old stores merge into one; distinct subjects stay distinct), the fold is committed, the host removes the old stores and commits, and the first session's injected index shows the migrated topics.
 
 ### Scenario: Migration interrupted mid-fold
 
-**Given**: The migration crashed after creating some `topics/` files but before sweeping the old stores
+**Given**: The migration crashed after creating some `topics/` files but before removing the old stores
 **When**: The system restarts and the hook runs
-**Then**: The legacy stores still hold content, so the pass re-runs; the agent re-folds, merging into the existing topic files rather than duplicating; then the old stores are swept. No data is lost (pre-migration state is git-recoverable).
+**Then**: The legacy stores still hold content, so the pass re-runs; the agent re-folds, merging into the existing topic files rather than duplicating; then the old stores are removed. No data is lost (pre-migration state is git-recoverable).
 
 ## Notes
 
