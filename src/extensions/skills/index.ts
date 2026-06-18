@@ -3,12 +3,14 @@ import { resolve } from "node:path";
 
 import { Type } from "typebox";
 
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension, SESSION_SCOPES } from "../api.ts";
 import { discoverSkillAgents } from "./agents.ts";
 import { BUILTIN_AGENTS } from "./builtins.ts";
 import { createDelegateTool } from "./delegate.ts";
 import { registerReload } from "./reload.ts";
 import { registerSkillSuggestion } from "./suggest.ts";
+import { SKILLS_USAGE } from "./usage.ts";
 
 interface SkillsConfig {
   enabled: boolean;
@@ -74,5 +76,13 @@ export default defineExtension<SkillsConfig>({
       },
       { sessionScopes: ["main", "background"] },
     );
+
+    // Agent-facing skill guidance (catalog habit + injected-skill authority), contributed as the
+    // extension's own usage section so the core base prompt stays feature-agnostic. Not gated by
+    // proactiveLoading: the catalog/progressive-disclosure guidance is relevant even when proactive
+    // injection is off. Scoped like the factory above so background task runs receive it too.
+    app.agent.use(provideContext(SKILLS_USAGE, "skills-usage"), {
+      sessionScopes: ["main", "background"],
+    });
   },
 });

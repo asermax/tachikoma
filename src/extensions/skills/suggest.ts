@@ -79,7 +79,7 @@ const classifyWithDeadline = async <T>(
 type SkillSuggestionResult = { message: { customType: string; content: string; display: false } };
 
 const PREFACE =
-  "The following skill content has been injected for this session — the instructions below are available immediately, so no /skill command is needed. Follow each skill's instructions where relevant:";
+  "The following skills have been proactively loaded because they match the current task — their content is already here, so no /skill load is needed. These skills define the correct process for this kind of request: follow their instructions and workflows rather than improvising an alternative approach. If a skill defines a workflow, use it.";
 
 /**
  * Proactive skill loading: on each genuine top-level turn, a conversation-aware classifier picks
@@ -172,7 +172,12 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
           }
           injected.add(skill.name);
           injectedNames.push(skill.name);
-          sections.push(`<injected-skill name="${skill.name}">\n${body}\n</injected-skill>`);
+          // Each section ends with a per-skill adherence nudge so the instruction to follow the
+          // skill's process lands directly under the content it applies to (matters most when several
+          // skills are injected together), reinforcing the preface's authority framing.
+          sections.push(
+            `<injected-skill name="${skill.name}">\n${body}\n\n→ Follow the instructions above for this task. If a workflow is defined, start it.\n</injected-skill>`,
+          );
         } catch (error) {
           log.warn(
             { err: error, skill: skill.name },

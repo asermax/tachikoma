@@ -99,9 +99,13 @@ describe("registerSkillSuggestion", () => {
 
     expect(result?.message.customType).toBe("skill-content");
     expect(result?.message.display).toBe(false);
-    expect(result?.message.content).toContain("injected for this session");
+    // Strengthened preface: authority framing, not the old "where relevant" softness.
+    expect(result?.message.content).toContain("proactively loaded");
+    expect(result?.message.content).toContain("rather than improvising");
     expect(result?.message.content).toContain('<injected-skill name="pdf-tools">');
     expect(result?.message.content).toContain("Injected skill body.");
+    // Per-skill adherence line appended inside each injected-skill wrapper.
+    expect(result?.message.content).toContain("If a workflow is defined, start it.");
     expect(result?.message.content).not.toContain("/skill:");
   });
 
