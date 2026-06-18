@@ -70,6 +70,31 @@ export const enumerateEntries = (session: AgentSession): SessionEntry[] =>
 export const getEntry = (session: AgentSession, id: string): SessionEntry | undefined =>
   session.sessionManager.getEntry(id);
 
+/**
+ * Plain text of a message entry: the joined `text` blocks of its content. Returns `""` for
+ * non-message entries or entries whose content isn't a block array, so callers can treat empty as
+ * "no text". Centralized so branch-summary rendering and channel context recovery share one read of
+ * pi's message shape.
+ */
+export const messageText = (entry: SessionEntry): string => {
+  if (entry.type !== "message") return "";
+
+  const content = (entry.message as { content?: unknown }).content;
+  if (!Array.isArray(content)) return "";
+
+  return content
+    .filter(
+      (block): block is { type: "text"; text: string } =>
+        block != null &&
+        typeof block === "object" &&
+        (block as { type?: unknown }).type === "text" &&
+        typeof (block as { text?: unknown }).text === "string",
+    )
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+};
+
 export const getLeafId = (session: AgentSession): string | null =>
   session.sessionManager.getLeafId();
 

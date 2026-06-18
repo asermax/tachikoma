@@ -53,7 +53,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
 
   const recorded: RecordedMessage[] = [];
   const mappings = new Map<string, MessageRouting>();
-  const branchExchanges = new Map<string, string>();
+  const reactedToTexts = new Map<string, string>();
   // The trunk routing for the message being produced/received: live leaf entry + live branch id.
   const routing = {
     current: { treeEntryId: "entry-1", branchId: "topic-1" } as MessageRouting | null,
@@ -121,6 +121,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
   const stop = vi.fn(async () => {});
   const submit = vi.fn();
   const runtime: ChannelRuntime = { log: fakeLog, submit };
+  const reactedToText = vi.fn((treeEntryId: string) => reactedToTexts.get(treeEntryId) ?? null);
 
   const channel = new TelegramChannel(bot, {
     chatId: 42,
@@ -131,7 +132,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     stop,
     store,
     currentRouting: () => routing.current,
-    branchLastExchange: (branchId: string) => branchExchanges.get(branchId) ?? null,
+    reactedToText,
     ...overrides,
   });
 
@@ -213,7 +214,8 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     store,
     recorded,
     mappings,
-    branchExchanges,
+    reactedToText,
+    reactedToTexts,
     routing,
     triggerError: (error: unknown) => errorHandler({ error }),
     startCalls,
@@ -803,18 +805,33 @@ describe("reply-to branch routing", () => {
     expect(submitted.text).toBe(`follow-up${UNRESOLVED_REPLY_HINT}`);
   });
 
-  it("omits the reply quote when replying to the live branch's message", async () => {
+  it("omits the reply quote when replying to the live branch's most recent message", async () => {
     const { channel, runtime, submit, mappings, dispatchText } = makeChannel();
     await channel.start(runtime);
 
-    // Target on the live branch (topic-1, the current routing): quote is suppressed (already live).
-    mappings.set("3", { treeEntryId: "entry-3", branchId: "topic-1" });
+    // Target is the live branch's tip (entry-1, the current routing leaf): already at the bottom of
+    // the conversation, so the identifying quote is suppressed.
+    mappings.set("3", { treeEntryId: "entry-1", branchId: "topic-1" });
 
     await dispatchText("follow-up", 9, { message_id: 3, text: "the plan is ready" });
 
     const submitted = submit.mock.calls[0]?.[0];
     expect(submitted.text).toBe("follow-up");
     expect(submitted.metadata.replyToMessageId).toBe("3");
+    expect(submitted.metadata.forcedBranchId).toBe("topic-1");
+  });
+
+  it("keeps the reply quote for an older message on the live branch", async () => {
+    const { channel, runtime, submit, mappings, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    // An older live-branch message (entry-3, not the live leaf entry-1): the quote identifies it.
+    mappings.set("3", { treeEntryId: "entry-3", branchId: "topic-1" });
+
+    await dispatchText("follow-up", 9, { message_id: 3, text: "the plan is ready" });
+
+    const submitted = submit.mock.calls[0]?.[0];
+    expect(submitted.text).toBe("Replied to:\n> the plan is ready\n\nfollow-up");
     expect(submitted.metadata.forcedBranchId).toBe("topic-1");
   });
 
@@ -894,35 +911,56 @@ describe("inbound reactions", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("prepends the referenced branch's last exchange when reacting to an earlier branch", async () => {
-    const { channel, runtime, submit, mappings, branchExchanges, dispatchReaction } = makeChannel();
+  it("prepends the reacted-to message quote when reacting to a non-live message", async () => {
+    const { channel, runtime, submit, mappings, reactedToTexts, reactedToText, dispatchReaction } =
+      makeChannel();
     await channel.start(runtime);
 
     // Reaction targets a message on an earlier branch (topic-2, not the live topic-1).
     mappings.set("10", { treeEntryId: "entry-10", branchId: "topic-2" });
-    branchExchanges.set("topic-2", "user: hi\nassistant: hello there");
+    reactedToTexts.set("entry-10", "ship the fix tonight");
 
     await dispatchReaction(10, "👍");
 
+    expect(reactedToText).toHaveBeenCalledWith("entry-10");
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Reacted to:\nuser: hi\nassistant: hello there\n\nThe user reacted 👍 to a previous message. Interpret it in the context of the last exchange and respond accordingly.",
+        text: "Reacted to:\n> ship the fix tonight\n\nThe user reacted 👍 to a previous message. Interpret it in context and respond accordingly.",
       }),
     );
   });
 
-  it("omits context when reacting to a message on the live branch", async () => {
-    const { channel, runtime, submit, mappings, branchExchanges, dispatchReaction } = makeChannel();
+  it("omits the quote when reacting to the live branch's most recent message", async () => {
+    const { channel, runtime, submit, mappings, reactedToTexts, reactedToText, dispatchReaction } =
+      makeChannel();
     await channel.start(runtime);
 
-    // Reaction targets a message on the live branch (topic-1, the current routing).
+    // The live branch's tip (entry-1, the current routing leaf): already at the bottom, no quote.
+    mappings.set("11", { treeEntryId: "entry-1", branchId: "topic-1" });
+    reactedToTexts.set("entry-1", "ship the fix tonight");
+
+    await dispatchReaction(11, "👍");
+
+    expect(reactedToText).not.toHaveBeenCalled();
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({ text: "The user reacted 👍 to a previous message." }),
+    );
+  });
+
+  it("keeps the quote for an older message on the live branch", async () => {
+    const { channel, runtime, submit, mappings, reactedToTexts, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    // An older live-branch message (entry-11, not the live leaf entry-1): the quote identifies it.
     mappings.set("11", { treeEntryId: "entry-11", branchId: "topic-1" });
-    branchExchanges.set("topic-1", "user: hi\nassistant: hello there");
+    reactedToTexts.set("entry-11", "ship the fix tonight");
 
     await dispatchReaction(11, "👍");
 
     expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "The user reacted 👍 to a previous message." }),
+      expect.objectContaining({
+        text: "Reacted to:\n> ship the fix tonight\n\nThe user reacted 👍 to a previous message. Interpret it in context and respond accordingly.",
+      }),
     );
   });
 

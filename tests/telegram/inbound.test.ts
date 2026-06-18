@@ -143,20 +143,31 @@ describe("mapReaction", () => {
     expect(inbound?.text).toBe("The user reacted 🔥 to a previous message.");
   });
 
-  it("prepends the last exchange and guidance when context is supplied", () => {
+  it("prepends the reacted-to message quote and guidance when context is supplied", () => {
     const inbound = mapReaction(reaction(12, 42, ["👍"]), {
-      lastExchange: "user: hi\nassistant: hello there",
+      reactedToText: "the plan is ready",
     });
 
     expect(inbound?.text).toBe(
-      "Reacted to:\nuser: hi\nassistant: hello there\n\n" +
-        "The user reacted 👍 to a previous message. Interpret it in the context of the last exchange and respond accordingly.",
+      "Reacted to:\n> the plan is ready\n\n" +
+        "The user reacted 👍 to a previous message. Interpret it in context and respond accordingly.",
     );
     expect(inbound?.metadata).toEqual({ reaction: true, replyToMessageId: "12" });
   });
 
-  it("omits the context block and guidance when the last exchange is blank", () => {
-    const inbound = mapReaction(reaction(12, 42, ["👍"]), { lastExchange: "   " });
+  it("truncates a long reacted-to quote with a head…tail ellipsis", () => {
+    const longText = `${"H".repeat(400)}${"T".repeat(400)}`;
+    const inbound = mapReaction(reaction(12, 42, ["👍"]), { reactedToText: longText });
+
+    const quoteLine = inbound?.text.split("\n")[1] ?? "";
+    expect(quoteLine).toContain("…");
+    expect(quoteLine.startsWith("> H")).toBe(true);
+    expect(quoteLine.endsWith("T")).toBe(true);
+    expect(inbound?.text.length).toBeLessThan(longText.length);
+  });
+
+  it("omits the quote when the reacted-to text is blank", () => {
+    const inbound = mapReaction(reaction(12, 42, ["👍"]), { reactedToText: "   " });
 
     expect(inbound?.text).toBe("The user reacted 👍 to a previous message.");
   });

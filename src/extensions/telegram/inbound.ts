@@ -28,6 +28,14 @@ export const replyQuote = (message: Pick<Message, "reply_to_message">): string |
   return `Replied to:\n> ${truncateQuote(text)}`;
 };
 
+/** Quote of a reacted-to message's recovered text, mirroring {@link replyQuote}. Null when blank. */
+export const reactionQuote = (text: string | null | undefined): string | null => {
+  const trimmed = text?.trim();
+  if (trimmed == null || trimmed.length === 0) return null;
+
+  return `Reacted to:\n> ${truncateQuote(trimmed)}`;
+};
+
 /** The id of the bot/user message a reply targets, as a string key. */
 export const replyTargetId = (message: Pick<Message, "reply_to_message">): string | null =>
   message.reply_to_message != null ? String(message.reply_to_message.message_id) : null;
@@ -87,13 +95,14 @@ const emojiSet = (reactions: ReactionType[] | undefined): Set<string> =>
 /**
  * Frame a reaction update as an inbound message. Diffs old/new reactions so the
  * agent sees what the user added or removed; returns null when nothing changed.
- * When `context.lastExchange` is supplied (the reaction targets an older
- * message), it is prepended as `Reacted to:` context with an interpretation
- * hint; a reaction to the session's latest message is left bare (already live).
+ * When `context.reactedToText` is supplied (the channel recovered the targeted
+ * message's text — the reaction is not aimed at the session's most recent
+ * message), it is prepended as a `Reacted to:` quote so the agent knows which
+ * message the emoji targets; otherwise the bare reaction prose is used.
  */
 export const mapReaction = (
   event: MessageReactionUpdated,
-  context?: { lastExchange: string | null },
+  context?: { reactedToText?: string | null },
 ): InboundMessage | null => {
   const next = emojiSet(event.new_reaction);
   const previous = emojiSet(event.old_reaction);
@@ -109,11 +118,9 @@ export const mapReaction = (
   ].filter((part) => part != null);
 
   const prose = `The user ${parts.join(" and ")} to a previous message.`;
-  const exchange = context?.lastExchange?.trim();
+  const quote = reactionQuote(context?.reactedToText);
   const text =
-    exchange != null && exchange.length > 0
-      ? `Reacted to:\n${exchange}\n\n${prose} Interpret it in the context of the last exchange and respond accordingly.`
-      : prose;
+    quote != null ? `${quote}\n\n${prose} Interpret it in context and respond accordingly.` : prose;
 
   return {
     text,

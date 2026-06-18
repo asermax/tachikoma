@@ -62,8 +62,8 @@ export interface TelegramChannelOptions {
    * null when no trunk is active. Read post-append so the tree entry id exists.
    */
   currentRouting: () => MessageRouting | null;
-  /** The last user+assistant exchange of a recorded branch, used as reaction/reply context. */
-  branchLastExchange: (branchId: string) => string | null;
+  /** Recover the text of a recorded message by its tree-entry id, for reaction context. */
+  reactedToText: (treeEntryId: string) => string | null;
 }
 
 export const STOP_COMMAND = "/stop";
@@ -185,14 +185,15 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      // Prepend the referenced branch's last exchange only when the reaction targets an earlier
-      // branch; a reaction on the live branch is already in the agent's context.
-      const lastExchange =
-        reference.branchId !== this.currentBranchId()
-          ? this.options.branchLastExchange(reference.branchId)
-          : null;
+      // Quote the reacted-to message's text so the agent knows which message the emoji targets,
+      // unless the reaction lands on the live branch's most recent message (already at the bottom
+      // of the conversation). Earlier-branch context (summary + ask_branch hint) is injected by the
+      // boundary on the forced route, so it isn't duplicated here.
+      const reactedToText = this.isLiveBranchTip(reference)
+        ? null
+        : this.options.reactedToText(reference.treeEntryId);
 
-      const inbound = mapReaction(event, { lastExchange });
+      const inbound = mapReaction(event, { reactedToText });
       if (inbound == null) return;
 
       runtime.submit(this.applyForcedRouting(inbound, reference));
@@ -268,21 +269,32 @@ export class TelegramChannel implements Channel {
     return { ...message, text };
   }
 
-  /** The branch id of the live trunk leaf, or null when no trunk is active. */
-  private currentBranchId(): string | null {
-    return this.options.currentRouting()?.branchId ?? null;
+  /**
+   * Whether `reference` is the live branch's most recent message — the message at the bottom of the
+   * conversation, already visible to the agent. Routing records each message against the trunk leaf
+   * at finalize, so this is a recency check: once a newer exchange lands, an older message's
+   * tree-entry id no longer matches the live leaf.
+   */
+  private isLiveBranchTip(reference: MessageRouting): boolean {
+    const live = this.options.currentRouting();
+    return (
+      live != null &&
+      reference.branchId === live.branchId &&
+      reference.treeEntryId === live.treeEntryId
+    );
   }
 
   /**
-   * Whether to suppress the reply quote: only when the reply targets the live branch (already in the
-   * agent's context). An unrecorded or earlier-branch target keeps the quote so context survives.
+   * Whether to suppress the reply quote: only when the reply targets the live branch's most recent
+   * message (already at the bottom of the conversation). Any other target — an older live-branch
+   * message or an earlier branch — keeps the quote so the agent can tell which message was replied to.
    */
   private shouldSkipQuote(message: Pick<Message, "reply_to_message">): boolean {
     const target = replyTargetId(message);
     if (target == null) return false;
 
     const reference = this.options.store.resolve(target);
-    return reference != null && reference.branchId === this.currentBranchId();
+    return reference != null && this.isLiveBranchTip(reference);
   }
 
   async respond({ message, events }: Exchange): Promise<void> {

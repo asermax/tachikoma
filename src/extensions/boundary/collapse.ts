@@ -1,10 +1,11 @@
-import type { AgentSession, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import {
   type BranchSummaryDetails,
   branchEntriesSinceBase,
   branchWithSummary,
   getLeafId,
+  messageText,
 } from "../../agent/session-tree.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
 import type { Logger } from "../../log.ts";
@@ -45,26 +46,6 @@ const SUMMARY_SYSTEM = [
   "Output only the summary prose, no preamble.",
 ].join("\n");
 
-const textOf = (entry: SessionEntry): string => {
-  if (entry.type !== "message") return "";
-
-  const content = (entry.message as { content?: unknown }).content;
-
-  if (!Array.isArray(content)) return "";
-
-  return content
-    .filter(
-      (block): block is { type: "text"; text: string } =>
-        block != null &&
-        typeof block === "object" &&
-        (block as { type?: unknown }).type === "text" &&
-        typeof (block as { text?: unknown }).text === "string",
-    )
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
-};
-
 /** The branch's own turns: entries on the leaf path strictly after `currentBaseId`. */
 const renderBranchTranscript = (session: AgentSession, currentBaseId: string | null): string => {
   const sections: string[] = [];
@@ -75,7 +56,7 @@ const renderBranchTranscript = (session: AgentSession, currentBaseId: string | n
     const role = entry.message.role;
     if (role !== "user" && role !== "assistant") continue;
 
-    const text = textOf(entry);
+    const text = messageText(entry);
     if (text === "") continue;
 
     sections.push(`${role === "user" ? "User" : "Assistant"}: ${text}`);
