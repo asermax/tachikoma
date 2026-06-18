@@ -26,8 +26,10 @@ export interface ReconcileDeps {
 const SIGKILL_EXIT_CODE = 137;
 
 const readExitCode = async (path: string): Promise<number | null> => {
-  // Retry once after 100ms: the watcher's kill(pid, 0) can observe death before
-  // the in-process exit listener has written the sidecar.
+  // Retry once after 100ms. A normal exit writes the sidecar from the spawned
+  // shell before it dies, so the file is already present once liveness fails;
+  // the retry covers signal deaths, where the host's exit listener (the only
+  // writer) lags the watcher's kill(pid, 0) observation of death.
   for (const delayMs of [0, 100]) {
     if (delayMs > 0) await sleep(delayMs);
 

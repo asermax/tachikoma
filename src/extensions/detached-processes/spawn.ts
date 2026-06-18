@@ -59,10 +59,43 @@ const signalExitCode = (signal: NodeJS.Signals): number | null => {
 };
 
 /**
+ * Wrap `value` for a POSIX single-quoted context: wrap it in single quotes and
+ * escape embedded single quotes via the `'\''` idiom. Safe for paths containing
+ * spaces, `$`, or quotes. Applied to the sidecar path and again to the whole
+ * trap body, which keeps the user's command string out of every quoted region.
+ */
+const shSingleQuote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+
+/**
+ * Wrap a user command so the spawned shell writes its own exit code to the
+ * sidecar before exiting — recovering the code even when the host was down at
+ * exit time, which the host's exit listener cannot cover.
+ *
+ * An EXIT trap captures `$?` and writes the sidecar on normal completion *and*
+ * on a user `exit N` (the trap fires with `$? = N`). It runs in the same shell
+ * as the command — not a subshell — so any signal traps the user command
+ * installs stay in effect on the process-group leader. The trap does not fire
+ * when a signal kills the shell, so signal deaths are still captured only by
+ * the host's exit listener (128 + signal). The shell's own exit status is the
+ * command's code (the EXIT trap does not alter it), so the host listener writes
+ * the same value the trap wrote. Only the sidecar path is quoted; the user
+ * command passes through verbatim after `EXIT; `, with no escaping.
+ *
+ * `sidecarPath` must be absolute: the child may run with a different cwd, and a
+ * relative path would be resolved against the child's cwd rather than the host's.
+ */
+export const wrapWithExitCapture = (command: string, sidecarPath: string): string => {
+  const body = `__tachikoma_rc=$?; printf %s "$__tachikoma_rc" > ${shSingleQuote(sidecarPath)}`;
+  return `trap ${shSingleQuote(body)} EXIT; ${command}`;
+};
+
+/**
  * Spawn a detached shell command with stdout/stderr captured to files and
- * persist the record. The exit-code sidecar file lets reconciliation recover
- * the code while this host process is alive; after a restart the child is
- * reparented and the code is unknowable (null).
+ * persist the record. The command is wrapped (see wrapWithExitCapture) so the
+ * spawned shell writes its own exit code to the sidecar before exiting, making
+ * the code recoverable even when the host was down at exit time. The host's
+ * exit listener remains as a second writer for signal deaths (whose EXIT trap
+ * never fires) and to trigger immediate reconciliation.
  */
 export const spawnProcess = async (
   deps: SpawnDeps,
@@ -88,7 +121,11 @@ export const spawnProcess = async (
   const stdoutFd = openSync(stdoutPath, "a");
   const stderrFd = openSync(stderrPath, "a");
 
-  const wrapped = limiter.wrap(id, options.command, options.memoryLimitMb ?? null);
+  const wrapped = limiter.wrap(
+    id,
+    wrapWithExitCapture(options.command, sidecarPath),
+    options.memoryLimitMb ?? null,
+  );
   const cwd = options.cwd ?? process.cwd();
 
   let child: ReturnType<typeof spawn>;
@@ -118,6 +155,10 @@ export const spawnProcess = async (
     log.error({ pid, err: error }, "detached child emitted an error");
   });
 
+  // Fallback writer + immediate reconcile trigger. A signal that kills the
+  // shell does not run the wrapper's EXIT trap, so for signal deaths the code is
+  // only recoverable via this listener (128 + signal). For normal exits this
+  // write is redundant with the wrapper's own sidecar write.
   child.on("exit", (code, signal) => {
     const value = code ?? (signal != null ? signalExitCode(signal) : null);
 

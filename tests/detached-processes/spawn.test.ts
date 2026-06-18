@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +11,7 @@ import {
   isAlive,
   spawnProcess,
   terminate,
+  wrapWithExitCapture,
 } from "../../src/extensions/detached-processes/spawn.ts";
 import { createWatcherTick } from "../../src/extensions/detached-processes/watcher.ts";
 import { createTestContext, type TestContext, waitFor } from "./setup.ts";
@@ -178,5 +180,28 @@ describe("terminate", () => {
 
     expect(warn).toHaveBeenCalled();
     await waitFor(() => !isAlive(record.pid));
+  });
+});
+
+describe("wrapWithExitCapture", () => {
+  it("writes the command's exit code to the sidecar itself, with no host listener", async () => {
+    const sidecar = join(ctx.processesDir, "wrap-exit-code");
+
+    // Run the wrapped command through a real shell with no host exit listener,
+    // proving the sidecar is written by the child itself — durable across a host
+    // restart. `exit 3` confirms the EXIT trap fires and captures the code.
+    const result = spawnSync("sh", ["-c", wrapWithExitCapture("exit 3", sidecar)]);
+
+    expect(result.status).toBe(3);
+    expect(await readFile(sidecar, "utf-8")).toBe("3");
+  });
+
+  it("captures a clean exit and propagates it as the wrapper's own status", async () => {
+    const sidecar = join(ctx.processesDir, "wrap-exit-code");
+
+    const result = spawnSync("sh", ["-c", wrapWithExitCapture("true", sidecar)]);
+
+    expect(result.status).toBe(0);
+    expect(await readFile(sidecar, "utf-8")).toBe("0");
   });
 });
