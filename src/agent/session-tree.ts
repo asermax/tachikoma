@@ -99,6 +99,13 @@ export const getLeafId = (session: AgentSession): string | null =>
   session.sessionManager.getLeafId();
 
 /**
+ * The session's creation instant (its header timestamp), or null if absent. Used to recover a
+ * trunk's true calendar day when closing it late — the day it happened, not the day we got to it.
+ */
+export const sessionCreatedAt = (session: AgentSession): string | null =>
+  session.sessionManager.getHeader()?.timestamp ?? null;
+
+/**
  * Re-seat the leaf onto an earlier entry so the next turn extends it. On `SessionManager.open`
  * pi sets the leaf to the LAST file entry, not the active branch tip — the trunk lifecycle uses
  * this to re-seat onto the current base after a reload (see ADR-014, R9).

@@ -144,8 +144,15 @@ const STORE_INSTRUCTIONS: Record<MemoryStore, string> = {
   ].join("\n\n"),
 };
 
-/** The follow-up user instruction handed to the forked conversation for one memory store. */
-export const storeInstruction = (store: MemoryStore, workspaceRoot: string): string =>
-  STORE_INSTRUCTIONS[store]
-    .replaceAll("$WORKSPACE", workspaceRoot)
-    .replaceAll("{date}", localIsoDate());
+/**
+ * The follow-up user instruction handed to the forked conversation for one memory store. `date`
+ * (`YYYY-MM-DD`) is the day the conversation belongs to — it dates the episodic file. It MUST be the
+ * trunk's own day, not wall-clock: a trunk closed late (nightly miss, recovery, multi-day downtime)
+ * still files its memories under the day it happened. Defaults to today for non-close callers.
+ */
+export const storeInstruction = (
+  store: MemoryStore,
+  workspaceRoot: string,
+  date: string = localIsoDate(),
+): string =>
+  STORE_INSTRUCTIONS[store].replaceAll("$WORKSPACE", workspaceRoot).replaceAll("{date}", date);

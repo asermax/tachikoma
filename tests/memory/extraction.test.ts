@@ -39,4 +39,12 @@ describe("storeInstruction", () => {
     expect(instruction).toContain("Today's date is");
     expect(instruction).toContain(join(workspace, "memories", "episodic"));
   });
+
+  it("stamps the given day (not wall-clock) so a late close files episodic under its real date", () => {
+    const instruction = storeInstruction("episodic", workspace, "2026-06-13");
+
+    expect(instruction).toContain("Today's date is 2026-06-13.");
+    // The per-day filename instruction carries the same date.
+    expect(instruction).toContain("2026-06-13.md");
+  });
 });

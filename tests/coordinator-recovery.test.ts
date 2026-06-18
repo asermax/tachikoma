@@ -18,19 +18,26 @@ const createFakeLog = () => {
   return Object.assign(log, { child: () => log }) as unknown as Logger;
 };
 
-const fakeSession = (sessionFile: string) => ({
+const fakeSession = (sessionFile: string, createdAt?: string) => ({
   sessionFile,
   dispose: vi.fn(),
   messages: [],
-  sessionManager: { getEntries: () => [], getLeafId: () => null, getBranch: () => [] },
+  sessionManager: {
+    getEntries: () => [],
+    getLeafId: () => null,
+    getBranch: () => [],
+    getHeader: () => (createdAt != null ? { timestamp: createdAt } : null),
+  },
 });
 
-// An agent that returns a fresh fake session keyed on the opened file.
-const createAgent = () =>
+// An agent that returns a fresh fake session keyed on the opened file. `createdAt` optionally maps a
+// file to its session-header timestamp, so recovery's day-derivation can be exercised.
+const createAgent = (createdAt?: (file: string) => string | undefined) =>
   ({
-    open: vi.fn(async (options?: { sessionFile?: string }) =>
-      fakeSession(options?.sessionFile ?? "/tmp/new.jsonl"),
-    ),
+    open: vi.fn(async (options?: { sessionFile?: string }) => {
+      const file = options?.sessionFile ?? "/tmp/new.jsonl";
+      return fakeSession(file, createdAt?.(file));
+    }),
   }) as unknown as AgentManager;
 
 const makeCoordinator = (
@@ -228,6 +235,31 @@ describe("Coordinator.recoverStaleTrunks", () => {
     await coordinator.recoverStaleTrunks();
     // The retry succeeds and the trunk is finally retired.
     expect(attempts).toBe(2);
+    expect(trunkState.listUnclosed()).toEqual([]);
+  });
+
+  it("dates a recovered unclosed trunk by its session creation day, not the day recovery runs", async () => {
+    const file = join(dir, "five-days-stale.jsonl");
+    await writeFile(file, "");
+
+    const regs = createRegistrations();
+    const days: (string | null)[] = [];
+    regs.postProcessors.push({
+      name: "extract",
+      process: async (ctx) => void days.push(ctx.trunk?.day ?? null),
+    });
+
+    // Recovery runs on the 18th; the trunk's session was created on the 13th.
+    const now = () => new Date("2026-06-18T10:00:00Z");
+    const agent = createAgent(() => "2026-06-13T09:00:00Z");
+    const { coordinator, trunkState } = makeCoordinator(db, agent, regs, now);
+
+    trunkState.addUnclosed(file);
+
+    await coordinator.recoverStaleTrunks();
+
+    // The day handed to the close pipeline is the conversation's real day, so its memories file there.
+    expect(days).toEqual(["2026-06-13"]);
     expect(trunkState.listUnclosed()).toEqual([]);
   });
 });

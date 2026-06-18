@@ -11,6 +11,7 @@ import {
   getEntry,
   getLeafId,
   reseatLeaf,
+  sessionCreatedAt,
 } from "../../src/agent/session-tree.ts";
 
 const makeSession = () => {
@@ -20,6 +21,7 @@ const makeSession = () => {
     getEntries: vi.fn(() => [{ id: "e1" }, { id: "e2" }]),
     getEntry: vi.fn((id: string) => ({ id })),
     getLeafId: vi.fn(() => "leaf-9"),
+    getHeader: vi.fn(() => ({ timestamp: "2026-06-13T09:00:00Z" })),
     branch: vi.fn(),
     appendCustomEntry: vi.fn(() => "custom-1"),
     appendCustomMessageEntry: vi.fn(() => "msg-1"),
@@ -54,6 +56,13 @@ describe("session-tree helpers", () => {
     expect(enumerateEntries(session)).toHaveLength(2);
     expect(getEntry(session, "e1")).toEqual({ id: "e1" });
     expect(getLeafId(session)).toBe("leaf-9");
+  });
+
+  it("reads the session creation instant from the header", () => {
+    const session = makeSession();
+
+    expect(sessionCreatedAt(session)).toBe("2026-06-13T09:00:00Z");
+    expect(session.sessionManager.getHeader).toHaveBeenCalled();
   });
 
   it("re-seats the leaf via branch()", () => {

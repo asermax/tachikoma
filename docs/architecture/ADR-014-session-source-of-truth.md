@@ -28,8 +28,9 @@ Consequently:
 
 ### Negative
 - Trunk *discovery* needs the `app_state` pointer (the pi header is not extensible and `sessionsDir` is shared with fork/side-run sessions, so directory scanning is unreliable).
-- Crash-safe close/recovery relies on on-file completion markers plus the `app_state` `unclosed` index rather than a `postProcessingState` column.
-- The pre-1.0 pi session-tree surface is now load-bearing; it is tracked in `docs/reference/pi-sdk-notes.md` and re-verified on upgrade (the ADR-001 churn risk now extends to the tree primitives).
+- Crash-safe close/recovery relies on on-file completion markers plus the `app_state` `unclosed` index rather than a `postProcessingState` column. A trunk is retired from `unclosed` **only after a fully clean close** — if any post-processor fails it stays indexed and the next startup re-runs the close, with the on-file markers skipping the work that already completed (so a partial memory extraction is retried, never silently dropped).
+- A recovered trunk's calendar **day** is its own: for an entry recovered from `unclosed` with no active pointer, the day is derived from the session header's creation instant (`sessionCreatedAt` → `localDay`), never defaulted to the recovery day — so a late or multi-day-stale close still attributes the conversation (and its date-stamped episodic memory) to the day it happened.
+- The pre-1.0 pi session-tree surface is now load-bearing; it is tracked in `docs/reference/pi-sdk-notes.md` and re-verified on upgrade (the ADR-001 churn risk now extends to the tree primitives). In particular, `createBranchedSession` is destructive in place — branch-only forks (per-branch extraction, `ask_branch`, shadow-fork) run it on a `SessionManager` loaded fresh from disk, never on a live trunk session.
 
 ## Alternatives Considered
 

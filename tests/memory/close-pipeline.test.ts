@@ -146,7 +146,7 @@ describe("extractBranches", () => {
       branchId: "topic-2",
     });
 
-    await extractBranches(session, records, deps, fakeLog);
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
 
     // Two unmarked branches × two stores (episodic + topics).
     expect(forkAndContinue).toHaveBeenCalledTimes(4);
@@ -162,12 +162,14 @@ describe("extractBranches", () => {
     const records = getBranchRecords(session);
     const { deps, forkAndContinue } = extractionDeps();
 
-    await extractBranches(session, records, deps, fakeLog);
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
 
     const sources = forkAndContinue.mock.calls.map((call) => call[0] as string);
     expect(sources.every((src) => src.startsWith(join(workspace, "branch-")))).toBe(true);
-    // Per-branch focus is noted in the instruction handed to the fork.
+    // Per-branch focus is noted in the instruction handed to the fork, dated to the trunk's day (not
+    // wall-clock) so a late close still files the episodic memory under the day it happened.
     expect(forkAndContinue.mock.calls[0]?.[1]).toContain("single topic branch");
+    expect(forkAndContinue.mock.calls[0]?.[1]).toContain("2026-06-15");
   });
 
   it("re-run after a crash skips every branch that already carries a marker", async () => {
@@ -175,13 +177,13 @@ describe("extractBranches", () => {
     const records = getBranchRecords(session);
     const { deps, forkAndContinue } = extractionDeps();
 
-    await extractBranches(session, records, deps, fakeLog);
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
     expect(forkAndContinue).toHaveBeenCalledTimes(6);
 
     forkAndContinue.mockClear();
 
     // A clean re-run (recovery / second close) extracts nothing — all markers present.
-    await extractBranches(session, records, deps, fakeLog);
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
     expect(forkAndContinue).not.toHaveBeenCalled();
   });
 
@@ -195,7 +197,9 @@ describe("extractBranches", () => {
       if (sourceFile.includes("leaf-2")) throw new Error("extraction boom");
     });
 
-    await expect(extractBranches(session, records, deps, fakeLog)).rejects.toThrow("topic-2");
+    await expect(extractBranches(session, records, deps, "2026-06-15", fakeLog)).rejects.toThrow(
+      "topic-2",
+    );
 
     expect(isBranchExtracted(session, "topic-1")).toBe(true);
     expect(isBranchExtracted(session, "topic-2")).toBe(false);
@@ -205,7 +209,7 @@ describe("extractBranches", () => {
     forkAndContinue.mockClear();
     forkAndContinue.mockResolvedValue(undefined);
 
-    await extractBranches(session, records, deps, fakeLog);
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
 
     expect(forkAndContinue).toHaveBeenCalledTimes(2); // topic-2 × two stores
     expect(isBranchExtracted(session, "topic-2")).toBe(true);
@@ -217,7 +221,7 @@ describe("extractBranches", () => {
     const records = getBranchRecords(session);
     const { deps, forkAndContinue } = extractionDeps();
 
-    await extractBranches(session, records, deps, fakeLog);
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
 
     expect(forkAndContinue).not.toHaveBeenCalled();
   });

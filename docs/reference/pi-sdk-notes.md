@@ -122,6 +122,7 @@ The daily-trunk model (ADR-014) relies on these `SessionManager` primitives — 
 | `appendCustomEntry` | `(customType: string, data?: unknown) => string` | Persist trunk/branch/boomerang state + idempotency markers out of LLM context. |
 | `appendCustomMessageEntry` | `(customType, content, display: boolean, details?) => string` | Inject the related-branch pointer into LLM context with `display: false`. |
 | `getEntries` / `getEntry` / `getLeafId` / `branch(id)` | as in the instance API above | Rebuild branch records on reload; re-seat the leaf onto the current base after `open` (pi sets the leaf to the LAST file entry, not the active tip). |
+| `getHeader` | `() => SessionHeader \| null` | The session's creation instant (`header.timestamp`), wrapped by `sessionCreatedAt`. Recovers a stale trunk's true calendar day on a late close (`localDay(header.timestamp)`) instead of defaulting to the recovery day. |
 
 `AgentManager.shadowFork(sourceFile, { systemPrompt, tier })` reuses the existing `open({ sessionFile, bare: true, tools: [] })` path rather than pi's lower-level `createAgentSessionServices`/`createAgentSessionFromServices` two-call construction — `bare` + empty `tools` already yields an extension-free, tool-free headless session, and `open` composes the loader/model/tier. The fork file is deleted on `dispose`. The source file is opened in a separate `SessionManager` and is never mutated (R6).
 

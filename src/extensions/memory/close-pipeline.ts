@@ -81,6 +81,7 @@ export const extractBranches = async (
   session: AgentSession,
   records: BranchRecord[],
   { agent, workspaceRoot }: CloseExtractionDeps,
+  day: string,
   log: Logger,
 ): Promise<void> => {
   const sessionFile = session.sessionFile;
@@ -116,7 +117,7 @@ export const extractBranches = async (
           // must not message the user or fire tasks (belt-and-suspenders with SILENT_BACKGROUND_SECTION).
           await agent.forkAndContinue(
             branchFile,
-            branchStoreInstruction(store, workspaceRoot, record),
+            branchStoreInstruction(store, workspaceRoot, record, day),
             "processor",
             FILE_EDIT_TOOLS,
           );
@@ -148,8 +149,9 @@ const branchStoreInstruction = (
   store: MemoryStore,
   workspaceRoot: string,
   record: BranchRecord,
+  day: string,
 ): string =>
-  `${storeInstruction(store, workspaceRoot)}\n\nThis conversation is a single topic branch (\`${record.branchId}\`) from today's session. Focus only on this branch's own turns.`;
+  `${storeInstruction(store, workspaceRoot, day)}\n\nThis conversation is a single topic branch (\`${record.branchId}\`) from the ${day} session. Focus only on this branch's own turns.`;
 
 /**
  * Phase 2 — prune. Interim body: run the existing per-store maintenance tick (prune/consolidate-adjacent
@@ -280,7 +282,7 @@ export const createTrunkClosePipeline = (deps: TrunkClosePipelineDeps): PostProc
 
     const phases = { ...deps.phases, log };
 
-    await extractBranches(trunk.session, trunk.branchRecords, deps.extraction, log);
+    await extractBranches(trunk.session, trunk.branchRecords, deps.extraction, trunk.day, log);
     await prunePhase(trunk.session, phases);
     await consolidatePhase(trunk.session, phases);
     await coreContextStep(trunk.session, phases);

@@ -4,7 +4,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { streamPrompt } from "./agent/adapter.ts";
 import type { AgentManager } from "./agent/manager.ts";
-import { branchEntriesSinceBase } from "./agent/session-tree.ts";
+import { branchEntriesSinceBase, sessionCreatedAt } from "./agent/session-tree.ts";
 import { buildDigest } from "./channels/delivery-digest.ts";
 import { compareQueued, evaluate, type QueuedItem } from "./channels/delivery-queue.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
@@ -409,15 +409,23 @@ export class Coordinator {
         continue;
       }
 
-      const day = pointerDay.get(file) ?? today;
+      // The active pointer's own trunk is stale only when its day precedes today; a same-day
+      // pointer is left for the coordinator to reopen.
+      const pointerOwnDay = pointerDay.get(file);
+      if (pointerOwnDay != null && pointerOwnDay >= today) continue;
 
-      // An unclosed trunk with no pointer-day is from a prior run by definition; treat the pointer's
-      // own trunk as stale only when its day precedes today.
-      if (pointerDay.has(file) && day >= today) continue;
+      const session = await this.agent.open({ sessionFile: file });
+
+      // The trunk's TRUE day: the pointer's day if known, else the session's own creation day — never
+      // `today`. A trunk closed late (downtime, multi-day recovery) must keep the day it happened, so
+      // its memories file under that date rather than the day we happened to recover it.
+      const created = sessionCreatedAt(session);
+      const day =
+        pointerOwnDay ??
+        (created != null ? localDay(() => new Date(created), this.timezone) : today);
 
       this.log.info({ sessionFile: file, day }, "recovering stale trunk");
 
-      const session = await this.agent.open({ sessionFile: file });
       await this.closeTrunkSession({ session, day, sessionFile: file }, true);
     }
 
