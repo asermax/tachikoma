@@ -17,24 +17,26 @@ const truncateQuote = (text: string): string => {
   return `${stripped.slice(0, half)}…${stripped.slice(-half)}`;
 };
 
-/** Quote of a replied-to message, prepended to the agent prompt as context. */
-export const replyQuote = (message: Pick<Message, "reply_to_message">): string | null => {
-  const replied = message.reply_to_message;
-  if (replied == null) return null;
-
-  const text = replied.text ?? replied.caption;
-  if (text == null || text.trim().length === 0) return null;
-
-  return `Replied to:\n> ${truncateQuote(text)}`;
-};
-
-/** Quote of a reacted-to message's recovered text, mirroring {@link replyQuote}. Null when blank. */
-export const reactionQuote = (text: string | null | undefined): string | null => {
+/**
+ * A `Label:\n> <quote>` block of `text`, or null when `text` is blank. Shared by reply and
+ * reaction quotes so the blank-check and truncation live in one place.
+ */
+const quoteBlock = (label: string, text: string | null | undefined): string | null => {
   const trimmed = text?.trim();
   if (trimmed == null || trimmed.length === 0) return null;
 
-  return `Reacted to:\n> ${truncateQuote(trimmed)}`;
+  return `${label}:\n> ${truncateQuote(trimmed)}`;
 };
+
+/** Quote of a replied-to message, prepended to the agent prompt as context. */
+export const replyQuote = (message: Pick<Message, "reply_to_message">): string | null => {
+  const replied = message.reply_to_message;
+  return replied == null ? null : quoteBlock("Replied to", replied.text ?? replied.caption);
+};
+
+/** Quote of a reacted-to message's recovered text, mirroring {@link replyQuote}. Null when blank. */
+export const reactionQuote = (text: string | null | undefined): string | null =>
+  quoteBlock("Reacted to", text);
 
 /** The id of the bot/user message a reply targets, as a string key. */
 export const replyTargetId = (message: Pick<Message, "reply_to_message">): string | null =>
