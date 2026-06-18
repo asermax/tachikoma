@@ -1,3 +1,11 @@
+## [3.31.1](https://github.com/asermax/tachikoma/compare/v3.31.0...v3.31.1) (2026-06-18)
+
+
+### Bug Fixes
+
+* **coordinator:** keep a trunk unclosed when post-processing fails ([3206b61](https://github.com/asermax/tachikoma/commit/3206b61b2d341650022d4e15b98a578fdf0d5f63))
+* **memory:** cut branch files from a detached session so trunk close extracts every branch ([3929f8d](https://github.com/asermax/tachikoma/commit/3929f8dda3ed826740e1557c7f53cc01be4e3d20))
+
 # [3.31.0](https://github.com/asermax/tachikoma/compare/v3.30.1...v3.31.0) (2026-06-18)
 
 
