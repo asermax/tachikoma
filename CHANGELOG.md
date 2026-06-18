@@ -1,3 +1,10 @@
+## [3.31.2](https://github.com/asermax/tachikoma/compare/v3.31.1...v3.31.2) (2026-06-18)
+
+
+### Bug Fixes
+
+* **memory:** date episodic extraction by the trunk's day, not wall-clock ([979968b](https://github.com/asermax/tachikoma/commit/979968bd29ea91f8fa22da510b682113bbc26055))
+
 ## [3.31.1](https://github.com/asermax/tachikoma/compare/v3.31.0...v3.31.1) (2026-06-18)
 
 
