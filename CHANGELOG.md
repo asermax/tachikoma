@@ -1,3 +1,10 @@
+# [3.32.0](https://github.com/asermax/tachikoma/compare/v3.31.2...v3.32.0) (2026-06-18)
+
+
+### Features
+
+* **skills:** treat skills as authoritative via extension-owned guidance ([d4057c9](https://github.com/asermax/tachikoma/commit/d4057c9d7e01b4ca63c6c2a9b069cc2a754101dd))
+
 ## [3.31.2](https://github.com/asermax/tachikoma/compare/v3.31.1...v3.31.2) (2026-06-18)
 
 
