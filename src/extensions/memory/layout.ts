@@ -3,25 +3,23 @@ import { join } from "node:path";
 
 import type { Logger } from "../../log.ts";
 
-// Store-set seam — the single source of truth every module iterates (see design S1). Adding a
-// store is membership, not a rewrite: dir creation derives from MEMORY_STORES (ensureMemoryLayout),
-// index seeding + context injection from INDEXED_STORES, maintenance + cross-store manifests from
-// MEMORY_STORES, and extraction from EXTRACTION_STORES. The one asymmetry — `learnings` is in the
-// top two sets but absent from EXTRACTION_STORES — is what folds learnings into the topics fork and
-// prevents a duplicate (R4).
+// The store sets every module iterates. `learnings` is absent from EXTRACTION_STORES on purpose —
+// the topics fork writes it too, so a separate learnings extraction would duplicate.
 export const MEMORY_STORES = ["episodic", "topics", "learnings"] as const;
 export type MemoryStore = (typeof MEMORY_STORES)[number];
 
 export const INDEXED_STORES = ["topics", "learnings"] as const satisfies readonly MemoryStore[];
 
-// Stores that get their own extraction fork. `learnings` is folded INTO the topics fork (never its
-// own), so it is excluded here — see extractBranches and the shared topics+learnings instruction.
+/** Whether a store owns a seeded MEMORY.md index (topics + learnings do; episodic does not). */
+const INDEXED_STORE_SET: ReadonlySet<MemoryStore> = new Set<MemoryStore>(INDEXED_STORES);
+export const isIndexedStore = (store: MemoryStore): boolean => INDEXED_STORE_SET.has(store);
+
+// Stores that get their own extraction fork. `learnings` is folded into the topics fork, never its own.
 export const EXTRACTION_STORES = ["episodic", "topics"] as const satisfies readonly MemoryStore[];
 export type ExtractionStore = (typeof EXTRACTION_STORES)[number];
 
-// Which stores each extraction fork WRITES to — drives the post-run sweep. Learnings is folded into
-// the topics fork, so that fork writes both `topics/` and `learnings/` and must sweep both. Keyed on
-// ExtractionStore so the sweep is exhaustive at compile time (every fork maps to its target dirs).
+// The stores each extraction fork writes — drives the post-run sweep. Keyed on ExtractionStore so
+// every fork's write surface (and thus sweep) is exhaustive at compile time.
 export const FORK_WRITE_STORES: Readonly<Record<ExtractionStore, readonly MemoryStore[]>> = {
   episodic: ["episodic"],
   topics: ["topics", "learnings"],

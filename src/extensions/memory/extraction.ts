@@ -3,6 +3,7 @@ import { localIsoDate } from "../../util/dates.ts";
 import type { ExtractionStore, MemoryStore } from "./layout.ts";
 import {
   CONTEXT_DEDUP_SECTION,
+  formatStoreDirs,
   INDEX_UPDATE_SECTION,
   STORE_PURPOSE_SECTION,
   scopeSection,
@@ -116,10 +117,8 @@ const TOPICS_BASE_PROMPT = `We just finished the conversation above. Using what 
 
 Remember: These memories help the assistant maintain context across sessions. Focus on durable, accurate knowledge about each subject — both the reference facts and the preferences — not activity logs or documents.`;
 
-// Folded into the topics instruction so ONE extraction pass classifies every signal as topic content
-// or learning content and writes it to exactly one store (R4/R6). Self-scoped to memories/learnings/
-// for learning signals; the authoritative two-directory write surface is the combined scopeSection +
-// SILENT_BACKGROUND_SECTION at the end of the instruction.
+// Folded into the topics instruction so one pass classifies each signal as topic or learning and
+// writes it to exactly one store.
 const LEARNINGS_EXTRACTION_SECTION = `## Learnings — what bites and what worked
 
 This same pass also captures **experience**, distinct in kind from the topics knowledge above. A learning is recurring friction, a hard constraint, a repeated failure, or a reflection about an approach that worked or turned out to be a dead end — something that *bites* or would bite again, not something that is merely true. Experience is what is missing if every session rediscovers the same gotchas.
@@ -161,26 +160,20 @@ Each learnings file is one theme of recurring friction, broad and future-mergeab
 
 Learnings write only within \`$WORKSPACE/memories/learnings/\`.`;
 
-// Extraction runs as a silent follow-up turn on a fork of the just-ended conversation. The
-// forked agent still has its full tool set and persona, so it must be told this is background
-// file maintenance — no chat reply, no messaging/notification/task tools. Accepts one store or
-// several: the topics+learnings fork writes two directories, so its silent clause must name both.
-const SILENT_BACKGROUND_SECTION = (stores: MemoryStore | readonly MemoryStore[]): string => {
-  const list = Array.isArray(stores) ? [...stores] : [stores];
-  const dirs = list.map((store) => `\`$WORKSPACE/memories/${store}/\``).join(" and ");
-
-  return `## Background Maintenance Step
+// Extraction runs as a silent follow-up turn on a fork of the just-ended conversation. The forked
+// agent keeps its full tool set and persona, so it must be told this is background file maintenance —
+// no chat reply, no messaging/notification/task tools.
+const SILENT_BACKGROUND_SECTION = (stores: MemoryStore | readonly MemoryStore[]): string =>
+  `## Background Maintenance Step
 
 This is a SILENT background memory-maintenance step, not part of the conversation. Do NOT send any
 user-facing message, ask any question, or produce a chat reply, and do NOT use any messaging,
 notification, or task-management tools. Only read files in the workspace and create or modify files
-under ${dirs}. When you are done, simply stop — your only output is the
+under ${formatStoreDirs(stores)}. When you are done, simply stop — your only output is the
 file changes.`;
-};
 
-// Keyed on ExtractionStore, not MemoryStore: only stores that get their own extraction fork have an
-// instruction. Learnings is folded into the topics fork, so it has no entry here — and the type now
-// enforces that (R4) at compile time rather than leaving STORE_INSTRUCTIONS["learnings"] undefined.
+// Keyed on ExtractionStore: only stores with their own fork get an instruction. The type enforces
+// that learnings (folded into topics) has no entry, rather than leaving it undefined at runtime.
 const STORE_INSTRUCTIONS: Record<ExtractionStore, string> = {
   episodic: [
     EPISODIC_BASE_PROMPT,
@@ -189,12 +182,12 @@ const STORE_INSTRUCTIONS: Record<ExtractionStore, string> = {
   ].join("\n\n"),
   topics: [
     TOPICS_BASE_PROMPT,
-    LEARNINGS_EXTRACTION_SECTION, // folded in — this fork classifies each signal as topic or learning (R4/R6)
-    STORE_PURPOSE_SECTION, // carries the learnings authority bullet (Batch 1)
+    LEARNINGS_EXTRACTION_SECTION,
+    STORE_PURPOSE_SECTION,
     CONTEXT_DEDUP_SECTION,
     WORKSPACE_VALIDATION_SECTION,
-    INDEX_UPDATE_SECTION, // the fork writes both stores, so it keeps both MEMORY.md indexes in sync
-    scopeSection(["topics", "learnings"]), // both directories — authoritative two-dir write surface
+    INDEX_UPDATE_SECTION, // writes both stores, so both MEMORY.md indexes stay in sync
+    scopeSection(["topics", "learnings"]),
     SILENT_BACKGROUND_SECTION(["topics", "learnings"]),
   ].join("\n\n"),
 };

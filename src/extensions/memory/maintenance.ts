@@ -6,6 +6,7 @@ import type { Logger } from "../../log.ts";
 import type { Runner } from "./extraction.ts";
 import {
   fileExists,
+  isIndexedStore,
   MEMORY_STORES,
   type MemoryStore,
   storeDir,
@@ -457,11 +458,16 @@ export const buildCrossStoreManifest = async (
   ].join("\n");
 };
 
-const basePrompt = (store: MemoryStore, settings: MaintenanceThresholds): string => {
-  if (store === "episodic") return episodicMaintenancePrompt(settings);
-  if (store === "learnings") return LEARNINGS_MAINTENANCE_PROMPT;
-  return TOPICS_MAINTENANCE_PROMPT;
+// Each store's base maintenance prompt. Keyed on MemoryStore so a store missing an entry is a
+// compile error, not a silent fall-through to topics.
+const MAINTENANCE_PROMPTS: Record<MemoryStore, (settings: MaintenanceThresholds) => string> = {
+  episodic: episodicMaintenancePrompt,
+  topics: () => TOPICS_MAINTENANCE_PROMPT,
+  learnings: () => LEARNINGS_MAINTENANCE_PROMPT,
 };
+
+const basePrompt = (store: MemoryStore, settings: MaintenanceThresholds): string =>
+  MAINTENANCE_PROMPTS[store](settings);
 
 export const maintenanceSystemPrompt = async (
   store: MemoryStore,
@@ -471,7 +477,7 @@ export const maintenanceSystemPrompt = async (
 
   // Day-of-week dispatch: weekdays keep the index consistent cheaply,
   // Sunday rebuilds it from scratch with fresh descriptions.
-  if (store !== "episodic") {
+  if (isIndexedStore(store)) {
     const isSunday = (now?.() ?? new Date()).getDay() === 0;
     parts.push(isSunday ? heavyIndexRebuildSection(store) : INDEX_LIGHT_MAINTENANCE_SECTION);
   }

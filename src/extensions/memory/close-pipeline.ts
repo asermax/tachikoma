@@ -142,8 +142,7 @@ export const extractBranches = async (
         FILE_EDIT_TOOLS,
       );
 
-      // Sweep every directory this fork writes. The topics fork also writes learnings/, so both
-      // must be swept for emptied files to be cleaned up.
+      // Sweep every directory this fork writes — the topics fork writes learnings/ too.
       for (const swept of FORK_WRITE_STORES[store]) {
         await sweepEmptyMarkdown(storeDir(workspaceRoot, swept), log);
       }

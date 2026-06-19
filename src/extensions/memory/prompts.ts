@@ -104,13 +104,14 @@ Verify index consistency between MEMORY.md and actual files in the directory.
 - When you create, modify, or delete memory files during this maintenance run, also update MEMORY.md per the standard index update rules (add new entries, update descriptions on meaningful changes, remove entries for deleted files).
 - The consistency check runs in addition to your normal maintenance tasks.`;
 
-// Accepts one store or several: the topics+learnings extraction fork writes two directories, so its
-// scope must name both. Single-store callers (maintenance, episodic) pass one store and are unchanged.
-export const scopeSection = (stores: MemoryStore | readonly MemoryStore[]): string => {
-  const list = Array.isArray(stores) ? [...stores] : [stores];
-  const dirs = list.map((store) => `\`$WORKSPACE/memories/${store}/\``).join(" and ");
+/** Render one or more stores as a backtick-wrapped `$WORKSPACE/memories/<store>/` list joined by " and ". */
+export const formatStoreDirs = (stores: MemoryStore | readonly MemoryStore[]): string =>
+  (Array.isArray(stores) ? stores : [stores])
+    .map((store) => `\`$WORKSPACE/memories/${store}/\``)
+    .join(" and ");
 
-  return `## Scope
+// Accepts one store or several: the topics+learnings extraction fork writes two directories.
+export const scopeSection = (stores: MemoryStore | readonly MemoryStore[]): string =>
+  `## Scope
 
-You can read files anywhere in the workspace (needed for validation and deduplication). Only create or modify files within ${dirs}. You have no delete tool: when a file must go away (merged into another, obsolete, or misnamed), overwrite it with empty content — empty files are cleaned up automatically after you finish.`;
-};
+You can read files anywhere in the workspace (needed for validation and deduplication). Only create or modify files within ${formatStoreDirs(stores)}. You have no delete tool: when a file must go away (merged into another, obsolete, or misnamed), overwrite it with empty content — empty files are cleaned up automatically after you finish.`;
