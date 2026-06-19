@@ -322,9 +322,13 @@ export class Coordinator {
 
     const session = await this.agent.open({ sessionFile: pointer.sessionFile });
 
+    // This runs before respond() (preparation phase), so the close progress surfaces on the lead-in
+    // the upcoming response reclaims — no ghost line. silent=false lets per-processor lines edit it live.
+    this.status("Closing yesterday's trunk…");
+
     await this.closeTrunkSession(
       { session, day: pointer.day, sessionFile: pointer.sessionFile },
-      true,
+      false,
     );
     this.trunkState.clearActive();
   }
@@ -343,7 +347,9 @@ export class Coordinator {
       return;
     }
 
-    await this.closeTrunk();
+    // No exchange follows, so nothing reclaims a status lead-in — stay silent to avoid orphaning a
+    // "Post-processing: …" ghost line. (Shutdown's close keeps silent=false; shuttingDown routes it to shutdownStatus.)
+    await this.closeTrunk(true);
   }
 
   /** Close the live trunk (shutdown / explicit). No-op when no trunk is open. */
@@ -550,7 +556,8 @@ export class Coordinator {
         log: this.log,
       },
       log: this.log,
-      onProcessorStart: (processor) => this.status(`Post-processing: ${processor.name}…`, silent),
+      onProcessorStart: (processor) =>
+        this.status(`${processor.statusLabel ?? `Post-processing: ${processor.name}`}…`, silent),
       onProcessorSettled: (_processor, result) => {
         if (result.status === "rejected") failures += 1;
       },

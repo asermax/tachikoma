@@ -1,4 +1,4 @@
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -688,6 +688,112 @@ describe("renderPrompt media rendering", () => {
   });
 });
 
+describe("Coordinator new-day close surfaces pipeline progress to the channel", () => {
+  it("shows the close lead-in then per-processor progress on the active channel, before the response", async () => {
+    const staleFile = join(dir, "yesterday.jsonl");
+    await writeFile(staleFile, "");
+
+    // Stale session opens for yesterday's file; a fresh session opens for today's new trunk.
+    const staleSession = createSession({ sessionFile: staleFile });
+    const todaySession = createSession({
+      sessionFile: "/tmp/today.jsonl",
+      messages: [{ role: "assistant", content: [{ type: "text", text: "good morning" }] }],
+    });
+    const agent = {
+      open: vi.fn(async (options?: { sessionFile?: string }) =>
+        options?.sessionFile === staleFile ? staleSession : todaySession,
+      ),
+    } as unknown as AgentManager;
+
+    const regs = createRegistrations();
+    regs.postProcessors.push({
+      name: "memory-trunk-close",
+      phase: "main",
+      statusLabel: "Processing memories",
+      process: async () => {},
+    });
+    regs.postProcessors.push({
+      name: "transcript-archive",
+      phase: "finalize",
+      statusLabel: "Archiving transcript",
+      process: async () => {},
+    });
+
+    const now = () => new Date("2026-06-15T10:00:00Z");
+    const { coordinator, trunkState } = makeCoordinator(db, agent, regs, now);
+
+    // Active pointer left on the previous day → the first message of the new day closes it.
+    trunkState.promoteToActive({
+      sessionFile: staleFile,
+      day: "2026-06-14",
+      openedAt: "2026-06-14T10:00:00Z",
+    });
+
+    const status = vi.fn();
+    const respond = vi.fn(drainExchange);
+    coordinator.attachChannel(createChannel({ status, respond }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("good morning"));
+
+    // The close runs and surfaces its progress before the response streams.
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+
+    expect(status).toHaveBeenNthCalledWith(1, "Closing yesterday's trunk…");
+    expect(status).toHaveBeenNthCalledWith(2, "Processing memories…");
+    expect(status).toHaveBeenNthCalledWith(3, "Archiving transcript…");
+
+    controller.abort();
+    await loop;
+  });
+
+  it("degrades gracefully when the channel has no status() — no throw, response still proceeds", async () => {
+    const staleFile = join(dir, "yesterday.jsonl");
+    await writeFile(staleFile, "");
+
+    const staleSession = createSession({ sessionFile: staleFile });
+    const todaySession = createSession();
+    const agent = {
+      open: vi.fn(async (options?: { sessionFile?: string }) =>
+        options?.sessionFile === staleFile ? staleSession : todaySession,
+      ),
+    } as unknown as AgentManager;
+
+    const regs = createRegistrations();
+    regs.postProcessors.push({
+      name: "memory-trunk-close",
+      phase: "main",
+      statusLabel: "Processing memories",
+      process: async () => {},
+    });
+
+    const now = () => new Date("2026-06-15T10:00:00Z");
+    const { coordinator, trunkState } = makeCoordinator(db, agent, regs, now);
+    trunkState.promoteToActive({
+      sessionFile: staleFile,
+      day: "2026-06-14",
+      openedAt: "2026-06-14T10:00:00Z",
+    });
+
+    // createChannel() with no status override → channel.status is undefined.
+    const respond = vi.fn(drainExchange);
+    coordinator.attachChannel(createChannel({ respond }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("hi"));
+
+    // No throw despite no status(); the response still proceeds.
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+
+    controller.abort();
+    await loop;
+  });
+});
+
 describe("Coordinator.closeTrunkIfDue (nightly close trigger)", () => {
   it("closes the trunk when one is active and idle", async () => {
     const session = createSession();
@@ -749,6 +855,39 @@ describe("Coordinator.closeTrunkIfDue (nightly close trigger)", () => {
     expect(session.dispose).not.toHaveBeenCalled();
 
     release?.();
+    controller.abort();
+    await loop;
+  });
+
+  it("stays silent during the idle close (no response follows to reclaim a lead-in)", async () => {
+    const session = createSession();
+    const regs = createRegistrations();
+    regs.postProcessors.push({
+      name: "memory-trunk-close",
+      phase: "main",
+      statusLabel: "Processing memories",
+      process: async () => {},
+    });
+
+    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
+    const status = vi.fn();
+    coordinator.attachChannel(createChannel({ status }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    // Open the trunk via a normal exchange, then let the loop go idle.
+    coordinator.submit(textMsg("hello"));
+    await vi.waitFor(() => expect(session.prompt).toHaveBeenCalled());
+
+    status.mockClear();
+
+    await coordinator.closeTrunkIfDue();
+
+    // Idle close surfaces nothing — nothing follows to reclaim a status lead-in.
+    expect(status).not.toHaveBeenCalled();
+    expect(session.dispose).toHaveBeenCalledTimes(1);
+
     controller.abort();
     await loop;
   });

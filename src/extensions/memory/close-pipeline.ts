@@ -291,6 +291,7 @@ export interface TrunkClosePipelineDeps {
 export const createTrunkClosePipeline = (deps: TrunkClosePipelineDeps): PostProcessor => ({
   name: "memory-trunk-close",
   phase: "main",
+  statusLabel: "Processing memories",
 
   async process({ trunk, log }) {
     if (trunk == null) {
