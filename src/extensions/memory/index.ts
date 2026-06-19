@@ -16,6 +16,9 @@ export const MemoryConfigSchema = Type.Object({
       recentDays: Type.Number({ default: 15 }),
       weeklyThresholdMonths: Type.Number({ default: 3 }),
       monthlyThresholdMonths: Type.Number({ default: 12 }),
+      // Extract each branch's stores (episodic, topics) concurrently — they write disjoint dirs, so
+      // parallel is safe. Set false to extract one store at a time.
+      parallelizeExtraction: Type.Boolean({ default: true }),
       // Transcript archives are pruned by age (deterministic, no agent run); 0 keeps them forever.
       transcriptsSchedule: Type.String({ default: "50 3 * * *" }),
       transcriptRetentionDays: Type.Number({ default: 90 }),
@@ -96,6 +99,7 @@ export default defineExtension<MemoryConfig>({
           extraction: {
             agent: { forkAndContinue: app.agent.forkAndContinue, branchFile: app.agent.branchFile },
             workspaceRoot,
+            parallelize: maintenance.parallelizeExtraction,
           },
           phases: {
             side: app.agent.side,

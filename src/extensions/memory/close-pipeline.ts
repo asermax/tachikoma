@@ -50,6 +50,14 @@ export type BranchForker = Pick<AgentManager, "forkAndContinue" | "branchFile">;
 export interface CloseExtractionDeps {
   agent: BranchForker;
   workspaceRoot: string;
+  /**
+   * Run each branch's store extractions (episodic, topics) concurrently — they write disjoint
+   * directories, so parallel is safe (default). Set false to extract one store at a time. Branches
+   * are always extracted serially: same-store extraction across branches shares the canonical store
+   * files (e.g. `episodic/{day}.md`, `topics/MEMORY.md`), so cross-branch concurrency needs the
+   * separate fan-out/synthesis extraction mode rather than this flag.
+   */
+  parallelize?: boolean;
 }
 
 export interface ClosePhaseDeps {
@@ -69,8 +77,16 @@ export interface ClosePhaseDeps {
 /**
  * Phase 1 — per-branch extraction. For every branch lacking an `extracted` marker, fork ONLY that
  * branch's conversation (root → its original leaf, sliced conceptually from its base forward) and run
- * the three store extractions over it, then write the per-branch marker. Idempotent: a re-run skips
+ * the store extractions over it, then write the per-branch marker. Idempotent: a re-run skips
  * branches that already carry a marker. The temp branch file is deleted after the fork.
+ *
+ * Branches are extracted one at a time, but a single branch's stores (episodic, topics) run
+ * concurrently by default — they write disjoint directories, so there is no contention. Each store's
+ * fork is awaited to settlement (all-settled) before the shared branch file is deleted, so a sibling
+ * fork is never left reading a file the `finally` is tearing down. Set `parallelize: false` to fall
+ * back to one store at a time. Cross-branch concurrency is intentionally NOT done here: same-store
+ * forks across branches share the canonical store files, so that needs the separate fan-out/synthesis
+ * extraction mode (single synthesis writer) rather than this flag.
  *
  * A single branch's failure is isolated — it is logged and skipped (no marker, so it retries on the
  * next close) rather than aborting the whole day. If ANY branch failed, the function throws after the
@@ -80,7 +96,7 @@ export interface ClosePhaseDeps {
 export const extractBranches = async (
   session: AgentSession,
   records: BranchRecord[],
-  { agent, workspaceRoot }: CloseExtractionDeps,
+  { agent, workspaceRoot, parallelize = true }: CloseExtractionDeps,
   day: string,
   log: Logger,
 ): Promise<void> => {
@@ -110,19 +126,35 @@ export const extractBranches = async (
 
     const start = Date.now();
 
+    // One branch's store forks share this throwaway branch file (each forkAndContinue copies it into
+    // its own session via forkFrom — the source is read-only), and are hard-limited to file tools so
+    // the extraction agent reuses the persona but cannot message the user or fire tasks.
+    const runStore = async (store: MemoryStore): Promise<void> => {
+      await agent.forkAndContinue(
+        branchFile,
+        branchStoreInstruction(store, workspaceRoot, record, day),
+        "processor",
+        FILE_EDIT_TOOLS,
+      );
+
+      await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);
+    };
+
     try {
       try {
-        for (const store of MEMORY_STORES) {
-          // Hard-limit the fork to file tools — the extraction agent reuses the session's persona but
-          // must not message the user or fire tasks (belt-and-suspenders with SILENT_BACKGROUND_SECTION).
-          await agent.forkAndContinue(
-            branchFile,
-            branchStoreInstruction(store, workspaceRoot, record, day),
-            "processor",
-            FILE_EDIT_TOOLS,
+        // The stores write disjoint directories (episodic/ vs topics/), so a branch's stores can run
+        // concurrently without clobbering each other. We await ALL of them settling — not just the
+        // first rejection — so the finally below never deletes branchFile while a sibling fork is
+        // still reading it. Branches stay serial: same-store forks across branches share the canonical
+        // store files, so cross-branch concurrency is the fan-out/synthesis mode's job, not this loop.
+        if (parallelize) {
+          const outcomes = await Promise.allSettled(MEMORY_STORES.map(runStore));
+          const rejection = outcomes.find(
+            (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
           );
-
-          await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);
+          if (rejection) throw rejection.reason;
+        } else {
+          for (const store of MEMORY_STORES) await runStore(store);
         }
       } finally {
         await rm(branchFile, { force: true });

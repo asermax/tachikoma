@@ -41,8 +41,9 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 | R20 | Store-maintenance prompts include the store-purpose section, a names-only cross-store manifest (the other memory store plus existing root context files, for cross-store reconciliation; omitted when nothing else exists), contradiction-detection instructions under the `Skills > Topics > Context` authority hierarchy, and the scope section |
 | R21 | The core-context step reviews `SOUL.md`, `USER.md`, `AGENTS.md` at the workspace root for staleness, redundancy, overlap, and size (USER.md ~120 lines, AGENTS.md ~400 lines); it is cleanup-only (adds no new content — that is the per-session `core-context` processor's job), especially conservative for SOUL.md, runs no `sweepEmptyMarkdown` (edits in place, never empties), and its prompt carries the store-purpose section plus a names-only topics manifest so context defers to the more authoritative topics store (omitted when topics is empty) |
 | R22 | A `memory-transcripts-prune` cron deletes `.jsonl` files in `memories/transcripts/` whose modification time (set at archive write) is strictly older than `transcriptRetentionDays` (default 90); it is deterministic host-side deletion (no headless agent run), skips non-`.jsonl` files, never throws (missing dir is a silent no-op; per-file failures warn and continue), and is disabled — retaining transcripts forever — when `transcriptRetentionDays <= 0` (zero or any negative value) |
-| R23 | Configuration lives under `[extensions.memory]`: `enabled` and `maintenance` (`enabled`, `recentDays`, `weeklyThresholdMonths`, `monthlyThresholdMonths`, plus `transcriptsSchedule` and `transcriptRetentionDays` for transcript retention) |
+| R23 | Configuration lives under `[extensions.memory]`: `enabled` and `maintenance` (`enabled`, `recentDays`, `weeklyThresholdMonths`, `monthlyThresholdMonths`, `parallelizeExtraction`, plus `transcriptsSchedule` and `transcriptRetentionDays` for transcript retention) |
 | R24 | `enabled = false` registers nothing — no bootstrap hooks, provider, processors, or crons |
+| R25 | A branch's store extractions (episodic, topics) run concurrently by default — the stores write disjoint directories, so there is no contention; `parallelizeExtraction = false` (under `[memory.maintenance]`) falls back to one store at a time. Branches are always extracted one at a time, because same-store extraction across branches shares the canonical store files (a read-modify-write); each store fork is awaited to settlement before the branch's shared throwaway file is deleted, so a sibling fork is never left reading a file being torn down |
 
 ## Behaviors
 
@@ -76,6 +77,7 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 - Given the fork runs, when the extraction agent acts, then it sends no user-facing message, asks no question, and uses only file tools (the silent-background directive reinforces the allowlist)
 - Given a background/headless run with no trunk, when the `memory-trunk-close` processor runs, then it no-ops (there are no day's branches to fold)
 - Given the agent emptied a file (merge or obsolescence), when the run completes, then the sweep deletes it while non-empty files survive
+- Given a branch with unextracted stores and `parallelizeExtraction` at its default, when extraction runs, then the branch's episodic and topics forks run concurrently (they touch disjoint directories) and both are awaited to settlement before the branch is marked extracted; given `parallelizeExtraction = false`, then the stores extract one at a time. Branches are always extracted serially
 
 ### Topics Extraction Folds Both Signal Types (R11, R12)
 
@@ -110,6 +112,6 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 ### Configuration (R23, R24)
 
 **Acceptance Criteria**:
-- Given no `[extensions.memory]` section, when the extension loads, then defaults apply: enabled, maintenance enabled with thresholds 15 days / 3 months / 12 months, transcripts schedule `50 3 * * *`, and `transcriptRetentionDays` 90
+- Given no `[extensions.memory]` section, when the extension loads, then defaults apply: enabled, maintenance enabled with thresholds 15 days / 3 months / 12 months, `parallelizeExtraction` true (a branch's stores extract concurrently), transcripts schedule `50 3 * * *`, and `transcriptRetentionDays` 90
 - Given `maintenance.enabled = false`, when the extension loads, then the trunk-close pipeline is not registered, but the `transcript-archive` processor and `memory-transcripts-prune` cron still register (transcript retention is independent of memory maintenance)
 - Given `enabled = false`, when the extension loads, then setup logs the disabled state and registers nothing

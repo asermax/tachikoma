@@ -225,6 +225,64 @@ describe("extractBranches", () => {
 
     expect(forkAndContinue).not.toHaveBeenCalled();
   });
+
+  it("runs a branch's stores concurrently when parallelize is unset (default)", async () => {
+    const session = threeBranchTrunk();
+    const records = getBranchRecords(session);
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const forkAndContinue = vi.fn().mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      // Yield so the sibling store's fork is observed in flight alongside this one.
+      await Promise.resolve();
+      inFlight -= 1;
+    });
+    const branchFile = vi.fn((_source: string, leafId: string) =>
+      join(workspace, `branch-${leafId}.jsonl`),
+    );
+    const deps: CloseExtractionDeps = {
+      agent: { forkAndContinue, branchFile },
+      workspaceRoot: workspace,
+    };
+
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
+
+    // A branch's two stores run at once (peak = store count); branches stay serial, so the peak
+    // never reaches the branch count.
+    expect(maxInFlight).toBe(2);
+    expect(isBranchExtracted(session, "topic-1")).toBe(true);
+    expect(isBranchExtracted(session, "topic-2")).toBe(true);
+    expect(isBranchExtracted(session, "topic-3")).toBe(true);
+  });
+
+  it("runs a branch's stores one at a time when parallelize is false", async () => {
+    const session = threeBranchTrunk();
+    const records = getBranchRecords(session);
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const forkAndContinue = vi.fn().mockImplementation(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await Promise.resolve();
+      inFlight -= 1;
+    });
+    const branchFile = vi.fn((_source: string, leafId: string) =>
+      join(workspace, `branch-${leafId}.jsonl`),
+    );
+    const deps: CloseExtractionDeps = {
+      agent: { forkAndContinue, branchFile },
+      workspaceRoot: workspace,
+      parallelize: false,
+    };
+
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
+
+    // Serial: a branch's stores never overlap (peak 1), matching the pre-parallel behavior.
+    expect(maxInFlight).toBe(1);
+  });
 });
 
 describe("ordered phases + step markers", () => {
