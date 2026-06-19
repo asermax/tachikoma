@@ -51,11 +51,8 @@ export interface CloseExtractionDeps {
   agent: BranchForker;
   workspaceRoot: string;
   /**
-   * Run each branch's store extractions (episodic, topics) concurrently — they write disjoint
-   * directories, so parallel is safe (default). Set false to extract one store at a time. Branches
-   * are always extracted serially: same-store extraction across branches shares the canonical store
-   * files (e.g. `episodic/{day}.md`, `topics/MEMORY.md`), so cross-branch concurrency needs the
-   * separate fan-out/synthesis extraction mode rather than this flag.
+   * Run a branch's store extractions (episodic, topics) concurrently — they write disjoint
+   * directories, so parallel is safe (default). Set false to extract one store at a time.
    */
   parallelize?: boolean;
 }
@@ -126,9 +123,8 @@ export const extractBranches = async (
 
     const start = Date.now();
 
-    // One branch's store forks share this throwaway branch file (each forkAndContinue copies it into
-    // its own session via forkFrom — the source is read-only), and are hard-limited to file tools so
-    // the extraction agent reuses the persona but cannot message the user or fire tasks.
+    // Each store's fork copies this throwaway branchFile into its own session (the source is
+    // read-only), hard-limited to file tools so it reuses the persona without messaging or tasks.
     const runStore = async (store: MemoryStore): Promise<void> => {
       await agent.forkAndContinue(
         branchFile,
@@ -142,11 +138,8 @@ export const extractBranches = async (
 
     try {
       try {
-        // The stores write disjoint directories (episodic/ vs topics/), so a branch's stores can run
-        // concurrently without clobbering each other. We await ALL of them settling — not just the
-        // first rejection — so the finally below never deletes branchFile while a sibling fork is
-        // still reading it. Branches stay serial: same-store forks across branches share the canonical
-        // store files, so cross-branch concurrency is the fan-out/synthesis mode's job, not this loop.
+        // allSettled (not Promise.all) so the `finally` never deletes branchFile while a sibling fork
+        // is still copying it — a first-rejection short-circuit could tear the shared file down mid-read.
         if (parallelize) {
           const outcomes = await Promise.allSettled(MEMORY_STORES.map(runStore));
           const rejection = outcomes.find(
