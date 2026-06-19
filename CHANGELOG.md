@@ -1,3 +1,10 @@
+# [3.36.0](https://github.com/asermax/tachikoma/compare/v3.35.0...v3.36.0) (2026-06-19)
+
+
+### Features
+
+* **coordinator:** surface new-day trunk close progress on the channel ([dc8c536](https://github.com/asermax/tachikoma/commit/dc8c5368cc3711d1287e529d322186aa1e63c2a3))
+
 # [3.35.0](https://github.com/asermax/tachikoma/compare/v3.34.0...v3.35.0) (2026-06-19)
 
 
