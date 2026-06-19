@@ -322,9 +322,16 @@ export class Coordinator {
 
     const session = await this.agent.open({ sessionFile: pointer.sessionFile });
 
+    // The first message of a new day waits on yesterday's memory pipeline. Surface its progress on a
+    // lead-in the upcoming response reclaims: this runs inside ensureTrunk, before respond(), so the
+    // channel is in its preparation phase and routes status() to a lead-in message that the streamed
+    // response later claims as its seed (no ghost line). silent=false lets the per-processor
+    // "Processing memories…" / "Archiving transcript…" lines edit that lead-in as the pipeline runs.
+    this.status("Closing yesterday's trunk…");
+
     await this.closeTrunkSession(
       { session, day: pointer.day, sessionFile: pointer.sessionFile },
-      true,
+      false,
     );
     this.trunkState.clearActive();
   }
@@ -343,7 +350,10 @@ export class Coordinator {
       return;
     }
 
-    await this.closeTrunk();
+    // Idle close: no exchange follows, so there is no response to reclaim a status lead-in — stay
+    // silent (debug-logged only) to avoid orphaning a "Post-processing: …" ghost line. The shutdown
+    // close path keeps silent=false; with shuttingDown set it routes to the dedicated shutdownStatus.
+    await this.closeTrunk(true);
   }
 
   /** Close the live trunk (shutdown / explicit). No-op when no trunk is open. */
@@ -550,7 +560,8 @@ export class Coordinator {
         log: this.log,
       },
       log: this.log,
-      onProcessorStart: (processor) => this.status(`Post-processing: ${processor.name}…`, silent),
+      onProcessorStart: (processor) =>
+        this.status(`${processor.statusLabel ?? `Post-processing: ${processor.name}`}…`, silent),
       onProcessorSettled: (_processor, result) => {
         if (result.status === "rejected") failures += 1;
       },

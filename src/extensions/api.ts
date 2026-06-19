@@ -56,6 +56,11 @@ export interface PostProcessorContext {
 export interface PostProcessor {
   name: string;
   phase?: PostProcessingPhase;
+  /**
+   * Friendly label for the user-facing "in progress" status line shown while this processor runs
+   * (e.g. "Processing memories"). Omit to fall back to the generic "Post-processing: <name>".
+   */
+  statusLabel?: string;
   process(context: PostProcessorContext): Promise<void>;
 }
 

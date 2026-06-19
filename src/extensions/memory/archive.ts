@@ -35,6 +35,7 @@ const headerSessionId = (raw: string, log: Logger): string | null => {
 export const createTranscriptArchiveProcessor = (workspaceRoot: string): PostProcessor => ({
   name: "transcript-archive",
   phase: "finalize",
+  statusLabel: "Archiving transcript",
 
   async process({ transcriptPath, log }) {
     if (transcriptPath == null) {
