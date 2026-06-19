@@ -42,8 +42,8 @@ const SUMMARY_SYSTEM = [
   "- what work was completed and what was produced (files, commands, outputs)",
   "- any important context or details the agent needs to know",
   "",
-  "Do NOT include open questions, next steps, goals, or task lists — the branch is finished. Focus on",
-  "describing what actually happened. Output only the summary prose, no preamble.",
+  "Do NOT include open questions, next steps, goals, or task lists — the branch is finished.",
+  "Output only the summary prose, no preamble.",
 ].join("\n");
 
 /** The branch's own turns: entries on the leaf path strictly after `currentBaseId`. */
