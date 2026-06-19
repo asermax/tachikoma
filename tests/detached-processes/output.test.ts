@@ -7,7 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   readOutputTail,
+  readOutputTailMerged,
   readOutputWindow,
+  readOutputWindowMerged,
 } from "../../src/extensions/detached-processes/output.ts";
 
 let dir: string;
@@ -100,6 +102,125 @@ describe("readOutputWindow", () => {
       content: "",
       totalLines: 3,
       pastEnd: true,
+    });
+  });
+});
+
+describe("readOutputTailMerged", () => {
+  const missing = (name: string): string => join(dir, `${name}-${randomUUID()}.log`);
+
+  it("returns null when all streams are missing", async () => {
+    expect(
+      await readOutputTailMerged([
+        { label: "stdout", path: missing("out") },
+        { label: "stderr", path: missing("err") },
+      ]),
+    ).toBeNull();
+  });
+
+  it("returns null when all streams are empty files", async () => {
+    expect(
+      await readOutputTailMerged([
+        { label: "stdout", path: await writeLog("") },
+        { label: "stderr", path: await writeLog("") },
+      ]),
+    ).toBeNull();
+  });
+
+  it("presents both streams as separated labeled sections, stdout first", async () => {
+    expect(
+      await readOutputTailMerged([
+        { label: "stdout", path: await writeLog("out1\nout2\n") },
+        { label: "stderr", path: await writeLog("err1\n") },
+      ]),
+    ).toBe("[stdout]\nout1\nout2\n\n[stderr]\nerr1");
+  });
+
+  it("omits a missing/empty stdout and shows stderr only", async () => {
+    expect(
+      await readOutputTailMerged([
+        { label: "stdout", path: missing("out") },
+        { label: "stderr", path: await writeLog("only-err\n") },
+      ]),
+    ).toBe("[stderr]\nonly-err");
+  });
+
+  it("omits an empty stderr and shows stdout only", async () => {
+    expect(
+      await readOutputTailMerged([
+        { label: "stdout", path: await writeLog("only-out\n") },
+        { label: "stderr", path: await writeLog("") },
+      ]),
+    ).toBe("[stdout]\nonly-out");
+  });
+});
+
+describe("readOutputWindowMerged", () => {
+  const missing = (name: string): string => join(dir, `${name}-${randomUUID()}.log`);
+
+  it("applies the window to each stream and separates them", async () => {
+    expect(
+      await readOutputWindowMerged(
+        [
+          { label: "stdout", path: await writeLog("a\nb\nc\n") },
+          { label: "stderr", path: await writeLog("x\ny\nz\n") },
+        ],
+        0,
+        2,
+      ),
+    ).toEqual({
+      content: "[stdout]\na\nb\n\n[stderr]\nx\ny",
+      pastEnd: false,
+      totalLines: 3,
+    });
+  });
+
+  it("omits a stream past EOF while keeping the other", async () => {
+    const result = await readOutputWindowMerged(
+      [
+        { label: "stdout", path: await writeLog("only-line\n") },
+        { label: "stderr", path: await writeLog("x\ny\nz\nw\nv\n") },
+      ],
+      0,
+      2,
+    );
+
+    expect(result.content).toBe("[stdout]\nonly-line\n\n[stderr]\nx\ny");
+    expect(result.pastEnd).toBe(false);
+    expect(result.totalLines).toBe(5);
+  });
+
+  it("flags pastEnd and reports the longest log when every window is past EOF", async () => {
+    expect(
+      await readOutputWindowMerged(
+        [
+          { label: "stdout", path: await writeLog("a\nb\nc\n") },
+          { label: "stderr", path: await writeLog("x\n") },
+        ],
+        50,
+        10,
+      ),
+    ).toEqual({
+      content: "",
+      pastEnd: true,
+      totalLines: 3,
+    });
+  });
+
+  it("reports empty when all streams are missing or empty", async () => {
+    expect(
+      await readOutputWindowMerged(
+        [
+          { label: "stdout", path: missing("out") },
+          { label: "stderr", path: await writeLog("") },
+        ],
+        0,
+        10,
+      ),
+    ).toEqual({
+      content: "",
+      pastEnd: false,
+      totalLines: 0,
     });
   });
 });
