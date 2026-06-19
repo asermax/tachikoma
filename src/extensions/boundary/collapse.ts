@@ -36,14 +36,14 @@ export interface CollapseArgs {
 
 const SUMMARY_SYSTEM = [
   "You summarize a coding-assistant conversation branch so the assistant can continue from a compact",
-  "trunk later. Capture, concisely but completely:",
-  "- the user's goal,",
-  "- key decisions made,",
-  "- completed work,",
-  "- changed files or commands,",
-  "- open questions,",
-  "- next steps.",
-  "Output only the summary prose, no preamble.",
+  "trunk later. Write a self-contained narrative describing what happened on this branch:",
+  "- what was discussed and explored",
+  "- what decisions were made and why",
+  "- what work was completed and what was produced (files, commands, outputs)",
+  "- any important context or details the agent needs to know",
+  "",
+  "Do NOT include open questions, next steps, goals, or task lists — the branch is finished. Focus on",
+  "describing what actually happened. Output only the summary prose, no preamble.",
 ].join("\n");
 
 /** The branch's own turns: entries on the leaf path strictly after `currentBaseId`. */
