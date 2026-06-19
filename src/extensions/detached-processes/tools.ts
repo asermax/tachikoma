@@ -7,7 +7,12 @@ import { type Static, Type } from "typebox";
 import type { Logger } from "../../log.ts";
 import { type ScopeInspector, scopeUnitName } from "./cgroup.ts";
 import type { ProcessLimiter } from "./limits.ts";
-import { readOutputTail, readOutputWindow } from "./output.ts";
+import {
+  readOutputTail,
+  readOutputTailMerged,
+  readOutputWindow,
+  readOutputWindowMerged,
+} from "./output.ts";
 import { type ProcessNotification, type ReconcileDeps, reconcileExit } from "./reconcile.ts";
 import type { ProcessRepository } from "./repository.ts";
 import { type DetachedProcessRecord, STOP_REASON_OOM_KILLED } from "./schema.ts";
@@ -61,7 +66,8 @@ export const ReadProcessOutputParams = Type.Object({
   process_id: Type.String({ description: "ID of the process" }),
   stream: Type.Optional(
     StringEnum(["stdout", "stderr"] as const, {
-      description: "Which output stream to read (default stdout)",
+      description:
+        "Which output stream to read — defaults to both; set 'stdout' or 'stderr' to read only one",
     }),
   ),
   offset: Type.Optional(
@@ -232,20 +238,31 @@ export const handleQueryProcess = async (
   return ["# Detached Processes", "", ...records.flatMap(describeProcess)].join("\n");
 };
 
+/** Trim a raw output blob to pi's tail limits, prefixing a marker when shortened. */
+const formatTail = (raw: string): string => {
+  const { content, truncated } = truncateTail(raw);
+  return truncated ? `[earlier output truncated]\n${content}` : content;
+};
+
 export const handleReadProcessOutput = async (
   deps: ProcessToolDeps,
   args: Static<typeof ReadProcessOutputParams>,
 ): Promise<string> => {
-  deps.log.debug(
-    { process_id: args.process_id, stream: args.stream },
-    "read_process_output invoked",
-  );
+  const stream = args.stream ?? "both";
+
+  deps.log.debug({ process_id: args.process_id, stream }, "read_process_output invoked");
 
   const record = deps.repository.get(args.process_id);
 
   if (record == null) throw notFound(args.process_id);
 
-  const path = args.stream === "stderr" ? record.stderrPath : record.stdoutPath;
+  // Both streams, kept as separated labeled sections so stdout and stderr never
+  // blend. Many programs write their useful output to stderr; reading both by
+  // default means the caller doesn't have to guess which stream a process uses.
+  const streams = [
+    { label: "stdout", path: record.stdoutPath },
+    { label: "stderr", path: record.stderrPath },
+  ];
 
   if (args.offset != null || args.count != null) {
     const offset = args.offset ?? 0;
@@ -254,6 +271,18 @@ export const handleReadProcessOutput = async (
     if (offset < 0) throw new Error(`Invalid offset: ${offset}. Must be 0 or greater.`);
     if (count < 1) throw new Error(`Invalid count: ${count}. Minimum value is 1.`);
 
+    if (stream === "both") {
+      const merged = await readOutputWindowMerged(streams, offset, count);
+
+      if (merged.empty) return "No output yet.";
+      if (merged.pastEnd) {
+        return `No output at lines ${offset}-${offset + count} (logs have up to ${merged.totalLines} lines).`;
+      }
+
+      return formatTail(merged.content);
+    }
+
+    const path = stream === "stderr" ? record.stderrPath : record.stdoutPath;
     const window = await readOutputWindow(path, offset, count);
 
     if (window == null || window.totalLines === 0) return "No output yet.";
@@ -262,18 +291,23 @@ export const handleReadProcessOutput = async (
       return `No output at lines ${offset}-${offset + count} (log has ${window.totalLines} lines).`;
     }
 
-    const { content, truncated } = truncateTail(window.content);
-
-    return truncated ? `[earlier output truncated]\n${content}` : content;
+    return formatTail(window.content);
   }
 
+  if (stream === "both") {
+    const merged = await readOutputTailMerged(streams);
+
+    if (merged == null) return "No output yet.";
+
+    return formatTail(merged);
+  }
+
+  const path = stream === "stderr" ? record.stderrPath : record.stdoutPath;
   const raw = await readOutputTail(path);
 
   if (raw == null || raw === "") return "No output yet.";
 
-  const { content, truncated } = truncateTail(raw);
-
-  return truncated ? `[earlier output truncated]\n${content}` : content;
+  return formatTail(raw);
 };
 
 export const handleRenameProcess = async (
@@ -423,10 +457,11 @@ export const createProcessToolsFactory =
       name: "read_process_output",
       label: "Read Process Output",
       description:
-        "Read a detached process's captured output. Defaults to the tail of stdout; pass stream='stderr' for the error stream. Pass offset (0-based line) and/or count to read a specific window instead, paging through older output. Large reads are truncated to the most recent output.",
+        "Read a detached process's captured output. By default returns both stdout and stderr as separated sections — many programs write their useful output (logs, errors, progress) to stderr, so this shows the full picture in one call. Pass stream='stdout' or stream='stderr' to read only one. Pass offset (0-based line) and/or count to read a specific window instead, paging through older output. Large reads are truncated to the most recent output.",
       promptSnippet: "Read captured output of a detached process",
       promptGuidelines: [
-        "Use read_process_output to check on a detached process's progress or failures.",
+        "Use read_process_output to check on a detached process's progress or failures — it returns both stdout and stderr by default.",
+        "Don't assume a process is stalled or silent without reading its output; many programs log to stderr.",
         "Use offset/count to page back through earlier output when the tail isn't enough.",
       ],
       parameters: ReadProcessOutputParams,

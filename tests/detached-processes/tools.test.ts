@@ -148,7 +148,7 @@ describe("handleQueryProcess", () => {
 });
 
 describe("handleReadProcessOutput", () => {
-  it("reads stdout by default and stderr on request", async () => {
+  it("reads both streams by default and one when a stream is selected", async () => {
     const record = await spawnProcess(ctx.spawnDeps, {
       name: "noisy",
       command: "echo out; echo err >&2",
@@ -156,10 +156,28 @@ describe("handleReadProcessOutput", () => {
 
     await waitFor(() => !isAlive(record.pid));
 
-    expect(await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id })).toBe("out\n");
+    expect(await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id })).toBe(
+      "[stdout]\nout\n\n[stderr]\nerr",
+    );
+    expect(
+      await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id, stream: "stdout" }),
+    ).toBe("out\n");
     expect(
       await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id, stream: "stderr" }),
     ).toBe("err\n");
+  });
+
+  it("reads only stderr by default when stdout is empty", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, {
+      name: "stderr-only",
+      command: "echo err >&2",
+    });
+
+    await waitFor(() => !isAlive(record.pid));
+
+    expect(await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id })).toBe(
+      "[stderr]\nerr",
+    );
   });
 
   it("reports when there is no output", async () => {
@@ -181,7 +199,12 @@ describe("handleReadProcessOutput", () => {
     await waitFor(() => !isAlive(record.pid));
 
     expect(
-      await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id, offset: 1, count: 2 }),
+      await handleReadProcessOutput(ctx.toolDeps, {
+        process_id: record.id,
+        stream: "stdout",
+        offset: 1,
+        count: 2,
+      }),
     ).toBe("line2\nline3");
   });
 
@@ -212,8 +235,47 @@ describe("handleReadProcessOutput", () => {
     await waitFor(() => !isAlive(record.pid));
 
     expect(
-      await handleReadProcessOutput(ctx.toolDeps, { process_id: record.id, offset: 50, count: 10 }),
+      await handleReadProcessOutput(ctx.toolDeps, {
+        process_id: record.id,
+        stream: "stdout",
+        offset: 50,
+        count: 10,
+      }),
     ).toMatch(/No output at lines 50-60 \(log has 1 lines\)\./);
+  });
+
+  it("windowed read with the default streams pages each stream in parallel", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, {
+      name: "both",
+      command: "for i in 1 2 3; do echo o$i; done; for i in 1 2; do echo e$i >&2; done",
+    });
+
+    await waitFor(() => !isAlive(record.pid));
+
+    expect(
+      await handleReadProcessOutput(ctx.toolDeps, {
+        process_id: record.id,
+        offset: 0,
+        count: 2,
+      }),
+    ).toBe("[stdout]\no1\no2\n\n[stderr]\ne1\ne2");
+  });
+
+  it("windowed read past both streams names the longest log", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, {
+      name: "both-short",
+      command: "for i in 1 2 3; do echo o$i; done; echo e1 >&2",
+    });
+
+    await waitFor(() => !isAlive(record.pid));
+
+    expect(
+      await handleReadProcessOutput(ctx.toolDeps, {
+        process_id: record.id,
+        offset: 50,
+        count: 10,
+      }),
+    ).toMatch(/No output at lines 50-60 \(logs have up to 3 lines\)\./);
   });
 
   it("rejects a negative offset", async () => {
