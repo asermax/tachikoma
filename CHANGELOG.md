@@ -1,3 +1,10 @@
+# [3.35.0](https://github.com/asermax/tachikoma/compare/v3.34.0...v3.35.0) (2026-06-19)
+
+
+### Features
+
+* **detached-processes:** read both stdout and stderr by default ([4a0e62e](https://github.com/asermax/tachikoma/commit/4a0e62e11fc6dddf66c2653864426c762610f2ac))
+
 # [3.34.0](https://github.com/asermax/tachikoma/compare/v3.33.0...v3.34.0) (2026-06-19)
 
 
