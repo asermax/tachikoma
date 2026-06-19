@@ -1,3 +1,10 @@
+# [3.34.0](https://github.com/asermax/tachikoma/compare/v3.33.0...v3.34.0) (2026-06-19)
+
+
+### Features
+
+* **memory:** extract a branch's stores concurrently ([11728eb](https://github.com/asermax/tachikoma/commit/11728ebc49b494f3b95edd66ef6068299264bcf6))
+
 # [3.33.0](https://github.com/asermax/tachikoma/compare/v3.32.0...v3.33.0) (2026-06-18)
 
 
