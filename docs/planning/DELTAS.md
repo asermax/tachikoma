@@ -179,7 +179,7 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
 
 ### DLT-123: Learnings memory layer
-**Status**: ✓ Design
+**Status**: ⧗ Plan
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
