@@ -3,10 +3,21 @@ import { join } from "node:path";
 
 import type { Logger } from "../../log.ts";
 
-export const MEMORY_STORES = ["episodic", "topics"] as const;
+// Store-set seam — the single source of truth every module iterates (see design S1). Adding a
+// store is membership, not a rewrite: dir creation derives from MEMORY_STORES (ensureMemoryLayout),
+// index seeding + context injection from INDEXED_STORES, maintenance + cross-store manifests from
+// MEMORY_STORES, and extraction from EXTRACTION_STORES. The one asymmetry — `learnings` is in the
+// top two sets but absent from EXTRACTION_STORES — is what folds learnings into the topics fork and
+// prevents a duplicate (R4).
+export const MEMORY_STORES = ["episodic", "topics", "learnings"] as const;
 export type MemoryStore = (typeof MEMORY_STORES)[number];
 
-export const INDEXED_STORES = ["topics"] as const satisfies readonly MemoryStore[];
+export const INDEXED_STORES = ["topics", "learnings"] as const satisfies readonly MemoryStore[];
+
+// Stores that get their own extraction fork. `learnings` is folded INTO the topics fork (never its
+// own), so it is excluded here — see extractBranches and the shared topics+learnings instruction.
+export const EXTRACTION_STORES = ["episodic", "topics"] as const satisfies readonly MemoryStore[];
+export type ExtractionStore = (typeof EXTRACTION_STORES)[number];
 
 export const MEMORY_INDEX_FILENAME = "MEMORY.md";
 

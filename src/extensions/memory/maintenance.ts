@@ -189,6 +189,84 @@ Files whose content carries headers like "Status: Completed", "Status: Merged", 
 
 If no changes are needed, exit with no changes.`;
 
+const LEARNINGS_MAINTENANCE_PROMPT = `You are a memory maintenance agent performing learnings memory cleanup.
+
+## Directory
+
+\`$WORKSPACE/memories/learnings/\`
+
+## Pre-check
+
+If the directory is empty or contains no \`.md\` files, stop immediately — nothing to maintain.
+
+## File Handling
+
+- Skip empty (0-byte) or malformed files — do not attempt to process them.
+- Only process files with \`.md\` extension.
+
+## File Model
+
+Each learnings file holds one theme of recurring friction under two sections:
+- \`## Drafts\` — tentative lessons observed once (not yet corroborated as recurring).
+- \`## Confirmed\` — the same friction, now corroborated across sessions (permanent).
+
+A single file may hold entries in either or both sections. Keep this two-section structure intact. If a file is missing the headers or scrambles entries across them, repair the structure in place: restore the \`## Drafts\` / \`## Confirmed\` headers and place each entry under the right one. If a file's structure is unrecoverable, leave it for the next pass rather than guessing.
+
+## Evaluation Criteria
+
+Read all learnings files and evaluate each for these issues. A learning is experience (what bites, what worked), not knowledge — evaluate it as a recurring friction, not as a topic to keep tidy.
+
+### Draft Promotion (safety-net)
+
+Review every \`## Drafts\` entry. Promote any draft that is clearly corroborated as a recurring pattern — the same friction appears in more than one entry, or a draft and a confirmed entry describe the same recurring problem — by moving it from \`## Drafts\` to \`## Confirmed\`. This is the safety-net promotion: extraction usually promotes on recognized recurrence, but a missed re-read is caught here. Leave genuinely single-occurrence drafts as drafts: a draft is not deleted merely for being seen once (only stale or contradicted learnings are pruned).
+
+### Contradiction — a resolved friction is corrected or removed, never promoted
+
+A draft or confirmed entry is contradicted when a later observation shows the friction was **resolved**: the flaky test now passes, the deploy step no longer fails, the user confirms the constraint was lifted, the dead-end approach was abandoned for a reason that no longer applies. When that happens, correct the entry to reflect the resolution or remove it entirely — never promote a resolved friction, because resolution is the opposite of recurrence.
+
+### Staleness
+
+An entry is stale when the friction it describes no longer applies or has been superseded:
+- References to resolved issues, fixed bugs, or retired tooling.
+- Information contradicted by a newer entry.
+- Friction about a project, system, or workflow that no longer exists.
+
+For stale entries: update if the friction still applies but its details changed, or remove if the friction is fully resolved or obsolete.
+
+### Redundancy
+
+Same friction stated in different files or restated within a file:
+- Keep the most complete and well-organized version.
+- Remove the duplicate entries.
+
+### Fragmentation — consolidate per-incident files into broad slug files
+
+Beyond pairwise overlap, look for clusters of many small files that fragment a single friction theme into per-incident, per-bug, or per-date entries — the main driver of learnings directory bloat and the pattern this store forbids:
+
+- List all files in \`$WORKSPACE/memories/learnings/\` and group them by the friction theme or subject (project, system, tool, or kind of problem).
+- When multiple files share the same theme, consolidate them into a single broad-theme file named for the friction (\`<theme>.md\`, e.g. \`test-suite.md\`, \`deploys.md\`, \`<tool>.md\`) — broad and future-mergeable, never incident- or date-scoped.
+- Merge their drafts and confirmed entries (deduplicating), then empty the original narrow files so they are cleaned up.
+- Preserve substantive lessons during the merge; discard incident-specific noise.
+
+### Size Enforcement
+
+Keep files concise — flag any file exceeding ~50 lines for consolidation or pruning. A learnings file that long likely bundles several distinct frictions (split them into their own broad slug files) or carries narrative that belongs in episodic memory rather than a learning.
+
+### Topic Orthogonality
+
+Learnings hold experience and sit orthogonal to the \`Skills > Topics > Context\` authority hierarchy. A learning and a topic about the same subject are different kinds of information, so never merge a learning into a topic file, prune a learning in deference to a topic, or restate a topic as a learning. The cross-store visibility section lists topics only so you can avoid restating them — not so you defer to them.
+
+## Deletion
+
+- If a learnings file is entirely obsolete (all entries resolved or stale, no useful content), delete it.
+- Do NOT delete files that contain any useful, current lesson — a file holding even one current draft or confirmed entry should be kept.
+
+## Idempotency
+
+The goal is to leave the store materially smaller and better-curated than you found it. Treat absence of exact duplicates as insufficient grounds for skipping — semantic overlap, resolved friction, and per-incident granularity are also valid triggers for action.
+
+If no changes are needed, exit with no changes.`;
+
 const heavyIndexRebuildSection = (store: MemoryStore): string => `## Memory Index Rebuild (full)
 
 Rebuild the MEMORY.md index file in \`$WORKSPACE/memories/${store}/\` from scratch:
@@ -235,6 +313,7 @@ When reviewing files in this store, check for contradictions against other store
 const STORE_LABELS: Record<MemoryStore, string> = {
   episodic: "Episodic Files",
   topics: "Topics Files",
+  learnings: "Learnings Files",
 };
 
 const CONTEXT_FILE_NAMES = ["SOUL.md", "USER.md", "AGENTS.md"];
@@ -380,6 +459,7 @@ export const buildCrossStoreManifest = async (
 
 const basePrompt = (store: MemoryStore, settings: MaintenanceThresholds): string => {
   if (store === "episodic") return episodicMaintenancePrompt(settings);
+  if (store === "learnings") return LEARNINGS_MAINTENANCE_PROMPT;
   return TOPICS_MAINTENANCE_PROMPT;
 };
 

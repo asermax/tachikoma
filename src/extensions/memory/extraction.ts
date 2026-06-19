@@ -1,6 +1,6 @@
 import type { SideRunner } from "../../agent/side-run.ts";
 import { localIsoDate } from "../../util/dates.ts";
-import type { MemoryStore } from "./layout.ts";
+import type { ExtractionStore, MemoryStore } from "./layout.ts";
 import {
   CONTEXT_DEDUP_SECTION,
   INDEX_UPDATE_SECTION,
@@ -127,7 +127,10 @@ notification, or task-management tools. Only read files in the workspace and cre
 under \`$WORKSPACE/memories/${store}/\`. When you are done, simply stop — your only output is the
 file changes.`;
 
-const STORE_INSTRUCTIONS: Record<MemoryStore, string> = {
+// Keyed on ExtractionStore, not MemoryStore: only stores that get their own extraction fork have an
+// instruction. Learnings is folded into the topics fork, so it has no entry here — and the type now
+// enforces that (R4) at compile time rather than leaving STORE_INSTRUCTIONS["learnings"] undefined.
+const STORE_INSTRUCTIONS: Record<ExtractionStore, string> = {
   episodic: [
     EPISODIC_BASE_PROMPT,
     scopeSection("episodic"),
@@ -151,7 +154,7 @@ const STORE_INSTRUCTIONS: Record<MemoryStore, string> = {
  * still files its memories under the day it happened. Defaults to today for non-close callers.
  */
 export const storeInstruction = (
-  store: MemoryStore,
+  store: ExtractionStore,
   workspaceRoot: string,
   date: string = localIsoDate(),
 ): string =>

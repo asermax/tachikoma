@@ -25,10 +25,15 @@ describe("ensureMemoryLayout", () => {
 
     expect((await readdir(join(workspace, "memories"))).sort()).toEqual([
       "episodic",
+      "learnings",
       "topics",
       "transcripts",
     ]);
     expect(await readFile(join(workspace, "memories", "topics", "MEMORY.md"), "utf8")).toBe(
+      "# Memory Index\n",
+    );
+    // learnings is an indexed store like topics — it gets a header-only MEMORY.md too.
+    expect(await readFile(join(workspace, "memories", "learnings", "MEMORY.md"), "utf8")).toBe(
       "# Memory Index\n",
     );
   });
@@ -56,6 +61,32 @@ describe("ensureMemoryLayout", () => {
 
     expect(await readFile(join(workspace, "memories", "topics", "MEMORY.md"), "utf8")).toContain(
       "Hand-written entry",
+    );
+  });
+
+  it("seeds placeholder entries for pre-existing learnings files (mirrors topics)", async () => {
+    await mkdir(join(workspace, "memories", "learnings"), { recursive: true });
+    await writeFile(join(workspace, "memories", "learnings", "test-suite.md"), "friction", "utf8");
+
+    await ensureMemoryLayout(workspace, fakeLog);
+
+    expect(await readFile(join(workspace, "memories", "learnings", "MEMORY.md"), "utf8")).toBe(
+      "# Memory Index\n\n[Test Suite](./test-suite.md): Description pending update\n",
+    );
+  });
+
+  it("leaves an existing learnings index untouched (idempotent)", async () => {
+    await mkdir(join(workspace, "memories", "learnings"), { recursive: true });
+    await writeFile(
+      join(workspace, "memories", "learnings", "MEMORY.md"),
+      "# Memory Index\n\n[Custom](./custom.md): Hand-written learning\n",
+      "utf8",
+    );
+
+    await ensureMemoryLayout(workspace, fakeLog);
+
+    expect(await readFile(join(workspace, "memories", "learnings", "MEMORY.md"), "utf8")).toContain(
+      "Hand-written learning",
     );
   });
 });

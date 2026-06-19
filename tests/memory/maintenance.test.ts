@@ -115,6 +115,56 @@ describe("runMaintenanceTick", () => {
     // No second store to misclassify into — that section is gone.
     expect(system).not.toContain("Misclassification");
   });
+
+  it("runs the learnings maintenance prompt targeting memories/learnings/", async () => {
+    const { side, run } = fakeRunner();
+
+    await runMaintenanceTick("learnings", deps(side, monday));
+
+    const options = run.mock.calls[0]?.[0];
+    expect(options.tier).toBe("processor");
+    expect(options.system).toContain(join(workspace, "memories", "learnings"));
+    expect(options.system).toContain("learnings memory cleanup");
+    // two-section file model + safety-net draft promotion + resolved-friction handling + orthogonality
+    expect(options.system).toContain("## Drafts");
+    expect(options.system).toContain("## Confirmed");
+    expect(options.system).toContain("Draft Promotion");
+    expect(options.system).toContain("resolved");
+    expect(options.system).toContain("never promote");
+    expect(options.system).toContain("orthogonal");
+    // per-incident fragmentation consolidation (R12) + size guard
+    expect(options.system).toContain("Fragmentation");
+    expect(options.system).toContain("~50 lines");
+  });
+
+  it("uses the light index consistency section for learnings on weekdays", async () => {
+    const { side, run } = fakeRunner();
+
+    await runMaintenanceTick("learnings", deps(side, monday));
+
+    const system = run.mock.calls[0]?.[0].system;
+    expect(system).toContain("## Memory Index Consistency");
+    expect(system).not.toContain("## Memory Index Rebuild (full)");
+  });
+
+  it("uses the full index rebuild section for learnings on Sundays", async () => {
+    const { side, run } = fakeRunner();
+
+    await runMaintenanceTick("learnings", deps(side, sunday));
+
+    const system = run.mock.calls[0]?.[0].system;
+    expect(system).toContain("## Memory Index Rebuild (full)");
+    expect(system).toContain(join(workspace, "memories", "learnings"));
+  });
+
+  it("commits the learnings pass with a store-specific message", async () => {
+    const { side } = fakeRunner();
+    const commitChanges = vi.fn().mockResolvedValue(undefined);
+
+    await runMaintenanceTick("learnings", { ...deps(side, monday), commitChanges });
+
+    expect(commitChanges).toHaveBeenCalledWith("chore(memory): scheduled learnings maintenance");
+  });
 });
 
 describe("buildCrossStoreManifest", () => {
@@ -150,6 +200,21 @@ describe("buildCrossStoreManifest", () => {
 
   it("returns null when nothing else exists", async () => {
     expect(await buildCrossStoreManifest(workspace, "topics")).toBeNull();
+  });
+
+  it("lists the other stores for learnings and excludes learnings itself", async () => {
+    await mkdir(join(workspace, "memories", "topics"), { recursive: true });
+    await writeFile(join(workspace, "memories", "topics", "tech-stack.md"), "stack", "utf8");
+    await mkdir(join(workspace, "memories", "episodic"), { recursive: true });
+    await writeFile(join(workspace, "memories", "episodic", "2026-06-10.md"), "day", "utf8");
+
+    const manifest = await buildCrossStoreManifest(workspace, "learnings");
+
+    expect(manifest).toContain("### Topics Files");
+    expect(manifest).toContain("- `memories/topics/tech-stack.md`");
+    expect(manifest).toContain("### Episodic Files");
+    // the current store (learnings) is excluded from cross-store visibility
+    expect(manifest).not.toContain("### Learnings Files");
   });
 });
 

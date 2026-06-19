@@ -16,6 +16,7 @@ import {
   extractBranches,
   prunePhase,
 } from "../../src/extensions/memory/close-pipeline.ts";
+import { EXTRACTION_STORES } from "../../src/extensions/memory/layout.ts";
 import type { Logger } from "../../src/log.ts";
 import {
   BRANCH_SUMMARY,
@@ -148,8 +149,12 @@ describe("extractBranches", () => {
 
     await extractBranches(session, records, deps, "2026-06-15", fakeLog);
 
-    // Two unmarked branches × two stores (episodic + topics).
+    // Two unmarked branches × two extraction forks (EXTRACTION_STORES = episodic + topics).
     expect(forkAndContinue).toHaveBeenCalledTimes(4);
+    // R4: extraction iterates EXTRACTION_STORES — which excludes learnings — so each unmarked
+    // branch spawns exactly 2 forks and never a learnings fork. Lock the seam at its source.
+    expect([...EXTRACTION_STORES]).toEqual(["episodic", "topics"]);
+    expect(EXTRACTION_STORES).not.toContain("learnings");
     expect(branchedLeaves.sort()).toEqual(["leaf-1", "leaf-3"]);
 
     expect(isBranchExtracted(session, "topic-1")).toBe(true);
@@ -301,8 +306,8 @@ describe("ordered phases + step markers", () => {
     await consolidatePhase(session, deps);
     await coreContextStep(session, deps);
 
-    // prune = two store passes (episodic + topics); consolidate is an interim no-op (DLT-173 seam); core-context = one pass.
-    expect(order).toEqual(["store", "store", "context"]);
+    // prune = three store passes (episodic + topics + learnings); consolidate is an interim no-op (DLT-173 seam); core-context = one pass.
+    expect(order).toEqual(["store", "store", "store", "context"]);
     expect(isStepDone(session, CLOSE_STEPS.prune)).toBe(true);
     expect(isStepDone(session, CLOSE_STEPS.consolidate)).toBe(true);
     expect(isStepDone(session, CLOSE_STEPS.coreContext)).toBe(true);
@@ -324,7 +329,7 @@ describe("ordered phases + step markers", () => {
     // Recovery re-runs the phase cleanly and now writes the marker.
     const run = vi.fn().mockResolvedValue({ text: "done" });
     await prunePhase(session, phaseDeps(run));
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(3); // three store passes: episodic + topics + learnings
     expect(isStepDone(session, CLOSE_STEPS.prune)).toBe(true);
 
     // A subsequent re-run skips the completed phase entirely.
@@ -366,9 +371,10 @@ describe("createTrunkClosePipeline", () => {
       log: fakeLog,
     });
 
-    // Six extracts (3 branches × 2 stores), then prune (2 store), consolidate (no-op), core (context).
+    // Six extracts (3 branches × 2 forks — EXTRACTION_STORES excludes learnings), then prune (3
+    // store passes: episodic + topics + learnings), consolidate (no-op), core (context).
     expect(events.slice(0, 6)).toEqual(Array(6).fill("extract"));
-    expect(events.slice(6)).toEqual(["store", "store", "context"]);
+    expect(events.slice(6)).toEqual(["store", "store", "store", "context"]);
   });
 
   it("no-ops for a background run with no trunk", async () => {

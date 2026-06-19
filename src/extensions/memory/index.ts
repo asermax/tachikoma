@@ -31,7 +31,7 @@ export type MemoryConfig = Static<typeof MemoryConfigSchema>;
 
 /**
  * Long-term memory: a git-versioned markdown store under workspace `memories/`
- * (episodic, topics, transcripts). Injects a static index of the
+ * (episodic, topics, learnings, transcripts). Injects a static index of the
  * store on every message; folds extraction + pruning + consolidation + the
  * once-daily core-context update into the trunk-close pipeline, and archives
  * the trunk transcript at close.
