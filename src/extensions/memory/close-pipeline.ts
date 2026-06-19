@@ -18,6 +18,7 @@ import { storeInstruction } from "./extraction.ts";
 import {
   EXTRACTION_STORES,
   type ExtractionStore,
+  FORK_WRITE_STORES,
   MEMORY_STORES,
   type MemoryStore,
   storeDir,
@@ -141,7 +142,11 @@ export const extractBranches = async (
         FILE_EDIT_TOOLS,
       );
 
-      await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);
+      // Sweep every directory this fork writes. The topics fork also writes learnings/, so both
+      // must be swept for emptied files to be cleaned up.
+      for (const swept of FORK_WRITE_STORES[store]) {
+        await sweepEmptyMarkdown(storeDir(workspaceRoot, swept), log);
+      }
     };
 
     try {

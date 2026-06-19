@@ -19,6 +19,14 @@ export const INDEXED_STORES = ["topics", "learnings"] as const satisfies readonl
 export const EXTRACTION_STORES = ["episodic", "topics"] as const satisfies readonly MemoryStore[];
 export type ExtractionStore = (typeof EXTRACTION_STORES)[number];
 
+// Which stores each extraction fork WRITES to — drives the post-run sweep. Learnings is folded into
+// the topics fork, so that fork writes both `topics/` and `learnings/` and must sweep both. Keyed on
+// ExtractionStore so the sweep is exhaustive at compile time (every fork maps to its target dirs).
+export const FORK_WRITE_STORES: Readonly<Record<ExtractionStore, readonly MemoryStore[]>> = {
+  episodic: ["episodic"],
+  topics: ["topics", "learnings"],
+};
+
 export const MEMORY_INDEX_FILENAME = "MEMORY.md";
 
 export const memoriesRoot = (workspaceRoot: string): string => join(workspaceRoot, "memories");

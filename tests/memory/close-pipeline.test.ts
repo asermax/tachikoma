@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -16,7 +16,7 @@ import {
   extractBranches,
   prunePhase,
 } from "../../src/extensions/memory/close-pipeline.ts";
-import { EXTRACTION_STORES } from "../../src/extensions/memory/layout.ts";
+import { EXTRACTION_STORES, fileExists } from "../../src/extensions/memory/layout.ts";
 import type { Logger } from "../../src/log.ts";
 import {
   BRANCH_SUMMARY,
@@ -104,6 +104,18 @@ const threeBranchTrunk = () =>
       branchId: "topic-3",
       originalLeafId: "leaf-3",
       baseId: "s-2",
+    }),
+  ]);
+
+/** A trunk with a single collapsed branch — for tests that need exactly one extraction pass. */
+const singleBranchTrunk = () =>
+  makeSession([
+    leafEntry("leaf-1"),
+    branchSummaryEntry("s-1", {
+      customType: BRANCH_SUMMARY,
+      branchId: "topic-1",
+      originalLeafId: "leaf-1",
+      baseId: null,
     }),
   ]);
 
@@ -287,6 +299,25 @@ describe("extractBranches", () => {
 
     // Serial: a branch's stores never overlap (peak 1), matching the pre-parallel behavior.
     expect(maxInFlight).toBe(1);
+  });
+
+  it("sweeps memories/learnings/ after the topics fork too (it writes both stores)", async () => {
+    const session = singleBranchTrunk();
+    const records = getBranchRecords(session);
+    const { deps, forkAndContinue } = extractionDeps();
+
+    // The topics fork now writes (and empties) files in learnings/ as well as topics/, so its post-run
+    // sweep must cover both directories. Pre-create an emptied learnings file (an empty-as-deletion leftover).
+    const learningsDir = join(workspace, "memories", "learnings");
+    await mkdir(learningsDir, { recursive: true });
+    const emptiedLearnings = join(learningsDir, "emptied.md");
+    await writeFile(emptiedLearnings, "");
+
+    // The faked fork writes nothing — the sweep alone must prove the learnings/ coverage.
+    await extractBranches(session, records, deps, "2026-06-15", fakeLog);
+
+    expect(forkAndContinue).toHaveBeenCalledTimes(2); // one branch × (episodic + topics) forks
+    await expect(fileExists(emptiedLearnings)).resolves.toBe(false);
   });
 });
 
