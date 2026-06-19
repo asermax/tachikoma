@@ -96,11 +96,9 @@ export const readOutputTailMerged = async (streams: StreamedLog[]): Promise<stri
 export interface MergedOutputWindow {
   /** Separated labeled sections, or "" when no stream had lines in the window. */
   content: string;
-  /** True when every stream is empty (no log lines at all). */
-  empty: boolean;
   /** True when no stream yielded window content but at least one stream has lines. */
   pastEnd: boolean;
-  /** Largest totalLines across the streams — the furthest one would page. */
+  /** Largest totalLines across the streams — 0 when every stream is empty (no lines at all). */
   totalLines: number;
 }
 
@@ -116,14 +114,12 @@ export const readOutputWindowMerged = async (
   count: number,
 ): Promise<MergedOutputWindow> => {
   const parts: { label: string; content: string }[] = [];
-  let anyHasLines = false;
   let totalLines = 0;
 
   for (const { label, path } of streams) {
     const window = await readOutputWindow(path, offset, count);
     if (window == null) continue;
 
-    if (window.totalLines > 0) anyHasLines = true;
     totalLines = Math.max(totalLines, window.totalLines);
 
     if (!window.pastEnd && window.content !== "") parts.push({ label, content: window.content });
@@ -131,8 +127,9 @@ export const readOutputWindowMerged = async (
 
   return {
     content: formatSections(parts),
-    empty: !anyHasLines,
-    pastEnd: parts.length === 0 && anyHasLines,
+    // `totalLines` is 0 iff no stream has any lines, i.e. everything is empty — so
+    // "past end" only applies when at least one stream has lines but none are in range.
+    pastEnd: parts.length === 0 && totalLines > 0,
     totalLines,
   };
 };

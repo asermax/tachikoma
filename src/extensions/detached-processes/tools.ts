@@ -274,7 +274,7 @@ export const handleReadProcessOutput = async (
     if (stream === "both") {
       const merged = await readOutputWindowMerged(streams, offset, count);
 
-      if (merged.empty) return "No output yet.";
+      if (merged.totalLines === 0) return "No output yet.";
       if (merged.pastEnd) {
         return `No output at lines ${offset}-${offset + count} (logs have up to ${merged.totalLines} lines).`;
       }

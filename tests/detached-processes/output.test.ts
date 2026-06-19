@@ -170,7 +170,6 @@ describe("readOutputWindowMerged", () => {
       ),
     ).toEqual({
       content: "[stdout]\na\nb\n\n[stderr]\nx\ny",
-      empty: false,
       pastEnd: false,
       totalLines: 3,
     });
@@ -187,7 +186,6 @@ describe("readOutputWindowMerged", () => {
     );
 
     expect(result.content).toBe("[stdout]\nonly-line\n\n[stderr]\nx\ny");
-    expect(result.empty).toBe(false);
     expect(result.pastEnd).toBe(false);
     expect(result.totalLines).toBe(5);
   });
@@ -204,7 +202,6 @@ describe("readOutputWindowMerged", () => {
       ),
     ).toEqual({
       content: "",
-      empty: false,
       pastEnd: true,
       totalLines: 3,
     });
@@ -222,7 +219,6 @@ describe("readOutputWindowMerged", () => {
       ),
     ).toEqual({
       content: "",
-      empty: true,
       pastEnd: false,
       totalLines: 0,
     });
