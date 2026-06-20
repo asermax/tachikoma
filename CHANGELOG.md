@@ -1,3 +1,10 @@
+## [3.36.1](https://github.com/asermax/tachikoma/compare/v3.36.0...v3.36.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **boundary:** allow ask_branch to query the most-recently collapsed branch ([579393c](https://github.com/asermax/tachikoma/commit/579393c7a0a02b7593ebb7ede7ddd27ed1869374))
+
 # [3.36.0](https://github.com/asermax/tachikoma/compare/v3.35.0...v3.36.0) (2026-06-19)
 
 
