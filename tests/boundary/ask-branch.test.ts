@@ -8,7 +8,7 @@ vi.mock("node:fs/promises", () => ({
 }));
 
 const { handleAskBranch } = await import("../../src/extensions/boundary/ask-branch.ts");
-const { BRANCH_SUMMARY, BOOMERANG_STATE } = await import("../../src/sessions/trunk.ts");
+const { BRANCH_SUMMARY } = await import("../../src/sessions/trunk.ts");
 
 import type { Logger } from "../../src/log.ts";
 
@@ -30,24 +30,17 @@ const branchSummary = (
   details: { customType: BRANCH_SUMMARY, branchId, originalLeafId, baseId },
 });
 
-const boomerang = (currentTopicBaseId: string | null) => ({
-  type: "custom" as const,
-  customType: BOOMERANG_STATE,
-  id: "boom-1",
-  data: { currentTopicBaseId, lastDecision: "shift", relatedBranchId: null },
-});
-
 /**
- * Two collapsed branches: topic-1 (sum-1) and topic-2 (sum-2). The live branch extends sum-2, so the
- * boomerang base is sum-2. Both collapsed branches are queryable — only their summaries are in context,
- * not their full conversations (leaf-1, leaf-2), including topic-2 whose summary IS the live base. The
- * live (un-collapsed) branch would be topic-3 and has no record, so it reports "no such branch".
+ * Two collapsed branches: topic-1 (sum-1) and topic-2 (sum-2). The live branch extends sum-2, so
+ * topic-2 is the most-recently collapsed branch and its summary is the live base. Both collapsed
+ * branches are queryable — only their summaries are in context, not their full conversations
+ * (leaf-1, leaf-2), including topic-2. The live (un-collapsed) branch would be topic-3 and has no
+ * record, so it reports "no such branch".
  */
 const makeTrunk = () => {
   const entries = [
     branchSummary("sum-1", "topic-1", "leaf-1", null),
     branchSummary("sum-2", "topic-2", "leaf-2", "sum-1"),
-    boomerang("sum-2"),
   ];
 
   const byId = new Map(entries.map((e) => [e.id, e]));
