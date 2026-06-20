@@ -3,14 +3,15 @@ import { rm } from "node:fs/promises";
 import type { AgentSession, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 import type { Logger } from "../../log.ts";
-import { getBranchRecords, readBoomerangState } from "../../sessions/trunk.ts";
+import { getBranchRecords } from "../../sessions/trunk.ts";
 import type { AgentApi } from "../api.ts";
 
 /**
  * `ask_branch` tool. Answers a focused question from a prior branch's FULL conversation
- * (not its summary) by headless-forking that branch's `originalLeafId`. Rejects a request targeting
- * the active (live) branch — it is already in context — and reports gracefully (no turn failure) for
- * an unknown branch id.
+ * (not its summary) by headless-forking that branch's `originalLeafId`. Every collapsed branch is
+ * queryable — only its summary, not its full conversation, is in context — including the most recently
+ * collapsed branch whose summary is the live base. Reports gracefully (no turn failure) for an unknown
+ * branch id (the live, un-collapsed branch has no record yet, so it is reported as unknown).
  */
 
 export const AskBranchParams = Type.Object({
@@ -51,14 +52,6 @@ export const handleAskBranch = async (
   if (record == null) {
     deps.log.debug({ branchId: args.branchId }, "ask_branch unresolved — unknown branch");
     return `No such branch '${args.branchId}' exists.`;
-  }
-
-  // The base of the live branch is the latest collapse's summary id; a request targeting it is asking
-  // about the branch already live in context, so reject rather than fork.
-  const currentBase = readBoomerangState(trunk)?.currentTopicBaseId ?? null;
-
-  if (record.summaryEntryId === currentBase) {
-    return `Branch '${args.branchId}' is the currently active branch — it is already in context.`;
   }
 
   // Cut the branch from a fresh-loaded manager (never the live trunk) so answering a lookup does not
@@ -114,7 +107,7 @@ export const createAskBranchFactory =
       name: "ask_branch",
       label: "Ask Previous Branch",
       description:
-        "Recover missing context from a previous topic branch of today's conversation. Answers come from that branch's FULL original conversation (its abandoned leaf), not its summary — so details that were never summarized are still reachable. Branch ids are topic-1, topic-2, ... in the order branches started; if unsure which, try the likely candidate — an unknown id reports gracefully and a branch without the answer says so. It refuses the branch currently live in context.",
+        "Recover missing context from a previous topic branch of today's conversation. Answers come from that branch's FULL original conversation (its abandoned leaf), not its summary — so details that were never summarized are still reachable. Branch ids are topic-1, topic-2, ... in the order branches started; if unsure which, try the likely candidate — an unknown id reports gracefully and a branch without the answer says so.",
       promptSnippet:
         "Recover missing context from a previous topic branch by asking it a focused question",
       promptGuidelines: [

@@ -39,7 +39,9 @@ const boomerang = (currentTopicBaseId: string | null) => ({
 
 /**
  * Two collapsed branches: topic-1 (sum-1) and topic-2 (sum-2). The live branch extends sum-2, so the
- * boomerang base is sum-2 — making topic-2 the "active" branch and topic-1 a queryable prior branch.
+ * boomerang base is sum-2. Both collapsed branches are queryable — only their summaries are in context,
+ * not their full conversations (leaf-1, leaf-2), including topic-2 whose summary IS the live base. The
+ * live (un-collapsed) branch would be topic-3 and has no record, so it reports "no such branch".
  */
 const makeTrunk = () => {
   const entries = [
@@ -86,19 +88,29 @@ describe("handleAskBranch", () => {
     expect(shadowFork).not.toHaveBeenCalled();
   });
 
-  it("rejects a request targeting the active (live) branch", async () => {
+  it("answers the most-recently collapsed branch whose summary is the live base", async () => {
     const trunk = makeTrunk();
-    const shadowFork = vi.fn();
-    const branchFile = vi.fn();
+    const branchFile = vi.fn(() => "/tmp/branch-topic-2.jsonl");
+    const fork = {
+      prompt: vi.fn().mockResolvedValue("  full-conversation detail  "),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    };
+    const shadowFork = vi.fn().mockResolvedValue(fork);
 
     const result = await handleAskBranch(
       { getTrunkSession: () => trunk, shadowFork, branchFile, log: fakeLog },
       { branchId: "topic-2", question: "what happened?" },
     );
 
-    expect(result).toContain("currently active branch");
-    expect(branchFile).not.toHaveBeenCalled();
-    expect(shadowFork).not.toHaveBeenCalled();
+    // topic-2's summary (sum-2) IS the live base, but only its summary — not its full conversation
+    // (leaf-2) — is in context, so it must be queryable like any earlier branch (regression:
+    // previously rejected as "the currently active branch — it is already in context").
+    expect(branchFile).toHaveBeenCalledWith("/tmp/trunk.jsonl", "leaf-2");
+    expect(shadowFork).toHaveBeenCalledWith("/tmp/branch-topic-2.jsonl", { tier: "searcher" });
+    expect(fork.prompt).toHaveBeenCalledOnce();
+    expect(result).toBe("full-conversation detail");
+    expect(fork.dispose).toHaveBeenCalledOnce();
+    expect(h.rmMock).toHaveBeenCalledWith("/tmp/branch-topic-2.jsonl", { force: true });
   });
 
   it("answers a prior branch by branching its originalLeafId off the trunk file, then deletes the temp file", async () => {
