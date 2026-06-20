@@ -35,7 +35,7 @@ export interface CollapseArgs {
 }
 
 const SUMMARY_SYSTEM = [
-  "You summarize a coding-assistant conversation branch so the assistant can continue from a compact",
+  "You summarize a conversation branch so the assistant can continue from a compact",
   "trunk later. Write a self-contained narrative describing what happened on this branch:",
   "- what was discussed and explored",
   "- what decisions were made and why",
