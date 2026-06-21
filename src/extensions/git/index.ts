@@ -3,11 +3,12 @@ import { Type } from "typebox";
 import { provideContext } from "../../agent/system-prompt-section.ts";
 import { createCommitAgent } from "../../git/commit-agent.ts";
 import { createGitResolver } from "../../git/resolve.ts";
+import { createDebouncedTask } from "../../util/debouncer.ts";
 import { defineExtension } from "../api.ts";
 import { createGitExchangeProcessor } from "./exchange.ts";
 import { createGitGuardrailFactory } from "./guardrail.ts";
 import { initializeWorkspaceRepo } from "./hooks.ts";
-import { createGitProcessor } from "./processor.ts";
+import { commitAndPushWorkspace, createGitProcessor } from "./processor.ts";
 import { createGitToolsFactory } from "./tools.ts";
 import { GIT_USAGE } from "./usage.ts";
 
@@ -38,6 +39,16 @@ export default defineExtension<GitConfig>({
     const resolver = createGitResolver(app.agent.side);
     const commitAgent = createCommitAgent(app.agent.side, "workspace");
 
+    // Debounced per-exchange workspace commit-push: each exchange resets the timer
+    // and the workspace is committed and pushed in the background once the
+    // configured quiet window elapses. commitDebounceMinutes = 0 disables this
+    // (trunk close remains the persistence backstop).
+    const debouncer = createDebouncedTask(
+      () => commitAndPushWorkspace({ workspaceRoot, agent: commitAgent, resolver, log: app.log }),
+      app.config.scheduler.commitDebounceMinutes * 60_000,
+      app.log,
+    );
+
     app.bootstrap("init-workspace-repo", () =>
       initializeWorkspaceRepo(workspaceRoot, app.log, resolver),
     );
@@ -52,20 +63,21 @@ export default defineExtension<GitConfig>({
       sessionScopes: ["main", "background"],
     });
 
-    // Per-exchange: agent-grouped WIP commit (no push) so work is durable
-    // mid-day with a meaningful message. It runs a model call, so it is launched
-    // off the exchange path and never blocks the next turn.
-    app.sessions.onExchange(
-      createGitExchangeProcessor({ workspaceRoot, agent: commitAgent, log: app.log }),
+    // Per-exchange: reset the debounced workspace commit-push timer. The
+    // commit-and-push runs in the background after the quiet window; the exchange
+    // path only touches the timer.
+    app.sessions.onExchange(createGitExchangeProcessor({ debouncer, log: app.log }));
+
+    // At trunk close: the backstop. The processor clears and drains the debouncer,
+    // then groups whatever is still uncommitted and pushes once. This close-time
+    // agent commit and the parallel per-branch memory extraction both fire at
+    // close, so a trunk close drives a burst of side-runner load.
+    app.sessions.registerProcessor(
+      createGitProcessor({ workspaceRoot, agent: commitAgent, resolver, debouncer }),
     );
 
-    // At trunk close: the agent groups whatever is still uncommitted (residual
-    // changes only — the day's per-exchange WIP commits are left as-is, no
-    // rebase/amend) and pushes once. This close-time agent commit and the
-    // parallel per-branch memory extraction both fire at close, so a trunk close
-    // drives a burst of side-runner load.
-    app.sessions.registerProcessor(
-      createGitProcessor({ workspaceRoot, agent: commitAgent, resolver }),
-    );
+    // Cancel any pending debounce fire on shutdown — the drain's finalize pass
+    // handles persistence.
+    app.onShutdown("git-debounce", () => debouncer.clear());
   },
 });

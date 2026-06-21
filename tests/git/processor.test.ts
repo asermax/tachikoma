@@ -1,12 +1,13 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PostProcessorContext } from "../../src/extensions/api.ts";
 import { createGitProcessor } from "../../src/extensions/git/processor.ts";
 import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { runGit } from "../../src/git/git.ts";
+import type { DebouncedTask } from "../../src/util/debouncer.ts";
 import {
   agentCommittingAs,
   agentThatThrows,
@@ -166,5 +167,24 @@ describe("git processor", () => {
     expect(log.warn).toHaveBeenCalledWith(
       expect.stringContaining("remain after git processor retry"),
     );
+  });
+
+  it("clears and drains the debouncer before committing", async () => {
+    await writeFile(join(workspace, "notes.md"), "content\n", "utf8");
+    const debouncer = {
+      touch: vi.fn(),
+      clear: vi.fn(),
+      whenIdle: vi.fn().mockResolvedValue(undefined),
+    } as unknown as DebouncedTask;
+
+    await createGitProcessor({
+      workspaceRoot: workspace,
+      agent: agentCommittingAs("Add notes"),
+      debouncer,
+    }).process(context());
+
+    expect(debouncer.clear).toHaveBeenCalledTimes(1);
+    expect(debouncer.whenIdle).toHaveBeenCalledTimes(1);
+    expect(await lastSubject(workspace)).toBe("Add notes");
   });
 });

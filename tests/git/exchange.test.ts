@@ -1,20 +1,20 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createGitExchangeProcessor } from "../../src/extensions/git/exchange.ts";
 import { runGit } from "../../src/git/git.ts";
-import {
-  agentCommittingAs,
-  commitFile,
-  fakeLogger,
-  headOf,
-  initRepo,
-  lastSubject,
-  makeTempDir,
-  recordingAgentCommittingAs,
-} from "./helpers.ts";
+import type { DebouncedTask } from "../../src/util/debouncer.ts";
+import { commitFile, fakeLogger, initRepo, makeTempDir } from "./helpers.ts";
+
+/** A `DebouncedTask` stand-in that records `touch()` calls and otherwise no-ops. */
+const recordingDebouncer = (): DebouncedTask =>
+  ({
+    touch: vi.fn(),
+    clear: vi.fn(),
+    whenIdle: vi.fn().mockResolvedValue(undefined),
+  }) as unknown as DebouncedTask;
 
 let base: string;
 let workspace: string;
@@ -32,55 +32,24 @@ afterEach(async () => {
 });
 
 describe("git exchange processor", () => {
-  it("makes an agent-grouped commit when the workspace has changes", async () => {
+  it("resets the debounce timer on each exchange and does not commit", async () => {
     await writeFile(join(workspace, "notes.md"), "remember this\n", "utf8");
-    const head = await headOf(workspace);
+    const debouncer = recordingDebouncer();
 
-    const processor = createGitExchangeProcessor({
-      workspaceRoot: workspace,
-      agent: agentCommittingAs("Add notes"),
-      log: fakeLogger(),
-    });
-    await processor.process({ userText: "hi", assistantText: "ok" });
-    await processor.whenIdle();
+    await createGitExchangeProcessor({ debouncer, log: fakeLogger() }).process({ userText: "hi" });
 
-    expect(await lastSubject(workspace)).toBe("Add notes");
-    expect(await runGit(workspace, ["status", "--porcelain"])).toBe("");
-
-    const newCommits = await runGit(workspace, ["rev-list", `${head}..HEAD`, "--count"]);
-    expect(newCommits).toBe("1");
+    expect(debouncer.touch).toHaveBeenCalledTimes(1);
+    // Nothing is committed on the exchange path — the file stays uncommitted.
+    expect(await runGit(workspace, ["status", "--porcelain"])).not.toBe("");
   });
 
-  it("does nothing when the workspace is clean", async () => {
-    const head = await headOf(workspace);
-    const recording = recordingAgentCommittingAs("Add notes");
+  it("resets the timer on every exchange, not just the first", async () => {
+    const debouncer = recordingDebouncer();
 
-    const processor = createGitExchangeProcessor({
-      workspaceRoot: workspace,
-      agent: recording.agent,
-      log: fakeLogger(),
-    });
-    await processor.process({ userText: "hi", assistantText: "ok" });
-    await processor.whenIdle();
+    const processor = createGitExchangeProcessor({ debouncer, log: fakeLogger() });
+    await processor.process({ userText: "one" });
+    await processor.process({ userText: "two" });
 
-    expect(await headOf(workspace)).toBe(head);
-    expect(recording.calls).toBe(0);
-  });
-
-  it("single-flights overlapping exchanges — a second call while one is in flight is a no-op", async () => {
-    await writeFile(join(workspace, "notes.md"), "remember this\n", "utf8");
-    const recording = recordingAgentCommittingAs("Add notes");
-
-    const processor = createGitExchangeProcessor({
-      workspaceRoot: workspace,
-      agent: recording.agent,
-      log: fakeLogger(),
-    });
-
-    await processor.process({ userText: "hi", assistantText: "ok" });
-    await processor.process({ userText: "again", assistantText: "ok" });
-    await processor.whenIdle();
-
-    expect(recording.calls).toBe(1);
+    expect(debouncer.touch).toHaveBeenCalledTimes(2);
   });
 });
