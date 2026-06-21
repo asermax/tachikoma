@@ -6,6 +6,7 @@ import type { AgentEvent } from "../../src/domain/agent-events.ts";
 import { textMessage } from "../../src/domain/message.ts";
 import { packCallbackData } from "../../src/extensions/telegram/buttons.ts";
 import {
+  BOT_COMMANDS,
   STOP_ACKNOWLEDGEMENT,
   STOP_COMMAND,
   TelegramChannel,
@@ -1483,5 +1484,50 @@ describe("runtime guard", () => {
         events: stream([{ kind: "result", stopReason: "done" }]),
       }),
     ).rejects.toThrow("telegram channel not started");
+  });
+});
+
+describe("command menu (R10)", () => {
+  it("registers every command via setMyCommands on start", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+
+    expect(api.setMyCommands).toHaveBeenCalledTimes(1);
+    expect(api.setMyCommands).toHaveBeenCalledWith(BOT_COMMANDS);
+  });
+
+  it("covers the full R10 command set with valid names and descriptions", () => {
+    // Command names are lowercase and start with a letter (Telegram Bot API constraints); descriptions
+    // are 3–256 chars. Verified per DLT-181 KD11.
+    for (const { command, description } of BOT_COMMANDS) {
+      expect(command).toMatch(/^[a-z][a-z0-9_]{0,31}$/);
+      expect(description.length).toBeGreaterThanOrEqual(3);
+      expect(description.length).toBeLessThanOrEqual(256);
+    }
+
+    expect(BOT_COMMANDS.map((c) => c.command)).toEqual([
+      "new",
+      "queue",
+      "stop",
+      "checkpoint",
+      "back",
+      "rollback",
+      "skill",
+      "tasks",
+      "reload",
+    ]);
+  });
+
+  it("indicates the argument form for argument-taking commands", () => {
+    const byName = Object.fromEntries(BOT_COMMANDS.map((c) => [c.command, c.description]));
+    expect(byName.new).toMatch(/\/new </);
+    expect(byName.queue).toMatch(/\/queue </);
+    expect(byName.skill).toMatch(/\/skill </);
+  });
+
+  it("does not fail startup when setMyCommands rejects (best-effort)", async () => {
+    const { channel, runtime, api } = makeChannel();
+    api.setMyCommands.mockRejectedValueOnce(new Error("telegram unreachable"));
+    await expect(channel.start(runtime)).resolves.toBeUndefined();
   });
 });
