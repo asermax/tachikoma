@@ -1,3 +1,4 @@
+import type { DecisionHeader } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
 import { splitMessage, TELEGRAM_MAX_MESSAGE_LENGTH } from "./chunking.ts";
 import { toTelegramEntities } from "./entities.ts";
@@ -38,6 +39,13 @@ export class StreamRenderer {
   private lastEditAt = 0;
   private broken = false;
   private readonly silent: boolean;
+  /**
+   * A turn-scoped decision header (R8) anchored above the streamed text. Set before streaming begins
+   * and recomposed on every edit so the streamed body never overwrites it (KD9). Dropped (set to null)
+   * once the body grows past the edit limit (best-effort) or when the renderer is finalized — never
+   * carried to a later exchange.
+   */
+  private header: DecisionHeader | null = null;
 
   /**
    * @param seedMessageId An existing message id to edit in place instead of
@@ -60,6 +68,15 @@ export class StreamRenderer {
     this.log = log;
     this.messageId = seedMessageId;
     this.silent = silent;
+  }
+
+  /**
+   * Anchor a turn-scoped decision header (R8) above the streamed text. Set before streaming begins;
+   * `compose()` recomposes it on every edit so the body never overwrites it. Best-effort: it is dropped
+   * (and logged) if the body grows past the edit limit or a render fails.
+   */
+  setHeader(header: DecisionHeader): void {
+    this.header = header;
   }
 
   async appendText(text: string): Promise<void> {
@@ -98,7 +115,12 @@ export class StreamRenderer {
 
     // The marker bakes a trailing blank line to separate it from the next text
     // segment; at finalize there is none, so drop the dangling whitespace.
-    const text = this.buffer.trimEnd();
+    const body = this.buffer.trimEnd();
+    const header = this.headerText();
+    // Anchor the header atop the finalized text too (turn-scoped). When the body overflows into
+    // multiple chunks the header rides the first; a header dropped mid-stream (over-limit) is already
+    // null here. A header with no body still surfaces the decision label.
+    const text = header.length === 0 ? body : body.length > 0 ? `${header}\n\n${body}` : header;
 
     if (text.length === 0) {
       await this.deleteCurrentMessage();
@@ -170,6 +192,13 @@ export class StreamRenderer {
     } catch (error) {
       // Stop streaming entirely — finalize() falls back to plain chunked sends.
       this.broken = true;
+      // Best-effort surfacing (R8): the decision took effect, but its header can no longer be rendered.
+      if (this.header != null) {
+        this.log.info(
+          { decisionHeader: this.header },
+          "decision header dropped after a render failure (best-effort surfacing)",
+        );
+      }
       this.log.warn({ err: error }, "streaming send/edit failed — falling back to final send");
     }
   }
@@ -216,16 +245,55 @@ export class StreamRenderer {
     return lastBreak === -1 ? "" : this.buffer.slice(0, lastBreak);
   }
 
+  /**
+   * The display text to render: an optional decision header anchored above the streamed body and live
+   * line. The header is recomposed on every edit so streaming never overwrites it (KD9). Because
+   * `editMessageText` replaces the FULL message text (re-confirmed vs the Telegram Bot API), the
+   * 4096-char limit applies to the whole composition: the transient (lowest priority) is dropped first,
+   * then — best-effort (R8) — the header itself is dropped once the body grows past the limit, so a
+   * long streamed response degrades gracefully rather than failing the edit. Once dropped the header
+   * stays dropped (no flicker) for the rest of the exchange.
+   */
   private compose(): string {
     const text = this.streamableBuffer();
+    const transient = this.transient;
 
-    if (this.transient == null) return text;
+    // Body = settled text + optional live line, joined by a blank line. Shared by the header and
+    // no-header paths so the header is a pure prefix over the existing composition.
+    const body =
+      transient == null ? text : text.length === 0 ? transient : `${text}\n\n${transient}`;
 
-    if (text.length === 0) return this.transient;
+    const header = this.headerText();
 
-    const joined = `${text}\n\n${this.transient}`;
+    // No header ⇒ today's behavior: drop the transient when body + transient would exceed the limit.
+    if (header.length === 0) {
+      if (transient == null || text.length === 0) return body;
+      return body.length <= TELEGRAM_MAX_MESSAGE_LENGTH ? body : text;
+    }
 
-    return joined.length <= TELEGRAM_MAX_MESSAGE_LENGTH ? joined : text;
+    // With a header: anchor it above the body. Drop the transient first if the composition is too long.
+    const withTransient = body.length > 0 ? `${header}\n\n${body}` : header;
+    if (withTransient.length <= TELEGRAM_MAX_MESSAGE_LENGTH) return withTransient;
+
+    if (transient != null && text.length > 0) {
+      const withoutTransient = `${header}\n\n${text}`;
+      if (withoutTransient.length <= TELEGRAM_MAX_MESSAGE_LENGTH) return withoutTransient;
+    }
+
+    // Header + settled text still won't fit: best-effort — drop the header for the rest of the stream.
+    this.log.info(
+      { decisionHeader: this.header },
+      "decision header dropped — body exceeded the edit limit (best-effort surfacing)",
+    );
+    this.header = null;
+    return body.length <= TELEGRAM_MAX_MESSAGE_LENGTH ? body : text;
+  }
+
+  /** The markdown display of the decision header (bold label + one-line note), or "" when none. */
+  private headerText(): string {
+    if (this.header == null) return "";
+    const label = `**${this.header.label}**`;
+    return this.header.note.length > 0 ? `${label} — ${this.header.note}` : label;
   }
 
   /**

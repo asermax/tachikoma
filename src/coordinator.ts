@@ -8,7 +8,7 @@ import { branchEntriesSinceBase, sessionCreatedAt } from "./agent/session-tree.t
 import { buildDigest } from "./channels/delivery-digest.ts";
 import { compareQueued, evaluate, type QueuedItem } from "./channels/delivery-queue.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
-import type { InboundMessage } from "./domain/message.ts";
+import { decisionHeaderFrom, type InboundMessage } from "./domain/message.ts";
 import type { EventBus } from "./events.ts";
 import type { InboundContext, TrunkInbound } from "./extensions/api.ts";
 import { runPhasedPostProcessors } from "./extensions/post-processing.ts";
@@ -461,7 +461,14 @@ export class Coordinator {
       if (message.metadata.handled === true) return;
 
       const events = streamPrompt(active.session, renderPrompt(message), this.log);
-      await this.channel?.respond({ message, events });
+      await this.channel?.respond({
+        message,
+        events,
+        // The header is turn-scoped: read fresh from this exchange's metadata (never carried across
+        // turns). Absent/ malformed descriptor ⇒ no header. Manual commands ack directly (handled) and
+        // never reach here; this serves decisions that still stream (auto decisions, rollback replay).
+        header: decisionHeaderFrom(message.metadata) ?? undefined,
+      });
 
       await this.runExchangeProcessors(message);
     } finally {

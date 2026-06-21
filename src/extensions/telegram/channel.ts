@@ -297,7 +297,7 @@ export class TelegramChannel implements Channel {
     return reference != null && this.isLiveBranchTip(reference);
   }
 
-  async respond({ message, events }: Exchange): Promise<void> {
+  async respond({ message, events, header }: Exchange): Promise<void> {
     const log = this.log();
 
     // The mutex is held only for the seed handoff and finalize — not for the entire
@@ -316,6 +316,10 @@ export class TelegramChannel implements Channel {
     if (initResult == null) return;
 
     const { renderer, remainingEvents, stopTyping } = initResult;
+
+    // Anchor the turn-scoped decision header before any text streams so every edit recomposes it
+    // (KD9). Absent ⇒ no header. The renderer is per-exchange, so the header is naturally turn-scoped.
+    if (header != null) renderer.setHeader(header);
 
     try {
       for await (const event of remainingEvents) {

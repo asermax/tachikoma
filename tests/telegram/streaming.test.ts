@@ -327,3 +327,126 @@ describe("StreamRenderer", () => {
     );
   });
 });
+
+describe("StreamRenderer decision header (DLT-181)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("anchors the header above the streamed body and recomposes it across edits", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({
+      label: "📌 Checkpoint set",
+      note: "main line parked",
+      rollbackable: true,
+    });
+
+    await renderer.appendText("First.\n\n");
+    // The header is recomposed on every edit (KD9): editMessageText replaces the full text, so the
+    // renderer must prepend the header each time.
+    expect(api.calls[0]).toEqual({
+      type: "send",
+      text: rendered("**📌 Checkpoint set** — main line parked\n\nFirst."),
+    });
+
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("Second.\n\n");
+    expect(api.calls.at(-1)).toEqual({
+      type: "edit",
+      messageId: 1,
+      text: rendered("**📌 Checkpoint set** — main line parked\n\nFirst.\n\nSecond."),
+    });
+  });
+
+  it("renders no header when unset (today's behavior)", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.appendText("Hello.\n\n");
+
+    expect(api.calls[0]).toEqual({ type: "send", text: rendered("Hello.") });
+  });
+
+  it("renders a label-only header when the note is empty", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({ label: "🆕 New topic", note: "", rollbackable: false });
+
+    await renderer.appendText("Body.\n\n");
+
+    expect(api.calls[0]?.text).toBe(rendered("**🆕 New topic**\n\nBody."));
+  });
+
+  it("keeps the header above a transient line, recomposed each edit", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({ label: "📌 Checkpoint set", note: "parked", rollbackable: true });
+
+    await renderer.appendText("Settled.");
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("grep", { pattern: "needle" });
+
+    // header + settled body + live tool line, all recomposed together.
+    expect(api.calls.at(-1)?.text).toBe(
+      rendered("**📌 Checkpoint set** — parked\n\nSettled.\n\n_🔧 Searching for 'needle'_"),
+    );
+  });
+
+  it("drops the header (best-effort) when the body exceeds the edit limit and logs the descriptor", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({ label: "📌 Checkpoint set", note: "parked", rollbackable: true });
+
+    // Body just under the limit on its own; header + body overflows it.
+    const big = `${"a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH - 5)}\n\n`;
+    await renderer.appendText(big);
+
+    // The header was dropped so the body alone renders; the descriptor is logged (R8 best-effort).
+    expect(api.calls.at(-1)?.text).toBe(rendered(big));
+    expect(fakeLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionHeader: { label: "📌 Checkpoint set", note: "parked", rollbackable: true },
+      }),
+      "decision header dropped — body exceeded the edit limit (best-effort surfacing)",
+    );
+  });
+
+  it("includes the header on the finalized message", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({ label: "📌 Checkpoint set", note: "parked", rollbackable: true });
+
+    await renderer.appendText("Body.\n\n");
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("More.");
+
+    expect(await renderer.finalize()).toBe(1);
+    expect(api.calls.at(-1)?.text).toBe(
+      rendered("**📌 Checkpoint set** — parked\n\nBody.\n\nMore."),
+    );
+  });
+
+  it("logs the descriptor and falls back when a render fails mid-stream (R8)", async () => {
+    const api = fakeApi();
+    api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({ label: "📌 Checkpoint set", note: "parked", rollbackable: true });
+
+    await renderer.appendText("First.\n\n");
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("Second.\n\n");
+
+    // The edit failure marks the renderer broken and logs the dropped descriptor.
+    expect(fakeLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionHeader: { label: "📌 Checkpoint set", note: "parked", rollbackable: true },
+      }),
+      "decision header dropped after a render failure (best-effort surfacing)",
+    );
+  });
+});

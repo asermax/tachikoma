@@ -1,5 +1,5 @@
 import type { AgentEvent } from "../domain/agent-events.ts";
-import type { InboundMessage } from "../domain/message.ts";
+import type { DecisionHeader, InboundMessage } from "../domain/message.ts";
 import type { Logger } from "../log.ts";
 
 export interface ChannelRuntime {
@@ -10,6 +10,12 @@ export interface ChannelRuntime {
 export interface Exchange {
   message: InboundMessage;
   events: AsyncIterable<AgentEvent>;
+  /**
+   * Optional turn-scoped decision header (R8): a branching-decision label anchored above the streamed
+   * text for this one response. The coordinator forwards `message.metadata.decisionHeader` fresh each
+   * exchange (never carried across turns); the channel drops it after the exchange. Absent ⇒ no header.
+   */
+  header?: DecisionHeader;
 }
 
 export const DELIVERY_TIERS = {

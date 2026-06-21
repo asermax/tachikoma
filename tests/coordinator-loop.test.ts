@@ -892,3 +892,85 @@ describe("Coordinator.closeTrunkIfDue (nightly close trigger)", () => {
     await loop;
   });
 });
+
+describe("Coordinator decision-header forwarding (DLT-181)", () => {
+  it("forwards a metadata decisionHeader to channel.respond (turn-scoped, read fresh)", async () => {
+    const regs = createRegistrations();
+    regs.inboundMiddleware.push(async (message, _context, next) => {
+      message.metadata.decisionHeader = {
+        label: "📌 Checkpoint set",
+        note: "main line parked",
+        rollbackable: true,
+      };
+      await next();
+    });
+
+    const session = createSession();
+    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
+    const respond = vi.fn(drainExchange);
+    coordinator.attachChannel(createChannel({ respond }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("hi"));
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+
+    const exchange = respond.mock.calls[0]?.[0];
+    expect(exchange.header).toEqual({
+      label: "📌 Checkpoint set",
+      note: "main line parked",
+      rollbackable: true,
+    });
+
+    controller.abort();
+    await loop;
+  });
+
+  it("passes no header when the middleware sets none", async () => {
+    const regs = createRegistrations();
+    regs.inboundMiddleware.push(async (_m, _c, next) => {
+      await next();
+    });
+
+    const session = createSession();
+    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
+    const respond = vi.fn(drainExchange);
+    coordinator.attachChannel(createChannel({ respond }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("hi"));
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+
+    expect(respond.mock.calls[0]?.[0].header).toBeUndefined();
+
+    controller.abort();
+    await loop;
+  });
+
+  it("drops a malformed decisionHeader rather than forwarding it", async () => {
+    const regs = createRegistrations();
+    regs.inboundMiddleware.push(async (message, _context, next) => {
+      message.metadata.decisionHeader = { label: 123 }; // missing/invalid note
+      await next();
+    });
+
+    const session = createSession();
+    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
+    const respond = vi.fn(drainExchange);
+    coordinator.attachChannel(createChannel({ respond }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("hi"));
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+
+    expect(respond.mock.calls[0]?.[0].header).toBeUndefined();
+
+    controller.abort();
+    await loop;
+  });
+});
