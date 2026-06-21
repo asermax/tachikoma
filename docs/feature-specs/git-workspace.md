@@ -122,6 +122,7 @@ Read-only inspection plus an explicit commit-and-push, for when the user wants c
 
 **Acceptance Criteria**:
 - Given paths that exist in history and a clean tree, when `scrub` runs, then those paths are removed from every commit via `git filter-repo --invert-paths`; with an `origin` remote, the rewritten history is force-pushed and the (filter-repo-removed) remote is restored first
+- Given a repo that was scrubbed before (leaving `git filter-repo`'s per-repo state behind), when `scrub` runs again for new paths, then it completes non-interactively — no stdin prompt or hang — and purges the new paths
 - Given a dirty working tree, when `scrub` runs, then it refuses with a clear message and does not rewrite anything
 - Given a path absent from history, when `scrub` runs, then it reports the missing paths and does not rewrite anything
 - Given `git filter-repo` is not installed, when `scrub` runs, then it returns a clear "not installed" message instead of failing opaquely
