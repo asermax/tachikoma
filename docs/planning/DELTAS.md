@@ -81,7 +81,7 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Description**: Currently all agents run with `bypassPermissions` and no path restrictions, meaning they can modify any file the process has OS-level access to. Confine file writes, edits, and shell commands to the workspace path while preserving read access for broader system context. All agent instances must be subject to the sandbox boundary, regardless of how they are created. The specific sandboxing mechanism (runtime-level configuration, permission mode restrictions, or another approach) should be evaluated during speccing.
 
 ### DLT-064: Collapse intensive work sections in Telegram
-**Status**: ⧗ Spec
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Medium
