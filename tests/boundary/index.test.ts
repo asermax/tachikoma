@@ -8,8 +8,15 @@ import type {
   TrunkInbound,
 } from "../../src/extensions/api.ts";
 import boundary from "../../src/extensions/boundary/index.ts";
+import { BOOMERANG_STATE } from "../../src/sessions/trunk.ts";
 
 const fakeLog = { info: vi.fn(), error: vi.fn(), debug: vi.fn(), warn: vi.fn() };
+
+interface SetupConfig {
+  enabled?: boolean;
+  autoSetCheckpoint?: boolean;
+  autoSummarizeToCheckpoint?: boolean;
+}
 
 interface SetupResult {
   middleware: InboundMiddleware;
@@ -20,7 +27,8 @@ interface SetupResult {
   registeredFactory: boolean;
 }
 
-const setup = (config: { enabled: boolean } = { enabled: true }): SetupResult => {
+const setup = (config: SetupConfig = {}): SetupResult => {
+  const { enabled = true, autoSetCheckpoint = true, autoSummarizeToCheckpoint = true } = config;
   let middleware: InboundMiddleware | null = null;
   let registeredFactory = false;
 
@@ -30,7 +38,7 @@ const setup = (config: { enabled: boolean } = { enabled: true }): SetupResult =>
   const deliver = vi.fn();
 
   const app = {
-    extensionConfig: { enabled: config.enabled },
+    extensionConfig: { enabled, autoSetCheckpoint, autoSummarizeToCheckpoint },
     inbound: {
       use: (registered: InboundMiddleware) => {
         middleware = registered;
@@ -48,7 +56,11 @@ const setup = (config: { enabled: boolean } = { enabled: true }): SetupResult =>
     sessions: { activeTrunkSession: () => null },
     status: vi.fn(),
     log: fakeLog,
-  } as unknown as AppContext<{ enabled: boolean }>;
+  } as unknown as AppContext<{
+    enabled: boolean;
+    autoSetCheckpoint: boolean;
+    autoSummarizeToCheckpoint: boolean;
+  }>;
 
   boundary.setup(app);
 
@@ -104,6 +116,46 @@ const makeTrunk = (overrides: Partial<TrunkInbound> = {}): TrunkInbound => {
 };
 
 const context = (trunk: TrunkInbound | null): InboundContext => ({ trunk });
+
+const messageEntry = (id: string, role: "user" | "assistant", text: string) => ({
+  type: "message" as const,
+  id,
+  parentId: null,
+  timestamp: "2026-06-15T00:00:00Z",
+  message: { role, content: [{ type: "text", text }] },
+});
+
+/**
+ * A trunk session whose `getBranch` returns a fixed leaf path, so `checkpointHasTangent` is
+ * deterministic: pass a branch that starts at the checkpoint id and is followed (or not) by message
+ * turns. Used for the auto summarize-to-checkpoint path, which runs the real `checkpointHasTangent` +
+ * `summarizeCurrentTangent` against the session.
+ */
+const trunkWithBranch = (
+  branch: Array<ReturnType<typeof messageEntry>>,
+  overrides: Partial<TrunkInbound> = {},
+): TrunkInbound => {
+  const session = {
+    systemPrompt: "you are helpful",
+    sessionManager: {
+      branchWithSummary: vi.fn().mockReturnValue("tangent-summary-id"),
+      appendCustomEntry: vi.fn().mockReturnValue("c-1"),
+      appendCustomMessageEntry: vi.fn().mockReturnValue("c-2"),
+      getBranch: () => branch,
+      getEntries: () => [],
+      getEntry: () => undefined,
+      getLeafId: () => "leaf",
+    },
+  } as unknown as AgentSession;
+
+  return makeTrunk({ session, ...overrides });
+};
+
+/** Fork mock whose `prompt` resolves with the given classifier JSON. */
+const forkDeciding = (decision: string) => ({
+  prompt: vi.fn().mockResolvedValue(`{"decision":"${decision}","reason":"r"}`),
+  dispose: vi.fn().mockResolvedValue(undefined),
+});
 
 describe("boundary middleware", () => {
   it("registers the ask_branch tool factory", () => {
@@ -334,6 +386,192 @@ describe("boundary middleware", () => {
     expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
     expect(deliver).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("No checkpoint"), immediate: true }),
+    );
+  });
+
+  // ---- DLT-181 Batch 3: automatic set-checkpoint / summarize-to-checkpoint ----
+
+  it("auto set-checkpoint writes the checkpoint + lastAutoDecision + header, and does not collapse", async () => {
+    const { middleware, shadowFork } = setup();
+    shadowFork.mockResolvedValue(forkDeciding("set-checkpoint"));
+    const trunk = makeTrunk({ checkpointActive: false, checkpointId: null });
+    const next = vi.fn();
+    const message = textMessage("test", "a quick related side question");
+
+    await middleware(message, context(trunk), next);
+
+    // No topic collapse — the message continues inline as the first tangent turn.
+    expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
+    // The auto decision was recorded and a checkpoint set (both append boomerang state). Asserted as
+    // separate calls: the mock's getEntries=[] means readBoomerangState can't merge them into one
+    // snapshot — that merge is a trunk.ts invariant exercised faithfully in collapse.test.ts.
+    expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalledWith(
+      BOOMERANG_STATE,
+      expect.objectContaining({
+        lastAutoDecision: { kind: "set-checkpoint", preDecisionLeafId: "leaf" },
+      }),
+    );
+    expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalledWith(
+      BOOMERANG_STATE,
+      expect.objectContaining({ checkpointId: "leaf" }),
+    );
+    // The streamed response carries the turn-scoped decision header (rollback target).
+    expect(message.metadata.decisionHeader).toMatchObject({
+      label: "📌 Checkpoint set",
+      rollbackable: true,
+    });
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses auto set-checkpoint when a checkpoint is already active (degrades to continue)", async () => {
+    const { middleware, shadowFork } = setup();
+    shadowFork.mockResolvedValue(forkDeciding("set-checkpoint"));
+    const trunk = makeTrunk({ checkpointActive: true, checkpointId: "prior-checkpoint" });
+    const next = vi.fn();
+    const message = textMessage("test", "another tangent turn");
+
+    await middleware(message, context(trunk), next);
+
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+    expect(message.metadata.decisionHeader).toBeUndefined();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses auto set-checkpoint when autoSetCheckpoint is false (kill-switch)", async () => {
+    const { middleware, shadowFork } = setup({ autoSetCheckpoint: false });
+    shadowFork.mockResolvedValue(forkDeciding("set-checkpoint"));
+    const trunk = makeTrunk({ checkpointActive: false, checkpointId: null });
+    const next = vi.fn();
+
+    await middleware(textMessage("test", "a side question"), context(trunk), next);
+
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("auto summarize-to-checkpoint folds the tangent, clears the checkpoint, and sets a header", async () => {
+    const { middleware, shadowFork } = setup();
+    shadowFork.mockResolvedValue(forkDeciding("summarize-to-checkpoint"));
+    const trunk = trunkWithBranch(
+      [messageEntry("checkpoint", "assistant", "base"), messageEntry("t1", "user", "q")],
+      { checkpointActive: true, checkpointId: "checkpoint" },
+    );
+    const next = vi.fn();
+    const message = textMessage("test", "anyway, back to the main thing");
+
+    await middleware(message, context(trunk), next);
+
+    // The tangent folded into a summary rooted at the checkpoint (kind tangent, fromHook=true).
+    expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledWith(
+      "checkpoint",
+      expect.any(String),
+      expect.objectContaining({ kind: "tangent", baseId: "checkpoint" }),
+      true,
+    );
+    // The checkpoint cleared.
+    expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalledWith(
+      BOOMERANG_STATE,
+      expect.objectContaining({ checkpointId: null }),
+    );
+    // Not a rollback target.
+    expect(message.metadata.decisionHeader).toMatchObject({
+      label: "↩️ Summarized to checkpoint",
+      rollbackable: false,
+    });
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses auto summarize-to-checkpoint when no checkpoint is active", async () => {
+    const { middleware, shadowFork } = setup();
+    shadowFork.mockResolvedValue(forkDeciding("summarize-to-checkpoint"));
+    const trunk = makeTrunk({ checkpointActive: false, checkpointId: null });
+    const next = vi.fn();
+    const message = textMessage("test", "back to main");
+
+    await middleware(message, context(trunk), next);
+
+    expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
+    expect(message.metadata.decisionHeader).toBeUndefined();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses auto summarize-to-checkpoint when the checkpoint has no tangent (empty-tangent guard)", async () => {
+    const { middleware, shadowFork } = setup();
+    shadowFork.mockResolvedValue(forkDeciding("summarize-to-checkpoint"));
+    // Only the checkpoint on the path — no turn follows, so checkpointHasTangent is false.
+    const trunk = trunkWithBranch([messageEntry("checkpoint", "assistant", "base")], {
+      checkpointActive: true,
+      checkpointId: "checkpoint",
+    });
+    const next = vi.fn();
+    const message = textMessage("test", "back to main");
+
+    await middleware(message, context(trunk), next);
+
+    expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
+    expect(message.metadata.decisionHeader).toBeUndefined();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("suppresses auto summarize-to-checkpoint when autoSummarizeToCheckpoint is false (kill-switch)", async () => {
+    const { middleware, shadowFork } = setup({ autoSummarizeToCheckpoint: false });
+    shadowFork.mockResolvedValue(forkDeciding("summarize-to-checkpoint"));
+    const trunk = trunkWithBranch(
+      [messageEntry("checkpoint", "assistant", "base"), messageEntry("t1", "user", "q")],
+      { checkpointActive: true, checkpointId: "checkpoint" },
+    );
+    const next = vi.fn();
+
+    await middleware(textMessage("test", "back to main"), context(trunk), next);
+
+    expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails open to continue (no state change) when the classifier fork throws", async () => {
+    const { middleware, shadowFork } = setup();
+    shadowFork.mockRejectedValue(new Error("classifier down"));
+    const trunk = makeTrunk();
+    const next = vi.fn();
+
+    await middleware(textMessage("test", "something"), context(trunk), next);
+
+    expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("records lastAutoDecision {kind:new} on an automatic topic shift (a /rollback target)", async () => {
+    const { middleware, shadowFork } = setup();
+    shadowFork.mockResolvedValue(forkDeciding("shift"));
+    const trunk = makeTrunk({ hasAssistantTurnSinceBase: true });
+    const next = vi.fn();
+
+    await middleware(textMessage("test", "let's talk about something else"), context(trunk), next);
+
+    expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledTimes(1);
+    expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalledWith(
+      BOOMERANG_STATE,
+      expect.objectContaining({
+        lastAutoDecision: { kind: "new", preDecisionLeafId: "leaf" },
+      }),
+    );
+  });
+
+  it("does NOT record lastAutoDecision on a manual /new (only automatic decisions are rollback targets)", async () => {
+    const { middleware, shadowFork } = setup();
+    const trunk = makeTrunk({ hasAssistantTurnSinceBase: true });
+    const next = vi.fn();
+    const message = textMessage("test", "start over");
+    message.metadata.forceNew = true;
+
+    await middleware(message, context(trunk), next);
+
+    expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledTimes(1);
+    expect(shadowFork).not.toHaveBeenCalled();
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalledWith(
+      BOOMERANG_STATE,
+      expect.objectContaining({ lastAutoDecision: { kind: "new", preDecisionLeafId: "leaf" } }),
     );
   });
 });

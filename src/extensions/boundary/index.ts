@@ -1,15 +1,21 @@
 import { Type } from "typebox";
 
+import { checkpointHasTangent, getLeafId } from "../../agent/session-tree.ts";
 import type { Delivery } from "../../channels/types.ts";
+import { recordLastAutoDecision, setCheckpoint } from "../../sessions/trunk.ts";
 import { defineExtension } from "../api.ts";
 import { createAskBranchFactory } from "./ask-branch.ts";
 import { classifyShift } from "./classifier.ts";
-import { collapseCurrentTopic } from "./collapse.ts";
+import { collapseCurrentTopic, summarizeCurrentTangent } from "./collapse.ts";
 import { handleBackCommand, handleCheckpointCommand } from "./commands.ts";
 import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
 
 interface BoundaryConfig {
   enabled: boolean;
+  /** Kill-switch for the automatic `set-checkpoint` classifier result (DLT-181, KD8). */
+  autoSetCheckpoint: boolean;
+  /** Kill-switch for the automatic `summarize-to-checkpoint` classifier result (DLT-181, KD8). */
+  autoSummarizeToCheckpoint: boolean;
 }
 
 /**
@@ -25,10 +31,18 @@ export default defineExtension<BoundaryConfig>({
   configSchema: Type.Object({
     // Gates topic-shift detection. Forced shifts ("/new") are honored even when detection is off.
     enabled: Type.Boolean({ default: true }),
+    // Per-result kill-switches (KD8): each auto checkpoint result can be disabled independently without
+    // losing manual `/checkpoint`,`/back` or topic detection. Both default on (conservative-on).
+    autoSetCheckpoint: Type.Boolean({ default: true }),
+    autoSummarizeToCheckpoint: Type.Boolean({ default: true }),
   }),
 
   setup(app) {
-    const detectionEnabled = app.extensionConfig.enabled;
+    const {
+      enabled: detectionEnabled,
+      autoSetCheckpoint,
+      autoSummarizeToCheckpoint,
+    } = app.extensionConfig;
 
     if (!detectionEnabled) {
       app.log.info("boundary detection disabled by configuration");
@@ -138,6 +152,9 @@ export default defineExtension<BoundaryConfig>({
           sessionFile: trunk.sessionFile,
           currentBranchHasAssistantTurn: trunk.hasAssistantTurnSinceBase,
           message: message.text,
+          // The classifier runs on a detached shadowFork and cannot read the live trunk, so the active
+          // checkpoint state is injected (S3). It gates which checkpoint decision is even offered.
+          checkpointActive: trunk.checkpointActive,
         },
       );
 
@@ -146,7 +163,61 @@ export default defineExtension<BoundaryConfig>({
         "topic-shift classification",
       );
 
+      // Auto side-conversation decisions (DLT-181, R6). Each is gated defensively on the checkpoint
+      // state the classifier cannot see and on its per-result kill-switch (KD8); a suppressed result
+      // degrades to "continue" (the message is answered normally). The message is NOT handled here — it
+      // streams as the first tangent turn (set-checkpoint) or the resumed main-line turn
+      // (summarize-to-checkpoint) — so the decision surfaces via the turn-scoped header on that response.
+      if (decision === "set-checkpoint") {
+        if (autoSetCheckpoint && !trunk.checkpointActive) {
+          const leaf = getLeafId(trunk.session);
+          if (leaf != null) {
+            // Capture the leaf BEFORE setCheckpoint: its boomerang append advances the leaf past the
+            // checkpoint message, and preDecisionLeafId must name the tip before the triggering exchange.
+            recordLastAutoDecision(trunk.session, "set-checkpoint", leaf);
+            setCheckpoint(trunk.session, leaf);
+            message.metadata.decisionHeader = {
+              label: "📌 Checkpoint set",
+              note: "A side topic started — the main line is parked here.",
+              rollbackable: true,
+            };
+          }
+        }
+
+        return next();
+      }
+
+      if (decision === "summarize-to-checkpoint") {
+        const checkpointId = trunk.checkpointId;
+        // Defensive gating: only valid with an active checkpoint that has a tangent to fold (the
+        // classifier prompt is checkpoint-aware, but this guard never creates a vacuous summary — KD2).
+        if (
+          autoSummarizeToCheckpoint &&
+          checkpointId != null &&
+          checkpointHasTangent(trunk.session, checkpointId)
+        ) {
+          const result = await summarizeCurrentTangent(
+            { side: app.agent.side, log: app.log },
+            { session: trunk.session, checkpointId },
+          );
+
+          if (result != null) {
+            // summarizeCurrentTangent already folds the tangent and clears the checkpoint (R3/R5).
+            message.metadata.decisionHeader = {
+              label: "↩️ Summarized to checkpoint",
+              note: "Back on the main line; the side topic was folded away.",
+              rollbackable: false,
+            };
+          }
+        }
+
+        return next();
+      }
+
       if (decision === "shift") {
+        // Capture the leaf before the collapse: it is the tip the triggering exchange extends, i.e. the
+        // pre-decision point /rollback rewinds to (Batch 4). Recorded only on a successful auto collapse.
+        const preDecisionLeafId = getLeafId(trunk.session);
         const collapsed = await collapseLiveBranch("Topic shift — collapsing the previous branch");
 
         // Pull a related prior branch's context onto the fresh branch (one pointer, no merge).
@@ -159,6 +230,12 @@ export default defineExtension<BoundaryConfig>({
           );
 
           if (related != null) injectRelatedBranchContext(trunk.session, related, app.log);
+
+          // An automatic topic shift is a /rollback target (Batch 4). Manual /new (forceNew above) does
+          // NOT record it — only automatic decisions are rollback targets (R7).
+          if (preDecisionLeafId != null) {
+            recordLastAutoDecision(trunk.session, "new", preDecisionLeafId);
+          }
         }
 
         app.log.info(

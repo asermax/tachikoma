@@ -21,6 +21,7 @@ const input = {
   sessionFile: "/sessions/live.jsonl",
   currentBranchHasAssistantTurn: true,
   message: "let's talk about something else entirely",
+  checkpointActive: false,
 };
 
 describe("classifyShift", () => {
@@ -41,6 +42,24 @@ describe("classifyShift", () => {
     expect(fork.dispose).toHaveBeenCalledOnce();
   });
 
+  it("returns set-checkpoint when the classifier detects a tangent beginning (no checkpoint active)", async () => {
+    const fork = forkReturning('{"decision":"set-checkpoint","reason":"side tangent"}');
+    const deps = makeDeps({ shadowFork: vi.fn().mockResolvedValue(fork) });
+
+    await expect(classifyShift(deps, input)).resolves.toBe("set-checkpoint");
+    expect(fork.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("returns summarize-to-checkpoint when the classifier detects the tangent ending (checkpoint active)", async () => {
+    const fork = forkReturning('{"decision":"summarize-to-checkpoint","reason":"back to main"}');
+    const deps = makeDeps({ shadowFork: vi.fn().mockResolvedValue(fork) });
+
+    await expect(classifyShift(deps, { ...input, checkpointActive: true })).resolves.toBe(
+      "summarize-to-checkpoint",
+    );
+    expect(fork.dispose).toHaveBeenCalledOnce();
+  });
+
   it("fails open to continue when the shadow fork throws", async () => {
     const deps = makeDeps({ shadowFork: vi.fn().mockRejectedValue(new Error("fork down")) });
 
@@ -53,6 +72,13 @@ describe("classifyShift", () => {
 
     await expect(classifyShift(deps, input)).resolves.toBe("continue");
     expect(fork.dispose).toHaveBeenCalledOnce();
+  });
+
+  it("fails open to continue on an unrecognized decision value", async () => {
+    const fork = forkReturning('{"decision":"teleport","reason":"???"}');
+    const deps = makeDeps({ shadowFork: vi.fn().mockResolvedValue(fork) });
+
+    await expect(classifyShift(deps, input)).resolves.toBe("continue");
   });
 
   it("skips classification (no fork) when the current branch has no assistant turn", async () => {
@@ -76,5 +102,33 @@ describe("classifyShift", () => {
       systemPrompt: "live-prompt",
       tier: "classifier",
     });
+  });
+
+  it("offers set-checkpoint (not summarize) in the prompt when no checkpoint is active", async () => {
+    const fork = forkReturning('{"decision":"continue"}');
+    const shadowFork = vi.fn().mockResolvedValue(fork);
+    const deps = makeDeps({ shadowFork });
+
+    await classifyShift(deps, { ...input, checkpointActive: false });
+
+    expect(fork.prompt).toHaveBeenCalledOnce();
+    const prompt = fork.prompt.mock.calls[0]?.[0] as string;
+    // The set-checkpoint conditional block is present; the summarize-to-checkpoint block is not. (The
+    // shared JSON-enum line lists all four values, so assert on the block's distinctive phrasing.)
+    expect(prompt).toContain("clearly starts a related side tangent");
+    expect(prompt).not.toContain("a checkpoint is currently active");
+  });
+
+  it("offers summarize-to-checkpoint (not set-checkpoint) in the prompt when a checkpoint is active", async () => {
+    const fork = forkReturning('{"decision":"continue"}');
+    const shadowFork = vi.fn().mockResolvedValue(fork);
+    const deps = makeDeps({ shadowFork });
+
+    await classifyShift(deps, { ...input, checkpointActive: true });
+
+    expect(fork.prompt).toHaveBeenCalledOnce();
+    const prompt = fork.prompt.mock.calls[0]?.[0] as string;
+    expect(prompt).toContain("a checkpoint is currently active");
+    expect(prompt).not.toContain("clearly starts a related side tangent");
   });
 });
