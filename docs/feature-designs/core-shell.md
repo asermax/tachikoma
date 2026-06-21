@@ -42,7 +42,7 @@ Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the 
 
 The three `adapt*` calls are best-effort legacy migrations (see [migration](../feature-designs/migration.md)); they sit between workspace creation and the runtime services so translated config/workspace/data is in place before anything reads it.
 
-Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an uncaught error; the coordinator loop's `finally` closes the active session (running post-processing); `runApp`'s `finally` then stops the channel and the scheduler, and sets `process.exitCode = 1` when the drain followed a crash (so a supervisor restarts the process). See [conversation-loop](conversation-loop.md) for the crash-drain force-exit backstop.
+Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an uncaught error; the coordinator loop's `finally` drains the held queue to the channel (the trunk is left open — post-processing runs at the nightly close or next-startup recovery, not during teardown); `runApp`'s `finally` then stops the channel and the scheduler, and sets `process.exitCode = 1` when the drain followed a crash (so a supervisor restarts the process). See [conversation-loop](conversation-loop.md) for the crash-drain force-exit backstop.
 
 ## Components
 
@@ -157,7 +157,7 @@ Setup failures are isolated by provenance. A first-party extension's `setup()` f
 
 **Given**: The app is running with an open session and scheduled jobs
 **When**: The user presses Ctrl+C
-**Then**: The signal handler aborts the coordinator loop; its `finally` force-flushes held deliveries, disposes the active pi session, marks the session closed, and runs post-processing phases. `runApp`'s `finally` then stops the channel and calls `scheduler.stopAll()` (the boundary extension's idle timer is `unref`'d, so it never blocks shutdown).
+**Then**: The signal handler aborts the coordinator loop; its `finally` force-flushes held deliveries to the channel as one digest (the trunk is left open — it is not disposed or closed, and no post-processing phases run during teardown). `runApp`'s `finally` then stops the channel and calls `scheduler.stopAll()` (the boundary extension's idle timer is `unref`'d, so it never blocks shutdown).
 
 ## Notes
 

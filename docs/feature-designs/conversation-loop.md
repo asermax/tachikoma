@@ -27,7 +27,7 @@ pi's model is one in-process `AgentSession` per conversation. The daily-trunk mo
 
 ## Design Overview
 
-`Coordinator` (`src/coordinator.ts`) is a single serial loop for *new* exchanges. `submit()` is the entry point: a **pending-input intercept** runs first (bare arg-command → prompt, or capture the next message as an argument), then `/queue `/`/new ` prefix-stripping, then — for a message arriving while an exchange is in flight — steering into the live run via `session.steer()`, else enqueue. `handle()` runs the full exchange: `ensureTrunk()` → inbound middleware chain → (if not `handled`) `streamPrompt` consumed by `channel.respond({ header })` → exchange processors. The header is turn-scoped: read fresh from the exchange's metadata, never carried across turns. Trunk close (nightly cron, shutdown, lazy stale-day) funnels through `closeTrunkSession()`, which disposes the session, runs the phased marker-guarded post-processing pipeline, and retires the trunk from `unclosed` only on a clean close.
+`Coordinator` (`src/coordinator.ts`) is a single serial loop for *new* exchanges. `submit()` is the entry point: a **pending-input intercept** runs first (bare arg-command → prompt, or capture the next message as an argument), then `/queue `/`/new ` prefix-stripping, then — for a message arriving while an exchange is in flight — steering into the live run via `session.steer()`, else enqueue. `handle()` runs the full exchange: `ensureTrunk()` → inbound middleware chain → (if not `handled`) `streamPrompt` consumed by `channel.respond({ header })` → exchange processors. The header is turn-scoped: read fresh from the exchange's metadata, never carried across turns. Trunk close (nightly cron, lazy stale-day) funnels through `closeTrunkSession()`, which disposes the session, runs the phased marker-guarded post-processing pipeline, and retires the trunk from `unclosed` only on a clean close. Shutdown deliberately leaves the trunk open — it persists across restarts and is closed by the nightly cron or next-startup recovery (see the Shutdown drain decision below), not during teardown.
 
 ```
 submit() ─ pending-input intercept (bare arg-command → prompt; pending arg → capture)
@@ -46,13 +46,13 @@ submit() ─ pending-input intercept (bare arg-command → prompt; pending arg �
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/coordinator.ts` | Inbox loop; mid-exchange steering (`submit`→`session.steer`); `/queue`/`/new` opt-out; `abortExchange`; pending-input intercept (R17); middleware chain; trunk lifecycle (ensure/nightly/stale/shutdown/recover); close pipeline driver; the delivery priority queue; status emission; `replay()` | Serial *new* exchanges, but mid-exchange input steers the live run; promise-based wake; one `ActiveTrunk` (session + pointer); pending-input state is in-memory and ephemeral; replay routes around `submit()` via inbox `unshift` |
+| `src/coordinator.ts` | Inbox loop; mid-exchange steering (`submit`→`session.steer`); `/queue`/`/new` opt-out; `abortExchange`; pending-input intercept (R17); middleware chain; trunk lifecycle (ensure/nightly/stale/recover); close pipeline driver; the delivery priority queue; status emission; `replay()` | Serial *new* exchanges, but mid-exchange input steers the live run; promise-based wake; one `ActiveTrunk` (session + pointer); pending-input state is in-memory and ephemeral; replay routes around `submit()` via inbox `unshift` |
 | `src/sessions/trunk.ts` | Trunk identity and on-file state: `TrunkState` (the `app_state` pointer + `unclosed` index), `openOrCreateTrunk`, `BoomerangState`, branch-record enumeration, markers | Pointer + `unclosed` enforce the write-ordering invariant; same-day reopen re-seats the leaf onto the current base; boomerang-state is latest-wins and append-only |
 | `src/channels/types.ts` | `Channel`, `Exchange`, `Delivery` contracts | `respond()` consumes the stream to completion, so channel rendering paces the exchange; optional `header` carries the turn-scoped decision descriptor; `DELIVERY_TIERS` const map (per-tier timing in `delivery-queue.ts`) |
 | `src/domain/message.ts` | `InboundMessage`, `DecisionHeader`, `decisionHeaderFrom` | SDK-free domain types crossing the channel boundary; the header descriptor rides message metadata |
 | `src/extensions/host.ts`, `src/extensions/api.ts` | Map `app.sessions` / `app.channels` / `app.inbound` services onto coordinator methods | `SessionsApi.replay`/`activeTrunkSession`/`onOpen`; `TrunkInbound` snapshot handed to middleware |
 | `src/app.ts` | Wiring: recovers stale trunks after bootstrap, selects and starts the channel, registers the nightly-close cron, wires process-exit causes to `ShutdownController`, runs the loop | Nightly close at `scheduler.nightlyCloseHour` |
-| `src/shutdown.ts` | `ShutdownController`: routes `SIGINT`/`SIGTERM`/`uncaughtException`/`unhandledRejection` through one idempotent graceful drain | First trigger aborts (the loop's `finally` drains + post-processes); a second trigger force-exits immediately |
+| `src/shutdown.ts` | `ShutdownController`: routes `SIGINT`/`SIGTERM`/`uncaughtException`/`unhandledRejection` through one idempotent graceful drain | First trigger aborts (the loop's `finally` drains the held queue to the channel; the trunk is left open — no post-processing runs during teardown); a second trigger force-exits immediately |
 
 ## Key Decisions
 
@@ -111,16 +111,16 @@ submit() ─ pending-input intercept (bare arg-command → prompt; pending arg �
 
 ### Shutdown drain: flag, hooks, then awaited channel digest
 
-**Choice**: The loop's `finally` sets `shuttingDown = true`, runs every `onShutdown` hook (error-isolated), then `drainQueueToChannel()`, then closes the active trunk (announcing `Wrapping up the conversation…` / `Done` when one is active). `drainQueueToChannel` clears the timer, sorts the remaining queue with `compareQueued`, and renders it as one `buildDigest` straight through `channel.deliver()`.
+**Choice**: The loop's `finally` sets `shuttingDown = true`, runs every `onShutdown` hook (error-isolated), then `drainQueueToChannel()`. The live trunk is deliberately left open: closing it here runs the memory pipeline during teardown, which races a restarting process that reopens a fresh trunk (the old run is killed mid-pipeline) and redundantly re-pipelines a same-day restart — so the trunk is closed only by the nightly `closeTrunkIfDue` cron, or recovered idempotently at next startup (ADR-014's `unclosed` index + on-file markers make a trunk left open safe; a clean exit behaves like a crash, which recovery already handles). With an active trunk the loop announces `Wrapping up the conversation…` then `Done` around the drain (no close pipeline runs, so there are no per-processor lines between them). `drainQueueToChannel` clears the timer, sorts the remaining queue with `compareQueued`, and renders it as one `buildDigest` straight through `channel.deliver()`.
 **Why**: The inbox loop has exited by the `finally`, so a queued item can no longer become an agent turn — rendering the digest straight to the channel is the only way it reaches the user. Holding hook output behind the flag and letting the single awaited drain emit one ordered digest keeps one exit path the process waits on.
 **Consequences**: Pro — notices queued or pushed at shutdown reach the user as one digest. Con — the shutdown digest is a plain channel render, not an agent turn.
 
 ### Crash drain: route uncaught errors through the same abort path
 
 **Choice**: A `ShutdownController` (`src/shutdown.ts`) routes `SIGINT`, `SIGTERM`, `uncaughtException`, and `unhandledRejection` through one idempotent trigger. The first call aborts the `AbortController` the loop drains on; a crash cause additionally arms an unref'd force-exit timer. A second trigger force-exits immediately and clears the timer. `app.ts` sets `process.exitCode = 1` once a crash drain completes so the loop empties and pino flushes.
-**Why**: Post-processing reads the durable on-disk transcript and is error-isolated per step, so salvaging it on the crash path is safe — the same `finally` block trusted on graceful shutdown. Without this, an unhandled rejection exits before the drain, deferring the whole trunk's memory to next-startup recovery.
-**Alternatives Considered**: Minimal cleanup + immediate exit (defers all work to recovery — the fragility this closes).
-**Consequences**: Pro — a crash mid-conversation still extracts memory, updates context, and commits before exit. Con — on the unstable `uncaughtException` path the pino flush is best-effort.
+**Why**: Routing crashes through the same abort path drains the held queue to the channel (so notices queued or pushed at shutdown reach the user as one digest rather than dying with the process) and lets the loop empty and pino flush before exit. The day's memory is deferred to next-startup recovery — idempotent via the per-step on-file markers (ADR-014) — rather than raced during teardown, which is exactly the restart race that drove leaving the trunk open at shutdown. Without routing, an unhandled rejection exits before the drain, cutting off the queue drain and the final log flush.
+**Alternatives Considered**: Minimal cleanup + immediate exit — cuts off the held-queue drain (notices queued at shutdown die with the process) and the final log flush; recovery still backstops the day's memory either way.
+**Consequences**: Pro — a crash mid-conversation still drains held notices to the channel and flushes logs before exit, instead of dying abruptly; recovery backstops the day's memory (the trunk is left open and closed idempotently at next startup, so a force-exit cutting the drain short loses neither data nor the queue). Con — on the unstable `uncaughtException` path the pino flush is best-effort.
 
 ## System Behavior
 
@@ -162,13 +162,13 @@ submit() ─ pending-input intercept (bare arg-command → prompt; pending arg �
 
 ### Scenario: Uncaught error drains before exit
 
-**Given**: An active trunk with pending post-processing, and an unhandled rejection fires
+**Given**: An active trunk, and an unhandled rejection fires
 **When**: `ShutdownController` catches the rejection
-**Then**: The loop's `finally` drains (post-processing runs) through the same path as a graceful signal, then the process exits non-zero so a supervisor restarts it.
+**Then**: The loop's `finally` drains the held queue to the channel and flushes logs through the same path as a graceful signal (the trunk is left open — no post-processing runs during teardown; the day's memory is deferred to next-startup recovery), then the process exits non-zero so a supervisor restarts it.
 
 ## Notes
 
 - `status(text)` both emits a `status` event on the app event bus and calls the active channel's optional `status()`; **while shutting down** there is no streaming renderer, so `status()` reroutes to the channel's `shutdownStatus()`.
-- The shutdown sequence announces itself: with an active trunk, the loop's `finally` awaits `emitShutdownStatus("Wrapping up the conversation…")`, runs `closeTrunk()` (per-processor progress on the same message), then awaits `emitShutdownStatus("Done")`.
+- The shutdown sequence announces itself: with an active trunk, the loop's `finally` awaits `emitShutdownStatus("Wrapping up the conversation…")`, then awaits `emitShutdownStatus("Done")`. The trunk is left open between the two (no close pipeline runs during teardown, so there are no per-processor progress lines in the shutdown message); it reopens on the next process start.
 - The exchange's `try/finally` guarantees `exchanging` resets, `lastExchangeAt` stamps, held deliveries flush, and the queue re-evaluates even when `respond()` throws.
-- A nightly/`closeTrunkIfDue` close suppresses per-processor status lines (no renderer to reclaim them); shutdown and explicit closes still surface them.
+- A nightly/`closeTrunkIfDue` close suppresses per-processor status lines (no renderer to reclaim them); explicit closes (`/new`, topic-shift, resume) still surface them. Shutdown does not close the trunk, so it surfaces none.
