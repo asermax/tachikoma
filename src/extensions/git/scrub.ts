@@ -1,4 +1,6 @@
 import { execFile } from "node:child_process";
+import { rm } from "node:fs/promises";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { hasRemote, hasUncommittedChanges, runGit, runGitCapture } from "../../git/git.ts";
@@ -70,7 +72,7 @@ export const scrubPaths = async (
     return {
       code: SCRUB_RESULT.dirtyTree,
       message:
-        "Cannot scrub: the working tree has uncommitted changes. Commit or discard them first.",
+        "Cannot scrub: the working tree has uncommitted changes. Commit them first with the commit_workspace tool (or discard them), then retry the scrub.",
     };
   }
 
@@ -96,6 +98,23 @@ export const scrubPaths = async (
   }
 
   const originUrl = (await runGitCapture(cwd, ["remote", "get-url", "origin"])).stdout;
+
+  // filter-repo prompts on stdin ("Treat this run as a continuation... (Y/N)?")
+  // when it detects a prior run in the same repo whose `already_ran` marker is
+  // older than a day. stdin is never attached here, so the prompt hangs.
+  // `--force` does NOT bypass it (it only skips the separate fresh-clone sanity
+  // check), so clear filter-repo's per-repo metadata to make each scrub a fresh,
+  // non-interactive rewrite; filter-repo recreates the directory itself.
+  const gitDir = (await runGitCapture(cwd, ["rev-parse", "--absolute-git-dir"])).stdout;
+
+  try {
+    await rm(join(gitDir, "filter-repo"), { recursive: true, force: true });
+    log.debug({ gitDir }, "cleared git filter-repo metadata before scrub");
+  } catch (error) {
+    // Best-effort pre-flight: if we can't clear the marker, proceed and let
+    // filter-repo surface any resulting failure via its own exit (reported FAILED).
+    log.warn({ gitDir, error: String(error) }, "could not clear git filter-repo metadata");
+  }
 
   const filterArgs = ["filter-repo", "--invert-paths", "--force"];
 
