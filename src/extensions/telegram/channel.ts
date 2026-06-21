@@ -70,6 +70,23 @@ export const STOP_COMMAND = "/stop";
 export const STOP_ACKNOWLEDGEMENT = "⏹ Stopped.";
 
 /**
+ * Every slash command registered in Telegram's command menu (R10). Command names are lowercase and
+ * ≤32 chars; descriptions are 3–256 chars (Telegram Bot API constraints — verified, see DLT-181 KD11).
+ * Argument-taking commands indicate their argument form in the description; the rest take none.
+ */
+export const BOT_COMMANDS = [
+  { command: "new", description: "Start a new topic — /new <first message>" },
+  { command: "queue", description: "Queue a message for the next turn — /queue <message>" },
+  { command: "stop", description: "Stop the current response" },
+  { command: "checkpoint", description: "Park the main line here for a side topic" },
+  { command: "back", description: "Fold the side topic back to the checkpoint" },
+  { command: "rollback", description: "Undo the last automatic topic decision" },
+  { command: "skill", description: "Load a skill — /skill <name>" },
+  { command: "tasks", description: "Show and manage scheduled tasks" },
+  { command: "reload", description: "Reload skills and resources from disk" },
+] as const;
+
+/**
  * Appended to a text/media reply whose target couldn't be resolved, so the agent
  * knows the turn was routed to the current conversation rather than the original one.
  */
@@ -216,16 +233,12 @@ export class TelegramChannel implements Channel {
     // only when polling stops, so it runs detached.
     await this.bot.init();
 
-    // Surface the channel-agnostic prefix commands in Telegram's command menu so
-    // they're discoverable; the coordinator parses the prefixes (see submit()).
+    // Surface every slash command in Telegram's command menu so they're discoverable (R10). The
+    // coordinator handles /new, /queue (prefix-strip) and pending-input; /stop is channel-level;
+    // /skill and /reload are pi-native; /checkpoint, /back, /rollback live in the boundary extension.
+    // Argument-taking commands (/new, /queue, /skill) show their argument form in the description.
     await this.bot.api
-      .setMyCommands([
-        { command: "new", description: "Start a new conversation, ignoring the current topic" },
-        {
-          command: "queue",
-          description: "Queue a message for the next turn instead of interrupting",
-        },
-      ])
+      .setMyCommands(BOT_COMMANDS)
       .catch((error) => runtime.log.warn({ err: error }, "setting bot commands failed"));
 
     void this.bot

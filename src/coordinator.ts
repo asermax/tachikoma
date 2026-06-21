@@ -52,6 +52,13 @@ export class Coordinator {
   private readonly log: Logger;
   private readonly now: () => Date;
   private readonly timezone: string | undefined;
+  /** Milliseconds a bare arg-command waits for its argument before the pending prompt expires (R9). */
+  private readonly pendingInputTtlMs: number;
+  /**
+   * Per-chat pending-input state (R9): keyed by channel (single-user bot). In-memory and ephemeral —
+   * a restart drops it by design, so a stale prompt can never capture a post-restart message.
+   */
+  private readonly pendingInput = new Map<string, PendingInput>();
 
   constructor(
     trunkState: TrunkState,
@@ -61,6 +68,7 @@ export class Coordinator {
     log: Logger,
     timezone: string | undefined,
     now: () => Date = () => new Date(),
+    pendingInputTtlMs: number = DEFAULT_PENDING_INPUT_TTL_MS,
   ) {
     this.trunkState = trunkState;
     this.agent = agent;
@@ -69,6 +77,7 @@ export class Coordinator {
     this.log = log;
     this.timezone = timezone;
     this.now = now;
+    this.pendingInputTtlMs = pendingInputTtlMs;
   }
 
   // ---- channel wiring ---------------------------------------------------------
@@ -78,6 +87,14 @@ export class Coordinator {
   }
 
   submit(message: InboundMessage): void {
+    // Pending-input gate (R9): MUST precede prefix-stripping and steering. submit() strips "/new "
+    // and "/queue " prefixes and steers mid-exchange messages before any middleware runs, so a captured
+    // argument would otherwise be mis-parsed as a command or steered into the live run. Returns true
+    // when the message was consumed (a bare arg-command set a pending prompt, or a pending argument was
+    // captured) — in which case submit() stops here. System-origin messages never participate, and
+    // replay() bypasses submit() entirely (so a replayed turn is never captured as an argument).
+    if (this.interceptPendingInput(message)) return;
+
     // Leading slash commands are channel-agnostic. "/queue …" opts out of steering
     // (the message waits for the next exchange); "/new …" forces a fresh topic branch,
     // honored downstream by the boundary extension. Both skip steering: neither
@@ -126,6 +143,93 @@ export class Coordinator {
     this.inbox.push(normalized);
     this.wake?.();
     this.wake = null;
+  }
+
+  // ---- pending-input (R9) -------------------------------------------------------
+
+  /**
+   * Pending-input gate, called at the very top of {@link submit}. Returns true when the message was
+   * consumed by the pending-input flow and submit() should stop; false when it should proceed to
+   * prefix-stripping/steering/enqueue as usual.
+   *
+   * - Bare arg-command ("/new", "/queue", "/skill" with no argument): sets a per-chat pending state and
+   *   renders a hardcoded (non-LLM) prompt via the channel's status surface; the message is not enqueued.
+   * - While a pending state is active: a slash command cancels it and is processed normally; any other
+   *   message is captured as the argument and re-dispatched as "<command> <arg>".
+   *
+   * System-origin messages (queue digests) never participate — they are not user replies. `replay()`
+   * routes around submit() entirely, so a replayed triggering message is never captured as an argument.
+   */
+  private interceptPendingInput(message: InboundMessage): boolean {
+    if (message.metadata.origin === "system") return false;
+
+    const chatKey = message.channel;
+    this.expirePendingInput(chatKey);
+
+    const trimmed = message.text.trim();
+
+    // While a pending state is active, a non-command message is captured as the argument. Any slash
+    // command cancels it and falls through to bare-command detection below — so a different bare
+    // arg-command (e.g. /queue during a pending /new) re-enters pending-input for itself, while a
+    // non-arg command (e.g. /checkpoint) proceeds to be enqueued normally.
+    const pending = this.pendingInput.get(chatKey);
+    if (pending != null && !trimmed.startsWith("/")) {
+      // Capture the text as the argument, clear pending (so the re-dispatch isn't itself intercepted),
+      // and re-dispatch as "<command> <arg>". A whitespace-only argument just clears the pending state.
+      this.clearPendingInput(chatKey);
+      if (trimmed.length > 0) {
+        this.submit({ ...message, text: `/${pending.command} ${trimmed}` });
+      }
+      return true;
+    }
+    if (pending != null) {
+      // A command arrived: cancel the pending flow, then fall through to (re)detect a bare command.
+      this.clearPendingInput(chatKey);
+    }
+
+    // (Re)detect a bare arg-taking command: either with no prior pending, or a command that just
+    // cancelled one. Sets pending + renders the prompt instead of enqueuing the bare command.
+    const command = bareArgCommand(trimmed);
+    if (command != null) {
+      this.setPendingInput(chatKey, command);
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Set a pending state for `chatKey` and render its non-LLM prompt via the channel status surface. */
+  private setPendingInput(chatKey: string, command: PendingCommand): void {
+    this.clearPendingInput(chatKey); // replace any prior pending (clears its timer)
+
+    const promptedAt = this.now().getTime();
+    const timer = setTimeout(() => {
+      this.log.debug({ chatKey, command }, "pending-input expired (TTL)");
+      this.clearPendingInput(chatKey);
+    }, this.pendingInputTtlMs);
+    timer.unref?.(); // never keep the process alive solely to expire a prompt
+
+    this.pendingInput.set(chatKey, { command, promptedAt, timer });
+
+    // Render through the channel-agnostic status/lead-in surface (R9): Telegram shows a lead-in the
+    // eventual streamed response reclaims; a future REPL channel renders it the same way.
+    this.status(PENDING_PROMPTS[command]);
+  }
+
+  /** Drop the pending state for `chatKey` (and its TTL timer), if any. */
+  private clearPendingInput(chatKey: string): void {
+    const pending = this.pendingInput.get(chatKey);
+    if (pending == null) return;
+    clearTimeout(pending.timer);
+    this.pendingInput.delete(chatKey);
+  }
+
+  /** Defensive stale-check: drop an expired entry even if its timer hasn't fired yet. */
+  private expirePendingInput(chatKey: string): void {
+    const pending = this.pendingInput.get(chatKey);
+    if (pending != null && this.now().getTime() - pending.promptedAt > this.pendingInputTtlMs) {
+      this.clearPendingInput(chatKey);
+    }
   }
 
   /** Abort the in-flight agent run, if any (user-initiated stop). */
@@ -703,6 +807,44 @@ const hasAssistantTurnSinceBase = (session: AgentSession, baseId: string | null)
   branchEntriesSinceBase(session, baseId).some(
     (entry) => entry.type === "message" && entry.message.role === "assistant",
   );
+
+// ---- pending-input (R9) module helpers ----------------------------------------
+
+/** Default pending-input TTL (2 min); kept short so a stale prompt can't capture an unrelated message. */
+const DEFAULT_PENDING_INPUT_TTL_MS = 120_000;
+
+/** A pending-input entry: the command awaiting its argument, when it was prompted, and its expiry timer. */
+interface PendingInput {
+  command: PendingCommand;
+  promptedAt: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
+/**
+ * Argument-taking commands that enter a pending-input flow when invoked bare (R9). The value is the
+ * hardcoded (non-LLM) prompt rendered while awaiting the argument. The coordinator owns this set
+ * because it already owns the channel-agnostic "/new"/"/queue" prefix-stripping — the intercept must
+ * run at the top of submit(), before any middleware (which only runs after prefix-strip and steering).
+ */
+const PENDING_PROMPTS = {
+  new: "What's the first message for the new topic?",
+  queue: "What should I queue for the next turn?",
+  skill: "Which skill should I load?",
+} satisfies Record<string, string>;
+
+/** The bare commands that trigger pending-input (keys of {@link PENDING_PROMPTS}). */
+type PendingCommand = keyof typeof PENDING_PROMPTS;
+
+/**
+ * Returns the command name when `text` is a bare arg-taking command (the token alone, no argument), or
+ * null otherwise. "/new <arg>" (with an argument) is not bare — it flows through the existing
+ * prefix-strip → forceNew/queued path unchanged.
+ */
+const bareArgCommand = (text: string): PendingCommand | null => {
+  if (!text.startsWith("/")) return null;
+  const command = text.slice(1) as PendingCommand;
+  return command in PENDING_PROMPTS ? command : null;
+};
 
 const renderPrompt = (message: InboundMessage): string => {
   if (message.media.length === 0) return message.text;

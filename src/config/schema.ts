@@ -47,6 +47,16 @@ export const ConfigSchema = Type.Object({
     { default: {} },
   ),
 
+  coordinator: Type.Object(
+    {
+      // Milliseconds a bare arg-taking command (/new, /queue, /skill) waits for its argument before
+      // the pending-input prompt expires (R9). Default 2 minutes; kept short so a stale prompt can't
+      // capture a later, unrelated message. Transient (in-memory) — never survives a restart.
+      pendingInputTtlMs: Type.Number({ default: 120_000 }),
+    },
+    { default: {} },
+  ),
+
   scheduler: Type.Object(
     {
       timezone: Type.Optional(Type.String()),

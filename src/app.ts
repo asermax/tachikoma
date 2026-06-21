@@ -77,6 +77,8 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
     events,
     componentLogger(log, "coordinator"),
     config.scheduler.timezone,
+    undefined, // now — use the default real-time clock; the pending-input TTL is configured below
+    config.coordinator.pendingInputTtlMs,
   );
 
   const host = new ExtensionHost({

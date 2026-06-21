@@ -36,6 +36,12 @@ retentionDays = 7
 # terminal interface returns in a later delta.
 default = "telegram"
 
+[coordinator]
+# Milliseconds a bare arg-taking command (/new, /queue, /skill) waits for its
+# argument before the pending-input prompt expires (R9). Default 2 minutes — kept
+# short so a stale prompt can't capture a later, unrelated message. Transient.
+# pendingInputTtlMs = 120000
+
 [scheduler]
 # IANA timezone for cron schedules; defaults to the detected system timezone
 # when unset. An unrecognized zone fails config validation.

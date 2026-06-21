@@ -1,43 +1,21 @@
 import { defineExtension } from "../api.ts";
-import { collapseCurrentTopic } from "../boundary/collapse.ts";
 
 /**
- * Channel-agnostic conversation commands handled before the agent sees them.
- * (/queue is handled at submit time by the coordinator, since steering happens
- * before middleware runs; /stop is channel-level because it must act mid-stream.)
+ * Channel-agnostic conversation commands.
+ *
+ * `/queue` is handled at submit time by the coordinator (steering happens before middleware runs).
+ * `/stop` is channel-level because it must act mid-stream (Telegram's handleStop aborts the run).
+ *
+ * `/new` was handled here (an immediate topic collapse), but as of DLT-181 (R9) a *bare* `/new`
+ * enters the coordinator's pending-input flow instead (it prompts for the new topic's first message),
+ * and `/new <arg>` is prefix-stripped at submit time into `forceNew`, which the boundary extension
+ * honors. Neither reaches inbound middleware, so this extension now passes every message through —
+ * it remains registered as the home for future channel-agnostic commands.
  */
 export default defineExtension({
   name: "commands",
 
   setup(app) {
-    app.inbound.use(async (message, context, next) => {
-      if (message.text.trim() === "/new") {
-        message.metadata.handled = true;
-
-        app.log.debug({ command: "/new" }, "handling slash command");
-
-        // Daily-trunk model: a bare "/new" forces a topic shift, collapsing the current branch into a
-        // summary on the trunk so a fresh topic starts. The empty-branch guard skips collapse when the
-        // live branch has no assistant turn yet.
-        const trunk = context.trunk;
-
-        if (trunk?.hasAssistantTurnSinceBase === true) {
-          await collapseCurrentTopic(
-            { side: app.agent.side, log: app.log },
-            {
-              session: trunk.session,
-              currentBaseId: trunk.currentBaseId,
-              branchId: trunk.liveBranchId,
-              reason: "user forced a new topic",
-            },
-          );
-        }
-
-        app.channels.deliver({ text: "🆕 Started a fresh topic.", immediate: true });
-        return;
-      }
-
-      return next();
-    });
+    app.inbound.use(async (_message, _context, next) => next());
   },
 });
