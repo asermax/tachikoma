@@ -16,6 +16,7 @@ interface SetupResult {
   shadowFork: ReturnType<typeof vi.fn>;
   complete: ReturnType<typeof vi.fn>;
   classify: ReturnType<typeof vi.fn>;
+  deliver: ReturnType<typeof vi.fn>;
   registeredFactory: boolean;
 }
 
@@ -26,6 +27,7 @@ const setup = (config: { enabled: boolean } = { enabled: true }): SetupResult =>
   const shadowFork = vi.fn();
   const complete = vi.fn().mockResolvedValue("a summary");
   const classify = vi.fn();
+  const deliver = vi.fn();
 
   const app = {
     extensionConfig: { enabled: config.enabled },
@@ -42,6 +44,7 @@ const setup = (config: { enabled: boolean } = { enabled: true }): SetupResult =>
       shadowFork,
       branchFile: vi.fn(),
     },
+    channels: { deliver },
     sessions: { activeTrunkSession: () => null },
     status: vi.fn(),
     log: fakeLog,
@@ -54,6 +57,7 @@ const setup = (config: { enabled: boolean } = { enabled: true }): SetupResult =>
     shadowFork,
     complete,
     classify,
+    deliver,
     registeredFactory,
   };
 };
@@ -92,6 +96,9 @@ const makeTrunk = (overrides: Partial<TrunkInbound> = {}): TrunkInbound => {
     branchRecords,
     liveBranchId: `topic-${branchRecords.length + 1}`,
     hasAssistantTurnSinceBase: true,
+    checkpointId: null,
+    checkpointActive: false,
+    lastAutoDecision: null,
     ...overrides,
   };
 };
@@ -290,5 +297,43 @@ describe("boundary middleware", () => {
     expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
     expect(trunk.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledTimes(1);
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles /checkpoint before the classifier: acks, marks handled, never classifies", async () => {
+    const { middleware, shadowFork, deliver } = setup();
+    const trunk = makeTrunk();
+    const next = vi.fn();
+    const message = textMessage("test", "/checkpoint");
+
+    await middleware(message, context(trunk), next);
+
+    expect(message.metadata.handled).toBe(true);
+    expect(next).not.toHaveBeenCalled();
+    expect(shadowFork).not.toHaveBeenCalled();
+    // A checkpoint was written and the ack carries the label.
+    expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalled();
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("📌 Checkpoint set"),
+        immediate: true,
+      }),
+    );
+  });
+
+  it("handles /back before the classifier even with no checkpoint (no-op notice)", async () => {
+    const { middleware, shadowFork, deliver } = setup();
+    const trunk = makeTrunk(); // no active checkpoint
+    const next = vi.fn();
+    const message = textMessage("test", "/back");
+
+    await middleware(message, context(trunk), next);
+
+    expect(message.metadata.handled).toBe(true);
+    expect(next).not.toHaveBeenCalled();
+    expect(shadowFork).not.toHaveBeenCalled();
+    expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("No checkpoint"), immediate: true }),
+    );
   });
 });

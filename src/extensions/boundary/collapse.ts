@@ -4,12 +4,19 @@ import {
   type BranchSummaryDetails,
   branchEntriesSinceBase,
   branchWithSummary,
+  collapseTangent,
   getLeafId,
   messageText,
 } from "../../agent/session-tree.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
 import type { Logger } from "../../log.ts";
-import { BRANCH_SUMMARY, readBoomerangState, writeBoomerangState } from "../../sessions/trunk.ts";
+import {
+  BRANCH_SUMMARY,
+  clearCheckpoint,
+  nextTangentId,
+  readBoomerangState,
+  writeBoomerangState,
+} from "../../sessions/trunk.ts";
 
 /**
  * Branch collapse. On a topic shift the current branch is summarized and recorded on
@@ -32,6 +39,12 @@ export interface CollapseArgs {
   branchId: string;
   reason?: string;
   lastExchange?: string | null;
+}
+
+export interface TangentSummaryArgs {
+  session: AgentSession;
+  /** The active checkpoint's main-line tip entry id; the tangent folds into a summary rooted here. */
+  checkpointId: string;
 }
 
 const SUMMARY_SYSTEM = [
@@ -119,6 +132,66 @@ export const collapseCurrentTopic = async (
     deps.log.error(
       { err: error, branchId: args.branchId },
       "branch collapse failed — proceeding on current branch",
+    );
+    return null;
+  }
+};
+
+/**
+ * Summarize the tangent taken since `checkpointId` back into the checkpoint (R3/R4/R5): generate a
+ * tangent summary, collapse the branch rooted at the checkpoint via {@link collapseTangent} (the leaf
+ * re-seats onto the summary so the main line resumes at the checkpoint — only the tangent is parked
+ * away, never the main line), and clear the checkpoint. The summary is marked `kind: "tangent"` so it
+ * is excluded from `getBranchRecords`/`ask_branch`/extraction. Shares the topic collapse's summary
+ * prompt and transcript rendering. Degrades gracefully (R11): on any failure it logs and returns null,
+ * leaving the checkpoint active.
+ */
+export const summarizeCurrentTangent = async (
+  deps: CollapseDeps,
+  args: TangentSummaryArgs,
+): Promise<{ newBaseId: string } | null> => {
+  try {
+    const originalLeafId = getLeafId(args.session);
+
+    if (originalLeafId == null) {
+      deps.log.warn(
+        { checkpointId: args.checkpointId },
+        "tangent summarize skipped — session has no leaf",
+      );
+      return null;
+    }
+
+    const summary = await deps.side.complete({
+      tier: "processor",
+      system: SUMMARY_SYSTEM,
+      // The tangent's own turns: entries on the leaf path strictly after the checkpoint.
+      user: renderBranchTranscript(args.session, args.checkpointId),
+    });
+
+    const tangentId = nextTangentId(args.session);
+    const newBaseId = collapseTangent(args.session, args.checkpointId, summary, {
+      tangentId,
+      originalLeafId,
+    });
+
+    clearCheckpoint(args.session);
+
+    deps.log.info(
+      {
+        tangentId,
+        checkpointId: args.checkpointId,
+        newBaseId,
+        originalLeafId,
+        summaryLen: summary.length,
+      },
+      "tangent summarized to checkpoint",
+    );
+
+    return { newBaseId };
+  } catch (error) {
+    deps.log.error(
+      { err: error, checkpointId: args.checkpointId },
+      "tangent summarize failed — checkpoint left active",
     );
     return null;
   }

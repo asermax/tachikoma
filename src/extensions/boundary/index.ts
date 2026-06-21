@@ -1,9 +1,11 @@
 import { Type } from "typebox";
 
+import type { Delivery } from "../../channels/types.ts";
 import { defineExtension } from "../api.ts";
 import { createAskBranchFactory } from "./ask-branch.ts";
 import { classifyShift } from "./classifier.ts";
 import { collapseCurrentTopic } from "./collapse.ts";
+import { handleBackCommand, handleCheckpointCommand } from "./commands.ts";
 import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
 
 interface BoundaryConfig {
@@ -49,6 +51,18 @@ export default defineExtension<BoundaryConfig>({
       // System-origin injections (session tasks, notices) and turns with no live trunk never shift
       // topics — they append to the current branch with detection skipped (R13).
       if (message.metadata.boundary === "skip" || trunk == null) return next();
+
+      // Manual checkpoint commands (DLT-181): detected before any branching logic. Each marks the
+      // message handled and acks immediately (no agent turn, no stream — the decision label is baked
+      // into the ack text). `/checkpoint` parks the main line at the tip; `/back` folds the tangent
+      // back into the checkpoint so the main line resumes intact.
+      const commandDeps = {
+        side: app.agent.side,
+        log: app.log,
+        deliver: (delivery: Delivery) => app.channels.deliver(delivery),
+      };
+      if (handleCheckpointCommand(commandDeps, message, trunk)) return;
+      if (await handleBackCommand(commandDeps, message, trunk)) return;
 
       // Collapse the live branch into a `branch_summary`, unless it has no assistant turn yet
       // (empty-branch guard: a shift off an empty branch starts the new branch without an empty summary).

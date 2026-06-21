@@ -142,12 +142,16 @@ export const getLeafId = (session: AgentSession): string | null =>
   session.sessionManager.getLeafId();
 
 /**
- * Whether at least one turn follows the checkpoint — the empty-tangent guard (KD2). When the leaf is
- * still the checkpoint itself, there is no tangent to summarize: `/back` must short-circuit before the
- * append-only collapse primitive, which would otherwise create a vacuous summary.
+ * Whether at least one conversational turn follows the checkpoint — the empty-tangent guard (KD2). A
+ * turn is a message entry (user/assistant) on the leaf path strictly after the checkpoint. Infrastructure
+ * entries do NOT count: `setCheckpoint` appends a boomerang-state entry, which advances the leaf past the
+ * checkpoint message, so a raw `getLeafId !== checkpointId` check would falsely report a tangent after
+ * every `/checkpoint`. Walking the path for a real message (the same pattern
+ * `hasAssistantTurnSinceBase` uses) is robust to those appended markers. When no turn follows, `/back`
+ * short-circuits before the append-only collapse primitive, which would otherwise create a vacuous summary.
  */
 export const checkpointHasTangent = (session: AgentSession, checkpointId: string): boolean =>
-  getLeafId(session) !== checkpointId;
+  branchEntriesSinceBase(session, checkpointId).some((entry) => entry.type === "message");
 
 /**
  * The session's creation instant (its header timestamp), or null if absent. Used to recover a

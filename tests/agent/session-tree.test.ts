@@ -1,4 +1,4 @@
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -98,11 +98,21 @@ describe("session-tree helpers", () => {
     );
   });
 
-  it("checkpointHasTangent is false when the leaf is the checkpoint (empty-tangent guard, KD2)", () => {
-    const session = makeSession(); // getLeafId => "leaf-9"
+  it("checkpointHasTangent reports a tangent only when a real turn follows the checkpoint (KD2)", () => {
+    // `setCheckpoint` appends a boomerang-state entry, which advances the leaf past the checkpoint
+    // message — so the guard must look for a real message turn on the path, not compare leaf ids.
+    const msg = (id: string): SessionEntry => ({ type: "message", id }) as unknown as SessionEntry;
+    const infra = (id: string): SessionEntry => ({ type: "custom", id }) as unknown as SessionEntry;
+    const withTangent = {
+      sessionManager: { getBranch: () => [msg("cp"), infra("boomerang"), msg("t1")] },
+    } as unknown as AgentSession;
+    const empty = {
+      sessionManager: { getBranch: () => [msg("cp"), infra("boomerang")] },
+    } as unknown as AgentSession;
 
-    expect(checkpointHasTangent(session, "leaf-9")).toBe(false);
-    expect(checkpointHasTangent(session, "checkpoint-1")).toBe(true);
+    expect(checkpointHasTangent(withTangent, "cp")).toBe(true);
+    // Only the infrastructure marker follows the checkpoint — no real turn, so no tangent.
+    expect(checkpointHasTangent(empty, "cp")).toBe(false);
   });
 
   it("appends out-of-context state and hidden in-context entries", () => {
