@@ -1,3 +1,12 @@
+# [3.39.0](https://github.com/asermax/tachikoma/compare/v3.38.0...v3.39.0) (2026-06-21)
+
+
+### Features
+
+* **memory:** add learnings memory layer folded into topics extraction (DLT-123) ([66ad6a5](https://github.com/asermax/tachikoma/commit/66ad6a5393ed7e2498cf926e2d8a800b2d2f356c))
+* **memory:** establish learnings store layer ([cdd32dc](https://github.com/asermax/tachikoma/commit/cdd32dc216a14a8b6ad950093a69dd113acdc615))
+* **memory:** fold learnings into topics extraction fork ([b47a739](https://github.com/asermax/tachikoma/commit/b47a7397a9f8de599d3b79dddbeeaad4fced19d7))
+
 # [3.38.0](https://github.com/asermax/tachikoma/compare/v3.37.0...v3.38.0) (2026-06-21)
 
 
