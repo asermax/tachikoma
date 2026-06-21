@@ -103,7 +103,7 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 
 ### DLT-080: Self-healing skill system via post-conversation analysis
 **Status**: ✗ Defined
-**Depends on**: DLT-123
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Hard
 **Description**: Skills currently only improve when the user explicitly notices a gap and requests changes. Add a post-conversation processor that analyzes skill usage during the completed session — which skills were invoked, which failed or were misapplied, what workarounds the agent resorted to — and surfaces concrete edit suggestions to the user for improving skill definitions. For example: detecting that a workflow required manually chaining references that should be linked, that a CLI flag used in practice is missing from a skill's guidance, or that documented instructions diverged from actual usage patterns. Suggestions are presented for user review and approval, not applied automatically.
@@ -177,13 +177,6 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
-
-### DLT-123: Learnings memory layer
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Add a dedicated learnings layer to the memory model — a `learnings/` store of `<slug>.md` files capturing recurring friction, strict constraints, and repeated failures observed across sessions (e.g. an uncooperative test suite, a deployment step that keeps biting, a hard rule the user enforces), alongside the agent's own subjective self-observations about what worked and what didn't. This generalizes the earlier agent-reflections idea: reflections become one kind of learning. A post-processing extractor folds learnings from each completed session into the store, distinct from topic files (stable what/why knowledge about subjects) and episodic summaries (the narrative of what happened). Learnings are the experience substrate that later self-improvement work draws on, built on the topic-oriented memory store's layout, indexing, and extraction conventions.
 
 ### DLT-126: Media preprocessor for content understanding
 **Status**: ✗ Defined
@@ -292,7 +285,7 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 
 ### DLT-173: Phased consolidation and pruning maintenance
 **Status**: ✗ Defined
-**Depends on**: DLT-123
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Hard
 **Description**: Restructure memory maintenance into explicit, phase-based background passes over the unified topic store and the learnings layer, replacing the current single daily/weekly per-store sweep with named phases that each have specific tasks. A consolidation pass runs in phases — orientation (read existing topics to establish baseline and avoid duplication), signal-gathering (scan recent sessions and episodic summaries for new material), and topic-merging (create or update topic files, normalizing relative temporal references like "yesterday" into absolute ISO dates). A separate pruning pass eliminates entries contradicted by newer information and collapses clusters of near-duplicate topics into a single clean replacement, preserving the oldest record's creation timestamp. Each phase commits its workspace edits. This expands the existing time-tiered episodic and topic maintenance into a coherent, layer-aware pipeline.

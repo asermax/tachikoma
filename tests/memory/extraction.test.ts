@@ -32,6 +32,43 @@ describe("storeInstruction", () => {
     expect(instruction).not.toContain("classification self-check");
   });
 
+  it("folds learnings into the topics fork under one shared, file-tool-limited instruction", () => {
+    const instruction = storeInstruction("topics", workspace);
+
+    // The learnings extraction section is folded into this fork (R4: one pass classifies each signal
+    // inline — topic content to topics/, learning content to learnings/).
+    expect(instruction).toContain("## Drafts");
+    expect(instruction).toContain("## Confirmed");
+    // Inline topic-vs-learning classification: one store wins, by primary aspect (the two never duplicate).
+    expect(instruction).toContain("never both");
+    expect(instruction).toContain("primary");
+    // Read-before-promote: the agent reads existing learnings to match a recurring friction, and never
+    // promotes a resolved friction (resolution is the opposite of recurrence).
+    expect(instruction).toContain("Read existing learnings");
+    expect(instruction).toContain("never promote");
+    // One-time events are excluded from learnings (they stay episodic — only experience belongs here).
+    expect(instruction).toContain("One-time events");
+    expect(instruction).toContain("does NOT belong in learnings");
+    // INDEX_UPDATE_SECTION is present — the fork writes both stores, so it keeps both indexes in sync.
+    expect(instruction).toContain("## Memory Index");
+    expect(instruction).toContain("MEMORY.md in the same directory");
+
+    // The fork writes BOTH directories: both appear in the scope section and the silent-background clause.
+    const bothDirs = `\`${join(workspace, "memories", "topics")}/\` and \`${join(workspace, "memories", "learnings")}/\``;
+    expect(instruction).toContain(`Only create or modify files within ${bothDirs}.`);
+    expect(instruction).toContain(`create or modify files\nunder ${bothDirs}.`);
+  });
+
+  it("leaves the episodic instruction single-store and untouched by the learnings fold", () => {
+    const instruction = storeInstruction("episodic", workspace);
+
+    // Episodic is its own fork — it never carries the learnings fold or a learnings write surface.
+    expect(instruction).not.toContain("## Drafts");
+    expect(instruction).not.toContain("## Confirmed");
+    expect(instruction).not.toContain("memories/learnings/");
+    expect(instruction).toContain("memories/episodic/");
+  });
+
   it("stamps today's date and the conversation framing for episodic", () => {
     const instruction = storeInstruction("episodic", workspace);
 

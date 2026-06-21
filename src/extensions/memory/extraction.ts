@@ -1,8 +1,9 @@
 import type { SideRunner } from "../../agent/side-run.ts";
 import { localIsoDate } from "../../util/dates.ts";
-import type { MemoryStore } from "./layout.ts";
+import type { ExtractionStore, MemoryStore } from "./layout.ts";
 import {
   CONTEXT_DEDUP_SECTION,
+  formatStoreDirs,
   INDEX_UPDATE_SECTION,
   STORE_PURPOSE_SECTION,
   scopeSection,
@@ -116,18 +117,64 @@ const TOPICS_BASE_PROMPT = `We just finished the conversation above. Using what 
 
 Remember: These memories help the assistant maintain context across sessions. Focus on durable, accurate knowledge about each subject — both the reference facts and the preferences — not activity logs or documents.`;
 
-// Extraction runs as a silent follow-up turn on a fork of the just-ended conversation. The
-// forked agent still has its full tool set and persona, so it must be told this is background
-// file maintenance — no chat reply, no messaging/notification/task tools.
-const SILENT_BACKGROUND_SECTION = (store: MemoryStore): string => `## Background Maintenance Step
+// Folded into the topics instruction so one pass classifies each signal as topic or learning and
+// writes it to exactly one store.
+const LEARNINGS_EXTRACTION_SECTION = `## Learnings — what bites and what worked
+
+This same pass also captures **experience**, distinct in kind from the topics knowledge above. A learning is recurring friction, a hard constraint, a repeated failure, or a reflection about an approach that worked or turned out to be a dead end — something that *bites* or would bite again, not something that is merely true. Experience is what is missing if every session rediscovers the same gotchas.
+
+### What belongs in learnings
+
+- **Recurring friction**: an uncooperative test suite, a deploy step that keeps failing, a tool whose default behavior keeps surprising you.
+- **Hard constraints the user enforces**: rules, gates, or limits that must be respected across sessions.
+- **Repeated failures**: the same mistake or misstep made more than once.
+- **Reflections**: an approach that worked well, or one that turned out to be a dead end.
+
+### What does NOT belong in learnings
+
+- **One-time events** — a single bug fix, a one-off outage, an incident that happened once on a specific date. Those are episodic narrative, not experience; they only become a learning if the SAME friction recurs. Leave them out.
+- **A restatement of a topic or a context file.** If something is already stable knowledge (a fact or a preference), it is a topic — do not also record it as a learning. A learning is the *friction* a fact causes, not the fact itself.
+
+### Classify each signal once — topics or learnings, never both
+
+For every signal you consider, decide its PRIMARY aspect in context and write it to exactly ONE store:
+- Stable what/why knowledge and the user's preferences → \`memories/topics/\` (the instructions above).
+- Recurring friction, a hard constraint, a repeated failure, or a reflection → \`memories/learnings/\`.
+
+When a signal has BOTH a stable-knowledge and a friction character (a fact that causes friction, a constraint that is also a preference), record it by its **primary** aspect in one store only — the two stores never duplicate. A fact-that-bites is recorded in \`memories/learnings/\` as the lesson (what bites), not also restated as a topic.
+
+### Read existing learnings before deciding new vs recurring
+
+Before writing, **read the existing files in \`$WORKSPACE/memories/learnings/\`** to see what friction is already recorded. Then for each learning signal:
+
+- **New friction** — no existing draft or confirmed entry matches (a first sighting) → append it under \`## Drafts\` in the matching slug file. A first sighting is tentative: it does not yet establish a recurring pattern.
+- **Matches an existing draft** — this session's friction is the same subject and the same kind of problem as a \`## Drafts\` entry → promote it by moving that draft from \`## Drafts\` to \`## Confirmed\`. Repetition is the signal this is a real, recurring learning.
+- **The friction was resolved** in this conversation — the flaky test now passes, the deploy step no longer fails, the user confirms a constraint was lifted → correct or remove the existing entry instead. A resolved friction is the opposite of recurrence; never promote it.
+
+### File model and slugs
+
+Each learnings file is one theme of recurring friction, broad and future-mergeable:
+- Two sections per \`<slug>.md\`: \`## Drafts\` (tentative) and \`## Confirmed\` (corroborated across sessions). A new file starts with its first sighting under \`## Drafts\`; \`## Confirmed\` fills in as drafts are promoted.
+- Follow the same broad-slug conventions as topics (see "File Consolidation at Write Time" above): one theme per file, named for the friction (\`test-suite.md\`, \`deploys.md\`, \`<tool>.md\`), never incident- or date-scoped. Reuse the broadest existing file that covers the theme; only create a new one when no existing file fits.
+- Keep files concise (under ~50 lines). If a file grows past one theme, split it into its own broad slug.
+
+Learnings write only within \`$WORKSPACE/memories/learnings/\`.`;
+
+// Extraction runs as a silent follow-up turn on a fork of the just-ended conversation. The forked
+// agent keeps its full tool set and persona, so it must be told this is background file maintenance —
+// no chat reply, no messaging/notification/task tools.
+const SILENT_BACKGROUND_SECTION = (stores: MemoryStore | readonly MemoryStore[]): string =>
+  `## Background Maintenance Step
 
 This is a SILENT background memory-maintenance step, not part of the conversation. Do NOT send any
 user-facing message, ask any question, or produce a chat reply, and do NOT use any messaging,
 notification, or task-management tools. Only read files in the workspace and create or modify files
-under \`$WORKSPACE/memories/${store}/\`. When you are done, simply stop — your only output is the
+under ${formatStoreDirs(stores)}. When you are done, simply stop — your only output is the
 file changes.`;
 
-const STORE_INSTRUCTIONS: Record<MemoryStore, string> = {
+// Keyed on ExtractionStore: only stores with their own fork get an instruction. The type enforces
+// that learnings (folded into topics) has no entry, rather than leaving it undefined at runtime.
+const STORE_INSTRUCTIONS: Record<ExtractionStore, string> = {
   episodic: [
     EPISODIC_BASE_PROMPT,
     scopeSection("episodic"),
@@ -135,12 +182,13 @@ const STORE_INSTRUCTIONS: Record<MemoryStore, string> = {
   ].join("\n\n"),
   topics: [
     TOPICS_BASE_PROMPT,
+    LEARNINGS_EXTRACTION_SECTION,
     STORE_PURPOSE_SECTION,
     CONTEXT_DEDUP_SECTION,
     WORKSPACE_VALIDATION_SECTION,
-    INDEX_UPDATE_SECTION,
-    scopeSection("topics"),
-    SILENT_BACKGROUND_SECTION("topics"),
+    INDEX_UPDATE_SECTION, // writes both stores, so both MEMORY.md indexes stay in sync
+    scopeSection(["topics", "learnings"]),
+    SILENT_BACKGROUND_SECTION(["topics", "learnings"]),
   ].join("\n\n"),
 };
 
@@ -151,7 +199,7 @@ const STORE_INSTRUCTIONS: Record<MemoryStore, string> = {
  * still files its memories under the day it happened. Defaults to today for non-close callers.
  */
 export const storeInstruction = (
-  store: MemoryStore,
+  store: ExtractionStore,
   workspaceRoot: string,
   date: string = localIsoDate(),
 ): string =>

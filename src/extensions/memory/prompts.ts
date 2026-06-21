@@ -6,10 +6,11 @@ Each information store serves a distinct purpose. Use these definitions to route
 
 - **Skills** (\`skills/\`): Installed skills under the workspace \`skills/\` directory. Each skill's SKILL.md owns the authoritative operational knowledge for its domain — the most authoritative store. When a skill covers a topic, defer to it rather than restating its content elsewhere.
 - **Memory topics** (\`memories/topics/\`): Everything known about a subject — stable reference facts and the user's subjective preferences together, one topic per file. Each topic holds both the objective reference detail (project state, technical decisions, configuration, people, architecture) and the subjective choices about that subject (how the user wants things done, with context about why).
+- **Memory learnings** (\`memories/learnings/\`): Experience — recurring friction, hard constraints, repeated failures, and the agent's own self-reflections about what worked or turned out to be a dead end. A learning is about what *bites* and what worked, distinct in kind from the knowledge a topic holds, so it never merges into a topic and does not defer to one.
 - **Memory episodic** (\`memories/episodic/\`): Date-stamped summaries of what happened — events, outcomes, and decisions tied to a specific day.
 - **Context files** (workspace root): Concise summaries and pointers — personality (SOUL.md), user identity (USER.md), behavioral guidance (AGENTS.md). Context files hold terse summaries and defer to topics for detail rather than inlining it.
 
-Authority order: Skills > Topics > Context. When information appears in multiple stores, the more authoritative source is correct. Do not write memory or context content that an installed skill already owns for its domain. Context files should contain summaries and pointers, not detailed operational content.`;
+Authority order: Skills > Topics > Context. When information appears in multiple stores, the more authoritative source is correct. Learnings sits **orthogonal** to this ladder, not on it: a learning and a topic about the same subject are different *kinds* of information (experience vs knowledge), so neither overrides the other, and both remain available — never fold a learning into a topic or prune it in deference to one. Do not write memory or context content that an installed skill already owns for its domain. Context files should contain summaries and pointers, not detailed operational content.`;
 
 export const CONTEXT_DEDUP_SECTION = `## Context File Deduplication
 
@@ -103,6 +104,14 @@ Verify index consistency between MEMORY.md and actual files in the directory.
 - When you create, modify, or delete memory files during this maintenance run, also update MEMORY.md per the standard index update rules (add new entries, update descriptions on meaningful changes, remove entries for deleted files).
 - The consistency check runs in addition to your normal maintenance tasks.`;
 
-export const scopeSection = (store: MemoryStore): string => `## Scope
+/** Render one or more stores as a backtick-wrapped `$WORKSPACE/memories/<store>/` list joined by " and ". */
+export const formatStoreDirs = (stores: MemoryStore | readonly MemoryStore[]): string =>
+  (Array.isArray(stores) ? stores : [stores])
+    .map((store) => `\`$WORKSPACE/memories/${store}/\``)
+    .join(" and ");
 
-You can read files anywhere in the workspace (needed for validation and deduplication). Only create or modify files within \`$WORKSPACE/memories/${store}/\`. You have no delete tool: when a file must go away (merged into another, obsolete, or misnamed), overwrite it with empty content — empty files are cleaned up automatically after you finish.`;
+// Accepts one store or several: the topics+learnings extraction fork writes two directories.
+export const scopeSection = (stores: MemoryStore | readonly MemoryStore[]): string =>
+  `## Scope
+
+You can read files anywhere in the workspace (needed for validation and deduplication). Only create or modify files within ${formatStoreDirs(stores)}. You have no delete tool: when a file must go away (merged into another, obsolete, or misnamed), overwrite it with empty content — empty files are cleaned up automatically after you finish.`;

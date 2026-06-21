@@ -3,10 +3,27 @@ import { join } from "node:path";
 
 import type { Logger } from "../../log.ts";
 
-export const MEMORY_STORES = ["episodic", "topics"] as const;
+// The store sets every module iterates. `learnings` is absent from EXTRACTION_STORES on purpose —
+// the topics fork writes it too, so a separate learnings extraction would duplicate.
+export const MEMORY_STORES = ["episodic", "topics", "learnings"] as const;
 export type MemoryStore = (typeof MEMORY_STORES)[number];
 
-export const INDEXED_STORES = ["topics"] as const satisfies readonly MemoryStore[];
+export const INDEXED_STORES = ["topics", "learnings"] as const satisfies readonly MemoryStore[];
+
+/** Whether a store owns a seeded MEMORY.md index (topics + learnings do; episodic does not). */
+const INDEXED_STORE_SET: ReadonlySet<MemoryStore> = new Set<MemoryStore>(INDEXED_STORES);
+export const isIndexedStore = (store: MemoryStore): boolean => INDEXED_STORE_SET.has(store);
+
+// Stores that get their own extraction fork. `learnings` is folded into the topics fork, never its own.
+export const EXTRACTION_STORES = ["episodic", "topics"] as const satisfies readonly MemoryStore[];
+export type ExtractionStore = (typeof EXTRACTION_STORES)[number];
+
+// The stores each extraction fork writes — drives the post-run sweep. Keyed on ExtractionStore so
+// every fork's write surface (and thus sweep) is exhaustive at compile time.
+export const FORK_WRITE_STORES: Readonly<Record<ExtractionStore, readonly MemoryStore[]>> = {
+  episodic: ["episodic"],
+  topics: ["topics", "learnings"],
+};
 
 export const MEMORY_INDEX_FILENAME = "MEMORY.md";
 

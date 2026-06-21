@@ -15,7 +15,15 @@ import {
 import type { PostProcessor } from "../api.ts";
 import type { Runner } from "./extraction.ts";
 import { storeInstruction } from "./extraction.ts";
-import { MEMORY_STORES, type MemoryStore, storeDir, sweepEmptyMarkdown } from "./layout.ts";
+import {
+  EXTRACTION_STORES,
+  type ExtractionStore,
+  FORK_WRITE_STORES,
+  MEMORY_STORES,
+  type MemoryStore,
+  storeDir,
+  sweepEmptyMarkdown,
+} from "./layout.ts";
 import { contextMaintenanceSystemPrompt, maintenanceSystemPrompt } from "./maintenance.ts";
 
 /**
@@ -74,7 +82,8 @@ export interface ClosePhaseDeps {
 /**
  * Phase 1 — per-branch extraction. For every branch lacking an `extracted` marker, fork ONLY that
  * branch's conversation (root → its original leaf, sliced conceptually from its base forward) and run
- * the store extractions over it, then write the per-branch marker. Idempotent: a re-run skips
+ * the extraction forks over it (episodic + topics — learnings is folded into the topics fork, never
+ * its own), then write the per-branch marker. Idempotent: a re-run skips
  * branches that already carry a marker. The temp branch file is deleted after the fork.
  *
  * Branches are extracted one at a time, but a single branch's stores (episodic, topics) run
@@ -125,7 +134,7 @@ export const extractBranches = async (
 
     // Each store's fork copies this throwaway branchFile into its own session (the source is
     // read-only), hard-limited to file tools so it reuses the persona without messaging or tasks.
-    const runStore = async (store: MemoryStore): Promise<void> => {
+    const runStore = async (store: ExtractionStore): Promise<void> => {
       await agent.forkAndContinue(
         branchFile,
         branchStoreInstruction(store, workspaceRoot, record, day),
@@ -133,7 +142,10 @@ export const extractBranches = async (
         FILE_EDIT_TOOLS,
       );
 
-      await sweepEmptyMarkdown(storeDir(workspaceRoot, store), log);
+      // Sweep every directory this fork writes — the topics fork writes learnings/ too.
+      for (const swept of FORK_WRITE_STORES[store]) {
+        await sweepEmptyMarkdown(storeDir(workspaceRoot, swept), log);
+      }
     };
 
     try {
@@ -141,13 +153,13 @@ export const extractBranches = async (
         // allSettled (not Promise.all) so the `finally` never deletes branchFile while a sibling fork
         // is still copying it — a first-rejection short-circuit could tear the shared file down mid-read.
         if (parallelize) {
-          const outcomes = await Promise.allSettled(MEMORY_STORES.map(runStore));
+          const outcomes = await Promise.allSettled(EXTRACTION_STORES.map(runStore));
           const rejection = outcomes.find(
             (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
           );
           if (rejection) throw rejection.reason;
         } else {
-          for (const store of MEMORY_STORES) await runStore(store);
+          for (const store of EXTRACTION_STORES) await runStore(store);
         }
       } finally {
         await rm(branchFile, { force: true });
@@ -171,7 +183,7 @@ export const extractBranches = async (
 
 /** The follow-up instruction for one store, noting the fork is a single topic branch's own turns. */
 const branchStoreInstruction = (
-  store: MemoryStore,
+  store: ExtractionStore,
   workspaceRoot: string,
   record: BranchRecord,
   day: string,
