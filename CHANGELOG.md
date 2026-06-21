@@ -1,3 +1,12 @@
+# [3.37.0](https://github.com/asermax/tachikoma/compare/v3.36.1...v3.37.0) (2026-06-21)
+
+
+### Features
+
+* **git:** debounce per-exchange workspace commit-push ([c4ca0ce](https://github.com/asermax/tachikoma/commit/c4ca0ce8f85740822ad4edfe78043f346f826676))
+* **projects:** debounce per-exchange submodule commit-push ([96a84b9](https://github.com/asermax/tachikoma/commit/96a84b986d0d023872660037082afa8f15149cd6))
+* **util:** add trailing-edge debounced task primitive ([b379cca](https://github.com/asermax/tachikoma/commit/b379cca5d6e877a83a699376494410da0d610c43))
+
 ## [3.36.1](https://github.com/asermax/tachikoma/compare/v3.36.0...v3.36.1) (2026-06-20)
 
 
