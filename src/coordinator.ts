@@ -8,7 +8,7 @@ import { branchEntriesSinceBase, sessionCreatedAt } from "./agent/session-tree.t
 import { buildDigest } from "./channels/delivery-digest.ts";
 import { compareQueued, evaluate, type QueuedItem } from "./channels/delivery-queue.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
-import { decisionHeaderFrom, type InboundMessage } from "./domain/message.ts";
+import { type DecisionHeader, decisionHeaderFrom, type InboundMessage } from "./domain/message.ts";
 import type { EventBus } from "./events.ts";
 import type { InboundContext, TrunkInbound } from "./extensions/api.ts";
 import { runPhasedPostProcessors } from "./extensions/post-processing.ts";
@@ -133,6 +133,36 @@ export class Coordinator {
     this.log.info("exchange aborted by user");
 
     await this.active?.session.abort();
+  }
+
+  /**
+   * Re-run `text` as a fresh system-origin turn (DLT-181 rollback replay). The boundary extension
+   * performs the tree surgery, then hands the triggering message here to be re-answered under the
+   * corrected framing. This bypasses `submit()` entirely — no `/queue`/`/new` prefix-stripping, no
+   * mid-exchange steering, no pending-input capture (Batch 5) — so the replayed text runs verbatim.
+   * `boundary: "skip"` keeps the boundary classifier from re-classifying the turn (the framing is
+   * already applied); `origin: "system"` matches the queue-flush shape so it is never itself steered.
+   *
+   * Routes through the `handle()` turn path by enqueueing the synthetic message at the front of the
+   * inbox: the coordinator loop (serial) picks it up as the next exchange once the rollback command's
+   * own (handled) exchange unwinds — a fresh, non-reentrant turn that streams a full response carrying
+   * `header` (the "🔄 Rolled back…" descriptor, forwarded turn-scoped like any decision header).
+   */
+  replay(text: string, header?: DecisionHeader): void {
+    this.inbox.unshift({
+      text,
+      channel: this.channel?.name ?? "system",
+      receivedAt: this.now(),
+      media: [],
+      metadata: {
+        origin: "system",
+        boundary: "skip",
+        ...(header != null ? { decisionHeader: header } : {}),
+      },
+    });
+
+    this.wake?.();
+    this.wake = null;
   }
 
   /** The live daily-trunk pi session, or null when no trunk is active. */

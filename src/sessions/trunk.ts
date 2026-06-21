@@ -432,6 +432,15 @@ export const setCheckpoint = (session: AgentSession, leafId: string): void =>
 export const clearCheckpoint = (session: AgentSession): void =>
   patchBoomerangState(session, { checkpointId: null });
 
+/**
+ * Set `currentTopicBaseId` to `baseId`. Used by rollback Case B: rewinding past an auto-`new` shift
+ * leaves `currentTopicBaseId` pointing at the now-reversed (off-path) topic summary, so the base the
+ * restored live branch actually extends — the reversed summary's own `baseId` — must be restored, or a
+ * reopen would re-seat the leaf onto the dead summary. Patch-merges like the other lifecycle helpers.
+ */
+export const setCurrentTopicBase = (session: AgentSession, baseId: string | null): void =>
+  patchBoomerangState(session, { currentTopicBaseId: baseId });
+
 /** Record an automatic branching decision so `/rollback` can reverse it later (KD5). */
 export const recordLastAutoDecision = (
   session: AgentSession,

@@ -9,6 +9,7 @@ import { classifyShift } from "./classifier.ts";
 import { collapseCurrentTopic, summarizeCurrentTangent } from "./collapse.ts";
 import { handleBackCommand, handleCheckpointCommand } from "./commands.ts";
 import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
+import { handleRollbackCommand } from "./rollback.ts";
 
 interface BoundaryConfig {
   enabled: boolean;
@@ -77,6 +78,25 @@ export default defineExtension<BoundaryConfig>({
       };
       if (handleCheckpointCommand(commandDeps, message, trunk)) return;
       if (await handleBackCommand(commandDeps, message, trunk)) return;
+
+      // `/rollback` (DLT-181): reverse the most-recent automatic checkpoint/topic decision. Detected
+      // before the classifier like the other manual commands. On a no-op it acks the notice (handled);
+      // on a successful reversal it marks the message handled (the command itself does not stream) and
+      // replays the triggering message — whose streamed response carries the rollback header — via the
+      // coordinator replay (bypasses submit, so no re-classification of the corrected framing).
+      if (
+        await handleRollbackCommand(
+          {
+            side: app.agent.side,
+            log: app.log,
+            deliver: (delivery: Delivery) => app.channels.deliver(delivery),
+            replay: (text, header) => app.sessions.replay(text, header),
+          },
+          message,
+          trunk,
+        )
+      )
+        return;
 
       // Collapse the live branch into a `branch_summary`, unless it has no assistant turn yet
       // (empty-branch guard: a shift off an empty branch starts the new branch without an empty summary).

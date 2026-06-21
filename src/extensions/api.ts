@@ -7,7 +7,7 @@ import type { Channel, Delivery } from "../channels/types.ts";
 import type { Config } from "../config/schema.ts";
 import type { AppDatabase } from "../db/index.ts";
 import type { KeyValueState } from "../db/state.ts";
-import type { InboundMessage } from "../domain/message.ts";
+import type { DecisionHeader, InboundMessage } from "../domain/message.ts";
 import type { EventBus } from "../events.ts";
 import type { CommitAllDeterministicOptions, CommitAllOptions } from "../git/commit.ts";
 import type { CommitAgent } from "../git/commit-agent.ts";
@@ -101,6 +101,13 @@ export interface SessionsApi {
   close(): Promise<void>;
   /** Abort the in-flight agent run, if any (user-initiated stop). */
   abortExchange(): Promise<void>;
+  /**
+   * Re-run `text` as a fresh system-origin turn (DLT-181 rollback replay), bypassing `submit()`. The
+   * boundary extension calls this after restructuring the tree so the triggering message is re-answered
+   * under the corrected framing; `header` surfaces as the turn-scoped decision header on the replayed
+   * response. No-op-safe to call mid-exchange (the replay queues as the next turn).
+   */
+  replay(text: string, header?: DecisionHeader): void;
   /** The live daily-trunk pi session, or null when no trunk is active. */
   activeTrunkSession(): AgentSession | null;
   /** Fires once when the day's trunk opens (daily-trunk lifecycle). */

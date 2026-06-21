@@ -178,6 +178,7 @@ export class ExtensionHost {
       sessions: {
         close: () => services.coordinator.closeTrunk(),
         abortExchange: () => services.coordinator.abortExchange(),
+        replay: (text, header) => services.coordinator.replay(text, header),
         activeTrunkSession: () => services.coordinator.activeTrunkSession(),
         onOpen: (hook) => services.regs.sessionOpenHooks.push(hook),
         onExchange: (processor) => services.regs.exchangeProcessors.push(processor),
