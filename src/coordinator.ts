@@ -388,12 +388,9 @@ export class Coordinator {
 
       if (announceShutdown) await this.emitShutdownStatus("Wrapping up the conversation…");
 
-      // The trunk deliberately survives shutdown: closing it here runs the memory pipeline during
-      // teardown, which races a restarting process reopening a fresh trunk (the old run is killed
-      // mid-pipeline) and redundantly re-pipelines a same-day restart. The trunk is closed by the
-      // nightly closeTrunkIfDue cron, or recovered idempotently at next startup — ADR-014's
-      // unclosed index + on-file markers make a trunk left open by shutdown safe (a clean exit
-      // behaves like a crash, which recovery already handles).
+      // The trunk deliberately survives shutdown — closing it here races a restarting process
+      // (which reopens a fresh trunk) and redundantly re-pipelines a same-day restart; it is
+      // closed by the nightly closeTrunkIfDue cron or recovered idempotently at next startup (ADR-014).
       if (announceShutdown) await this.emitShutdownStatus("Done");
     }
   }
@@ -484,7 +481,7 @@ export class Coordinator {
     }
 
     // No exchange follows, so nothing reclaims a status lead-in — stay silent to avoid orphaning a
-    // "Post-processing: …" ghost line. (Shutdown's close keeps silent=false; shuttingDown routes it to shutdownStatus.)
+    // "Post-processing: …" ghost line.
     await this.closeTrunk(true);
   }
 
