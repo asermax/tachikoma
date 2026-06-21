@@ -654,7 +654,6 @@ export class Coordinator {
       liveBranchId: nextBranchId(branchRecords),
       hasAssistantTurnSinceBase: hasAssistantTurnSinceBase(active.session, currentBaseId),
       checkpointId,
-      checkpointActive: checkpointId != null,
       lastAutoDecision: boomerang?.lastAutoDecision ?? null,
     };
   }
@@ -842,8 +841,8 @@ type PendingCommand = keyof typeof PENDING_PROMPTS;
  */
 const bareArgCommand = (text: string): PendingCommand | null => {
   if (!text.startsWith("/")) return null;
-  const command = text.slice(1) as PendingCommand;
-  return command in PENDING_PROMPTS ? command : null;
+  const token = text.slice(1);
+  return token in PENDING_PROMPTS ? (token as PendingCommand) : null;
 };
 
 const renderPrompt = (message: InboundMessage): string => {

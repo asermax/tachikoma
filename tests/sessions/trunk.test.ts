@@ -477,7 +477,6 @@ describe("branch kind discriminator (DLT-181)", () => {
       customType: BRANCH_SUMMARY,
       branchId: "tangent-x",
       kind: "tangent",
-      tangentId: "tangent-x",
       originalLeafId: leafId,
       baseId,
     });

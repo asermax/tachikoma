@@ -109,7 +109,6 @@ const makeTrunk = (overrides: Partial<TrunkInbound> = {}): TrunkInbound => {
     liveBranchId: `topic-${branchRecords.length + 1}`,
     hasAssistantTurnSinceBase: true,
     checkpointId: null,
-    checkpointActive: false,
     lastAutoDecision: null,
     ...overrides,
   };
@@ -394,7 +393,7 @@ describe("boundary middleware", () => {
   it("auto set-checkpoint writes the checkpoint + lastAutoDecision + header, and does not collapse", async () => {
     const { middleware, shadowFork } = setup();
     shadowFork.mockResolvedValue(forkDeciding("set-checkpoint"));
-    const trunk = makeTrunk({ checkpointActive: false, checkpointId: null });
+    const trunk = makeTrunk({ checkpointId: null });
     const next = vi.fn();
     const message = textMessage("test", "a quick related side question");
 
@@ -426,7 +425,7 @@ describe("boundary middleware", () => {
   it("suppresses auto set-checkpoint when a checkpoint is already active (degrades to continue)", async () => {
     const { middleware, shadowFork } = setup();
     shadowFork.mockResolvedValue(forkDeciding("set-checkpoint"));
-    const trunk = makeTrunk({ checkpointActive: true, checkpointId: "prior-checkpoint" });
+    const trunk = makeTrunk({ checkpointId: "prior-checkpoint" });
     const next = vi.fn();
     const message = textMessage("test", "another tangent turn");
 
@@ -440,7 +439,7 @@ describe("boundary middleware", () => {
   it("suppresses auto set-checkpoint when autoSetCheckpoint is false (kill-switch)", async () => {
     const { middleware, shadowFork } = setup({ autoSetCheckpoint: false });
     shadowFork.mockResolvedValue(forkDeciding("set-checkpoint"));
-    const trunk = makeTrunk({ checkpointActive: false, checkpointId: null });
+    const trunk = makeTrunk({ checkpointId: null });
     const next = vi.fn();
 
     await middleware(textMessage("test", "a side question"), context(trunk), next);
@@ -454,7 +453,7 @@ describe("boundary middleware", () => {
     shadowFork.mockResolvedValue(forkDeciding("summarize-to-checkpoint"));
     const trunk = trunkWithBranch(
       [messageEntry("checkpoint", "assistant", "base"), messageEntry("t1", "user", "q")],
-      { checkpointActive: true, checkpointId: "checkpoint" },
+      { checkpointId: "checkpoint" },
     );
     const next = vi.fn();
     const message = textMessage("test", "anyway, back to the main thing");
@@ -484,7 +483,7 @@ describe("boundary middleware", () => {
   it("suppresses auto summarize-to-checkpoint when no checkpoint is active", async () => {
     const { middleware, shadowFork } = setup();
     shadowFork.mockResolvedValue(forkDeciding("summarize-to-checkpoint"));
-    const trunk = makeTrunk({ checkpointActive: false, checkpointId: null });
+    const trunk = makeTrunk({ checkpointId: null });
     const next = vi.fn();
     const message = textMessage("test", "back to main");
 
@@ -500,7 +499,6 @@ describe("boundary middleware", () => {
     shadowFork.mockResolvedValue(forkDeciding("summarize-to-checkpoint"));
     // Only the checkpoint on the path — no turn follows, so checkpointHasTangent is false.
     const trunk = trunkWithBranch([messageEntry("checkpoint", "assistant", "base")], {
-      checkpointActive: true,
       checkpointId: "checkpoint",
     });
     const next = vi.fn();
@@ -518,7 +516,7 @@ describe("boundary middleware", () => {
     shadowFork.mockResolvedValue(forkDeciding("summarize-to-checkpoint"));
     const trunk = trunkWithBranch(
       [messageEntry("checkpoint", "assistant", "base"), messageEntry("t1", "user", "q")],
-      { checkpointActive: true, checkpointId: "checkpoint" },
+      { checkpointId: "checkpoint" },
     );
     const next = vi.fn();
 

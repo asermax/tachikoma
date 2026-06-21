@@ -26,8 +26,6 @@ export interface BranchSummaryDetails {
    * is computed at read time from a reversal marker (see `effectiveKind` in `sessions/trunk.ts`).
    */
   kind?: "topic" | "tangent";
-  /** For tangents: the `tangent-N` id on its own sequence, separate from `topic-N`. Undefined for topics. */
-  tangentId?: string;
   /**
    * Leaf of the abandoned branch at collapse. `branchWithSummary` does NOT record the abandoned
    * leaf, so we store it ourselves — this is what makes the full branch reachable afterwards via
@@ -81,7 +79,6 @@ export const collapseTangent = (
     customType: BRANCH_SUMMARY,
     branchId: options.tangentId,
     kind: "tangent",
-    tangentId: options.tangentId,
     originalLeafId: options.originalLeafId,
     baseId: checkpointId,
   });

@@ -77,8 +77,6 @@ export interface TrunkInbound {
   hasAssistantTurnSinceBase: boolean;
   /** The active checkpoint's main-line tip entry id, or null when none is set (DLT-181). */
   checkpointId: string | null;
-  /** Whether an active checkpoint marks a returnable main-line point (checkpointId != null). */
-  checkpointActive: boolean;
   /** The most recent automatic branching decision (a `/rollback` target), or null. */
   lastAutoDecision: AutoDecision | null;
 }

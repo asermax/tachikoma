@@ -9,7 +9,7 @@ import { classifyShift } from "./classifier.ts";
 import { collapseCurrentTopic, summarizeCurrentTangent } from "./collapse.ts";
 import { handleBackCommand, handleCheckpointCommand } from "./commands.ts";
 import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
-import { handleRollbackCommand } from "./rollback.ts";
+import { handleRollbackCommand, type RollbackDeps } from "./rollback.ts";
 
 interface BoundaryConfig {
   enabled: boolean;
@@ -60,6 +60,18 @@ export default defineExtension<BoundaryConfig>({
       { sessionScopes: ["main"] },
     );
 
+    // Stateless command deps, shared across the manual command handlers and built once in setup scope
+    // rather than rebuilt per message. `/rollback` adds the coordinator `replay` seam to the same set.
+    const commandDeps = {
+      side: app.agent.side,
+      log: app.log,
+      deliver: (delivery: Delivery) => app.channels.deliver(delivery),
+    };
+    const rollbackDeps: RollbackDeps = {
+      ...commandDeps,
+      replay: (text, header) => app.sessions.replay(text, header),
+    };
+
     app.inbound.use(async (message, context, next) => {
       const trunk = context.trunk;
 
@@ -71,11 +83,6 @@ export default defineExtension<BoundaryConfig>({
       // message handled and acks immediately (no agent turn, no stream — the decision label is baked
       // into the ack text). `/checkpoint` parks the main line at the tip; `/back` folds the tangent
       // back into the checkpoint so the main line resumes intact.
-      const commandDeps = {
-        side: app.agent.side,
-        log: app.log,
-        deliver: (delivery: Delivery) => app.channels.deliver(delivery),
-      };
       if (handleCheckpointCommand(commandDeps, message, trunk)) return;
       if (await handleBackCommand(commandDeps, message, trunk)) return;
 
@@ -84,19 +91,7 @@ export default defineExtension<BoundaryConfig>({
       // on a successful reversal it marks the message handled (the command itself does not stream) and
       // replays the triggering message — whose streamed response carries the rollback header — via the
       // coordinator replay (bypasses submit, so no re-classification of the corrected framing).
-      if (
-        await handleRollbackCommand(
-          {
-            side: app.agent.side,
-            log: app.log,
-            deliver: (delivery: Delivery) => app.channels.deliver(delivery),
-            replay: (text, header) => app.sessions.replay(text, header),
-          },
-          message,
-          trunk,
-        )
-      )
-        return;
+      if (await handleRollbackCommand(rollbackDeps, message, trunk)) return;
 
       // Collapse the live branch into a `branch_summary`, unless it has no assistant turn yet
       // (empty-branch guard: a shift off an empty branch starts the new branch without an empty summary).
@@ -174,7 +169,7 @@ export default defineExtension<BoundaryConfig>({
           message: message.text,
           // The classifier runs on a detached shadowFork and cannot read the live trunk, so the active
           // checkpoint state is injected (S3). It gates which checkpoint decision is even offered.
-          checkpointActive: trunk.checkpointActive,
+          checkpointActive: trunk.checkpointId != null,
         },
       );
 
@@ -189,7 +184,7 @@ export default defineExtension<BoundaryConfig>({
       // streams as the first tangent turn (set-checkpoint) or the resumed main-line turn
       // (summarize-to-checkpoint) — so the decision surfaces via the turn-scoped header on that response.
       if (decision === "set-checkpoint") {
-        if (autoSetCheckpoint && !trunk.checkpointActive) {
+        if (autoSetCheckpoint && trunk.checkpointId == null) {
           const leaf = getLeafId(trunk.session);
           if (leaf != null) {
             // Capture the leaf BEFORE setCheckpoint: its boomerang append advances the leaf past the

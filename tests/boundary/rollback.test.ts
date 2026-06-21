@@ -166,7 +166,6 @@ const trunkFrom = (fake: FakeSession, overrides: Partial<TrunkInbound> = {}): Tr
     liveBranchId: `topic-${getBranchRecords(fake.session).length + 1}`,
     hasAssistantTurnSinceBase: true,
     checkpointId: boomerang?.checkpointId ?? null,
-    checkpointActive: (boomerang?.checkpointId ?? null) != null,
     lastAutoDecision: boomerang?.lastAutoDecision ?? null,
     ...overrides,
   };
@@ -300,7 +299,6 @@ describe("handleRollbackCommand (/rollback) — eligibility + no-ops", () => {
       customType: BRANCH_SUMMARY,
       branchId: "tangent-1",
       kind: "tangent",
-      tangentId: "tangent-1",
       originalLeafId: "m-resp",
       baseId: "c",
     });

@@ -90,7 +90,6 @@ describe("session-tree helpers", () => {
         customType: BRANCH_SUMMARY,
         branchId: "tangent-1",
         kind: "tangent",
-        tangentId: "tangent-1",
         originalLeafId: "leaf-9",
         baseId: "checkpoint-1",
       },

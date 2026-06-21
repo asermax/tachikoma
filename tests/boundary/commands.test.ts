@@ -145,7 +145,6 @@ const trunkFrom = (fake: FakeSession, overrides: Partial<TrunkInbound> = {}): Tr
     liveBranchId: "topic-1",
     hasAssistantTurnSinceBase: true,
     checkpointId,
-    checkpointActive: checkpointId != null,
     lastAutoDecision: null,
     ...overrides,
   };
@@ -327,7 +326,7 @@ describe("handleBackCommand (/back)", () => {
     expect(fake.branchCalls[0]?.branchFromId).toBe("m2");
     expect(fake.branchCalls[0]?.details).toMatchObject({
       kind: "tangent",
-      tangentId: "tangent-1",
+      branchId: "tangent-1",
       baseId: "m2",
     });
     // The summary covers the tangent turns (t1/t2), not the main line.
@@ -376,7 +375,7 @@ describe("handleBackCommand (/back)", () => {
     // One collapse rooted at the checkpoint, same as the one-turn case.
     expect(fake.branchCalls).toHaveLength(1);
     expect(fake.branchCalls[0]?.branchFromId).toBe("m2");
-    expect(fake.branchCalls[0]?.details).toMatchObject({ kind: "tangent", tangentId: "tangent-1" });
+    expect(fake.branchCalls[0]?.details).toMatchObject({ kind: "tangent", branchId: "tangent-1" });
     expect(getBranchRecords(fake.session)).toEqual([]);
     expect(readBoomerangState(fake.session)?.checkpointId).toBeNull();
   });
