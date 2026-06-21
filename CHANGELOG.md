@@ -1,3 +1,10 @@
+## [3.39.2](https://github.com/asermax/tachikoma/compare/v3.39.1...v3.39.2) (2026-06-21)
+
+
+### Bug Fixes
+
+* **git:** clear filter-repo metadata to keep scrub non-interactive ([45dd94b](https://github.com/asermax/tachikoma/commit/45dd94bcd4a3229ba195d146fa9fdee231f2d35d))
+
 ## [3.39.1](https://github.com/asermax/tachikoma/compare/v3.39.0...v3.39.1) (2026-06-21)
 
 
