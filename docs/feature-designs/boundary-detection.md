@@ -109,7 +109,7 @@ A topic shift calls `collapseCurrentTopic` (`src/extensions/boundary/collapse.ts
 ### `kind` discriminator with a separate `tangent-N` sequence
 
 **Choice**: `BranchSummaryDetails.kind` is `"topic"` (default) or `"tangent"`; `"reversed"` is never persisted — it is computed at read time from a reversal marker. The topic-branch enumeration (`getBranchRecords`) excludes both `tangent` and `reversed`, so `ask_branch`, related-branch matching, and memory extraction skip them in one place; tangents count on their own `tangent-N` sequence so `topic-N` ids stay stable.
-**Why**: Without a discriminator, tangents would interleave into the topic sequence and become branch-query targets and extraction subjects. A kind field keeps the topic sequence clean and makes exclusion a single filter; computing `reversed` at read time is the only option because a `branch_summary` cannot be mutated (append-only) — the reversal marker + `effectiveKind` read-time computation are an instance of [DES-007](../design/DES-007-marker-computed-effective-state.md).
+**Why**: Without a discriminator, tangents would interleave into the topic sequence and become branch-query targets and extraction subjects. A kind field keeps the topic sequence clean and makes exclusion a single filter; computing `reversed` at read time is the only option because a `branch_summary` cannot be mutated (append-only) — the reversal marker + `effectiveKind` read-time computation are an instance of [DES-008](../design/DES-008-marker-computed-effective-state.md).
 **Consequences**: Pro — one filter, four consumers; stable ids. Con — every branch-record consumer must go through the chokepoint (a shared helper centralizes it).
 
 ### Rollback = `branch(id)` re-seat + opposite transition + replay (no deletion)

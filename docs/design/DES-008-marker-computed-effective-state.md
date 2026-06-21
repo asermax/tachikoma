@@ -1,4 +1,4 @@
-# DES-007: Marker-Computed Effective State over an Append-Only Log
+# DES-008: Marker-Computed Effective State over an Append-Only Log
 
 **Scope**: Project-wide
 **Date**: 2026-06-21

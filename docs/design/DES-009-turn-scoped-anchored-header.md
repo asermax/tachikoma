@@ -1,4 +1,4 @@
-# DES-008: Turn-Scoped Anchored-Prefix Header Recomposed by the Streaming Renderer
+# DES-009: Turn-Scoped Anchored-Prefix Header Recomposed by the Streaming Renderer
 
 **Scope**: Project-wide (channels)
 **Date**: 2026-06-21
