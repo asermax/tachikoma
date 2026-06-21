@@ -723,6 +723,61 @@ describe("shutdownStatus", () => {
   });
 });
 
+describe("lifecycleStatus", () => {
+  it("sends a dedicated italic message and edits it in place across calls", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.lifecycleStatus("Post-processing: memory…");
+    await channel.lifecycleStatus("Post-processing: git…");
+    await channel.lifecycleStatus("Trunk closed");
+
+    expect(calls).toEqual([
+      { type: "send", text: rendered("_Post-processing: memory…_") },
+      { type: "edit", messageId: 1, text: rendered("_Post-processing: git…_") },
+      { type: "edit", messageId: 1, text: rendered("_Trunk closed_") },
+    ]);
+  });
+
+  it("starts a fresh message when fresh=true (one message per lifecycle event)", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    // A prior lifecycle message exists (id 1).
+    await channel.lifecycleStatus("Post-processing: memory…");
+    // fresh=true opens a new message (id 2) instead of editing the prior one.
+    await channel.lifecycleStatus("Post-processing: memory…", true);
+    await channel.lifecycleStatus("Trunk closed");
+
+    expect(calls).toEqual([
+      { type: "send", text: rendered("_Post-processing: memory…_") },
+      { type: "send", text: rendered("_Post-processing: memory…_") },
+      { type: "edit", messageId: 2, text: rendered("_Trunk closed_") },
+    ]);
+  });
+
+  it("is not reclaimed or deleted by a later streamed response", async () => {
+    const { channel, runtime, calls } = makeChannel();
+    await channel.start(runtime);
+
+    // A lifecycle message exists (id 1).
+    await channel.lifecycleStatus("Post-processing: memory…", true);
+    const lifecycleCalls = calls.length;
+
+    // A subsequent exchange streams a response. The renderer is never seeded with the lifecycle
+    // message id, so it must not edit or delete it.
+    await channel.respond({
+      message: inboundWith("hi", 7),
+      events: stream([
+        { kind: "text", text: "Hello" },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(calls.slice(lifecycleCalls).filter((c) => c.messageId === 1)).toEqual([]);
+  });
+});
+
 const inboundWith = (text: string, messageId: number) => ({
   text,
   channel: "telegram",

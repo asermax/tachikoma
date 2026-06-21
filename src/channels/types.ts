@@ -60,5 +60,15 @@ export interface Channel {
    */
   shutdownStatus?(text: string): Promise<void>;
 
+  /**
+   * Render trunk-lifecycle progress (nightly close, stale-trunk recovery) on a
+   * dedicated, persistent message that survives into the next exchange — unlike
+   * `status` (a reclaimable preparation lead-in) it is never reclaimed or deleted
+   * by a streamed response. One message per lifecycle event: the first call with
+   * `fresh` starts a new message, later calls edit it in place. Optional; channels
+   * without it fall back to `status`.
+   */
+  lifecycleStatus?(text: string, fresh?: boolean): Promise<void>;
+
   stop(): Promise<void>;
 }

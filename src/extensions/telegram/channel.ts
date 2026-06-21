@@ -122,6 +122,13 @@ export class TelegramChannel implements Channel {
    */
   private leadInMessageId: number | null = null;
   private shutdownMessageId: number | null = null;
+  /**
+   * Dedicated message for trunk-lifecycle progress (nightly close, stale-trunk
+   * recovery). Distinct from the lead-in (reclaimed by the next response) and the
+   * shutdown message (teardown-scoped): it persists across exchanges, one message
+   * per lifecycle event (`fresh` resets it).
+   */
+  private lifecycleMessageId: number | null = null;
 
   constructor(bot: Bot, options: TelegramChannelOptions) {
     this.bot = bot;
@@ -590,6 +597,24 @@ export class TelegramChannel implements Channel {
         this.shutdownMessageId = await this.upsertDedicatedMessage(this.shutdownMessageId, text);
       } catch (error) {
         this.log().warn({ err: error }, "shutdown status update failed");
+      }
+    });
+  }
+
+  /**
+   * Render trunk-lifecycle progress (nightly close, stale-trunk recovery) on one dedicated italic
+   * message, edited in place across calls. `fresh` starts a new message — one per lifecycle event
+   * (e.g. each recovered trunk) — so events don't collapse onto a predecessor's message. Runs under
+   * the mutex so it serializes with sends and edits; the message is never seeded into the
+   * StreamRenderer, so it persists untouched across later exchanges.
+   */
+  async lifecycleStatus(text: string, fresh = false): Promise<void> {
+    await this.mutex.run(async () => {
+      try {
+        if (fresh) this.lifecycleMessageId = null;
+        this.lifecycleMessageId = await this.upsertDedicatedMessage(this.lifecycleMessageId, text);
+      } catch (error) {
+        this.log().warn({ err: error }, "lifecycle status update failed");
       }
     });
   }

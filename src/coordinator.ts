@@ -30,6 +30,14 @@ interface ActiveTrunk {
   sessionFile: string;
 }
 
+/**
+ * How a trunk-close surfaces its post-processing progress.
+ * - `transient` — the reclaimable preparation lead-in (an exchange follows to reclaim it).
+ * - `lifecycle` — a dedicated, persistent message that survives into the next exchange, for closes
+ *   with no following exchange (nightly cron, stale-trunk recovery) where a lead-in would orphan.
+ */
+type TrunkCloseVisibility = "transient" | "lifecycle";
+
 export class Coordinator {
   private readonly inbox: InboundMessage[] = [];
   private wake: (() => void) | null = null;
@@ -44,6 +52,15 @@ export class Coordinator {
   private exchanging = false;
   private shuttingDown = false;
   private channel: Channel | null = null;
+  /** True while a lifecycle trunk-close pipeline runs — routes `status()` to the lifecycle message. */
+  private lifecycleActive = false;
+  /** Set at the start of each lifecycle close so the first status line opens a fresh message. */
+  private lifecycleFresh = false;
+  /**
+   * Lifecycle status buffered before the channel attached (stale-trunk recovery runs at startup,
+   * before `attachChannel`). Flushed in order by `attachChannel` so each recovered trunk surfaces.
+   */
+  private lifecycleBuffer: { text: string; fresh: boolean }[] = [];
 
   private readonly trunkState: TrunkState;
   private readonly agent: AgentManager;
@@ -84,6 +101,9 @@ export class Coordinator {
 
   attachChannel(channel: Channel): void {
     this.channel = channel;
+    // Stale-trunk recovery runs before the channel attaches, so its lifecycle status was buffered.
+    // Flush it now, in order, so each recovered trunk's close surfaces on its own message.
+    void this.flushLifecycleBuffer();
   }
 
   submit(message: InboundMessage): void {
@@ -274,25 +294,65 @@ export class Coordinator {
     return this.active?.session ?? null;
   }
 
-  status(text: string, silent = false): void {
+  status(text: string): void {
     this.log.debug({ status: text }, "pipeline status");
     this.events.emit("status", { text });
 
-    // No renderer to host the line: stop here so it's logged for operators without
-    // leaving a ghost status in the chat.
-    if (silent) return;
-
     try {
-      // During teardown there is no streaming renderer to host the line, so
-      // route to the dedicated shutdown message instead (e.g. per-processor
-      // "Post-processing: …" progress shown as part of the shutdown sequence).
-      if (this.shuttingDown && this.channel?.shutdownStatus != null) {
+      // A lifecycle trunk-close is running: surface the line on the dedicated, persistent lifecycle
+      // message instead of the reclaimable lead-in — there is no following exchange to reclaim it.
+      // The first line opens a fresh message (one per close); the rest edit it in place.
+      if (this.lifecycleActive) {
+        const fresh = this.lifecycleFresh;
+        this.lifecycleFresh = false;
+        void this.lifecycleStatus(text, fresh);
+      } else if (this.shuttingDown && this.channel?.shutdownStatus != null) {
+        // During teardown there is no streaming renderer to host the line, so route to the dedicated
+        // shutdown message instead (e.g. per-processor "Post-processing: …" progress shown as part
+        // of the shutdown sequence).
         void this.channel.shutdownStatus(text);
       } else {
         this.channel?.status?.(text);
       }
     } catch (error) {
       this.log.warn({ err: error }, "channel status rendering failed");
+    }
+  }
+
+  /**
+   * Render a trunk-lifecycle line on the dedicated, persistent lifecycle message (one per close).
+   * While no channel is attached yet (stale-trunk recovery at startup), the line is buffered and
+   * flushed in order by `attachChannel`. Channels without a `lifecycleStatus` surface fall back to
+   * the reclaimable `status` line (or no-op).
+   */
+  private async lifecycleStatus(text: string, fresh = false): Promise<void> {
+    if (this.channel == null) {
+      this.lifecycleBuffer.push({ text, fresh });
+      return;
+    }
+
+    try {
+      if (this.channel.lifecycleStatus != null) {
+        await this.channel.lifecycleStatus(text, fresh);
+      } else {
+        this.channel.status?.(text);
+      }
+    } catch (error) {
+      this.log.debug({ err: error }, "lifecycle status rendering failed");
+    }
+  }
+
+  /**
+   * Replay lifecycle status buffered before the channel attached (stale-trunk recovery), in order.
+   * Called once from `attachChannel`, which sets `this.channel` first — so by the time this runs the
+   * buffer is frozen (no code path buffers post-attach: `lifecycleStatus` only buffers while the
+   * channel is null), and the replay owns the buffer exclusively.
+   */
+  private async flushLifecycleBuffer(): Promise<void> {
+    const buffered = this.lifecycleBuffer;
+    this.lifecycleBuffer = [];
+    for (const { text, fresh } of buffered) {
+      await this.lifecycleStatus(text, fresh);
     }
   }
 
@@ -456,12 +516,13 @@ export class Coordinator {
     const session = await this.agent.open({ sessionFile: pointer.sessionFile });
 
     // This runs before respond() (preparation phase), so the close progress surfaces on the lead-in
-    // the upcoming response reclaims — no ghost line. silent=false lets per-processor lines edit it live.
+    // the upcoming response reclaims — no ghost line. Transient visibility lets per-processor lines
+    // edit it live.
     this.status("Closing yesterday's trunk…");
 
     await this.closeTrunkSession(
       { session, day: pointer.day, sessionFile: pointer.sessionFile },
-      false,
+      "transient",
     );
     this.trunkState.clearActive();
   }
@@ -480,20 +541,20 @@ export class Coordinator {
       return;
     }
 
-    // No exchange follows, so nothing reclaims a status lead-in — stay silent to avoid orphaning a
-    // "Post-processing: …" ghost line.
-    await this.closeTrunk(true);
+    // No exchange follows, so surface the close on a dedicated lifecycle message that persists
+    // (rather than the reclaimable lead-in, which would orphan a "Post-processing: …" ghost line).
+    await this.closeTrunk("lifecycle");
   }
 
   /** Close the live trunk (nightly cron via closeTrunkIfDue, or explicit). No-op when no trunk is open. */
-  async closeTrunk(silent = false): Promise<void> {
+  async closeTrunk(visibility: TrunkCloseVisibility = "transient"): Promise<void> {
     const active = this.active;
     if (active == null) return;
 
     this.active = null;
     this.trunkLive = false;
 
-    await this.closeTrunkSession(active, silent);
+    await this.closeTrunkSession(active, visibility);
     this.trunkState.clearActive();
   }
 
@@ -502,13 +563,39 @@ export class Coordinator {
    * it from the unclosed index. The retire happens ONLY after post-processing completes (the
    * write-ordering invariant's second half) so a crash mid-close keeps the trunk recoverable.
    */
-  private async closeTrunkSession(trunk: ActiveTrunk, silent: boolean): Promise<void> {
+  private async closeTrunkSession(
+    trunk: ActiveTrunk,
+    visibility: TrunkCloseVisibility,
+  ): Promise<void> {
     trunk.session.dispose();
 
     this.log.info({ sessionFile: trunk.sessionFile, day: trunk.day }, "trunk closed");
     this.events.emit("session:closed", { sessionFile: trunk.sessionFile, day: trunk.day });
 
-    const failures = await this.runPostProcessing(trunk, silent);
+    // A lifecycle close surfaces on a dedicated, persistent message (one per close). While active,
+    // pipeline status() lines route there instead of the reclaimable lead-in; the first line opens a
+    // fresh message and the rest edit it in place. Used for the nightly close and stale-trunk
+    // recovery, where no following exchange exists to reclaim a lead-in. The flags are cleared in a
+    // finally so an unexpected throw can't leave status() misrouted to the lifecycle message.
+    if (visibility === "lifecycle") {
+      this.lifecycleActive = true;
+      this.lifecycleFresh = true;
+    }
+
+    let failures = 0;
+    try {
+      failures = await this.runPostProcessing(trunk);
+      if (visibility === "lifecycle") {
+        // Final state of the close: either completed, or failed (a failed close leaves the trunk
+        // unclosed for the next recovery to retry, below).
+        await this.lifecycleStatus(failures > 0 ? "Trunk close failed" : "Trunk closed", false);
+      }
+    } finally {
+      if (visibility === "lifecycle") {
+        this.lifecycleActive = false;
+        this.lifecycleFresh = false;
+      }
+    }
 
     // Retire only on a fully clean close. A post-processor failure (e.g. partial memory extraction)
     // keeps the trunk in the unclosed index so the next recovery re-runs the pipeline; the per-phase
@@ -565,7 +652,9 @@ export class Coordinator {
 
       this.log.info({ sessionFile: file, day }, "recovering stale trunk");
 
-      await this.closeTrunkSession({ session, day, sessionFile: file }, true);
+      // Recovered at startup (no channel yet): the lifecycle status is buffered and flushed when the
+      // channel attaches, so the user still sees each recovered trunk's close.
+      await this.closeTrunkSession({ session, day, sessionFile: file }, "lifecycle");
     }
 
     if (pointer != null && pointer.day < today) this.trunkState.clearActive();
@@ -682,7 +771,7 @@ export class Coordinator {
   }
 
   /** Run the trunk's post-processors; returns the number that rejected (0 ⇒ a clean close). */
-  private async runPostProcessing(trunk: ActiveTrunk, silent = false): Promise<number> {
+  private async runPostProcessing(trunk: ActiveTrunk): Promise<number> {
     let failures = 0;
 
     await runPhasedPostProcessors({
@@ -699,7 +788,7 @@ export class Coordinator {
       },
       log: this.log,
       onProcessorStart: (processor) =>
-        this.status(`${processor.statusLabel ?? `Post-processing: ${processor.name}`}…`, silent),
+        this.status(`${processor.statusLabel ?? `Post-processing: ${processor.name}`}…`),
       onProcessorSettled: (_processor, result) => {
         if (result.status === "rejected") failures += 1;
       },

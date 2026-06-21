@@ -662,6 +662,69 @@ describe("Coordinator.run post-processing on close", () => {
   });
 });
 
+describe("Coordinator lifecycle close visibility", () => {
+  it("ends the lifecycle message at 'Trunk close failed' when a post-processor fails", async () => {
+    const regs = createRegistrations();
+    regs.postProcessors.push({
+      name: "memory",
+      phase: "main",
+      statusLabel: "Processing memories",
+      process: async () => {
+        throw new Error("partial extraction");
+      },
+    });
+
+    const lifecycleStatus = vi.fn(async () => {});
+    const { coordinator } = makeCoordinator(db, createAgent(createSession()), regs);
+    coordinator.attachChannel(createChannel({ lifecycleStatus }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+    coordinator.submit(textMsg("hi"));
+    await vi.waitFor(() => expect(coordinator.activeTrunkSession()).not.toBeNull());
+
+    await coordinator.closeTrunkIfDue();
+
+    expect(lifecycleStatus.mock.calls.map((c) => c[0])).toEqual([
+      "Processing memories…",
+      "Trunk close failed",
+    ]);
+
+    controller.abort();
+    await loop;
+  });
+
+  it("does not route a transient close (default) to the lifecycle message", async () => {
+    const regs = createRegistrations();
+    regs.postProcessors.push({
+      name: "memory",
+      phase: "main",
+      statusLabel: "Processing memories",
+      process: async () => {},
+    });
+
+    const lifecycleStatus = vi.fn(async () => {});
+    const status = vi.fn();
+    const { coordinator } = makeCoordinator(db, createAgent(createSession()), regs);
+    coordinator.attachChannel(createChannel({ lifecycleStatus, status }));
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+    coordinator.submit(textMsg("hi"));
+    await vi.waitFor(() => expect(coordinator.activeTrunkSession()).not.toBeNull());
+
+    // closeTrunk() defaults to transient — the lazy-backstop path, reclaimed by a following exchange.
+    await coordinator.closeTrunk();
+
+    expect(lifecycleStatus).not.toHaveBeenCalled();
+    // Progress still surfaces via the reclaimable status lead-in.
+    expect(status).toHaveBeenCalledWith("Processing memories…");
+
+    controller.abort();
+    await loop;
+  });
+});
+
 describe("renderPrompt media rendering", () => {
   it("appends an attachments block when the message carries media", async () => {
     const session = createSession();
@@ -863,7 +926,7 @@ describe("Coordinator.closeTrunkIfDue (nightly close trigger)", () => {
     await loop;
   });
 
-  it("stays silent during the idle close (no response follows to reclaim a lead-in)", async () => {
+  it("surfaces the idle close on a persistent lifecycle message (no following exchange to reclaim a lead-in)", async () => {
     const session = createSession();
     const regs = createRegistrations();
     regs.postProcessors.push({
@@ -874,8 +937,8 @@ describe("Coordinator.closeTrunkIfDue (nightly close trigger)", () => {
     });
 
     const { coordinator } = makeCoordinator(db, createAgent(session), regs);
-    const status = vi.fn();
-    coordinator.attachChannel(createChannel({ status }));
+    const lifecycleStatus = vi.fn(async () => {});
+    coordinator.attachChannel(createChannel({ lifecycleStatus }));
 
     const controller = new AbortController();
     const loop = coordinator.run(controller.signal);
@@ -884,12 +947,16 @@ describe("Coordinator.closeTrunkIfDue (nightly close trigger)", () => {
     coordinator.submit(textMsg("hello"));
     await vi.waitFor(() => expect(session.prompt).toHaveBeenCalled());
 
-    status.mockClear();
-
     await coordinator.closeTrunkIfDue();
 
-    // Idle close surfaces nothing — nothing follows to reclaim a status lead-in.
-    expect(status).not.toHaveBeenCalled();
+    // The idle close surfaces on a dedicated lifecycle message — there is no following exchange to
+    // reclaim a lead-in — opening fresh then editing through phases to a final "Trunk closed".
+    expect(lifecycleStatus.mock.calls.map((c) => c[0])).toEqual([
+      "Processing memories…",
+      "Trunk closed",
+    ]);
+    expect(lifecycleStatus.mock.calls[0]?.[1]).toBe(true);
+    expect(lifecycleStatus.mock.calls[1]?.[1]).toBe(false);
     expect(session.dispose).toHaveBeenCalledTimes(1);
 
     controller.abort();

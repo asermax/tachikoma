@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentManager } from "../src/agent/manager.ts";
+import type { Channel } from "../src/channels/types.ts";
 import { Coordinator } from "../src/coordinator.ts";
 import { type AppDatabase, createDatabase, runMigrations } from "../src/db/index.ts";
 import { KeyValueState } from "../src/db/state.ts";
@@ -53,6 +54,16 @@ const makeCoordinator = (
 
   return { coordinator, trunkState, log };
 };
+
+/** Minimal Channel stub whose `lifecycleStatus` is observable; all other methods are no-ops. */
+const stubChannel = (lifecycleStatus: ReturnType<typeof vi.fn>): Channel => ({
+  name: "test",
+  start: vi.fn(async () => {}),
+  respond: vi.fn(async () => {}),
+  deliver: vi.fn(async () => {}),
+  stop: vi.fn(async () => {}),
+  lifecycleStatus,
+});
 
 const dayOf = (iso: string) =>
   new Intl.DateTimeFormat("en-CA", { timeZone: "UTC" }).format(new Date(iso));
@@ -261,5 +272,81 @@ describe("Coordinator.recoverStaleTrunks", () => {
     // The day handed to the close pipeline is the conversation's real day, so its memories file there.
     expect(days).toEqual(["2026-06-13"]);
     expect(trunkState.listUnclosed()).toEqual([]);
+  });
+});
+
+describe("Coordinator.recoverStaleTrunks lifecycle visibility", () => {
+  it("buffers lifecycle status before the channel attaches and flushes it in order", async () => {
+    const file = join(dir, "yesterday.jsonl");
+    await writeFile(file, "");
+
+    const regs = createRegistrations();
+    regs.postProcessors.push({
+      name: "memory",
+      phase: "main",
+      process: async () => {},
+    });
+
+    const now = () => new Date("2026-06-15T10:00:00Z");
+    const { coordinator, trunkState } = makeCoordinator(db, createAgent(), regs, now);
+    trunkState.promoteToActive({
+      sessionFile: file,
+      day: dayOf("2026-06-14T10:00:00Z"),
+      openedAt: "2026-06-14T10:00:00Z",
+    });
+
+    // Recovery runs with no channel attached → lifecycle status is buffered, not lost.
+    await coordinator.recoverStaleTrunks();
+    expect(trunkState.listUnclosed()).toEqual([]);
+
+    const lifecycleStatus = vi.fn(async () => {});
+    coordinator.attachChannel(stubChannel(lifecycleStatus));
+
+    // The flush is fire-and-forget from attachChannel; wait for both lines to land in order.
+    await vi.waitFor(() => expect(lifecycleStatus).toHaveBeenCalledTimes(2));
+    expect(lifecycleStatus.mock.calls.map((c) => c[0])).toEqual([
+      "Post-processing: memory…",
+      "Trunk closed",
+    ]);
+    // The first line opens a fresh message; the final edits it in place.
+    expect(lifecycleStatus.mock.calls[0]?.[1]).toBe(true);
+    expect(lifecycleStatus.mock.calls[1]?.[1]).toBe(false);
+  });
+
+  it("flushes a separate fresh message per recovered trunk", async () => {
+    const a = join(dir, "day1.jsonl");
+    const b = join(dir, "day2.jsonl");
+    await writeFile(a, "");
+    await writeFile(b, "");
+
+    const regs = createRegistrations();
+    regs.postProcessors.push({
+      name: "memory",
+      phase: "main",
+      process: async () => {},
+    });
+
+    const now = () => new Date("2026-06-15T10:00:00Z");
+    const { coordinator, trunkState } = makeCoordinator(db, createAgent(), regs, now);
+    trunkState.addUnclosed(a);
+    trunkState.addUnclosed(b);
+
+    await coordinator.recoverStaleTrunks();
+
+    const lifecycleStatus = vi.fn(async () => {});
+    coordinator.attachChannel(stubChannel(lifecycleStatus));
+
+    // Two trunks → two fresh messages (a fresh call starts each), each ending at "Trunk closed".
+    await vi.waitFor(() => expect(lifecycleStatus).toHaveBeenCalledTimes(4));
+    expect(lifecycleStatus.mock.calls.map((c) => c[0])).toEqual([
+      "Post-processing: memory…",
+      "Trunk closed",
+      "Post-processing: memory…",
+      "Trunk closed",
+    ]);
+    expect(lifecycleStatus.mock.calls[0]?.[1]).toBe(true); // trunk A: fresh
+    expect(lifecycleStatus.mock.calls[1]?.[1]).toBe(false); // trunk A: final
+    expect(lifecycleStatus.mock.calls[2]?.[1]).toBe(true); // trunk B: fresh
+    expect(lifecycleStatus.mock.calls[3]?.[1]).toBe(false); // trunk B: final
   });
 });
