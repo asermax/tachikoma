@@ -572,11 +572,9 @@ export class Coordinator {
     this.log.info({ sessionFile: trunk.sessionFile, day: trunk.day }, "trunk closed");
     this.events.emit("session:closed", { sessionFile: trunk.sessionFile, day: trunk.day });
 
-    // A lifecycle close surfaces on a dedicated, persistent message (one per close). While active,
-    // pipeline status() lines route there instead of the reclaimable lead-in; the first line opens a
-    // fresh message and the rest edit it in place. Used for the nightly close and stale-trunk
-    // recovery, where no following exchange exists to reclaim a lead-in. The flags are cleared in a
-    // finally so an unexpected throw can't leave status() misrouted to the lifecycle message.
+    // A lifecycle close steers the pipeline's status() lines onto the dedicated lifecycle message via
+    // these flags. They wrap post-processing only (cleared in finally so a throw can't leave status()
+    // misrouted); the final outcome is rendered afterward, directly rather than through status().
     if (visibility === "lifecycle") {
       this.lifecycleActive = true;
       this.lifecycleFresh = true;
@@ -585,16 +583,16 @@ export class Coordinator {
     let failures = 0;
     try {
       failures = await this.runPostProcessing(trunk);
-      if (visibility === "lifecycle") {
-        // Final state of the close: either completed, or failed (a failed close leaves the trunk
-        // unclosed for the next recovery to retry, below).
-        await this.lifecycleStatus(failures > 0 ? "Trunk close failed" : "Trunk closed", false);
-      }
     } finally {
       if (visibility === "lifecycle") {
         this.lifecycleActive = false;
         this.lifecycleFresh = false;
       }
+    }
+
+    if (visibility === "lifecycle") {
+      // Final state: a failed close leaves the trunk unclosed for the next recovery to retry.
+      await this.lifecycleStatus(failures > 0 ? "Trunk close failed" : "Trunk closed", false);
     }
 
     // Retire only on a fully clean close. A post-processor failure (e.g. partial memory extraction)
