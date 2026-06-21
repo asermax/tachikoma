@@ -541,13 +541,14 @@ describe("boundary middleware", () => {
     expect(next).toHaveBeenCalledTimes(1);
   });
 
-  it("records lastAutoDecision {kind:new} on an automatic topic shift (a /rollback target)", async () => {
+  it("records lastAutoDecision {kind:new} on an automatic topic shift and surfaces a rollbackable header", async () => {
     const { middleware, shadowFork } = setup();
     shadowFork.mockResolvedValue(forkDeciding("shift"));
     const trunk = makeTrunk({ hasAssistantTurnSinceBase: true });
     const next = vi.fn();
+    const message = textMessage("test", "let's talk about something else");
 
-    await middleware(textMessage("test", "let's talk about something else"), context(trunk), next);
+    await middleware(message, context(trunk), next);
 
     expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledTimes(1);
     expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalledWith(
@@ -556,6 +557,27 @@ describe("boundary middleware", () => {
         lastAutoDecision: { kind: "new", preDecisionLeafId: "leaf" },
       }),
     );
+    // The shifted response carries the turn-scoped decision header — set exactly where the rollback
+    // target is recorded, so the two coincide and /rollback is signalled as available (R8).
+    expect(message.metadata.decisionHeader).toMatchObject({
+      label: "🆕 New topic",
+      rollbackable: true,
+    });
+  });
+
+  it("does NOT set a header on an empty-branch auto shift (no collapse, no rollback target)", async () => {
+    const { middleware, shadowFork } = setup();
+    shadowFork.mockResolvedValue(forkDeciding("shift"));
+    const trunk = makeTrunk({ hasAssistantTurnSinceBase: false });
+    const next = vi.fn();
+    const message = textMessage("test", "let's talk about something else");
+
+    await middleware(message, context(trunk), next);
+
+    // Empty current branch: no summary emitted, so no collapse, no recorded decision, and no header.
+    expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
+    expect(message.metadata.decisionHeader).toBeUndefined();
+    expect(next).toHaveBeenCalledTimes(1);
   });
 
   it("does NOT record lastAutoDecision on a manual /new (only automatic decisions are rollback targets)", async () => {
@@ -573,5 +595,7 @@ describe("boundary middleware", () => {
       BOOMERANG_STATE,
       expect.objectContaining({ lastAutoDecision: { kind: "new", preDecisionLeafId: "leaf" } }),
     );
+    // Manual /new is surfaced via its inline ack, not a streamed header (ack-vs-header split).
+    expect(message.metadata.decisionHeader).toBeUndefined();
   });
 });

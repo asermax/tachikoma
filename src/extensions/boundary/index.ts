@@ -232,9 +232,16 @@ export default defineExtension<BoundaryConfig>({
           if (related != null) injectRelatedBranchContext(trunk.session, related, app.log);
 
           // An automatic topic shift is a /rollback target (Batch 4). Manual /new (forceNew above) does
-          // NOT record it — only automatic decisions are rollback targets (R7).
+          // NOT record it — only automatic decisions are rollback targets (R7). The decision surfaces on
+          // the shifted response via the turn-scoped header, which signals /rollback is available — set
+          // it exactly where the decision is recorded so the two can never disagree (R8).
           if (preDecisionLeafId != null) {
             recordLastAutoDecision(trunk.session, "new", preDecisionLeafId);
+            message.metadata.decisionHeader = {
+              label: "🆕 New topic",
+              note: "Started a fresh topic — the previous one was collapsed.",
+              rollbackable: true,
+            };
           }
         }
 
