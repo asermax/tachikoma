@@ -289,11 +289,14 @@ export class StreamRenderer {
     return body.length <= TELEGRAM_MAX_MESSAGE_LENGTH ? body : text;
   }
 
-  /** The markdown display of the decision header (bold label + one-line note), or "" when none. */
+  /** The markdown display of the decision header (the whole label + note in italics), or "" when none. */
   private headerText(): string {
     if (this.header == null) return "";
-    const label = `**${this.header.label}**`;
-    return this.header.note.length > 0 ? `${label} — ${this.header.note}` : label;
+    const body =
+      this.header.note.length > 0
+        ? `${this.header.label} — ${this.header.note}`
+        : this.header.label;
+    return `_${body}_`;
   }
 
   /**

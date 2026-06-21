@@ -351,7 +351,7 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     // renderer must prepend the header each time.
     expect(api.calls[0]).toEqual({
       type: "send",
-      text: rendered("**📌 Checkpoint set** — main line parked\n\nFirst."),
+      text: rendered("_📌 Checkpoint set — main line parked_\n\nFirst."),
     });
 
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
@@ -359,7 +359,7 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     expect(api.calls.at(-1)).toEqual({
       type: "edit",
       messageId: 1,
-      text: rendered("**📌 Checkpoint set** — main line parked\n\nFirst.\n\nSecond."),
+      text: rendered("_📌 Checkpoint set — main line parked_\n\nFirst.\n\nSecond."),
     });
   });
 
@@ -379,7 +379,7 @@ describe("StreamRenderer decision header (DLT-181)", () => {
 
     await renderer.appendText("Body.\n\n");
 
-    expect(api.calls[0]?.text).toBe(rendered("**🆕 New topic**\n\nBody."));
+    expect(api.calls[0]?.text).toBe(rendered("_🆕 New topic_\n\nBody."));
   });
 
   it("keeps the header above a transient line, recomposed each edit", async () => {
@@ -393,7 +393,7 @@ describe("StreamRenderer decision header (DLT-181)", () => {
 
     // header + settled body + live tool line, all recomposed together.
     expect(api.calls.at(-1)?.text).toBe(
-      rendered("**📌 Checkpoint set** — parked\n\nSettled.\n\n_🔧 Searching for 'needle'_"),
+      rendered("_📌 Checkpoint set — parked_\n\nSettled.\n\n_🔧 Searching for 'needle'_"),
     );
   });
 
@@ -426,9 +426,7 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     await renderer.appendText("More.");
 
     expect(await renderer.finalize()).toBe(1);
-    expect(api.calls.at(-1)?.text).toBe(
-      rendered("**📌 Checkpoint set** — parked\n\nBody.\n\nMore."),
-    );
+    expect(api.calls.at(-1)?.text).toBe(rendered("_📌 Checkpoint set — parked_\n\nBody.\n\nMore."));
   });
 
   it("logs the descriptor and falls back when a render fails mid-stream (R8)", async () => {
