@@ -29,5 +29,7 @@ The `StreamRenderer` gains collapse state (boundary counter + enable flag) and, 
 
 Sources:
 - Telegram Bot API `MessageEntity` (`expandable_blockquote` = "collapsed-by-default block quotation"; nesting: `blockquote`/`expandable_blockquote` can't nest each other; `bold`/`italic`/`code` nest inside) — `https://core.telegram.org/bots/api#messageentity` (Bot API 10.1, June 2026).
-- Stack Overflow confirmation of the multi-line collapse requirement — `https://stackoverflow.com/questions/79427631`.
-- Installed `@grammyjs/types@3.27.3` `message.d.ts:506` (grammY `1.43.0`).
+- Stack Overflow confirmation of the multi-line collapse requirement — `https://stackoverflow.com/questions/79427631` (retrieved 2026-06-21).
+- Installed `@grammyjs/types@3.27.3` `message.d.ts:506` (grammY `1.43.0`, resolved from `package.json` `grammy@^1.43.0`).
+
+Validated against the implementation: `src/extensions/telegram/entities.ts` (`Renderer.beginSpan(type, extra)` typed `MessageEntity["type"]`, the existing `blockquote_open` span path, and `splitMessageWithEntities`' offset-rebase logic) and `src/extensions/telegram/streaming.ts` (the `flush()`/`compose()`/`finalize()` paths the collapse branch hooks into), confirming the helper signatures and integration points.
