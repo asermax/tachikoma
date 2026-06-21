@@ -30,10 +30,10 @@ export interface ShutdownDeps {
 /**
  * Routes every process-exit cause — graceful signals AND uncaught errors — through one
  * idempotent graceful-drain path. The first `trigger()` aborts the controller (the
- * coordinator's `run()` finally then drains the active session and runs post-processing); a
- * crash cause also arms an unref'd force-exit timer so an unattended process still exits and
- * restarts even if the drain hangs. A second `trigger()` while a drain is in progress
- * force-exits immediately, so a wedged drain is always escapable.
+ * coordinator's `run()` finally then drains the held queue to the channel — the trunk is left
+ * open, not closed); a crash cause also arms an unref'd force-exit timer so an unattended
+ * process still exits and restarts even if the drain hangs. A second `trigger()` while a drain
+ * is in progress force-exits immediately, so a wedged drain is always escapable.
  *
  * `didCrash` tells app.ts to exit non-zero once the drain completes (it sets `process.exitCode`
  * rather than calling `process.exit`, so pino's file stream still flushes).

@@ -388,10 +388,12 @@ export class Coordinator {
 
       if (announceShutdown) await this.emitShutdownStatus("Wrapping up the conversation…");
 
-      // Per-processor progress emitted inside this call routes to the same
-      // shutdown message (see status() — shuttingDown is set above).
-      await this.closeTrunk();
-
+      // The trunk deliberately survives shutdown: closing it here runs the memory pipeline during
+      // teardown, which races a restarting process reopening a fresh trunk (the old run is killed
+      // mid-pipeline) and redundantly re-pipelines a same-day restart. The trunk is closed by the
+      // nightly closeTrunkIfDue cron, or recovered idempotently at next startup — ADR-014's
+      // unclosed index + on-file markers make a trunk left open by shutdown safe (a clean exit
+      // behaves like a crash, which recovery already handles).
       if (announceShutdown) await this.emitShutdownStatus("Done");
     }
   }
@@ -486,7 +488,7 @@ export class Coordinator {
     await this.closeTrunk(true);
   }
 
-  /** Close the live trunk (shutdown / explicit). No-op when no trunk is open. */
+  /** Close the live trunk (nightly cron via closeTrunkIfDue, or explicit). No-op when no trunk is open. */
   async closeTrunk(silent = false): Promise<void> {
     const active = this.active;
     if (active == null) return;
