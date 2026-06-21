@@ -129,8 +129,8 @@ describe("Coordinator background delivery", () => {
     controller.abort();
     await loop;
 
-    // After shutdown the trunk is closed; activeTrunkSession is null.
-    expect(coordinator.activeTrunkSession()).toBeNull();
+    // Shutdown does not close the trunk — it persists for the next process to reopen.
+    expect(coordinator.activeTrunkSession()).not.toBeNull();
   });
 
   it("drains items queued during shutdown to the channel as one tier-ordered digest", async () => {

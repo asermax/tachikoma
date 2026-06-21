@@ -551,7 +551,7 @@ describe("Coordinator.abortExchange", () => {
 });
 
 describe("Coordinator.run shutdown sequence", () => {
-  it("announces wrap-up and closes the trunk via shutdownStatus", async () => {
+  it("announces wrap-up but leaves the trunk open across shutdown", async () => {
     const session = createSession();
     const regs = createRegistrations();
     const ppCalls: string[] = [];
@@ -576,9 +576,10 @@ describe("Coordinator.run shutdown sequence", () => {
 
     expect(shutdownStatus).toHaveBeenCalledWith("Wrapping up the conversation…");
     expect(shutdownStatus).toHaveBeenCalledWith("Done");
-    expect(ppCalls).toContain("finalizer");
-    expect(coordinator.activeTrunkSession()).toBeNull();
-    expect(session.dispose).toHaveBeenCalled();
+    // The trunk survives shutdown — no pipeline, no dispose; the next process reopens it.
+    expect(ppCalls).toEqual([]);
+    expect(coordinator.activeTrunkSession()).toBe(session);
+    expect(session.dispose).not.toHaveBeenCalled();
   });
 
   it("skips the wrap-up announcement when there is no active trunk", async () => {
@@ -649,12 +650,15 @@ describe("Coordinator.run post-processing on close", () => {
     coordinator.submit(textMsg("hi"));
     await vi.waitFor(() => expect(coordinator.activeTrunkSession()).not.toBeNull());
 
-    controller.abort();
-    await loop;
+    // The trunk no longer closes on shutdown; drive the close via the nightly trigger instead.
+    await coordinator.closeTrunkIfDue();
 
     expect(calls.indexOf("memory")).toBeLessThan(calls.indexOf("archive"));
     expect(transcriptPaths[0]).toBe("/tmp/trunk.jsonl");
     expect(postProcessed).toHaveBeenCalledTimes(1);
+
+    controller.abort();
+    await loop;
   });
 });
 
