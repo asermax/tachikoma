@@ -15,7 +15,7 @@ Long-lived specifications describing **what** each part of Tachikoma does, kept 
 
 | Feature | Description |
 |---------|-------------|
-| [boundary-detection](boundary-detection.md) | Temporal (idle) and topical session boundaries — continue, start fresh, or resume a recent session via rolling summaries |
+| [boundary-detection](boundary-detection.md) | Topical boundaries on the daily trunk — topic shifts, checkpointed side tangents (`/checkpoint`/`/back`), automatic detection, `/rollback`, and an `ask_branch` context-recovery tool |
 | [foundational-context](foundational-context.md) | Composes the agent's identity from SOUL.md / USER.md (plus pi-native AGENTS.md) into the system prompt |
 | [memory](memory.md) | Long-term memory as git-versioned markdown (episodic, topics) plus transcript archives, with a static index, trunk-close extraction and maintenance, and a one-time legacy-store migration |
 

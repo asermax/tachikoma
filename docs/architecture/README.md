@@ -17,3 +17,4 @@ Architecture Decision Records (ADRs): one-time, hard-to-reverse choices about th
 | [ADR-011](ADR-011-task-runner.md) | Use just as the task runner | Accepted |
 | [ADR-012](ADR-012-repository-structure.md) | Single repository, single package: thin core plus all first-party extensions in-tree | Accepted |
 | [ADR-013](ADR-013-release-tooling.md) | Use semantic-release run locally (`just release`) against the `master` branch | Accepted |
+| [ADR-014](ADR-014-session-source-of-truth.md) | Session file as the conversational source of truth — the daily-trunk model, removing the `sessions` table | Accepted |
