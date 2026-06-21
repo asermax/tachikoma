@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitApi, PostProcessorContext } from "../../src/extensions/api.ts";
 import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { PUSH_RESULT } from "../../src/git/sync.ts";
+import type { DebouncedTask } from "../../src/util/debouncer.ts";
 import { fakeLogger } from "./helpers.ts";
 
 const commitAll = vi.fn();
@@ -186,5 +187,21 @@ describe("projects processor (mocked git)", () => {
       expect.objectContaining({ path: "projects/app" }),
       "failed to process submodule",
     );
+  });
+
+  it("clears and drains the debouncer before processing", async () => {
+    listSubmodules.mockResolvedValue([]);
+    const debouncer = {
+      touch: vi.fn(),
+      clear: vi.fn(),
+      whenIdle: vi.fn().mockResolvedValue(undefined),
+    } as unknown as DebouncedTask;
+
+    await createProjectsProcessor({ workspaceRoot: "/ws", agent, git, debouncer }).process(
+      context(),
+    );
+
+    expect(debouncer.clear).toHaveBeenCalledTimes(1);
+    expect(debouncer.whenIdle).toHaveBeenCalledTimes(1);
   });
 });

@@ -2,10 +2,15 @@ import { Type } from "typebox";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
 import { createGitResolver } from "../../git/resolve.ts";
+import { createDebouncedTask } from "../../util/debouncer.ts";
 import { defineExtension } from "../api.ts";
 import { buildProjectsContext } from "./context-provider.ts";
 import { syncProjects } from "./hooks.ts";
-import { createProjectsExchangeProcessor, createProjectsProcessor } from "./processor.ts";
+import {
+  commitAndPushSubmodules,
+  createProjectsExchangeProcessor,
+  createProjectsProcessor,
+} from "./processor.ts";
 import { createProjectsToolsFactory } from "./tools.ts";
 
 interface ProjectsConfig {
@@ -35,6 +40,24 @@ export default defineExtension<ProjectsConfig>({
     // One cwd-scoped resolver serves every submodule — it captures the repo path
     // from each smartPull/smartPush call, so it can act inside any project tree.
     const resolver = createGitResolver(app.agent.side);
+    const projectAgent = app.git.createCommitAgent("project");
+
+    // Debounced per-exchange projects commit-push: each exchange resets the timer
+    // and every dirty registered project is committed and pushed in the background
+    // once the configured quiet window elapses. commitDebounceMinutes = 0 disables
+    // this (trunk close remains the persistence backstop).
+    const debouncer = createDebouncedTask(
+      () =>
+        commitAndPushSubmodules({
+          workspaceRoot,
+          git: app.git,
+          agent: projectAgent,
+          resolver,
+          log: app.log,
+        }),
+      app.config.scheduler.commitDebounceMinutes * 60_000,
+      app.log,
+    );
 
     app.bootstrap("sync-projects", () => syncProjects(workspaceRoot, app.git, app.log, resolver));
 
@@ -48,19 +71,26 @@ export default defineExtension<ProjectsConfig>({
       },
     );
 
-    // Per-exchange: commit dirty submodules deterministically (no push). Push
-    // stays at close in the pre-finalize processor below.
-    app.sessions.onExchange(
-      createProjectsExchangeProcessor({ workspaceRoot, git: app.git, log: app.log }),
-    );
+    // Per-exchange: reset the debounced projects commit-push timer. The
+    // commit-and-push runs in the background after the quiet window; the exchange
+    // path only touches the timer.
+    app.sessions.onExchange(createProjectsExchangeProcessor({ debouncer, log: app.log }));
 
+    // At trunk close: the backstop (pre-finalize, before the workspace commit so
+    // submodule pointer updates land in the same pass). Clears and drains the
+    // debouncer, then commits + pushes dirty projects and any clean-ahead ones.
     app.sessions.registerProcessor(
       createProjectsProcessor({
         workspaceRoot,
-        agent: app.git.createCommitAgent("project"),
+        agent: projectAgent,
         git: app.git,
         resolver,
+        debouncer,
       }),
     );
+
+    // Cancel any pending debounce fire on shutdown — the drain's finalize pass
+    // handles persistence.
+    app.onShutdown("projects-debounce", () => debouncer.clear());
   },
 });

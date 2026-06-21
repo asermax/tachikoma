@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { CommitAgent } from "../../git/commit-agent.ts";
 import { PUSH_SUCCESS, type RebaseResolver } from "../../git/sync.ts";
 import type { Logger } from "../../log.ts";
+import type { DebouncedTask } from "../../util/debouncer.ts";
 import type { ExchangeProcessor, GitApi, PostProcessor } from "../api.ts";
 import { isAhead, isDirty, listSubmodules } from "./git.ts";
 
@@ -11,6 +12,8 @@ export interface ProjectsProcessorDeps {
   agent: CommitAgent;
   git: GitApi;
   resolver?: RebaseResolver;
+  /** Cleared and drained at trunk close so the finalize pass owns persistence exclusively. */
+  debouncer?: DebouncedTask;
 }
 
 export const projectFallbackMessage = (name: string, now = new Date()): string =>
@@ -93,167 +96,154 @@ const pushProject = async (
   );
 };
 
+export interface CommitAndPushSubmodulesDeps {
+  workspaceRoot: string;
+  git: GitApi;
+  agent: CommitAgent;
+  resolver?: RebaseResolver;
+  log: Logger;
+}
+
 /**
- * Pre-finalize post-processor: commits and pushes every dirty registered
- * project before the workspace commit runs (so submodule pointer updates land
- * in the same workspace commit pass), then pushes any clean project that still
- * sits ahead of its remote so committed changes never linger across sessions.
- * A rebase conflict during either push is handed to the resolver (agent-driven)
- * before falling back to abort.
+ * Commit and push every dirty registered project (then push any clean project still
+ * ahead of its remote), in parallel with per-project error isolation. Shared by the
+ * pre-finalize trunk-close processor and the debounced per-exchange fire so both
+ * follow the same two-pass path. A rebase conflict during either push is handed to
+ * the resolver (agent-driven) before falling back to abort.
+ */
+export const commitAndPushSubmodules = async ({
+  workspaceRoot,
+  git,
+  agent,
+  resolver,
+  log,
+}: CommitAndPushSubmodulesDeps): Promise<void> => {
+  const submodulePaths = await listSubmodules(workspaceRoot);
+
+  if (submodulePaths.length === 0) {
+    log.debug("no submodules found — skipping project processing");
+    return;
+  }
+
+  const dirtyChecks = await Promise.allSettled(
+    submodulePaths.map((path) => isDirty(join(workspaceRoot, path))),
+  );
+
+  const dirtyPaths: string[] = [];
+  const cleanPaths: string[] = [];
+
+  for (const [index, check] of dirtyChecks.entries()) {
+    const path = submodulePaths[index] as string;
+
+    if (check.status === "rejected") {
+      log.warn({ path, err: check.reason }, "failed to check submodule status");
+    } else if (check.value) {
+      dirtyPaths.push(path);
+    } else {
+      cleanPaths.push(path);
+    }
+  }
+
+  // Pass 1: commit + push dirty submodules. The commit also pushes any local
+  // commits already ahead of the remote.
+  if (dirtyPaths.length > 0) {
+    log.info({ paths: dirtyPaths }, "processing dirty submodules");
+
+    const results = await Promise.allSettled(
+      dirtyPaths.map((path) => commitAndPush(workspaceRoot, git, agent, path, log, resolver)),
+    );
+
+    for (const [index, result] of results.entries()) {
+      if (result.status === "rejected") {
+        log.warn({ path: dirtyPaths[index], err: result.reason }, "failed to process submodule");
+      }
+    }
+  }
+
+  // Pass 2: a clean tree can still sit ahead of its remote — commits made
+  // earlier (a background task, a prior exchange) that nothing has pushed.
+  // Push those so project commits never linger across sessions.
+  const aheadChecks = await Promise.allSettled(
+    cleanPaths.map((path) => isAhead(join(workspaceRoot, path))),
+  );
+
+  const aheadPaths: string[] = [];
+
+  for (const [index, check] of aheadChecks.entries()) {
+    const path = cleanPaths[index] as string;
+
+    if (check.status === "rejected") {
+      log.warn({ path, err: check.reason }, "failed to check if submodule is ahead");
+    } else if (check.value) {
+      aheadPaths.push(path);
+    }
+  }
+
+  if (aheadPaths.length === 0) {
+    if (dirtyPaths.length === 0) {
+      log.debug("no dirty or ahead submodules — skipping project processing");
+    }
+    return;
+  }
+
+  log.info({ paths: aheadPaths }, "pushing clean submodules ahead of their remote");
+
+  const pushResults = await Promise.allSettled(
+    aheadPaths.map((path) => pushProject(workspaceRoot, git, path, log, resolver)),
+  );
+
+  for (const [index, result] of pushResults.entries()) {
+    if (result.status === "rejected") {
+      log.warn({ path: aheadPaths[index], err: result.reason }, "failed to push ahead submodule");
+    }
+  }
+};
+
+/**
+ * Pre-finalize post-processor: the trunk-close backstop for registered projects.
+ * Clears and drains the debounced per-exchange commit-push first (so the finalize
+ * pass owns persistence exclusively and never races a pending fire), then commits
+ * and pushes every dirty project before the workspace commit runs (so submodule
+ * pointer updates land in the same workspace commit pass), then pushes any clean
+ * project that still sits ahead of its remote.
  */
 export const createProjectsProcessor = ({
   workspaceRoot,
   agent,
   git,
   resolver,
+  debouncer,
 }: ProjectsProcessorDeps): PostProcessor => ({
   name: "projects-commit",
   phase: "preFinalize",
 
   async process({ log }) {
-    const submodulePaths = await listSubmodules(workspaceRoot);
-
-    if (submodulePaths.length === 0) {
-      log.debug("no submodules found — skipping project processing");
-      return;
-    }
-
-    const dirtyChecks = await Promise.allSettled(
-      submodulePaths.map((path) => isDirty(join(workspaceRoot, path))),
-    );
-
-    const dirtyPaths: string[] = [];
-    const cleanPaths: string[] = [];
-
-    for (const [index, check] of dirtyChecks.entries()) {
-      const path = submodulePaths[index] as string;
-
-      if (check.status === "rejected") {
-        log.warn({ path, err: check.reason }, "failed to check submodule status");
-      } else if (check.value) {
-        dirtyPaths.push(path);
-      } else {
-        cleanPaths.push(path);
-      }
-    }
-
-    // Pass 1: commit + push dirty submodules. The commit also pushes any local
-    // commits already ahead of the remote.
-    if (dirtyPaths.length > 0) {
-      log.info({ paths: dirtyPaths }, "processing dirty submodules");
-
-      const results = await Promise.allSettled(
-        dirtyPaths.map((path) => commitAndPush(workspaceRoot, git, agent, path, log, resolver)),
-      );
-
-      for (const [index, result] of results.entries()) {
-        if (result.status === "rejected") {
-          log.warn({ path: dirtyPaths[index], err: result.reason }, "failed to process submodule");
-        }
-      }
-    }
-
-    // Pass 2: a clean tree can still sit ahead of its remote — commits made
-    // earlier (a background task, a prior exchange) that nothing has pushed.
-    // Push those so project commits never linger across sessions.
-    const aheadChecks = await Promise.allSettled(
-      cleanPaths.map((path) => isAhead(join(workspaceRoot, path))),
-    );
-
-    const aheadPaths: string[] = [];
-
-    for (const [index, check] of aheadChecks.entries()) {
-      const path = cleanPaths[index] as string;
-
-      if (check.status === "rejected") {
-        log.warn({ path, err: check.reason }, "failed to check if submodule is ahead");
-      } else if (check.value) {
-        aheadPaths.push(path);
-      }
-    }
-
-    if (aheadPaths.length === 0) {
-      if (dirtyPaths.length === 0) {
-        log.debug("no dirty or ahead submodules — skipping project processing");
-      }
-      return;
-    }
-
-    log.info({ paths: aheadPaths }, "pushing clean submodules ahead of their remote");
-
-    const pushResults = await Promise.allSettled(
-      aheadPaths.map((path) => pushProject(workspaceRoot, git, path, log, resolver)),
-    );
-
-    for (const [index, result] of pushResults.entries()) {
-      if (result.status === "rejected") {
-        log.warn({ path: aheadPaths[index], err: result.reason }, "failed to push ahead submodule");
-      }
-    }
+    debouncer?.clear();
+    await debouncer?.whenIdle();
+    await commitAndPushSubmodules({ workspaceRoot, git, agent, resolver, log });
   },
 });
 
 export interface ProjectsExchangeProcessorDeps {
-  workspaceRoot: string;
-  git: GitApi;
+  debouncer: DebouncedTask;
   log: Logger;
 }
 
 /**
- * Per-exchange safety commit for submodules: after each exchange, commit any
- * dirty registered project in one cheap deterministic commit — no agent, no
- * model call, no push. The agent-grouped commit and push stay at trunk close
- * (see `createProjectsProcessor`).
+ * Per-exchange signal for the debounced projects commit-push. Each exchange resets
+ * the debounce timer; the commit-and-push itself runs in the background, once,
+ * after the configured quiet window elapses with no further exchange (see
+ * `commitAndPushSubmodules` and `createDebouncedTask`). Nothing is committed on the
+ * exchange path — the trunk-close finalize pass remains the persistence backstop.
  */
 export const createProjectsExchangeProcessor = ({
-  workspaceRoot,
-  git,
+  debouncer,
   log,
 }: ProjectsExchangeProcessorDeps): ExchangeProcessor => ({
-  name: "projects-exchange-commit",
+  name: "projects-exchange-signal",
 
   async process() {
-    const submodulePaths = await listSubmodules(workspaceRoot);
-
-    if (submodulePaths.length === 0) return;
-
-    const dirtyChecks = await Promise.allSettled(
-      submodulePaths.map((path) => isDirty(join(workspaceRoot, path))),
-    );
-
-    const dirtyPaths: string[] = [];
-
-    for (const [index, check] of dirtyChecks.entries()) {
-      const path = submodulePaths[index] as string;
-
-      if (check.status === "rejected") {
-        log.warn({ path, err: check.reason }, "failed to check submodule status");
-      } else if (check.value) {
-        dirtyPaths.push(path);
-      }
-    }
-
-    if (dirtyPaths.length === 0) return;
-
-    const results = await Promise.allSettled(
-      dirtyPaths.map((path) =>
-        git.commitAllDeterministic({
-          cwd: join(workspaceRoot, path),
-          message: projectFallbackMessage(path.split("/").at(-1) ?? path),
-          log,
-        }),
-      ),
-    );
-
-    for (const [index, result] of results.entries()) {
-      if (result.status === "rejected") {
-        log.warn({ path: dirtyPaths[index], err: result.reason }, "failed to commit submodule");
-      } else if (result.value.length > 0) {
-        log.debug(
-          { path: dirtyPaths[index], subjects: result.value },
-          "per-exchange project commit",
-        );
-      }
-    }
+    debouncer.touch();
+    log.debug("projects commit-push signal — debounce timer reset");
   },
 });
