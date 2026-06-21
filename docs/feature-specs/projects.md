@@ -31,6 +31,7 @@ Git authentication (SSH keys, tokens) is the user's responsibility: the system a
 | R9 | The projects processor runs before the workspace commit (`finalize` phase) so submodule pointer updates land in the same workspace commit pass |
 | R10 | The extension can be disabled entirely via `[extensions.projects] enabled = false` |
 | R11 | At session close, the `projects-commit` post-processor also pushes any clean project that is ahead of its remote (e.g. commits left by a background task or an earlier exchange) via `smartPush`, so committed changes never linger unpushed across sessions |
+| R12 | Each exchange resets a debounce timer; after `[scheduler] commitDebounceMinutes` (default 5, `0` disables) of exchange quiet, every dirty registered project is committed and pushed to its `origin` in the background — reusing the same agent-grouped commit + `smartPush` path as the close pass (R8). New exchanges reset the timer; the close pass (R8/R11) clears and drains it first and remains the backstop |
 
 ## Behaviors
 
@@ -91,3 +92,14 @@ The `projects-commit` post-processor preserves work in every dirty project befor
 - Given `smartPush` returns `NOTHING_TO_PUSH` (the project was already up-to-date with the remote), when the processor checks the result, then because `NOTHING_TO_PUSH` is *not* in `PUSH_SUCCESS` (which is `PUSHED`/`REBASE_SUCCEEDED`/`AGENT_RESOLVED`), the same "push failed — changes remain committed locally" warning is logged even though nothing was actually wrong
 - Given multiple dirty projects, when the processor runs, then they are processed in parallel and one project's failure does not affect the others
 - Given the processor completes, when the `finalize`-phase workspace commit runs, then the updated submodule pointers are committed alongside other workspace changes ([git-workspace.md](git-workspace.md))
+
+### Debounced Mid-Session Commit-Push (R12)
+
+Each exchange resets a debounce timer shared with the workspace's; once a configurable quiet window elapses with no further exchange, every dirty registered project is committed and pushed in the background — so project work reaches its remote mid-session, without a commit and push on every exchange.
+
+**Acceptance Criteria**:
+- Given exchanges keep arriving less than the debounce window apart, when each fires, then no project commit or push occurs — the timer keeps resetting
+- Given the debounce window elapses with no new exchange, when the timer expires, then every dirty project is committed (agent-grouped, deterministic fallback) and pushed to its `origin` via `smartPush` in the background, with the same per-project error isolation and outcome logging as the close pass
+- Given `[scheduler] commitDebounceMinutes = 0`, when exchanges arrive, then no timer is armed and nothing commits mid-session — only the session-close pass persists project changes
+- Given a session closes while a debounce fire is pending or in flight, when the close pass runs, then the pending timer is cleared (and any in-flight fire drained) so the close pass owns persistence exclusively
+- Given the workspace and projects debounce timers fire near-simultaneously, then a workspace fire may transiently commit a submodule pointer one window stale, but the next fire or the close pass (which runs projects before the workspace) advances it — final consistency is guaranteed by the close pass
