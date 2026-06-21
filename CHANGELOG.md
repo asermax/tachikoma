@@ -1,3 +1,10 @@
+# [3.40.0](https://github.com/asermax/tachikoma/compare/v3.39.2...v3.40.0) (2026-06-21)
+
+
+### Features
+
+* **coordinator:** surface trunk-lifecycle close status on a dedicated message ([bf281ab](https://github.com/asermax/tachikoma/commit/bf281ab1ae10ad5c0622a67c1bc1373f91a18927))
+
 ## [3.39.2](https://github.com/asermax/tachikoma/compare/v3.39.1...v3.39.2) (2026-06-21)
 
 
