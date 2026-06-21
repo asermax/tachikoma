@@ -1,20 +1,11 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createGitExchangeProcessor } from "../../src/extensions/git/exchange.ts";
 import { runGit } from "../../src/git/git.ts";
-import type { DebouncedTask } from "../../src/util/debouncer.ts";
-import { commitFile, fakeLogger, initRepo, makeTempDir } from "./helpers.ts";
-
-/** A `DebouncedTask` stand-in that records `touch()` calls and otherwise no-ops. */
-const recordingDebouncer = (): DebouncedTask =>
-  ({
-    touch: vi.fn(),
-    clear: vi.fn(),
-    whenIdle: vi.fn().mockResolvedValue(undefined),
-  }) as unknown as DebouncedTask;
+import { commitFile, fakeLogger, initRepo, makeTempDir, recordingDebouncer } from "./helpers.ts";
 
 let base: string;
 let workspace: string;

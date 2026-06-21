@@ -13,6 +13,7 @@ export {
   fakeLogger,
   headOf,
   lastSubject,
+  recordingDebouncer,
   resolvingResolver,
 } from "../git/helpers.ts";
 

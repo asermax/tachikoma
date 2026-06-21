@@ -3,8 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { GitApi, PostProcessorContext } from "../../src/extensions/api.ts";
 import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { PUSH_RESULT } from "../../src/git/sync.ts";
-import type { DebouncedTask } from "../../src/util/debouncer.ts";
-import { fakeLogger } from "./helpers.ts";
+import { fakeLogger, recordingDebouncer } from "./helpers.ts";
 
 const commitAll = vi.fn();
 const smartPush = vi.fn();
@@ -191,11 +190,7 @@ describe("projects processor (mocked git)", () => {
 
   it("clears and drains the debouncer before processing", async () => {
     listSubmodules.mockResolvedValue([]);
-    const debouncer = {
-      touch: vi.fn(),
-      clear: vi.fn(),
-      whenIdle: vi.fn().mockResolvedValue(undefined),
-    } as unknown as DebouncedTask;
+    const debouncer = recordingDebouncer();
 
     await createProjectsProcessor({ workspaceRoot: "/ws", agent, git, debouncer }).process(
       context(),
