@@ -1,3 +1,16 @@
+# [3.38.0](https://github.com/asermax/tachikoma/compare/v3.37.0...v3.38.0) (2026-06-21)
+
+
+### Features
+
+* **boundary:** add /rollback to reverse automatic checkpoint/topic decisions ([3f6d36a](https://github.com/asermax/tachikoma/commit/3f6d36a88b5e1b6f04ffcbe1349eea8da5676782))
+* **boundary:** add manual /checkpoint and /back side-conversation commands ([fdb0520](https://github.com/asermax/tachikoma/commit/fdb052099ea9bdcb56f889069e3619c6040fa0bf))
+* **boundary:** auto set-checkpoint and summarize-to-checkpoint classifier results ([b6ca80a](https://github.com/asermax/tachikoma/commit/b6ca80ac027639ead3604fb2293dd5243ad3db23))
+* **boundary:** surface rollbackable header on automatic topic shift ([fef4979](https://github.com/asermax/tachikoma/commit/fef4979680a09c8a3fc8517d9d344a1b458995e5))
+* **channels:** surface turn-scoped decision headers on streamed responses ([0d1e3c5](https://github.com/asermax/tachikoma/commit/0d1e3c5c94ae32a54aef86e88f50f74acd7149b3))
+* **coordinator:** add pending-input flow and expand Telegram command menu ([8acaa45](https://github.com/asermax/tachikoma/commit/8acaa45386105e30cd7dca2084b96c273aa78ec1))
+* **sessions:** add checkpoint and tangent primitives for side conversations ([7b4739a](https://github.com/asermax/tachikoma/commit/7b4739aa7ec739bdf13c0e762698d2bc9ec430f6))
+
 # [3.37.0](https://github.com/asermax/tachikoma/compare/v3.36.1...v3.37.0) (2026-06-21)
 
 
