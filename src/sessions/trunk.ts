@@ -313,17 +313,28 @@ export const markReversed = (session: AgentSession, summaryEntryId: string): str
   appendState(session, REVERSAL, { summaryEntryId } satisfies ReversalMarker);
 
 /**
+ * The kind of a summary given a precomputed reversal set — the inner reversal-aware computation shared
+ * by every caller. Split out so {@link getBranchRecords}/{@link nextTangentId} build the set ONCE and
+ * reuse it across every summary instead of rescanning the whole entry list per summary.
+ */
+const kindWith = (
+  summaryEntryId: string,
+  kind: "topic" | "tangent",
+  reversed: Set<string>,
+): "topic" | "tangent" | "reversed" => (reversed.has(summaryEntryId) ? "reversed" : kind);
+
+/**
  * The kind a consumer should treat a branch summary as: `"reversed"` when a reversal marker names it
  * (KD6), otherwise its persisted `details.kind` (defaulting to `"topic"` for summaries written before
  * the discriminator existed). The single discriminator consulted by `getBranchRecords`, `ask_branch`,
- * DLT-182's `open_branch`, and extraction.
+ * DLT-182's `open_branch`, and extraction. Callers looping over many summaries should build the reversal
+ * set once and use {@link kindWith} rather than calling this per id (it rescans on every call).
  */
 export const effectiveKind = (
   session: AgentSession,
   summaryEntryId: string,
   kind: "topic" | "tangent" = "topic",
-): "topic" | "tangent" | "reversed" =>
-  readReversedSet(session).has(summaryEntryId) ? "reversed" : kind;
+): "topic" | "tangent" | "reversed" => kindWith(summaryEntryId, kind, readReversedSet(session));
 
 const toRecord = (summary: ValidatedSummary, index: number): BranchRecord => ({
   branchId: `topic-${index + 1}`,
@@ -350,20 +361,23 @@ export const getAllBranchRecords = (session: AgentSession): BranchRecord[] =>
  * the `topic-N` ids stay clean. Branch ids are deterministic: the Nth topic summary in file order is
  * `topic-N`, so ids are stable across reloads.
  */
-export const getBranchRecords = (session: AgentSession): BranchRecord[] =>
-  validatedSummaries(session)
+export const getBranchRecords = (session: AgentSession): BranchRecord[] => {
+  const reversed = readReversedSet(session);
+  return validatedSummaries(session)
     .filter(
-      (summary) => effectiveKind(session, summary.id, summary.details.kind ?? "topic") === "topic",
+      (summary) => kindWith(summary.id, summary.details.kind ?? "topic", reversed) === "topic",
     )
     .map(toRecord);
+};
 
 /**
  * The next `tangent-N` id for a tangent about to be summarized — tangents count on their own sequence,
  * independent of `topic-N`, counting only tangent-kind summaries so reversed tangents don't perturb it.
  */
 export const nextTangentId = (session: AgentSession): string => {
+  const reversed = readReversedSet(session);
   const count = validatedSummaries(session).filter(
-    (summary) => effectiveKind(session, summary.id, summary.details.kind ?? "topic") === "tangent",
+    (summary) => kindWith(summary.id, summary.details.kind ?? "topic", reversed) === "tangent",
   ).length;
 
   return `tangent-${count + 1}`;
