@@ -41,6 +41,12 @@ default = "telegram"
 # when unset. An unrecognized zone fails config validation.
 # timezone = "America/Argentina/Buenos_Aires"
 
+# Minutes of exchange quiet before pending workspace + registered-project changes
+# are committed and pushed in the background. Every exchange resets the timer, so
+# work is persisted this long after the last exchange of a burst. 0 disables
+# mid-session auto commit-push — only the nightly trunk close persists changes.
+commitDebounceMinutes = 5
+
 [env]
 # Environment variables applied to process.env at startup, available app-wide and
 # to anything inheriting the process environment (pi sessions, spawned tools,

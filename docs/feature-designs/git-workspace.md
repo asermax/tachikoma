@@ -44,6 +44,8 @@ session close ─► git-commit (finalize)
 
 Note: a rebase that succeeds (clean or agent-resolved) followed by a *push* failure returns `PUSH_FAILED`, distinct from `REBASE_FAILED`. On the pull side, `smartPull` treats a local-*ahead* branch the same as equal — both return `UP_TO_DATE` (it never pushes from a pull).
 
+Both persistence paths — the finalize pass above and the debounced mid-session fire — share one `commitAll → smartPush` flow; the debounce timer (`createDebouncedTask`, [DES-007](../design/DES-007-debounced-background-task.md)) simply arms that same flow to run after a configurable quiet window instead of at close.
+
 ## Components
 
 ### Implementation Structure
@@ -57,7 +59,9 @@ Note: a rebase that succeeds (clean or agent-resolved) followed by a *push* fail
 | `src/git/resolve.ts` *(core module)* | `createGitResolver`: the agent-backed `RebaseResolver` (type from `src/git/sync.ts`), with cwd-scoped `read_conflict`/`write_resolved`/`git` custom tools | One side-agent pass per call; tools bound to the target repo so the agent can't touch the wrong tree; `git` tool rejects push/fetch/reset/remote/filter-repo; swallows agent errors so a sync is never aborted by a throw |
 | `src/extensions/git/index.ts` | `defineExtension` wiring; honors `enabled` flag | Hook + tools factory + processor; no logic |
 | `src/extensions/git/hooks.ts` | `initializeWorkspaceRepo`: init + identity + gitignore + startup `smartPull` | Fixed identity, `commit.gpgsign false`; gitignore entries appended uncommitted on every startup |
-| `src/extensions/git/processor.ts` | `git-commit` post-processor (`finalize`) | Commit → push when `origin` exists → verify clean → one retry commit |
+| `src/extensions/git/processor.ts` | `commitAndPushWorkspace` (shared commit → push when `origin` exists → verify clean → one retry commit) and the `git-commit` `finalize` post-processor that wraps it | Finalize clears and drains the debouncer first, then runs the shared commit-push; the same `commitAndPushWorkspace` is the debounced mid-session fire |
+| `src/extensions/git/exchange.ts` | `git-exchange-signal` exchange processor | Each exchange only resets the debounce timer; nothing commits on the exchange path |
+| `src/util/debouncer.ts` *(shared utility)* | `createDebouncedTask`: trailing-edge debounce over an async task | Resettable `unref`-ed timer, single-flight with coalescing, `clear`/`whenIdle`, disabled when `delay≤0` ([DES-007](../design/DES-007-debounced-background-task.md)) |
 | `src/extensions/git/tools.ts` | `query_git_status`, `list_recent_commits`, `commit_workspace`, `scrub` | Handlers exported standalone; outputs truncated with pi's `truncateTail`; `commit_workspace` commits then pushes the workspace and every ahead project submodule via `smartPush` (resolver wired), reporting a per-repo outcome line; scrub handler resolves the target repo (workspace, or `projects/<name>` when `project` is given), validates it is non-empty and exists, delegates to `scrubPaths`, and surfaces its outcome message (plus a stale submodule-pointer note on a successful project scrub) |
 | `src/extensions/git/scrub.ts` | `scrubPaths`: clean-tree + path-existence + tool-availability checks, `git filter-repo --invert-paths`, origin restore + force-push | Returns a `SCRUB_RESULT` enum outcome, never throws; `isFilterRepoAvailable` probes `git filter-repo --version` so a missing tool is a clean error, not a crash |
 | `src/extensions/git/guardrail.ts` | `DESTRUCTIVE_GIT_DENY_PATTERNS`, `splitCompoundCommands`, `findDeniedSubcommand`, `createGitGuardrailFactory` | A `tool_call` interceptor that blocks the `bash` tool on destructive git; quoting-aware compound split so a destructive sub-command can't hide behind quotes or operators |
@@ -128,6 +132,19 @@ Note: a rebase that succeeds (clean or agent-resolved) followed by a *push* fail
 - Pro: Uses a first-class pi hook — no monkey-patching of the bash tool; blocking is surfaced to the agent with actionable guidance
 - Pro: Pure, exported helpers (`splitCompoundCommands`, `findDeniedSubcommand`) are fully unit-tested without a live session
 - Con: Enforcement is per-session-wiring, not global — a session that omits the factory is ungated; pattern-based matching is a denylist, so genuinely novel destructive invocations could slip through and the list must be maintained
+
+### Debounced mid-session commit-push
+
+**Choice**: Rather than commit on every exchange, each exchange resets a trailing-edge debounce timer (`createDebouncedTask`, [DES-007](../design/DES-007-debounced-background-task.md)); after `[scheduler] commitDebounceMinutes` (default 5, `0` disables) of exchange quiet the workspace is committed and pushed in the background via the same `commitAndPushWorkspace` the close pass uses. The finalize pass clears and drains the debouncer first so it owns persistence exclusively and never races a fire; shutdown clears the pending timer (the drain's finalize handles persistence).
+**Why**: Committing (an agent model call) and pushing on every exchange is wasteful and would extend every exchange with network I/O. Deferring to one fire after a quiet burst batches the work and runs it during idle — when no exchange is streaming, so there is no partial-write risk mid-exchange. The accepted tradeoff is that an active conversation (exchanges within the window) defers all persistence until the window elapses after the last exchange: a mid-conversation crash loses only that burst's uncommitted work, recovered at the next fire or session close. This is the cost of also eliminating the per-exchange agent model call.
+**Alternatives Considered**:
+- Debounce the push only, keep an immediate per-exchange commit: preserves on-disk durability but keeps paying the agent model call every exchange
+- A single shared timer across workspace and projects: would need a host-owned service, breaking the projects→git decoupling invariant
+**Consequences**:
+- Pro: One agent commit + one push per quiet burst instead of per exchange; fires during idle so no exchange is streaming when the commit runs
+- Pro: Finalize and the debounce fire share one `commitAndPushWorkspace`, so both follow identical commit-then-push semantics
+- Con: Up to one debounce window of uncommitted work is at risk during a crash in an active conversation; `0` reverts to close-only persistence
+- Con: One debouncer per extension (the workspace here; [projects](projects.md) has its own), so a workspace fire can transiently commit a submodule pointer one window stale — self-healing on the next fire and guaranteed correct by the close pass's phase ordering (projects `preFinalize` before workspace `finalize`)
 
 ## System Behavior
 

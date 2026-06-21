@@ -16,6 +16,7 @@ import {
   initRepo,
   lastSubject,
   makeTempDir,
+  recordingDebouncer,
 } from "./helpers.ts";
 
 const ctxLog = (): PostProcessorContext["log"] => fakeLogger();
@@ -166,5 +167,20 @@ describe("git processor", () => {
     expect(log.warn).toHaveBeenCalledWith(
       expect.stringContaining("remain after git processor retry"),
     );
+  });
+
+  it("clears and drains the debouncer before committing", async () => {
+    await writeFile(join(workspace, "notes.md"), "content\n", "utf8");
+    const debouncer = recordingDebouncer();
+
+    await createGitProcessor({
+      workspaceRoot: workspace,
+      agent: agentCommittingAs("Add notes"),
+      debouncer,
+    }).process(context());
+
+    expect(debouncer.clear).toHaveBeenCalledTimes(1);
+    expect(debouncer.whenIdle).toHaveBeenCalledTimes(1);
+    expect(await lastSubject(workspace)).toBe("Add notes");
   });
 });

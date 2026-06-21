@@ -8,9 +8,22 @@ import type { CommitAgent } from "../../src/git/commit-agent.ts";
 import { commitSubjects, runGit } from "../../src/git/git.ts";
 import type { RebaseResolver } from "../../src/git/sync.ts";
 import type { Logger } from "../../src/log.ts";
+import type { DebouncedTask } from "../../src/util/debouncer.ts";
 
 export const fakeLogger = (): Logger =>
   ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }) as unknown as Logger;
+
+/**
+ * A `DebouncedTask` stand-in whose methods are `vi.fn()` mocks — `touch()`,
+ * `clear()`, and `whenIdle()` (resolves immediately). Used to assert signal and
+ * drain behavior without arming a real debounce timer.
+ */
+export const recordingDebouncer = (): DebouncedTask =>
+  ({
+    touch: vi.fn(),
+    clear: vi.fn(),
+    whenIdle: vi.fn().mockResolvedValue(undefined),
+  }) as unknown as DebouncedTask;
 
 export const makeTempDir = (): Promise<string> => mkdtemp(join(tmpdir(), "tachi-git-"));
 
