@@ -37,7 +37,7 @@ Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the 
 7. `EventBus`, `Scheduler`, `createRegistrations()` — passive services
 8. `AgentManager`, `SessionRegistry`, `Coordinator` — runtime consumers of the registrations
 9. `host.load(firstPartyExtensions)` — extension setups in list order, then `host.bootstrap()` runs all hooks
-10. `coordinator.recoverUnprocessedSessions()` — close and post-process sessions a previous run left without completed post-processing (left open, or closed but interrupted before state persisted)
+10. `coordinator.recoverStaleTrunks()` — close and post-process trunks a previous run left without completed post-processing (left open, or closed but interrupted before state persisted)
 11. Channel resolution (`--channel` flag or `channels.default`), `channel.start`, then `coordinator.run(signal)` until a `ShutdownController` aborts on `SIGINT`/`SIGTERM`/`uncaughtException`/`unhandledRejection`
 
 The three `adapt*` calls are best-effort legacy migrations (see [migration](../feature-designs/migration.md)); they sit between workspace creation and the runtime services so translated config/workspace/data is in place before anything reads it.
