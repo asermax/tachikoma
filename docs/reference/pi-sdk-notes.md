@@ -1,6 +1,6 @@
-# pi SDK — verified API surface (0.79.1)
+# pi SDK — verified API surface (0.79.6)
 
-Verified against the installed `@earendil-works/pi-coding-agent@0.79.1` package (docs and `.d.ts` shipped in the package). This is the ground truth for how Tachikoma embeds pi. Re-verify on every pi upgrade — the project is pre-1.0 and fast-moving.
+Verified against the installed `@earendil-works/pi-coding-agent` package (docs and `.d.ts` shipped in the package). This is the ground truth for how Tachikoma embeds pi. Re-verify on every pi upgrade — the project is pre-1.0 and fast-moving. The surface was originally documented at `0.79.1`; the load-bearing daily-trunk primitives (`branch`/`branchWithSummary`/`appendCustomEntry`, the append-only re-seat model DLT-181 rollback depends on) were re-confirmed present and stable at `0.79.6` during DLT-181 implementation. Re-verify on the next minor bump.
 
 ## Packages
 
