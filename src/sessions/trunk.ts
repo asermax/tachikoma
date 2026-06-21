@@ -21,13 +21,19 @@ import type { KeyValueState } from "../db/state.ts";
  */
 
 /**
- * Custom-type tags for the entries this module reads and writes. Exported so the boundary rewrite (B3)
- * and the trunk-close pipeline (B6) reuse the SAME tags — these strings are the contract between the
- * writer and every later reader, so they must never drift.
+ * Custom-type tags for the entries this module reads and writes. Exported so the boundary rewrite
+ * (DLT-181) and the trunk-close pipeline reuse the SAME tags — these strings are the contract between
+ * the writer and every later reader, so they must never drift.
  */
 export const BRANCH_SUMMARY = "tachikoma-branch-summary";
 export const BOOMERANG_STATE = "tachikoma-boomerang-state";
 export const COMPLETION_MARKER = "tachikoma-completion-marker";
+/**
+ * Marker appended at rollback (KD6) to orphan a `branch_summary` that a reversed automatic decision
+ * left behind. A summary entry cannot be mutated (the tree is append-only), so its effective kind is
+ * computed at read time from this marker — see {@link effectiveKind}.
+ */
+export const REVERSAL = "tachikoma-reversal";
 
 /** Marker `kind`s distinguishing the two idempotency markers stored under {@link COMPLETION_MARKER}. */
 const MARKER_KIND = {
@@ -45,6 +51,11 @@ interface BranchExtractedMarker {
 interface StepDoneMarker {
   kind: typeof MARKER_KIND.stepDone;
   step: string;
+}
+
+/** Payload of a {@link REVERSAL} marker naming the orphaned `branch_summary` entry. */
+interface ReversalMarker {
+  summaryEntryId: string;
 }
 
 /** The active-trunk pointer persisted under `app_state["trunk"]["active"]`. */
@@ -65,11 +76,32 @@ export interface BranchRecord {
   lastExchange: string | null;
 }
 
-/** Boomerang snapshot rebuilt on reload; latest snapshot on the branch path wins. */
+/**
+ * An automatic branching decision recorded so `/rollback` can reverse it (KD5). Only `set-checkpoint`
+ * and `new` are rollback targets; manual decisions, `continue`, and `summarize-to-checkpoint` are not
+ * recorded. The triggering message is read from the tree at rollback time, so this stores the leaf
+ * *before* the triggering exchange rather than a message id.
+ */
+export interface AutoDecision {
+  kind: "set-checkpoint" | "new";
+  /** The leaf id immediately before the triggering exchange (rollback rewinds here via `reseatLeaf`). */
+  preDecisionLeafId: string;
+}
+
+/**
+ * Boomerang snapshot rebuilt on reload; latest snapshot on the branch path wins (append-only, so the
+ * last entry's `data` is authoritative). Checkpoint and last-auto-decision state (DLT-181) ride the
+ * same snapshot — reusing the boomerang entry avoids a new persistence surface (KD1/KD5). Old snapshots
+ * written before those fields existed are normalized on read with both defaulting to `null`.
+ */
 export interface BoomerangState {
   currentTopicBaseId: string | null;
   lastDecision: string | null;
   relatedBranchId: string | null;
+  /** The main-line tip entry id of the active checkpoint, or null when none is set. */
+  checkpointId: string | null;
+  /** The most recent automatic branching decision (a `/rollback` target), or null. */
+  lastAutoDecision: AutoDecision | null;
 }
 
 const ACTIVE_KEY = "active";
@@ -227,8 +259,10 @@ interface BranchSummaryLike {
 
 /**
  * The id the live (un-collapsed) branch will carry when it collapses: the next `topic-N` after the
- * branches already recorded. Centralized so the id written mid-branch (Telegram routing, the boundary
- * collapse call) is computed the same way everywhere and matches the id `getBranchRecords` assigns.
+ * topic branches already recorded. Centralized so the id written mid-branch (Telegram routing, the
+ * boundary collapse call) is computed the same way everywhere and matches the id `getBranchRecords`
+ * assigns. Counts only the filtered topic set, so parked-away tangents/reversed summaries never perturb
+ * the `topic-N` sequence (KD3).
  */
 export const nextBranchId = (records: BranchRecord[]): string => `topic-${records.length + 1}`;
 
@@ -243,32 +277,118 @@ const branchSummaryEntries = (session: AgentSession): BranchSummaryLike[] =>
       (entry as BranchSummaryLike).details?.customType === BRANCH_SUMMARY,
   );
 
+interface ValidatedSummary {
+  id: string;
+  details: BranchSummaryDetails;
+}
+
 /**
- * Rebuild every collapsed branch's record from the file. Branch ids are deterministic: the Nth
- * branch summary in file order is `topic-N`, so ids are stable across reloads. Referenced ids are
- * validated against the live tree (`getEntry`); an unresolvable reference drops the record rather than
- * handing a dangling pointer to `ask_branch`/extraction.
+ * Branch summaries with resolvable references, in file order. The shared base for every enumeration:
+ * `getBranchRecords` (topics only), `getAllBranchRecords` (all), and `nextTangentId` (tangents only)
+ * project from this, so the kind filter and reference validation each live in exactly one place.
+ * Referenced ids are validated against the live tree (`getEntry`); an unresolvable reference drops the
+ * record rather than handing a dangling pointer to `ask_branch`/extraction.
  */
-export const getBranchRecords = (session: AgentSession): BranchRecord[] => {
-  const records: BranchRecord[] = [];
-
-  branchSummaryEntries(session).forEach((entry, index) => {
+const validatedSummaries = (session: AgentSession): ValidatedSummary[] =>
+  branchSummaryEntries(session).flatMap((entry) => {
     const details = entry.details;
-
-    if (details == null) return;
-    if (getEntry(session, details.originalLeafId) == null) return;
-    if (details.baseId != null && getEntry(session, details.baseId) == null) return;
-
-    records.push({
-      branchId: `topic-${index + 1}`,
-      originalLeafId: details.originalLeafId,
-      baseId: details.baseId,
-      summaryEntryId: entry.id,
-      lastExchange: details.lastExchange ?? null,
-    });
+    if (details == null) return [];
+    if (getEntry(session, details.originalLeafId) == null) return [];
+    if (details.baseId != null && getEntry(session, details.baseId) == null) return [];
+    return [{ id: entry.id, details }];
   });
 
-  return records;
+/** Marker entries naming reversed `branch_summary` ids (mirrors the completion-marker scan). */
+const readReversedSet = (session: AgentSession): Set<string> =>
+  new Set(
+    enumerateEntries(session)
+      .filter((entry) => entry.type === "custom" && entry.customType === REVERSAL)
+      .map((entry) => (entry as { data?: ReversalMarker }).data)
+      .filter((data): data is ReversalMarker => data != null)
+      .map((data) => data.summaryEntryId),
+  );
+
+/** Append a reversal marker orphaning `summaryEntryId` (KD6). */
+export const markReversed = (session: AgentSession, summaryEntryId: string): string =>
+  appendState(session, REVERSAL, { summaryEntryId } satisfies ReversalMarker);
+
+/**
+ * The kind a consumer should treat a branch summary as: `"reversed"` when a reversal marker names it
+ * (KD6), otherwise its persisted `details.kind` (defaulting to `"topic"` for summaries written before
+ * the discriminator existed). The single discriminator consulted by `getBranchRecords`, `ask_branch`,
+ * DLT-182's `open_branch`, and extraction.
+ */
+export const effectiveKind = (
+  session: AgentSession,
+  summaryEntryId: string,
+  kind: "topic" | "tangent" = "topic",
+): "topic" | "tangent" | "reversed" =>
+  readReversedSet(session).has(summaryEntryId) ? "reversed" : kind;
+
+const toRecord = (summary: ValidatedSummary, index: number): BranchRecord => ({
+  branchId: `topic-${index + 1}`,
+  originalLeafId: summary.details.originalLeafId,
+  baseId: summary.details.baseId,
+  summaryEntryId: summary.id,
+  lastExchange: summary.details.lastExchange ?? null,
+});
+
+/**
+ * Rebuild EVERY collapsed branch's record from the file, unfiltered — topics, tangents, and reversed
+ * summaries all included. Internal callers only: the tangent counter (`nextTangentId`) and rollback
+ * target lookup (which resolves by `summaryEntryId`). Public branch-query consumers must use
+ * {@link getBranchRecords} so tangents/reversed summaries stay parked away. `branchId` here is the raw
+ * `topic-N`-by-position over all summaries and is NOT the public topic identity for non-topic records.
+ */
+export const getAllBranchRecords = (session: AgentSession): BranchRecord[] =>
+  validatedSummaries(session).map(toRecord);
+
+/**
+ * Rebuild the topic branches only — the single kind-filter chokepoint (KD3/KD6/KD7). Tangents and
+ * reversed summaries are excluded here, so `ask_branch`, related-branch matching, and trunk-close
+ * memory extraction (which source this list through the coordinator) all skip them in one place, and
+ * the `topic-N` ids stay clean. Branch ids are deterministic: the Nth topic summary in file order is
+ * `topic-N`, so ids are stable across reloads.
+ */
+export const getBranchRecords = (session: AgentSession): BranchRecord[] =>
+  validatedSummaries(session)
+    .filter(
+      (summary) => effectiveKind(session, summary.id, summary.details.kind ?? "topic") === "topic",
+    )
+    .map(toRecord);
+
+/**
+ * The next `tangent-N` id for a tangent about to be summarized — tangents count on their own sequence,
+ * independent of `topic-N`, counting only tangent-kind summaries so reversed tangents don't perturb it.
+ */
+export const nextTangentId = (session: AgentSession): string => {
+  const count = validatedSummaries(session).filter(
+    (summary) => effectiveKind(session, summary.id, summary.details.kind ?? "topic") === "tangent",
+  ).length;
+
+  return `tangent-${count + 1}`;
+};
+
+/** A snapshot with every field absent — the backward-compatible default for a pre-delta file. */
+const emptyBoomerangState = (): BoomerangState => ({
+  currentTopicBaseId: null,
+  lastDecision: null,
+  relatedBranchId: null,
+  checkpointId: null,
+  lastAutoDecision: null,
+});
+
+/**
+ * Fill absent fields with their defaults so a snapshot written before `checkpointId`/`lastAutoDecision`
+ * existed reads back complete (both default to `null`). The session file is the source of truth
+ * (ADR-014) and outlives this code, so reads must tolerate the older shape.
+ */
+const normalizeBoomerangState = (
+  data: Partial<BoomerangState> | undefined,
+): BoomerangState | null => {
+  if (data == null) return null;
+
+  return { ...emptyBoomerangState(), ...data };
 };
 
 /** Latest boomerang snapshot on the branch path wins (custom entries are append-only). */
@@ -277,11 +397,51 @@ export const readBoomerangState = (session: AgentSession): BoomerangState | null
     (entry) => entry.type === "custom" && entry.customType === BOOMERANG_STATE,
   );
 
-  return (snapshots.at(-1) as { data?: BoomerangState } | undefined)?.data ?? null;
+  return normalizeBoomerangState(
+    (snapshots.at(-1) as { data?: Partial<BoomerangState> } | undefined)?.data,
+  );
 };
 
 export const writeBoomerangState = (session: AgentSession, snapshot: BoomerangState): string =>
   appendState(session, BOOMERANG_STATE, snapshot);
+
+/**
+ * Append a new boomerang snapshot that merges `patch` over the latest one. Because the snapshot is
+ * latest-wins and append-only, a partial update must re-write the whole snapshot (merged with the prior
+ * fields) — otherwise a later reader taking this entry's `data` would lose every field not in `patch`.
+ */
+const patchBoomerangState = (session: AgentSession, patch: Partial<BoomerangState>): void => {
+  writeBoomerangState(session, {
+    ...(readBoomerangState(session) ?? emptyBoomerangState()),
+    ...patch,
+  });
+};
+
+// ---- checkpoint + decision-log lifecycle (DLT-181) ----------------------------
+//
+// The boundary middleware's write path for checkpoint state (KD1) and the auto-decision log (KD5).
+// These mutate boomerang-state directly rather than the read-only `TrunkInbound` snapshot the
+// middleware receives; clearing is an append (a `null`/override snapshot), never a deletion —
+// consistent with the append-only model.
+
+/** Set the active checkpoint at `leafId`, overriding any prior one (R2). One is active at a time. */
+export const setCheckpoint = (session: AgentSession, leafId: string): void =>
+  patchBoomerangState(session, { checkpointId: leafId });
+
+/** Clear the active checkpoint (e.g. after the tangent it marked is summarized away). */
+export const clearCheckpoint = (session: AgentSession): void =>
+  patchBoomerangState(session, { checkpointId: null });
+
+/** Record an automatic branching decision so `/rollback` can reverse it later (KD5). */
+export const recordLastAutoDecision = (
+  session: AgentSession,
+  kind: AutoDecision["kind"],
+  preDecisionLeafId: string,
+): void => patchBoomerangState(session, { lastAutoDecision: { kind, preDecisionLeafId } });
+
+/** Clear the auto-decision log once a reversal is staged (consumed by `/rollback`). */
+export const clearLastAutoDecision = (session: AgentSession): void =>
+  patchBoomerangState(session, { lastAutoDecision: null });
 
 const completionMarkers = (session: AgentSession): Array<BranchExtractedMarker | StepDoneMarker> =>
   enumerateEntries(session)

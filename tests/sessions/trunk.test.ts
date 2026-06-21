@@ -4,15 +4,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BranchSummaryDetails } from "../../src/agent/session-tree.ts";
 import type { KeyValueState } from "../../src/db/state.ts";
 import {
+  BOOMERANG_STATE,
   BRANCH_SUMMARY,
+  clearCheckpoint,
+  clearLastAutoDecision,
+  effectiveKind,
+  getAllBranchRecords,
   getBranchRecords,
   isBranchExtracted,
   isStepDone,
   localDay,
   markBranchExtracted,
+  markReversed,
   markStepDone,
+  nextBranchId,
+  nextTangentId,
   openOrCreateTrunk,
   readBoomerangState,
+  recordLastAutoDecision,
+  setCheckpoint,
   TrunkState,
   writeBoomerangState,
 } from "../../src/sessions/trunk.ts";
@@ -101,6 +111,11 @@ const makeSession = (sessionFile: string | undefined, initial: SessionEntry[] = 
     _entries: entries,
     _leaf: () => leafId,
   } as unknown as AgentSession & { _leaf: () => string | null };
+};
+
+/** Append a boomerang snapshot with arbitrary (partial) data, simulating an older file shape. */
+const appendRawBoomerang = (session: AgentSession, data: unknown): void => {
+  session.sessionManager.appendCustomEntry(BOOMERANG_STATE, data);
 };
 
 beforeEach(() => {
@@ -270,6 +285,8 @@ describe("openOrCreateTrunk", () => {
       currentTopicBaseId: "sum-1",
       lastDecision: "shift",
       relatedBranchId: null,
+      checkpointId: null,
+      lastAutoDecision: null,
     });
 
     const trunk = new TrunkState(makeState());
@@ -379,17 +396,41 @@ describe("boomerang state", () => {
       currentTopicBaseId: "a",
       lastDecision: "continue",
       relatedBranchId: null,
+      checkpointId: null,
+      lastAutoDecision: null,
     });
     writeBoomerangState(session, {
       currentTopicBaseId: "b",
       lastDecision: "shift",
       relatedBranchId: "topic-1",
+      checkpointId: null,
+      lastAutoDecision: null,
     });
 
     expect(readBoomerangState(session)).toEqual({
       currentTopicBaseId: "b",
       lastDecision: "shift",
       relatedBranchId: "topic-1",
+      checkpointId: null,
+      lastAutoDecision: null,
+    });
+  });
+
+  it("normalizes a pre-delta snapshot lacking checkpoint/lastAutoDecision (backward-compat)", () => {
+    // A snapshot written before DLT-181 carries only the original three fields.
+    const session = makeSession("/s/today.jsonl");
+    appendRawBoomerang(session, {
+      currentTopicBaseId: "sum-1",
+      lastDecision: "shift",
+      relatedBranchId: null,
+    });
+
+    expect(readBoomerangState(session)).toEqual({
+      currentTopicBaseId: "sum-1",
+      lastDecision: "shift",
+      relatedBranchId: null,
+      checkpointId: null,
+      lastAutoDecision: null,
     });
   });
 });
@@ -418,5 +459,136 @@ describe("completion markers", () => {
     expect(isStepDone(session, "prune")).toBe(false);
     // a branch marker named like a step must not satisfy the step query
     expect(isStepDone(session, "topic-9")).toBe(false);
+  });
+});
+
+describe("branch kind discriminator (DLT-181)", () => {
+  const topicSummary = (id: string, leafId: string, baseId: string | null = null): SessionEntry =>
+    branchSummaryEntry(id, {
+      customType: BRANCH_SUMMARY,
+      branchId: "topic-x",
+      kind: "topic",
+      originalLeafId: leafId,
+      baseId,
+    });
+
+  const tangentSummary = (id: string, leafId: string, baseId: string): SessionEntry =>
+    branchSummaryEntry(id, {
+      customType: BRANCH_SUMMARY,
+      branchId: "tangent-x",
+      kind: "tangent",
+      tangentId: "tangent-x",
+      originalLeafId: leafId,
+      baseId,
+    });
+
+  it("getBranchRecords excludes tangents and reversed summaries, keeping topic-N clean (KD3/KD6)", () => {
+    const leaf1 = messageEntry();
+    const tangentLeaf = messageEntry();
+    const leaf2 = messageEntry();
+    const session = makeSession("/s/today.jsonl", [
+      leaf1,
+      topicSummary("sum-1", leaf1.id),
+      tangentLeaf,
+      tangentSummary("tan-1", tangentLeaf.id, "sum-1"),
+      leaf2,
+      topicSummary("sum-2", leaf2.id, "sum-1"),
+    ]);
+
+    // Only the two topics are enumerated; the tangent is parked away (KD3/KD7).
+    expect(getBranchRecords(session).map((record) => record.summaryEntryId)).toEqual([
+      "sum-1",
+      "sum-2",
+    ]);
+    // nextBranchId counts only topics, so a tangent in the middle does not perturb topic-N.
+    expect(nextBranchId(getBranchRecords(session))).toBe("topic-3");
+  });
+
+  it("getAllBranchRecords returns every summary including tangents (internal callers)", () => {
+    const leaf1 = messageEntry();
+    const tangentLeaf = messageEntry();
+    const session = makeSession("/s/today.jsonl", [
+      leaf1,
+      topicSummary("sum-1", leaf1.id),
+      tangentLeaf,
+      tangentSummary("tan-1", tangentLeaf.id, "sum-1"),
+    ]);
+
+    expect(getAllBranchRecords(session).map((record) => record.summaryEntryId)).toEqual([
+      "sum-1",
+      "tan-1",
+    ]);
+  });
+
+  it("nextTangentId advances on its own sequence, independent of topic-N", () => {
+    const leaf1 = messageEntry();
+    const t1 = messageEntry();
+    const session = makeSession("/s/today.jsonl", [
+      leaf1,
+      topicSummary("sum-1", leaf1.id),
+      t1,
+      tangentSummary("tan-1", t1.id, "sum-1"),
+    ]);
+
+    expect(nextTangentId(session)).toBe("tangent-2");
+  });
+
+  it("effectiveKind reports reversed for a markered summary, tangent for tangents, topic otherwise", () => {
+    const leaf1 = messageEntry();
+    const tangentLeaf = messageEntry();
+    const reversedLeaf = messageEntry();
+    const session = makeSession("/s/today.jsonl", [
+      leaf1,
+      topicSummary("sum-1", leaf1.id),
+      tangentLeaf,
+      tangentSummary("tan-1", tangentLeaf.id, "sum-1"),
+      reversedLeaf,
+      topicSummary("sum-2", reversedLeaf.id, "sum-1"),
+    ]);
+
+    expect(effectiveKind(session, "sum-1", "topic")).toBe("topic");
+    expect(effectiveKind(session, "tan-1", "tangent")).toBe("tangent");
+
+    markReversed(session, "sum-2");
+    expect(effectiveKind(session, "sum-2", "topic")).toBe("reversed");
+    // A reversed summary drops out of the topic enumeration too (KD6).
+    expect(getBranchRecords(session).map((record) => record.summaryEntryId)).toEqual(["sum-1"]);
+  });
+});
+
+describe("checkpoint + decision-log lifecycle (DLT-181)", () => {
+  it("setCheckpoint records the tip and overrides a prior checkpoint (R2)", () => {
+    const session = makeSession("/s/today.jsonl");
+
+    setCheckpoint(session, "leaf-1");
+    expect(readBoomerangState(session)?.checkpointId).toBe("leaf-1");
+
+    setCheckpoint(session, "leaf-2");
+    expect(readBoomerangState(session)?.checkpointId).toBe("leaf-2");
+  });
+
+  it("clearCheckpoint nulls the checkpoint, preserving the rest of the snapshot", () => {
+    const session = makeSession("/s/today.jsonl");
+    setCheckpoint(session, "leaf-1");
+    recordLastAutoDecision(session, "new", "leaf-0");
+
+    clearCheckpoint(session);
+
+    const state = readBoomerangState(session);
+    expect(state?.checkpointId).toBeNull();
+    expect(state?.lastAutoDecision).toEqual({ kind: "new", preDecisionLeafId: "leaf-0" });
+  });
+
+  it("recordLastAutoDecision/clearLastAutoDecision round-trip", () => {
+    const session = makeSession("/s/today.jsonl");
+
+    recordLastAutoDecision(session, "set-checkpoint", "leaf-0");
+    expect(readBoomerangState(session)?.lastAutoDecision).toEqual({
+      kind: "set-checkpoint",
+      preDecisionLeafId: "leaf-0",
+    });
+
+    clearLastAutoDecision(session);
+    expect(readBoomerangState(session)?.lastAutoDecision).toBeNull();
   });
 });

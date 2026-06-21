@@ -497,13 +497,13 @@ export class Coordinator {
     await invoke(0);
   }
 
-  /** Snapshot the live trunk for the inbound middleware (current base, branch records, empty-branch guard). */
+  /** Snapshot the live trunk for the inbound middleware (base, branch records, checkpoint state). */
   private buildTrunkInbound(active: ActiveTrunk): TrunkInbound {
     const branchRecords = getBranchRecords(active.session);
+    const boomerang = readBoomerangState(active.session);
     const currentBaseId =
-      readBoomerangState(active.session)?.currentTopicBaseId ??
-      branchRecords.at(-1)?.summaryEntryId ??
-      null;
+      boomerang?.currentTopicBaseId ?? branchRecords.at(-1)?.summaryEntryId ?? null;
+    const checkpointId = boomerang?.checkpointId ?? null;
 
     return {
       session: active.session,
@@ -512,6 +512,9 @@ export class Coordinator {
       branchRecords,
       liveBranchId: nextBranchId(branchRecords),
       hasAssistantTurnSinceBase: hasAssistantTurnSinceBase(active.session, currentBaseId),
+      checkpointId,
+      checkpointActive: checkpointId != null,
+      lastAutoDecision: boomerang?.lastAutoDecision ?? null,
     };
   }
 

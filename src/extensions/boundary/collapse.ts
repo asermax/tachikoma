@@ -9,7 +9,7 @@ import {
 } from "../../agent/session-tree.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
 import type { Logger } from "../../log.ts";
-import { BRANCH_SUMMARY, writeBoomerangState } from "../../sessions/trunk.ts";
+import { BRANCH_SUMMARY, readBoomerangState, writeBoomerangState } from "../../sessions/trunk.ts";
 
 /**
  * Branch collapse. On a topic shift the current branch is summarized and recorded on
@@ -86,6 +86,8 @@ export const collapseCurrentTopic = async (
     const details: BranchSummaryDetails = {
       customType: BRANCH_SUMMARY,
       branchId: args.branchId,
+      // Topic collapses are the default branch kind; tangents (DLT-181) set "tangent" via collapseTangent.
+      kind: "topic",
       originalLeafId,
       baseId: args.currentBaseId,
       reason: args.reason,
@@ -94,10 +96,17 @@ export const collapseCurrentTopic = async (
 
     const newBaseId = branchWithSummary(args.session, args.currentBaseId, summary, details);
 
+    // A topic collapse invalidates any active checkpoint — the main-line point it marked is gone — so
+    // checkpointId clears (R2). The auto-decision log is written separately by the decision path and is
+    // preserved here (not reset by a shift), so a prior automatic decision stays a rollback target.
+    const priorAutoDecision = readBoomerangState(args.session)?.lastAutoDecision ?? null;
+
     writeBoomerangState(args.session, {
       currentTopicBaseId: newBaseId,
       lastDecision: "shift",
       relatedBranchId: null,
+      checkpointId: null,
+      lastAutoDecision: priorAutoDecision,
     });
 
     deps.log.info(

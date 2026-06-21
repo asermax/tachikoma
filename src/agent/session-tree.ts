@@ -1,5 +1,7 @@
 import type { AgentSession, SessionEntry } from "@earendil-works/pi-coding-agent";
 
+import { BRANCH_SUMMARY } from "../sessions/trunk.ts";
+
 /**
  * Typed, named access to pi's session-tree primitives (`SessionManager`), centralized so the
  * daily-trunk model has one seam over the SDK. Tachikoma reverses the earlier "bypass the pi session
@@ -15,8 +17,17 @@ import type { AgentSession, SessionEntry } from "@earendil-works/pi-coding-agent
 export interface BranchSummaryDetails {
   /** Custom-type tag distinguishing our branch summaries from pi-native ones. */
   customType: string;
-  /** Deterministic `topic-N` id (N = count of branch_summary entries at collapse + 1). */
+  /** Deterministic `topic-N` (topics) or `tangent-N` (tangents) id; N = position among same-kind summaries + 1. */
   branchId: string;
+  /**
+   * What this summary records: `"topic"` (a collapsed prior topic — the default) or `"tangent"` (a
+   * summarized side conversation parked at a checkpoint, DLT-181). Absent on summaries written before
+   * the discriminator existed; readers treat absence as `"topic"`. `"reversed"` is never persisted — it
+   * is computed at read time from a reversal marker (see `effectiveKind` in `sessions/trunk.ts`).
+   */
+  kind?: "topic" | "tangent";
+  /** For tangents: the `tangent-N` id on its own sequence, separate from `topic-N`. Undefined for topics. */
+  tangentId?: string;
   /**
    * Leaf of the abandoned branch at collapse. `branchWithSummary` does NOT record the abandoned
    * leaf, so we store it ourselves — this is what makes the full branch reachable afterwards via
@@ -42,6 +53,38 @@ export const branchWithSummary = (
   summary: string,
   details: BranchSummaryDetails,
 ): string => session.sessionManager.branchWithSummary(branchFromId, summary, details, true);
+
+export interface CollapseTangentOptions {
+  /** The tangent's own `tangent-N` id (separate sequence from `topic-N`). */
+  tangentId: string;
+  /** The abandoned tip (leaf of the tangent branch at collapse), stored so the branch stays reachable. */
+  originalLeafId: string;
+}
+
+/**
+ * Collapse a tangent rooted at `checkpointId` into a `branch_summary` and re-seat the leaf onto it, so
+ * the main line resumes at the checkpoint (R5). The checkpoint entry is the `branchFromId`, so the
+ * tangent folds into a summary rooted at the main-line tip — only the tangent is parked away, never the
+ * main line (the defining difference from a topic shift). `details.kind = "tangent"` marks it for the
+ * kind-filter chokepoint (KD3); the summary is then excluded from `getBranchRecords`/`ask_branch`/
+ * extraction. Returns the new summary entry id (the resumed main-line tip).
+ *
+ * See ADR-014: the tree is append-only, so this is a collapse + re-seat, never a move/delete.
+ */
+export const collapseTangent = (
+  session: AgentSession,
+  checkpointId: string,
+  summary: string,
+  options: CollapseTangentOptions,
+): string =>
+  branchWithSummary(session, checkpointId, summary, {
+    customType: BRANCH_SUMMARY,
+    branchId: options.tangentId,
+    kind: "tangent",
+    tangentId: options.tangentId,
+    originalLeafId: options.originalLeafId,
+    baseId: checkpointId,
+  });
 
 /** Walk from `fromId` (default: current leaf) to root, returning entries in path order. */
 export const getBranchEntries = (session: AgentSession, fromId?: string): SessionEntry[] =>
@@ -97,6 +140,14 @@ export const messageText = (entry: SessionEntry): string => {
 
 export const getLeafId = (session: AgentSession): string | null =>
   session.sessionManager.getLeafId();
+
+/**
+ * Whether at least one turn follows the checkpoint — the empty-tangent guard (KD2). When the leaf is
+ * still the checkpoint itself, there is no tangent to summarize: `/back` must short-circuit before the
+ * append-only collapse primitive, which would otherwise create a vacuous summary.
+ */
+export const checkpointHasTangent = (session: AgentSession, checkpointId: string): boolean =>
+  getLeafId(session) !== checkpointId;
 
 /**
  * The session's creation instant (its header timestamp), or null if absent. Used to recover a

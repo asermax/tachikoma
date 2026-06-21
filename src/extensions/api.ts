@@ -14,7 +14,7 @@ import type { CommitAgent } from "../git/commit-agent.ts";
 import type { PushResult, RebaseResolver, SyncResult } from "../git/sync.ts";
 import type { Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
-import type { BranchRecord } from "../sessions/trunk.ts";
+import type { AutoDecision, BranchRecord } from "../sessions/trunk.ts";
 import type { Workspace } from "../workspace.ts";
 
 // ---- pipeline contracts -----------------------------------------------------
@@ -75,6 +75,12 @@ export interface TrunkInbound {
   liveBranchId: string;
   /** Whether the live branch has at least one assistant turn since its base (empty-branch guard). */
   hasAssistantTurnSinceBase: boolean;
+  /** The active checkpoint's main-line tip entry id, or null when none is set (DLT-181). */
+  checkpointId: string | null;
+  /** Whether an active checkpoint marks a returnable main-line point (checkpointId != null). */
+  checkpointActive: boolean;
+  /** The most recent automatic branching decision (a `/rollback` target), or null. */
+  lastAutoDecision: AutoDecision | null;
 }
 
 export interface InboundContext {

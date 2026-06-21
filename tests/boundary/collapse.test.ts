@@ -24,6 +24,8 @@ const makeSession = (overrides: Partial<Record<string, unknown>> = {}) => {
 
   const sessionManager = {
     getLeafId: () => "leaf-3",
+    // collapseCurrentTopic reads boomerang state to preserve lastAutoDecision across the shift snapshot.
+    getEntries: () => [],
     getBranch: () => [
       message("base", "assistant", "earlier summary base"),
       message("u1", "user", "fix the build"),
@@ -74,6 +76,7 @@ describe("collapseCurrentTopic", () => {
     expect(branchCalls[0].details).toEqual({
       customType: BRANCH_SUMMARY,
       branchId: "topic-2",
+      kind: "topic",
       originalLeafId: "leaf-3",
       baseId: "base",
       reason: "clear shift",
@@ -85,6 +88,9 @@ describe("collapseCurrentTopic", () => {
       currentTopicBaseId: "summary-entry-9",
       lastDecision: "shift",
       relatedBranchId: null,
+      // a topic collapse invalidates any active checkpoint; lastAutoDecision is preserved (none here)
+      checkpointId: null,
+      lastAutoDecision: null,
     });
   });
 
@@ -113,5 +119,27 @@ describe("collapseCurrentTopic", () => {
 
     expect(result).toBeNull();
     expect(side.complete).not.toHaveBeenCalled();
+  });
+
+  it("clears checkpointId and preserves lastAutoDecision across a topic-shift collapse (R2)", async () => {
+    const priorDecision = { kind: "set-checkpoint" as const, preDecisionLeafId: "leaf-0" };
+    const { session, custom } = makeSession({
+      getEntries: () => [
+        { type: "custom", customType: BOOMERANG_STATE, data: { lastAutoDecision: priorDecision } },
+      ],
+    });
+    const side = { complete: vi.fn().mockResolvedValue("summary") };
+
+    await collapseCurrentTopic(
+      { side, log: fakeLog },
+      { session, currentBaseId: "base", branchId: "topic-2" },
+    );
+
+    // The shift snapshot invalidates the checkpoint but carries the decision log forward.
+    const boomerang = custom.find((c) => c.customType === BOOMERANG_STATE);
+    expect(boomerang?.data).toMatchObject({
+      checkpointId: null,
+      lastAutoDecision: priorDecision,
+    });
   });
 });

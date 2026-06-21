@@ -6,6 +6,8 @@ import {
   appendState,
   type BranchSummaryDetails,
   branchWithSummary,
+  checkpointHasTangent,
+  collapseTangent,
   enumerateEntries,
   getBranchEntries,
   getEntry,
@@ -13,6 +15,7 @@ import {
   reseatLeaf,
   sessionCreatedAt,
 } from "../../src/agent/session-tree.ts";
+import { BRANCH_SUMMARY } from "../../src/sessions/trunk.ts";
 
 const makeSession = () => {
   const sessionManager = {
@@ -69,6 +72,37 @@ describe("session-tree helpers", () => {
     const session = makeSession();
     reseatLeaf(session, "base-1");
     expect(session.sessionManager.branch).toHaveBeenCalledWith("base-1");
+  });
+
+  it("collapseTangent delegates to branchWithSummary rooted at the checkpoint with tangent details (R5)", () => {
+    const session = makeSession();
+
+    const id = collapseTangent(session, "checkpoint-1", "tangent summary", {
+      tangentId: "tangent-1",
+      originalLeafId: "leaf-9",
+    });
+
+    expect(id).toBe("summary-1");
+    expect(session.sessionManager.branchWithSummary).toHaveBeenCalledWith(
+      "checkpoint-1",
+      "tangent summary",
+      {
+        customType: BRANCH_SUMMARY,
+        branchId: "tangent-1",
+        kind: "tangent",
+        tangentId: "tangent-1",
+        originalLeafId: "leaf-9",
+        baseId: "checkpoint-1",
+      },
+      true,
+    );
+  });
+
+  it("checkpointHasTangent is false when the leaf is the checkpoint (empty-tangent guard, KD2)", () => {
+    const session = makeSession(); // getLeafId => "leaf-9"
+
+    expect(checkpointHasTangent(session, "leaf-9")).toBe(false);
+    expect(checkpointHasTangent(session, "checkpoint-1")).toBe(true);
   });
 
   it("appends out-of-context state and hidden in-context entries", () => {
