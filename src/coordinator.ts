@@ -134,10 +134,14 @@ export class Coordinator {
           }
         : message;
 
-    // Messages arriving mid-exchange steer the live run instead of waiting in line.
+    // Slash commands never steer: they belong to the inbound middleware and must queue to run through
+    // that chain (a command fed to the live run — e.g. /rollback right after /stop aborts it — lands
+    // as literal text, never executed). isCommand reads the original text, so /new and /queue —
+    // normalized to plain text above — are still caught.
+    const isCommand = message.text.trim().startsWith("/");
+
     if (
-      !queued &&
-      !forceNew &&
+      !isCommand &&
       this.exchanging &&
       this.active != null &&
       normalized.metadata.origin !== "system"

@@ -257,6 +257,49 @@ describe("Coordinator.submit steering", () => {
 
     expect(session.steer).not.toHaveBeenCalled();
   });
+
+  it("queues a slash command mid-exchange instead of steering it (e.g. /rollback after /stop)", async () => {
+    const session = createSession({
+      prompt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
+          }),
+      ),
+    });
+    const { coordinator } = makeCoordinator(db, createAgent(session));
+
+    // Submit the command exactly once, from within the first exchange's respond (while
+    // `exchanging` is true) — mirroring /rollback sent right after /stop aborts the run, in the
+    // window before the aborted exchange unwinds.
+    let submittedCommand = false;
+    coordinator.attachChannel(
+      createChannel({
+        respond: vi.fn(async (exchange: Exchange) => {
+          if (!submittedCommand) {
+            submittedCommand = true;
+            coordinator.submit(textMsg("/rollback"));
+          }
+          for await (const _ of exchange.events) {
+            // drain
+          }
+        }),
+      }),
+    );
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("first"));
+
+    // Not steered into the live run; queued and run in order once the exchange unwinds, so it
+    // reaches the inbound middleware (the boundary command handler) — evidenced by a 2nd prompt.
+    await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(2));
+    expect(session.steer).not.toHaveBeenCalled();
+
+    controller.abort();
+    await loop;
+  });
 });
 
 describe("Coordinator.handle full exchange", () => {

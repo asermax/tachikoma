@@ -27,11 +27,11 @@ pi's model is one in-process `AgentSession` per conversation. The daily-trunk mo
 
 ## Design Overview
 
-`Coordinator` (`src/coordinator.ts`) is a single serial loop for *new* exchanges. `submit()` is the entry point: a **pending-input intercept** runs first (bare arg-command → prompt, or capture the next message as an argument), then `/queue `/`/new ` prefix-stripping, then — for a message arriving while an exchange is in flight — steering into the live run via `session.steer()`, else enqueue. `handle()` runs the full exchange: `ensureTrunk()` → inbound middleware chain → (if not `handled`) `streamPrompt` consumed by `channel.respond({ header })` → exchange processors. The header is turn-scoped: read fresh from the exchange's metadata, never carried across turns. Trunk close (nightly cron, lazy stale-day) funnels through `closeTrunkSession()`, which disposes the session, runs the phased marker-guarded post-processing pipeline, and retires the trunk from `unclosed` only on a clean close. Shutdown deliberately leaves the trunk open — it persists across restarts and is closed by the nightly cron or next-startup recovery (see the Shutdown drain decision below), not during teardown.
+`Coordinator` (`src/coordinator.ts`) is a single serial loop for *new* exchanges. `submit()` is the entry point: a **pending-input intercept** runs first (bare arg-command → prompt, or capture the next message as an argument), then `/queue `/`/new ` prefix-stripping, then — for a non-command message arriving while an exchange is in flight — steering into the live run via `session.steer()`; slash commands never steer (they are queued so they reach the inbound middleware), else enqueue. `handle()` runs the full exchange: `ensureTrunk()` → inbound middleware chain → (if not `handled`) `streamPrompt` consumed by `channel.respond({ header })` → exchange processors. The header is turn-scoped: read fresh from the exchange's metadata, never carried across turns. Trunk close (nightly cron, lazy stale-day) funnels through `closeTrunkSession()`, which disposes the session, runs the phased marker-guarded post-processing pipeline, and retires the trunk from `unclosed` only on a clean close. Shutdown deliberately leaves the trunk open — it persists across restarts and is closed by the nightly cron or next-startup recovery (see the Shutdown drain decision below), not during teardown.
 
 ```
 submit() ─ pending-input intercept (bare arg-command → prompt; pending arg → capture)
-         ─ mid-exchange & not /queue & not /new & not system? ─→ session.steer(prompt)
+         ─ mid-exchange & not a slash command & not system? ─→ session.steer(prompt)
          └ else → [inbox] → handle():
   ensureTrunk (open/create today's, lazy stale-day close) → middleware (may collapse/checkpoint/rollback; may set handled → short-circuit) ─┐
                                                                   ▼
@@ -46,7 +46,7 @@ submit() ─ pending-input intercept (bare arg-command → prompt; pending arg �
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/coordinator.ts` | Inbox loop; mid-exchange steering (`submit`→`session.steer`); `/queue`/`/new` opt-out; `abortExchange`; pending-input intercept (R17); middleware chain; trunk lifecycle (ensure/nightly/stale/recover); close pipeline driver; the delivery priority queue; status emission; `replay()` | Serial *new* exchanges, but mid-exchange input steers the live run; promise-based wake; one `ActiveTrunk` (session + pointer); pending-input state is in-memory and ephemeral; replay routes around `submit()` via inbox `unshift` |
+| `src/coordinator.ts` | Inbox loop; mid-exchange steering (`submit`→`session.steer`); slash commands opt out (queued to the middleware; `/queue`/`/new` additionally strip + tag); `abortExchange`; pending-input intercept (R17); middleware chain; trunk lifecycle (ensure/nightly/stale/recover); close pipeline driver; the delivery priority queue; status emission; `replay()` | Serial *new* exchanges, but mid-exchange non-command input steers the live run; promise-based wake; one `ActiveTrunk` (session + pointer); pending-input state is in-memory and ephemeral; replay routes around `submit()` via inbox `unshift` |
 | `src/sessions/trunk.ts` | Trunk identity and on-file state: `TrunkState` (the `app_state` pointer + `unclosed` index), `openOrCreateTrunk`, `BoomerangState`, branch-record enumeration, markers | Pointer + `unclosed` enforce the write-ordering invariant; same-day reopen re-seats the leaf onto the current base; boomerang-state is latest-wins and append-only |
 | `src/channels/types.ts` | `Channel`, `Exchange`, `Delivery` contracts | `respond()` consumes the stream to completion, so channel rendering paces the exchange; optional `header` carries the turn-scoped decision descriptor; `DELIVERY_TIERS` const map (per-tier timing in `delivery-queue.ts`) |
 | `src/domain/message.ts` | `InboundMessage`, `DecisionHeader`, `decisionHeaderFrom` | SDK-free domain types crossing the channel boundary; the header descriptor rides message metadata |
@@ -77,10 +77,10 @@ submit() ─ pending-input intercept (bare arg-command → prompt; pending arg �
 
 ### Serial new exchanges with mid-exchange steering
 
-**Choice**: New exchanges are handled one at a time from the inbox, but a message arriving *while an exchange is in flight* is routed straight into the live run via pi's `session.steer()` rather than queued. `submit()` makes the call: if `exchanging` with an active trunk and a non-system message, it steers; `/queue ` (stripped, tagged `queued`) and `/new ` (stripped, tagged `forceNew`) opt out and wait their turn. A separate `abortExchange()` aborts the run for an explicit stop.
-**Why**: A single-user assistant benefits from redirecting a long run ("actually, focus on X") without waiting. The escape hatches keep the model coherent: `/queue` forces a "wait your turn" exchange, `/new` waits and starts a clean branch, and system-origin injections (delivery digests, replays) are never treated as steering.
-**Alternatives Considered**: Strictly serial, no steering (a quick redirect is invisible until the run settles); concurrent exchanges (no use case for a single-user assistant).
-**Consequences**: Pro — mid-run redirects reach the agent immediately. Con — steered input bypasses inbound middleware and context gathering; a steer failure drops the message (logged) — `/queue` is the workaround.
+**Choice**: New exchanges are handled one at a time from the inbox, but a non-command message arriving *while an exchange is in flight* is routed straight into the live run via pi's `session.steer()` rather than queued. `submit()` makes the call: if `exchanging` with an active trunk and a non-system, non-slash-command message, it steers. Slash commands (`/checkpoint`, `/back`, `/rollback`, `/skill`, etc.) never steer — they queue so they reach the inbound middleware and run in order; `/queue ` (stripped, tagged `queued`) and `/new ` (stripped, tagged `forceNew`) additionally carry their tag. A separate `abortExchange()` aborts the run for an explicit stop.
+**Why**: A single-user assistant benefits from redirecting a long run ("actually, focus on X") without waiting. The escape hatches keep the model coherent: slash commands queue and run through the middleware (a command must be executed, never fed to the live run as literal text — `/rollback` sent right after `/stop` aborts the run lands in the brief window before the exchange unwinds and must still reach its handler), `/queue` forces a "wait your turn" exchange, `/new` waits and starts a clean branch, and system-origin injections (delivery digests, replays) are never treated as steering.
+**Alternatives Considered**: Strictly serial, no steering (a quick redirect is invisible until the run settles); concurrent exchanges (no use case for a single-user assistant); steering slash commands and re-detecting them in the live run (commands belong to the middleware, and steering bypasses it).
+**Consequences**: Pro — mid-run redirects reach the agent immediately, while commands sent mid-exchange still execute once the run unwinds. Con — steered input bypasses inbound middleware and context gathering; a steer failure drops the message (logged) — `/queue` is the workaround.
 
 ### Pending-input interception at the top of `submit()`, in-memory and ephemeral
 
@@ -127,8 +127,14 @@ submit() ─ pending-input intercept (bare arg-command → prompt; pending arg �
 ### Scenario: User redirects a long run mid-exchange
 
 **Given**: The agent is generating a response in the active trunk
-**When**: The user submits "actually, focus on the second file" (no `/queue` prefix)
-**Then**: `submit()` sees `exchanging` with an active non-system trunk and calls `session.steer(prompt)` — the input joins the running generation without starting a new exchange; a `/queue `-prefixed message instead waits for the next exchange.
+**When**: The user submits "actually, focus on the second file" (a non-command message)
+**Then**: `submit()` sees `exchanging` with an active non-system trunk and calls `session.steer(prompt)` — the input joins the running generation without starting a new exchange; a slash command submitted mid-exchange instead queues and waits for the next exchange (it never steers).
+
+### Scenario: A slash command after /stop still reaches its handler
+
+**Given**: The agent is generating a response and the user sends `/stop`, which aborts the run
+**When**: The user immediately sends `/rollback` (during the window after the run aborts but before the exchange unwinds and `exchanging` clears)
+**Then**: `submit()` sees the `/` prefix, does **not** steer it into the aborting run, and queues it; once the aborted exchange unwinds, `/rollback` runs through the inbound middleware and the boundary handler reverses the decision — rather than being fed to the agent as literal text.
 
 ### Scenario: Restart mid-conversation resumes the current branch
 
