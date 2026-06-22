@@ -1,3 +1,12 @@
+# [3.41.0](https://github.com/asermax/tachikoma/compare/v3.40.1...v3.41.0) (2026-06-22)
+
+
+### Features
+
+* **telegram:** add intensive-work collapse detection (DLT-064 Batch 2) ([5647f63](https://github.com/asermax/tachikoma/commit/5647f63761fa34b297b0a89c84a2587ee6c5fb92))
+* **telegram:** add wrapExpandable and concatPayloads payload helpers ([f7a388f](https://github.com/asermax/tachikoma/commit/f7a388f9c978ca83b5a2dffff8809dc5a11949cd))
+* **telegram:** wire collapse-aware payload into compose/finalize (DLT-064 Batch 3) ([afc0482](https://github.com/asermax/tachikoma/commit/afc0482cd016ed058a426903d6cf00359ce4dff7))
+
 ## [3.40.1](https://github.com/asermax/tachikoma/compare/v3.40.0...v3.40.1) (2026-06-22)
 
 
