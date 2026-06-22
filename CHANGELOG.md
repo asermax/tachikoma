@@ -1,3 +1,10 @@
+## [3.40.1](https://github.com/asermax/tachikoma/compare/v3.40.0...v3.40.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **coordinator:** queue slash commands mid-exchange instead of steering ([beb9f53](https://github.com/asermax/tachikoma/commit/beb9f5310f5b3ee3653f2b8faf9ae1b478003259))
+
 # [3.40.0](https://github.com/asermax/tachikoma/compare/v3.39.2...v3.40.0) (2026-06-21)
 
 
