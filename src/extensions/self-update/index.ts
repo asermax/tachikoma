@@ -79,20 +79,8 @@ export default defineExtension<SelfUpdateConfig>({
       log: app.log,
     });
 
-    app.agent.use(
-      createUpgradeToolFactory(
-        upgradeDeps,
-        () => restarter,
-        (r) => app.requestRestart(r),
-      ),
-    );
-    app.agent.use(
-      createRestartToolFactory(
-        () => restarter,
-        (r) => app.requestRestart(r),
-        app.log,
-      ),
-    );
+    app.agent.use(createUpgradeToolFactory(upgradeDeps, () => restarter, app.requestRestart));
+    app.agent.use(createRestartToolFactory(() => restarter, app.requestRestart, app.log));
 
     app.agent.use(provideContext(SELF_UPDATE_USAGE, "self-update-usage"));
 
