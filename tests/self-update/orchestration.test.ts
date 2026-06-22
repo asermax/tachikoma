@@ -143,49 +143,39 @@ describe("runCheck", () => {
 });
 
 describe("runUpgrade", () => {
-  const createRestarter = () => {
-    const restart = vi.fn(() => {
-      throw new Error("__restart__");
-    });
-    return { restart } as unknown as Restarter & { restart: ReturnType<typeof vi.fn> };
-  };
-
-  it("writes a marker, installs the target, then restarts", async () => {
+  it("writes a marker, installs the target, then returns a started outcome (no restart)", async () => {
     const state = createState();
     const install = vi.fn(async () => {});
     const installer: Installer = { install };
-    const restarter = createRestarter();
 
-    await expect(
-      runUpgrade({
-        registry: registryReturning("2.1.0"),
-        installer,
-        restarter,
-        devInstall: devInstallReturning(false),
-        state,
-        currentVersion: CURRENT,
-        log: fakeLog,
-        now,
-      }),
-    ).rejects.toThrow("__restart__");
+    const outcome = await runUpgrade({
+      registry: registryReturning("2.1.0"),
+      installer,
+      devInstall: devInstallReturning(false),
+      state,
+      currentVersion: CURRENT,
+      log: fakeLog,
+      now,
+    });
 
+    // runUpgrade no longer re-execs — it returns `started` and the caller schedules the
+    // deferred restart, so the current exchange completes before the process restarts.
+    expect(outcome).toEqual({ status: "started", detail: expect.any(String) });
+    expect(outcome.detail).toContain("2.1.0");
     expect(state.getUpgradeMarker()).toMatchObject({
       previousVersion: CURRENT,
       targetVersion: "2.1.0",
     });
     expect(install).toHaveBeenCalledWith("2.1.0");
-    expect(restarter.restart).toHaveBeenCalledOnce();
   });
 
   it("returns up-to-date without touching the installer or marker", async () => {
     const state = createState();
     const install = vi.fn(async () => {});
-    const restarter = createRestarter();
 
     const outcome = await runUpgrade({
       registry: registryReturning("2.0.1"),
       installer: { install },
-      restarter,
       devInstall: devInstallReturning(false),
       state,
       currentVersion: CURRENT,
@@ -196,18 +186,15 @@ describe("runUpgrade", () => {
     expect(outcome.status).toBe("up-to-date");
     expect(install).not.toHaveBeenCalled();
     expect(state.getUpgradeMarker()).toBeNull();
-    expect(restarter.restart).not.toHaveBeenCalled();
   });
 
   it("returns registry-unavailable when the latest version cannot be fetched", async () => {
     const state = createState();
     const install = vi.fn(async () => {});
-    const restarter = createRestarter();
 
     const outcome = await runUpgrade({
       registry: registryReturning(null),
       installer: { install },
-      restarter,
       devInstall: devInstallReturning(false),
       state,
       currentVersion: CURRENT,
@@ -217,26 +204,22 @@ describe("runUpgrade", () => {
 
     expect(outcome.status).toBe("registry-unavailable");
     expect(install).not.toHaveBeenCalled();
-    expect(restarter.restart).not.toHaveBeenCalled();
   });
 
   it("defaults the clock to real time when no now() is supplied", async () => {
     const state = createState();
     const install = vi.fn(async () => {});
-    const restarter = createRestarter();
 
-    await expect(
-      runUpgrade({
-        registry: registryReturning("2.1.0"),
-        installer: { install },
-        restarter,
-        devInstall: devInstallReturning(false),
-        state,
-        currentVersion: CURRENT,
-        log: fakeLog,
-      }),
-    ).rejects.toThrow("__restart__");
+    const outcome = await runUpgrade({
+      registry: registryReturning("2.1.0"),
+      installer: { install },
+      devInstall: devInstallReturning(false),
+      state,
+      currentVersion: CURRENT,
+      log: fakeLog,
+    });
 
+    expect(outcome.status).toBe("started");
     expect(state.getUpgradeMarker()?.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
@@ -250,7 +233,6 @@ describe("runUpgrade", () => {
       runUpgrade({
         registry: registryReturning("2.1.0"),
         installer: { install },
-        restarter: createRestarter(),
         devInstall: devInstallReturning(false),
         state,
         currentVersion: CURRENT,
@@ -268,7 +250,6 @@ describe("runUpgrade", () => {
     const outcome = await runUpgrade({
       registry: registryReturning("2.1.0"),
       installer: { install },
-      restarter: createRestarter(),
       devInstall: devInstallReturning(false),
       state,
       currentVersion: CURRENT,
@@ -285,13 +266,11 @@ describe("runUpgrade", () => {
     const install = vi.fn(async () => {
       throw new Error("network down");
     });
-    const restarter = createRestarter();
 
     await expect(
       runUpgrade({
         registry: registryReturning("2.1.0"),
         installer: { install },
-        restarter,
         devInstall: devInstallReturning(false),
         state,
         currentVersion: CURRENT,
@@ -302,18 +281,15 @@ describe("runUpgrade", () => {
 
     expect(state.getUpgradeMarker()).toBeNull();
     expect(state.getFailedVersion()).toBe("2.1.0");
-    expect(restarter.restart).not.toHaveBeenCalled();
   });
 
   it("refuses to install from a development install and leaves state untouched", async () => {
     const state = createState();
     const install = vi.fn(async () => {});
-    const restarter = createRestarter();
 
     const outcome = await runUpgrade({
       registry: registryReturning("2.1.0"),
       installer: { install },
-      restarter,
       devInstall: devInstallReturning(true),
       state,
       currentVersion: CURRENT,
@@ -324,58 +300,63 @@ describe("runUpgrade", () => {
     expect(outcome.status).toBe("dev-install");
     expect(install).not.toHaveBeenCalled();
     expect(state.getUpgradeMarker()).toBeNull();
-    expect(restarter.restart).not.toHaveBeenCalled();
   });
 
-  it("proceeds with the install when not a development install", async () => {
+  it("proceeds with the install and returns started when not a development install", async () => {
     const state = createState();
     const install = vi.fn(async () => {});
-    const restarter = createRestarter();
 
-    await expect(
-      runUpgrade({
-        registry: registryReturning("2.1.0"),
-        installer: { install },
-        restarter,
-        devInstall: devInstallReturning(false),
-        state,
-        currentVersion: CURRENT,
-        log: fakeLog,
-        now,
-      }),
-    ).rejects.toThrow("__restart__");
+    const outcome = await runUpgrade({
+      registry: registryReturning("2.1.0"),
+      installer: { install },
+      devInstall: devInstallReturning(false),
+      state,
+      currentVersion: CURRENT,
+      log: fakeLog,
+      now,
+    });
 
+    expect(outcome.status).toBe("started");
     expect(install).toHaveBeenCalledWith("2.1.0");
-    expect(restarter.restart).toHaveBeenCalledOnce();
   });
 });
 
 describe("createRestartToolFactory", () => {
   interface CapturedTool {
     name: string;
-    execute: () => Promise<unknown>;
+    execute: () => Promise<{ content: { type: string; text: string }[] }>;
   }
 
-  it("registers restart_self and restarts via the Restarter seam on execute", async () => {
+  it("registers restart_self and schedules a deferred restart, returning a result", async () => {
     const restart = vi.fn(() => {
       throw new Error("__restart__");
     });
     const restarter = { restart } as unknown as Restarter;
+    const requestRestart = vi.fn();
 
     let captured: CapturedTool | null = null;
     const pi = { registerTool: (tool: CapturedTool) => (captured = tool) };
 
     createRestartToolFactory(
       () => restarter,
+      requestRestart,
       fakeLog,
     )(pi as unknown as Parameters<ExtensionFactory>[0]);
 
-    expect(captured).not.toBeNull();
     const tool = captured as unknown as CapturedTool;
     expect(tool.name).toBe("restart_self");
 
-    await expect(tool.execute()).rejects.toThrow("__restart__");
-    expect(restart).toHaveBeenCalledOnce();
+    const result = await tool.execute();
+
+    // The restarter is NOT invoked during the exchange — only handed to requestRestart for later.
+    expect(restart).not.toHaveBeenCalled();
+    expect(requestRestart).toHaveBeenCalledOnce();
+    const scheduled = requestRestart.mock.calls[0]?.[0] as () => never;
+    expect(typeof scheduled).toBe("function");
+    // Invoking the scheduled thunk reaches the restarter (the deferred re-exec).
+    expect(() => scheduled()).toThrow("__restart__");
+    // The tool returned a result the agent can relay.
+    expect(result.content[0]?.text).toBe("Restarting Tachikoma now to apply the changes.");
   });
 });
 

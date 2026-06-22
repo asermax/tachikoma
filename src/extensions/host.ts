@@ -237,6 +237,8 @@ export class ExtensionHost {
 
       status: (text) => services.coordinator.status(text),
 
+      requestRestart: (restart) => services.coordinator.requestRestart(restart),
+
       registerExtension: (nested, options) =>
         this.queue.push({
           extension: nested,

@@ -51,6 +51,14 @@ export class Coordinator {
   private deliveryTimer: ReturnType<typeof setTimeout> | null = null;
   private exchanging = false;
   /**
+   * A deferred process-restart thunk stashed by `requestRestart` (the `restart_self` /
+   * `upgrade_self` tools). Set mid-exchange; checked after each exchange so the run loop
+   * exits only once the full exchange lifecycle (response stream, exchange processors,
+   * delivery re-eval) has completed. The graceful-drain `finally` then runs, and `app.ts`
+   * performs the actual re-exec via `consumeRestartRequest` after channel/scheduler teardown.
+   */
+  private pendingRestart: (() => never) | null = null;
+  /**
    * InboundMessages steered into the live run this exchange, awaiting consumption
    * confirmation. `submit()` pushes here when it steers; `handle()`'s finally reconciles
    * them against pi's pending-steering queue and rescues any the run orphaned. Cleared
@@ -287,6 +295,27 @@ export class Coordinator {
   }
 
   /**
+   * Request a deferred process restart (`restart_self` / `upgrade_self`). The re-exec does
+   * NOT happen immediately: the current exchange runs to completion, the graceful-drain
+   * `finally` runs, and `app.ts` performs the re-exec via {@link consumeRestartRequest}
+   * after channel/scheduler teardown. First-write-wins — every restarter thunk re-execs the
+   * same on-disk entry, so concurrent requests are harmless.
+   */
+  requestRestart(restart: () => never): void {
+    if (this.pendingRestart == null) this.pendingRestart = restart;
+  }
+
+  /**
+   * Return and clear the deferred-restart thunk, if any. Called by `app.ts` after the run
+   * loop and channel/scheduler teardown, so the re-exec is the last thing the process does.
+   */
+  consumeRestartRequest(): (() => never) | null {
+    const restart = this.pendingRestart;
+    this.pendingRestart = null;
+    return restart;
+  }
+
+  /**
    * Re-run `text` as a fresh system-origin turn (DLT-181 rollback replay). The boundary extension
    * performs the tree surgery, then hands the triggering message here to be re-answered under the
    * corrected framing. This bypasses `submit()` entirely — no `/queue`/`/new` prefix-stripping, no
@@ -458,6 +487,13 @@ export class Coordinator {
         } catch (error) {
           this.log.error({ err: error }, "exchange failed");
         }
+
+        // A deferred restart was requested during the exchange (restart_self / upgrade_self).
+        // Break out so the graceful-drain finally runs and app.ts performs the re-exec — but only
+        // after the full exchange lifecycle (response, processors, delivery re-eval) completed
+        // above. This check precedes the while-condition's abort check, so a pending restart
+        // always wins over a concurrent shutdown signal (the restart subsumes the shutdown).
+        if (this.pendingRestart != null) break;
       }
     } finally {
       signal.removeEventListener("abort", onAbort);
@@ -472,13 +508,20 @@ export class Coordinator {
       await this.drainQueueToChannel();
 
       const announceShutdown = this.channel != null && this.active != null;
+      const restarting = this.pendingRestart != null;
 
-      if (announceShutdown) await this.emitShutdownStatus("Wrapping up the conversation…");
+      if (announceShutdown) {
+        await this.emitShutdownStatus(
+          restarting ? "Restarting Tachikoma…" : "Wrapping up the conversation…",
+        );
+      }
 
       // The trunk deliberately survives shutdown — closing it here races a restarting process
       // (which reopens a fresh trunk) and redundantly re-pipelines a same-day restart; it is
       // closed by the nightly closeTrunkIfDue cron or recovered idempotently at next startup (ADR-014).
-      if (announceShutdown) await this.emitShutdownStatus("Done");
+      if (announceShutdown) {
+        await this.emitShutdownStatus(restarting ? "Restarting now…" : "Done");
+      }
     }
   }
 

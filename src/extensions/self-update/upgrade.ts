@@ -1,12 +1,11 @@
 import type { Logger } from "../../log.ts";
 import { decideUpgrade, UPGRADE_GATES } from "./decisions.ts";
-import type { DevInstallDetector, Installer, RegistryClient, Restarter } from "./seams.ts";
+import type { DevInstallDetector, Installer, RegistryClient } from "./seams.ts";
 import type { SelfUpdateState } from "./state.ts";
 
 export interface UpgradeDeps {
   registry: RegistryClient;
   installer: Installer;
-  restarter: Restarter;
   devInstall: DevInstallDetector;
   state: SelfUpdateState;
   currentVersion: string;
@@ -26,7 +25,9 @@ export interface UpgradeOutcome {
  *  2. write the in-progress marker BEFORE touching the install, so a crash mid-
  *     upgrade is recoverable on the next boot,
  *  3. install the target globally,
- *  4. re-exec so the new code takes over (this call does not return on success).
+ *  4. return a `started` outcome — the caller (the upgrade_self tool) schedules a
+ *     *deferred* restart so the current exchange completes cleanly before the
+ *     process re-execs.
  *
  * If the install itself throws, the marker is cleared and the failed version is
  * recorded as the loop guard, since no restart will happen and the old code keeps
@@ -36,7 +37,6 @@ export interface UpgradeOutcome {
 export const runUpgrade = async ({
   registry,
   installer,
-  restarter,
   devInstall,
   state,
   currentVersion,
@@ -104,6 +104,9 @@ export const runUpgrade = async ({
     );
   }
 
-  log.warn({ to: target }, "install succeeded; re-executing");
-  return restarter.restart();
+  log.warn({ to: target }, "install succeeded; restart deferred to end of exchange");
+  return {
+    status: "started",
+    detail: `Upgraded from ${currentVersion} to ${target}. Restarting now to load the new version.`,
+  };
 };

@@ -10,23 +10,36 @@ export const UpgradeSelfParams = Type.Object({});
 export const RestartSelfParams = Type.Object({});
 
 /**
- * pi extension factory exposing the `upgrade_self` tool. On a successful upgrade
- * the process re-execs, so the tool call does not return; the agent should treat
- * a returned string as "did not restart" (already current, blocked, or registry
- * down).
+ * A deferred-restart sink: the tool hands its restarter thunk here instead of re-execing
+ * directly, so the current exchange (the tool result + the agent's turn) completes before
+ * the process restarts. In production this is `app.requestRestart` → the coordinator, which
+ * drains then lets `app.ts` perform the re-exec.
+ */
+export type RequestRestart = (restart: () => never) => void;
+
+/**
+ * pi Extension factory exposing the `upgrade_self` tool. On a successful upgrade the tool
+ * schedules a deferred restart and returns a `started` message; the process re-execs only
+ * after the current exchange completes, so the agent always sees a tool result and can
+ * finish its turn. A returned message for any other outcome (already current, registry
+ * unreachable, previously failed, dev install) means no restart was scheduled.
  */
 export const createUpgradeToolFactory =
-  (deps: () => UpgradeDeps): ExtensionFactory =>
+  (
+    deps: () => UpgradeDeps,
+    restarter: () => Restarter,
+    requestRestart: RequestRestart,
+  ): ExtensionFactory =>
   (pi) => {
     pi.registerTool({
       name: "upgrade_self",
       label: "Upgrade Tachikoma",
       description:
-        "Upgrade Tachikoma to the latest published version, then restart to load it. If the new version fails to boot, the previous version is automatically restored. Returns a message only when no restart happened (already up to date, registry unreachable, or the target previously failed).",
-      promptSnippet: "Upgrade Tachikoma to the latest version (restarts the process)",
+        "Upgrade Tachikoma to the latest published version, then restart to load it. The restart runs after this exchange finishes so your response is delivered in full; if the new version fails to boot, the previous version is automatically restored. Returns a message for every outcome (started, already up to date, registry unreachable, or the target previously failed).",
+      promptSnippet: "Upgrade Tachikoma to the latest version (restarts after this exchange)",
       promptGuidelines: [
         "Only call upgrade_self when the user explicitly asks to update/upgrade Tachikoma.",
-        "A successful upgrade restarts the process, so you will not see a tool result; tell the user the upgrade is starting before calling it.",
+        "The restart is deferred until after this exchange, so you will see a tool result — tell the user the upgrade is starting, then finish your turn; the process restarts once the exchange completes.",
       ],
       parameters: UpgradeSelfParams,
       async execute() {
@@ -34,6 +47,12 @@ export const createUpgradeToolFactory =
         resolved.log.info({ current: resolved.currentVersion }, "upgrade_self invoked");
 
         const outcome = await runUpgrade(resolved);
+
+        // The install committed — schedule a deferred restart so the current exchange (this
+        // tool result + the agent's turn) completes before the process re-execs.
+        if (outcome.status === "started") {
+          requestRestart(() => restarter().restart());
+        }
 
         return {
           content: [{ type: "text", text: outcome.detail }],
@@ -44,28 +63,37 @@ export const createUpgradeToolFactory =
   };
 
 /**
- * pi extension factory exposing the `restart_self` tool. Restarts the process
- * via the Restarter seam WITHOUT upgrading, so the call does not return on
- * success; the agent should treat any returned text as "did not restart".
+ * pi Extension factory exposing the `restart_self` tool. Schedules a deferred restart via
+ * the Restarter seam WITHOUT upgrading and returns a message; the process re-execs only
+ * after the current exchange completes, so the agent always sees a tool result and can
+ * finish its turn.
  */
 export const createRestartToolFactory =
-  (restarter: () => Restarter, log: Logger): ExtensionFactory =>
+  (restarter: () => Restarter, requestRestart: RequestRestart, log: Logger): ExtensionFactory =>
   (pi) => {
     pi.registerTool({
       name: "restart_self",
       label: "Restart Tachikoma",
       description:
-        "Restart Tachikoma without upgrading, to pick up configuration or state changes. This re-execs the current version in place; on success the process restarts and the tool call does not return.",
-      promptSnippet: "Restart Tachikoma in place to pick up config/state changes (no upgrade)",
+        "Restart Tachikoma without upgrading, to pick up configuration or state changes. This re-execs the current version in place; the restart runs after this exchange finishes so your response is delivered in full.",
+      promptSnippet:
+        "Restart Tachikoma in place to pick up config/state changes (restarts after this exchange, no upgrade)",
       promptGuidelines: [
         "Only call restart_self when the user explicitly asks to restart Tachikoma without upgrading (e.g. to apply config or state changes).",
-        "A successful restart re-execs the process, so you will not see a tool result; tell the user the restart is starting before calling it.",
+        "The restart is deferred until after this exchange, so you will see a tool result — tell the user the restart is starting, then finish your turn; the process restarts once the exchange completes.",
       ],
       parameters: RestartSelfParams,
       async execute() {
         log.info("restart_self invoked");
 
-        return restarter().restart();
+        // Schedule a deferred restart so the current exchange (this tool result + the agent's
+        // turn) completes before the process re-execs.
+        requestRestart(() => restarter().restart());
+
+        return {
+          content: [{ type: "text", text: "Restarting Tachikoma now to apply the changes." }],
+          details: undefined,
+        };
       },
     });
   };

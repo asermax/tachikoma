@@ -1204,3 +1204,104 @@ describe("Coordinator decision-header forwarding (DLT-181)", () => {
     await loop;
   });
 });
+
+describe("Coordinator deferred restart (restart_self / upgrade_self)", () => {
+  it("completes the exchange, drains held deliveries, then exits without re-execing mid-exchange", async () => {
+    const session = createSession();
+    const regs = createRegistrations();
+    const processed: string[] = [];
+    regs.exchangeProcessors.push({
+      name: "rolling",
+      process: async (ctx) => {
+        processed.push(ctx.userText);
+      },
+    });
+
+    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
+    const deliver = vi.fn(async () => {});
+    const shutdownStatus = vi.fn(async () => {});
+    // A stand-in for the Restarter thunk — the coordinator must NOT call it (app.ts does, after
+    // teardown). Throwing lets a test confirm it was never reached during the exchange.
+    const restart = vi.fn(() => {
+      throw new Error("__restart__");
+    });
+    coordinator.attachChannel(
+      createChannel({
+        deliver,
+        shutdownStatus,
+        respond: vi.fn(async (exchange: Exchange) => {
+          // The agent's restart_self/upgrade_self tool runs during the exchange and requests a
+          // deferred restart (as app.requestRestart → coordinator.requestRestart would).
+          coordinator.requestRestart(restart);
+          // A held delivery arriving mid-exchange is held (exchanging=true gates the queue flush);
+          // the graceful drain must flush it to the channel before the restart re-execs.
+          coordinator.deliver({ text: "a held notification" });
+          for await (const _ of exchange.events) {
+            // drain the streamed response to completion
+          }
+        }),
+      }),
+    );
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("restart please"));
+
+    // The exchange completed (processor ran) and the loop exited for the deferred restart.
+    await vi.waitFor(() => expect(processed).toEqual(["restart please"]));
+    await loop;
+
+    // The restarter was NOT invoked by the coordinator — only app.ts consumes it after teardown.
+    expect(restart).not.toHaveBeenCalled();
+    expect(coordinator.consumeRestartRequest()).toBe(restart);
+
+    // Held deliveries were drained to the channel before the restart.
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("a held notification") }),
+    );
+
+    // The restart was announced on the shutdown surface (vs the plain-shutdown wording).
+    expect(shutdownStatus).toHaveBeenCalledWith("Restarting Tachikoma…");
+    expect(shutdownStatus).toHaveBeenCalledWith("Restarting now…");
+  });
+
+  it("does not process a later message once a restart is pending", async () => {
+    const session = createSession();
+    const regs = createRegistrations();
+    const processed: string[] = [];
+    regs.exchangeProcessors.push({
+      name: "rolling",
+      process: async (ctx) => {
+        processed.push(ctx.userText);
+      },
+    });
+
+    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
+    const restart = vi.fn(() => {
+      throw new Error("__restart__");
+    });
+    coordinator.attachChannel(
+      createChannel({
+        respond: vi.fn(async (exchange: Exchange) => {
+          coordinator.requestRestart(restart);
+          // A message arriving after the restart was requested (system origin → enqueued, not steered).
+          coordinator.submit(textMsg("too late", { metadata: { origin: "system" } }));
+          for await (const _ of exchange.events) {
+            // drain
+          }
+        }),
+      }),
+    );
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("first"));
+    await loop;
+
+    // Only the first exchange ran; "too late" was dropped (the restart broke the loop).
+    expect(processed).toEqual(["first"]);
+    expect(coordinator.consumeRestartRequest()).toBe(restart);
+  });
+});
