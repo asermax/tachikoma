@@ -1,3 +1,11 @@
+## [3.41.1](https://github.com/asermax/tachikoma/compare/v3.41.0...v3.41.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **coordinator:** guard steering-queue clear on rescued count ([5875074](https://github.com/asermax/tachikoma/commit/58750742218002aff46b05a9f533b1f68df7afa6))
+* **coordinator:** rescue orphaned steered messages at run-end ([5c610ef](https://github.com/asermax/tachikoma/commit/5c610efca5b56a0e261d6a3727ee69f0a4f8709b))
+
 # [3.41.0](https://github.com/asermax/tachikoma/compare/v3.40.1...v3.41.0) (2026-06-22)
 
 
