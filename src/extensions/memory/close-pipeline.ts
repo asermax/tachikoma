@@ -123,12 +123,11 @@ export const extractBranches = async (
 
   const failed: string[] = [];
   const n = records.length;
-  let i = 0;
 
-  for (const record of records) {
-    // Position over ALL records (1-based): advances even for already-extracted or unforkable
-    // branches, so the counter reflects the true branch position in the day's set.
-    i += 1;
+  for (const [i0, record] of records.entries()) {
+    // 1-based array position over ALL records (advances even for skipped branches, so a recovery
+    // re-run still shows each branch's true position in the day's set).
+    const i = i0 + 1;
 
     if (isBranchExtracted(session, record.branchId)) {
       log.debug({ branchId: record.branchId }, "branch already extracted — skipping");
