@@ -1,7 +1,13 @@
 import type { DecisionHeader } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
 import { splitMessage, TELEGRAM_MAX_MESSAGE_LENGTH } from "./chunking.ts";
-import { toTelegramEntities } from "./entities.ts";
+import {
+  concatPayloads,
+  splitMessageWithEntities,
+  type TelegramPayload,
+  toTelegramEntities,
+  wrapExpandable,
+} from "./entities.ts";
 import {
   convertAndSplit,
   editWithFallback,
@@ -147,23 +153,20 @@ export class StreamRenderer {
 
     if (this.broken) return this.finalizeBroken();
 
-    // The marker bakes a trailing blank line to separate it from the next text
-    // segment; at finalize there is none, so drop the dangling whitespace.
-    const body = this.buffer.trimEnd();
-    const header = this.headerText();
-    // Anchor the header atop the finalized text too (turn-scoped). When the body overflows into
-    // multiple chunks the header rides the first; a header dropped mid-stream (over-limit) is already
-    // null here. A header with no body still surfaces the decision label.
-    const text = header.length === 0 ? body : body.length > 0 ? `${header}\n\n${body}` : header;
+    // Chunk the finalized payload: structured (header ⊕ block ⊕ tail) when collapse is active, else
+    // the markdown path. Both share the edit-first/send-rest loop below.
+    const chunks: TelegramPayload[] = this.collapseActive()
+      ? this.finalizeCollapseChunks()
+      : convertAndSplit(this.finalizeMarkdown());
 
-    if (text.length === 0) {
+    if (chunks.length === 0) {
       await this.deleteCurrentMessage();
       return null;
     }
 
     let lastId = this.messageId;
 
-    for (const [index, payload] of convertAndSplit(text).entries()) {
+    for (const [index, payload] of chunks.entries()) {
       if (index === 0 && this.messageId != null) {
         try {
           await editWithFallback(this.api, this.chatId, this.messageId, payload, this.log);
@@ -178,6 +181,34 @@ export class StreamRenderer {
     }
 
     return lastId;
+  }
+
+  /**
+   * The finalized markdown for the non-collapse path (today's behavior): header anchored above the
+   * trimmed body. A header dropped mid-stream (over-limit) is already null here; a header with no
+   * body still surfaces the decision label. When the body overflows into chunks the header rides the
+   * first via `convertAndSplit`.
+   */
+  private finalizeMarkdown(): string {
+    // The marker bakes a trailing blank line to separate it from the next text segment; at finalize
+    // there is none, so drop the dangling whitespace.
+    const body = this.buffer.trimEnd();
+    const header = this.headerText();
+    return header.length === 0 ? body : body.length > 0 ? `${header}\n\n${body}` : header;
+  }
+
+  /**
+   * The finalized structured payload, chunked entity-safely (DLT-064, S5). At finalize `transient` is
+   * null, so `composePayload()` splits intermediate = everything before the final paragraph, tail =
+   * the final paragraph: `header ⊕ wrapExpandable(intermediate) ⊕ tail`. All-intensive (empty tail)
+   * collapses to the whole body being the block; the header anchors above it. Empty payload ⇒ no
+   * chunks ⇒ the caller deletes the placeholder.
+   */
+  private finalizeCollapseChunks(): TelegramPayload[] {
+    const payload = this.composePayload();
+    return payload.text.length === 0
+      ? []
+      : splitMessageWithEntities(payload.text, payload.entities);
   }
 
   /**
@@ -209,16 +240,15 @@ export class StreamRenderer {
       const display = this.compose();
       if (display.length === 0 || display === this.lastRendered) return;
 
+      // Collapse-aware payload for both the send and edit sites (DLT-064). `display` is still
+      // computed above for the empty/unchanged short-circuit guard (and for compose()'s
+      // best-effort header-drop side effect); the payload is rebuilt from the buffer on every
+      // flush — the retroactive fold — exactly as the header/body are today (DES-009).
+      const payload = this.composePayload();
       if (this.messageId == null) {
-        this.messageId = await this.sendText(display);
+        this.messageId = await this.sendPayload(payload);
       } else {
-        await editWithFallback(
-          this.api,
-          this.chatId,
-          this.messageId,
-          toTelegramEntities(display),
-          this.log,
-        );
+        await editWithFallback(this.api, this.chatId, this.messageId, payload, this.log);
       }
 
       this.lastRendered = display;
@@ -252,8 +282,21 @@ export class StreamRenderer {
     const chunks = splitMessage(this.buffer);
     this.buffer = chunks.at(-1) ?? "";
 
-    for (const chunk of chunks.slice(0, -1)) {
-      const payload = toTelegramEntities(chunk);
+    // The committed chunks share the running collapse state at commit time — the reset happens once,
+    // after the loop, so the tally isn't lost mid-commit (DLT-064, Step 9). A committed chunk carries
+    // its own collapsed block when collapse is active (all-intermediate: no tail); the turn-scoped
+    // header rides the first committed chunk above its block (DES-009) and is consumed there so the
+    // streaming tail doesn't duplicate it. In the common case collapse is inactive at commit, so
+    // chunks render inline exactly as today and the header stays on the tail.
+    const collapse = this.collapseActive();
+    for (const [index, chunk] of chunks.slice(0, -1).entries()) {
+      const headerOnChunk = index === 0 && collapse && this.header != null;
+      const body = collapse ? wrapExpandable(toTelegramEntities(chunk)) : toTelegramEntities(chunk);
+      const payload = headerOnChunk
+        ? concatPayloads(toTelegramEntities(this.headerText()), body)
+        : body;
+      if (headerOnChunk) this.header = null;
+
       if (this.messageId != null) {
         await editWithFallback(this.api, this.chatId, this.messageId, payload, this.log);
         this.messageId = null;
@@ -264,7 +307,6 @@ export class StreamRenderer {
 
     // The committed chunks were the previous message boundary; the streaming tail is a new message,
     // so intensive-work detection resets and the tail is evaluated independently from zero (DLT-064, R9).
-    // (Batch 3 evaluates collapse for each committed chunk at commit time before this reset.)
     this.resetMessageBoundary();
     this.lastRendered = "";
   }
@@ -290,6 +332,19 @@ export class StreamRenderer {
     const lastBreak = this.buffer.lastIndexOf("\n\n");
 
     return lastBreak === -1 ? "" : this.buffer.slice(0, lastBreak);
+  }
+
+  /**
+   * The live tail's markdown for the collapse split (DLT-064, S3): the transient line (a running
+   * tool/status) when one is showing, otherwise the streaming trailing paragraph — the buffer after
+   * `streamableBuffer()`'s last `\n\n`. Everything chronologically before it (`streamableBuffer()`)
+   * is the intermediate region that folds into the collapsed block. The two recombine to the whole
+   * buffer, so this is a positional split with no length/content heuristic (R4).
+   */
+  private collapseTailMd(): string {
+    if (this.transient != null) return this.transient;
+    const lastBreak = this.buffer.lastIndexOf("\n\n");
+    return lastBreak === -1 ? this.buffer : this.buffer.slice(lastBreak + 2);
   }
 
   /**
@@ -336,6 +391,24 @@ export class StreamRenderer {
     return body.length <= TELEGRAM_MAX_MESSAGE_LENGTH ? body : text;
   }
 
+  /**
+   * The payload to render on each flush (DLT-064). One entry point for both branches: when collapse
+   * is active, build a structured payload — `header ⊕ wrapExpandable(intermediate) ⊕ tail` — so every
+   * settled segment folds into one collapsed block while the live tail stays expanded; otherwise take
+   * today's markdown path (`toTelegramEntities(compose())`). The header is converted separately and
+   * prepended via `concatPayloads` so it anchors above the block, never nested inside it (DES-009, S6).
+   * An empty tail (all-intermediate) collapses to the whole body being the block via `concatPayloads`'
+   * empty-operand rule. Rebuilt from the buffer on every flush — the retroactive fold.
+   */
+  private composePayload(): TelegramPayload {
+    if (!this.collapseActive()) return toTelegramEntities(this.compose());
+
+    const intermediate = toTelegramEntities(this.streamableBuffer());
+    const tail = toTelegramEntities(this.collapseTailMd());
+    const block = concatPayloads(wrapExpandable(intermediate), tail);
+    return concatPayloads(toTelegramEntities(this.headerText()), block);
+  }
+
   /** The markdown display of the decision header (the whole label + note in italics), or "" when none. */
   private headerText(): string {
     if (this.header == null) return "";
@@ -347,14 +420,12 @@ export class StreamRenderer {
   }
 
   /**
-   * Send fresh text as a new message, honoring the renderer's `silent` setting so
-   * streamed work-in-progress and overflow never fire partial pushes. Centralized
-   * so every fresh send from the renderer shares that contract.
+   * Send a fresh payload as a new message, honoring the renderer's `silent` setting so
+   * streamed work-in-progress and overflow never fire partial pushes. Centralized so every
+   * fresh send from the renderer shares that contract — including the collapse payload.
    */
-  private async sendText(text: string): Promise<number> {
-    return sendWithFallback(this.api, this.chatId, toTelegramEntities(text), {
-      silent: this.silent,
-    });
+  private async sendPayload(payload: TelegramPayload): Promise<number> {
+    return sendWithFallback(this.api, this.chatId, payload, { silent: this.silent });
   }
 
   /**

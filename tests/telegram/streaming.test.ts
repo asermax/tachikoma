@@ -1,7 +1,11 @@
+import type { MessageEntity } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TELEGRAM_MAX_MESSAGE_LENGTH } from "../../src/extensions/telegram/chunking.ts";
-import { toTelegramEntities } from "../../src/extensions/telegram/entities.ts";
+import {
+  type TelegramPayload,
+  toTelegramEntities,
+} from "../../src/extensions/telegram/entities.ts";
 import { EDIT_THROTTLE_MS, StreamRenderer } from "../../src/extensions/telegram/streaming.ts";
 import type { Logger } from "../../src/log.ts";
 
@@ -19,29 +23,64 @@ interface ApiCall {
   type: "send" | "edit" | "delete";
   messageId?: number;
   text?: string;
+  /** Entities passed in the `other` options arg (DLT-064): present only when non-empty. */
+  entities?: MessageEntity[];
 }
 
 const fakeApi = () => {
   const calls: ApiCall[] = [];
   let next = 0;
 
+  // The 4th param captures `other?.entities` (where the expandable_blockquote travels). It is recorded
+  // only when non-empty so existing assertions that check just {type, text, messageId} stay exact.
+  const recordEntities = (other?: {
+    entities?: MessageEntity[];
+  }): { entities?: MessageEntity[] } =>
+    other?.entities?.length ? { entities: other.entities } : {};
+
   return {
     calls,
-    sendMessage: vi.fn(async (_chat: number, text: string) => {
-      calls.push({ type: "send", text });
-      next += 1;
-      return { message_id: next };
-    }),
-    editMessageText: vi.fn(async (_chat: number, messageId: number, text: string) => {
-      calls.push({ type: "edit", messageId, text });
-      return true;
-    }),
+    sendMessage: vi.fn(
+      async (_chat: number, text: string, other?: { entities?: MessageEntity[] }) => {
+        calls.push({ type: "send", text, ...recordEntities(other) });
+        next += 1;
+        return { message_id: next };
+      },
+    ),
+    editMessageText: vi.fn(
+      async (
+        _chat: number,
+        messageId: number,
+        text: string,
+        other?: { entities?: MessageEntity[] },
+      ) => {
+        calls.push({ type: "edit", messageId, text, ...recordEntities(other) });
+        return true;
+      },
+    ),
     deleteMessage: vi.fn(async (_chat: number, messageId: number) => {
       calls.push({ type: "delete", messageId });
       return true;
     }),
   };
 };
+
+// Payload/entity assertion helpers, redeclared inline (the ones in entities.test.ts are module-local).
+const findEntity = (call: ApiCall | undefined, type: string) =>
+  call?.entities?.find((e) => e.type === type);
+
+/** Like `findEntity`, but asserts the entity is present and returns it non-optionally. */
+const mustEntity = (call: ApiCall | undefined, type: string): MessageEntity => {
+  const entity = findEntity(call, type);
+  if (!entity) throw new Error(`expected a ${type} entity on ${call?.type ?? "no"} call`);
+  return entity;
+};
+
+/** The payload recorded for a call (text + entities), for entity-level assertions. */
+const payloadOf = (call: ApiCall | undefined): TelegramPayload => ({
+  text: call?.text ?? "",
+  entities: call?.entities ?? [],
+});
 
 const notModifiedError = () =>
   Object.assign(new Error("400: Bad Request: message is not modified"), {
@@ -99,7 +138,7 @@ describe("StreamRenderer", () => {
     // even without a trailing paragraph break.
     await renderer.appendText("Let me search.");
     await renderer.appendTool("grep", { pattern: "skippable" });
-    expect(api.calls.at(-1)).toEqual({
+    expect(api.calls.at(-1)).toMatchObject({
       type: "send",
       text: rendered("Let me search.\n\n_🔧 Searching for 'skippable'_"),
     });
@@ -107,7 +146,7 @@ describe("StreamRenderer", () => {
     // Text after the tool bakes the summary marker, separated by blank lines.
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText("Found it.\n\n");
-    expect(api.calls.at(-1)).toEqual({
+    expect(api.calls.at(-1)).toMatchObject({
       type: "edit",
       messageId: 1,
       text: rendered("Let me search.\n\n_🔧 Searching for `skippable`_\n\nFound it."),
@@ -120,7 +159,7 @@ describe("StreamRenderer", () => {
 
     await renderer.showTransient("Compacting…");
 
-    expect(api.calls).toEqual([{ type: "send", text: rendered("_Compacting…_") }]);
+    expect(api.calls).toMatchObject([{ type: "send", text: rendered("_Compacting…_") }]);
   });
 
   it("finalize bypasses the throttle and flushes the trailing paragraph", async () => {
@@ -143,7 +182,7 @@ describe("StreamRenderer", () => {
     await renderer.appendTool("read", { path: "/tmp/notes/config.ts" });
 
     expect(await renderer.finalize()).toBe(1);
-    expect(api.calls.at(-1)).toEqual({
+    expect(api.calls.at(-1)).toMatchObject({
       type: "edit",
       messageId: 1,
       text: rendered("Done.\n\n_🔧 Reading `config.ts`_"),
@@ -349,14 +388,14 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     await renderer.appendText("First.\n\n");
     // The header is recomposed on every edit (KD9): editMessageText replaces the full text, so the
     // renderer must prepend the header each time.
-    expect(api.calls[0]).toEqual({
+    expect(api.calls[0]).toMatchObject({
       type: "send",
       text: rendered("_📌 Checkpoint set — main line parked_\n\nFirst."),
     });
 
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText("Second.\n\n");
-    expect(api.calls.at(-1)).toEqual({
+    expect(api.calls.at(-1)).toMatchObject({
       type: "edit",
       messageId: 1,
       text: rendered("_📌 Checkpoint set — main line parked_\n\nFirst.\n\nSecond."),
@@ -573,5 +612,251 @@ describe("StreamRenderer intensive-work detection (DLT-064)", () => {
     await renderer.appendText(`${"x".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 10)}\n\n`);
 
     expect(renderer.collapseActive()).toBe(false);
+  });
+});
+
+describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Same trailing-arg shape as channel.ts; a low threshold makes a turn intensive after a couple of
+  // tool→text boundaries so the payload-level behavior is observable without five segments.
+  const make = (api: ReturnType<typeof fakeApi>, collapse = true, threshold = 4): StreamRenderer =>
+    new StreamRenderer(api, 42, fakeLog, null, false, collapse, threshold);
+
+  it("folds intermediate segments into an expandable_blockquote, leaving the final answer expanded (R2/R5)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1); // 2 boundaries ⇒ active
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n"); // boundary 1
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ active
+    await renderer.appendTool("read", { path: "/c.ts" });
+    await renderer.appendText("final answer"); // boundary 3; no trailing break ⇒ live tail
+    await renderer.finalize();
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    // The collapsed block covers the intermediate region; the final answer sits AFTER it (expanded).
+    expect(last.text.slice(block.offset, block.offset + block.length)).not.toContain(
+      "final answer",
+    );
+    expect(last.text.slice(block.offset + block.length)).toContain("final answer");
+  });
+
+  it("carries the baked tool-summary markers nested inside the block, not live activity labels (R2/R5)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n");
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("final answer");
+    await renderer.finalize();
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    // Baked markers render as italic spans with inline code; both nest inside the block.
+    const innerItalics = (last.entities ?? []).filter((e) => e.type === "italic");
+    expect(innerItalics.length).toBeGreaterThan(0);
+    for (const e of innerItalics) {
+      expect(e.offset).toBeGreaterThanOrEqual(block.offset);
+      expect(e.offset + e.length).toBeLessThanOrEqual(block.offset + block.length);
+    }
+    const code = mustEntity(last, "code");
+    expect(code.offset).toBeGreaterThanOrEqual(block.offset);
+    expect(code.offset + code.length).toBeLessThanOrEqual(block.offset + block.length);
+    // The live activity phrasing ("Reading /b.ts") is not present — only the baked summary.
+    expect(last.text).not.toContain("Reading /b.ts");
+  });
+
+  it("makes the whole body the collapsed block for an all-intensive turn with no final text (R10)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n"); // boundary 1
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ active
+    await renderer.appendTool("read", { path: "/c.ts" }); // trailing tool — no following text
+    await renderer.finalize(); // bakes c's summary; adds no boundary; whole body becomes the block
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    // No expanded content outside the block: it spans the whole finalized text, and the trailing
+    // tool's baked summary is inside it (non-empty, expandable).
+    expect(block.offset).toBe(0);
+    expect(block.offset + block.length).toBe(last.text.length);
+    expect(last.text.slice(block.offset, block.offset + block.length)).toContain("c.ts");
+    expect(last.text.length).toBeGreaterThan(0);
+  });
+
+  it("keeps a running tool's live line expanded as the tail (R3)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n");
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ active
+    // A tool is running — its live line is the tail and stays expanded.
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("grep", { pattern: "needle" });
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    expect(last.text.slice(block.offset + block.length)).toContain("Searching for 'needle'");
+  });
+
+  it("folds earlier inline segments retroactively when the threshold is crossed (R2/R3)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n"); // boundary 1 — inactive
+    expect(api.calls.every((c) => !findEntity(c, "expandable_blockquote"))).toBe(true);
+
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/b.ts" });
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ crossing
+    // The previously-inline "first" segment is now rebuilt from the buffer into the block.
+    const crossed = api.calls.at(-1);
+    const block = mustEntity(crossed, "expandable_blockquote");
+    expect(crossed.text.slice(block.offset, block.offset + block.length)).toContain("first");
+  });
+
+  it("anchors the decision header above the collapsed block, never inside it (R11)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    renderer.setHeader({ label: "📌 Checkpoint set", note: "parked", rollbackable: true });
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n");
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ active
+    await renderer.appendTool("read", { path: "/c.ts" });
+    await renderer.appendText("final answer");
+    await renderer.finalize();
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    // The header is a separate italic payload prepended ABOVE the block (the first italic span).
+    const header = mustEntity(last, "italic");
+    expect(header.offset).toBeLessThanOrEqual(block.offset);
+    expect(header.offset + header.length).toBeLessThanOrEqual(block.offset);
+    // ...and the header text sits outside the block.
+    expect(last.text.slice(block.offset, block.offset + block.length)).not.toContain("Checkpoint");
+  });
+
+  it("renders no expandable_blockquote when collapseIntensiveWork is disabled, regardless of count (R7)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, false, 1); // disabled
+    for (let i = 0; i < 5; i += 1) {
+      await renderer.appendTool("read", { path: `/f${i}.ts` });
+      await renderer.appendText(`seg${i}\n\n`);
+    }
+    await renderer.finalize();
+    expect(api.calls.every((c) => !findEntity(c, "expandable_blockquote"))).toBe(true);
+  });
+
+  it("collapses only once the 5th boundary forms at the default threshold (R6/R8)", async () => {
+    // 4 boundaries ⇒ no collapse.
+    const a = fakeApi();
+    const r4 = make(a);
+    for (let i = 0; i < 4; i += 1) {
+      vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+      await r4.appendTool("read", { path: `/f${i}.ts` });
+      await r4.appendText(`seg${i}\n\n`);
+    }
+    await r4.finalize();
+    expect(a.calls.every((c) => !findEntity(c, "expandable_blockquote"))).toBe(true);
+
+    // 5 boundaries ⇒ collapse.
+    const b = fakeApi();
+    const r5 = make(b);
+    for (let i = 0; i < 5; i += 1) {
+      vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+      await r5.appendTool("read", { path: `/g${i}.ts` });
+      await r5.appendText(`seg${i}\n\n`);
+    }
+    await r5.finalize();
+    expect(b.calls.some((c) => findEntity(c, "expandable_blockquote") != null)).toBe(true);
+  });
+
+  it("renders a below-threshold turn byte-identically to the non-collapse path (R8)", async () => {
+    const api = fakeApi();
+    const renderer = make(api); // default threshold 4
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("the answer\n\n");
+    await renderer.finalize();
+    const last = api.calls.at(-1);
+    expect(last.text).toBe(rendered("_🔧 Reading `a.ts`_\n\nthe answer"));
+    expect(findEntity(last, "expandable_blockquote")).toBeUndefined();
+  });
+
+  it("renders a status transient as the expanded tail, outside the block (R11)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n");
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ active
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.showTransient("Compacting…");
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    expect(last.text.slice(block.offset + block.length)).toContain("Compacting…");
+  });
+
+  it("delivers plain inline text with no block on the broken-render fallback (R11)", async () => {
+    const api = fakeApi();
+    api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n");
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/b.ts" });
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("second\n\n"); // would be active, but the edit failure breaks the renderer
+    await renderer.finalize(); // finalizeBroken → sendChunked (plain text, no entities)
+    expect(api.calls.every((c) => !findEntity(c, "expandable_blockquote"))).toBe(true);
+  });
+
+  it("evaluates collapse per message on overflow: a committed chunk carries its own block, the tail resets (R9)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("seed\n\n"); // boundary 1
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/b.ts" });
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    // boundary 2 ⇒ active; the buffer overflows 4096 so commitOverflow commits the intensive chunk
+    // (carrying its own collapsed block) and resets detection for the streaming tail.
+    await renderer.appendText(`${"x".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 10)}\n\n`);
+
+    const committed = api.calls.find((c) => findEntity(c, "expandable_blockquote") != null);
+    expect(committed).toBeDefined();
+    // After the reset the streaming tail is evaluated independently from zero.
+    expect(renderer.collapseActive()).toBe(false);
+  });
+
+  it("exposes the composed payload's text as the convert of the buffer (structural sanity)", async () => {
+    // Guards against offset drift: the block entity exactly covers the intermediate converted text,
+    // and every nested entity points at the right substring of the payload text.
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n");
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("final answer");
+    await renderer.finalize();
+
+    const last = api.calls.at(-1);
+    const payload = payloadOf(last);
+    for (const e of payload.entities) {
+      expect(e.offset).toBeGreaterThanOrEqual(0);
+      expect(e.offset + e.length).toBeLessThanOrEqual(payload.text.length);
+    }
   });
 });
