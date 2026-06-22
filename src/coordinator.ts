@@ -134,10 +134,15 @@ export class Coordinator {
           }
         : message;
 
-    // Messages arriving mid-exchange steer the live run instead of waiting in line.
+    // Messages arriving mid-exchange steer the live run instead of waiting in line — except slash
+    // commands, which belong to the inbound middleware (/checkpoint,/back,/rollback in boundary;
+    // /skill,/reload in pi; /new,/queue normalized above) and must queue to run through that chain.
+    // Otherwise a command sent mid-exchange — notably /rollback right after /stop aborts the run,
+    // during the window before the exchange unwinds — is steered in as literal text, never executed.
+    const isCommand = message.text.trim().startsWith("/");
+
     if (
-      !queued &&
-      !forceNew &&
+      !isCommand &&
       this.exchanging &&
       this.active != null &&
       normalized.metadata.origin !== "system"
