@@ -199,13 +199,13 @@ export class StreamRenderer {
 
   /**
    * The finalized structured payload, chunked entity-safely (DLT-064, S5). At finalize `transient` is
-   * null, so `composePayload()` splits intermediate = everything before the final paragraph, tail =
-   * the final paragraph: `header ⊕ wrapExpandable(intermediate) ⊕ tail`. All-intensive (empty tail)
-   * collapses to the whole body being the block; the header anchors above it. Empty payload ⇒ no
-   * chunks ⇒ the caller deletes the placeholder.
+   * null, so `composeCollapsePayload()` splits intermediate = everything before the final paragraph,
+   * tail = the final paragraph: `header ⊕ wrapExpandable(intermediate) ⊕ tail`. All-intensive (empty
+   * tail) collapses to the whole body being the block; the header anchors above it. Empty payload ⇒
+   * no chunks ⇒ the caller deletes the placeholder.
    */
   private finalizeCollapseChunks(): TelegramPayload[] {
-    const payload = this.composePayload();
+    const payload = this.composeCollapsePayload();
     return payload.text.length === 0
       ? []
       : splitMessageWithEntities(payload.text, payload.entities);
@@ -240,11 +240,15 @@ export class StreamRenderer {
       const display = this.compose();
       if (display.length === 0 || display === this.lastRendered) return;
 
-      // Collapse-aware payload for both the send and edit sites (DLT-064). `display` is still
-      // computed above for the empty/unchanged short-circuit guard (and for compose()'s
-      // best-effort header-drop side effect); the payload is rebuilt from the buffer on every
-      // flush — the retroactive fold — exactly as the header/body are today (DES-009).
-      const payload = this.composePayload();
+      // Collapse-aware payload for both the send and edit sites (DLT-064). The non-collapse path
+      // reuses the `display` string already computed above — for the empty/unchanged short-circuit
+      // guard and for compose()'s best-effort header-drop side effect, which has already run by
+      // here — so the common case composes once and scans the buffer once, as before. The collapse
+      // path rebuilds a structured payload from the buffer on every flush (the retroactive fold),
+      // exactly as the header/body are today (DES-009).
+      const payload = this.collapseActive()
+        ? this.composeCollapsePayload()
+        : toTelegramEntities(display);
       if (this.messageId == null) {
         this.messageId = await this.sendPayload(payload);
       } else {
@@ -307,17 +311,17 @@ export class StreamRenderer {
 
     // The committed chunks were the previous message boundary; the streaming tail is a new message,
     // so intensive-work detection resets and the tail is evaluated independently from zero (DLT-064, R9).
-    this.resetMessageBoundary();
+    this.boundaryCount = 0;
     this.lastRendered = "";
   }
 
   /**
-   * Reset intensive-work detection for the current message (DLT-064, R9). Called after an overflow
-   * commit finalizes the earlier chunk(s) in place, so the streaming tail is a fresh message boundary
-   * and its boundaries re-accumulate from zero.
+   * Index of the last paragraph break (`\n\n`) in the buffer, or -1 when there is none. The single
+   * source for the positional split that `streamableBuffer()` (everything before it) and
+   * `collapseTailMd()` (everything after it) share, so the two stay exact complements (DLT-064, R4).
    */
-  private resetMessageBoundary(): void {
-    this.boundaryCount = 0;
+  private lastParagraphBreak(): number {
+    return this.buffer.lastIndexOf("\n\n");
   }
 
   /**
@@ -329,7 +333,7 @@ export class StreamRenderer {
   private streamableBuffer(): string {
     if (this.transient != null) return this.buffer;
 
-    const lastBreak = this.buffer.lastIndexOf("\n\n");
+    const lastBreak = this.lastParagraphBreak();
 
     return lastBreak === -1 ? "" : this.buffer.slice(0, lastBreak);
   }
@@ -337,13 +341,13 @@ export class StreamRenderer {
   /**
    * The live tail's markdown for the collapse split (DLT-064, S3): the transient line (a running
    * tool/status) when one is showing, otherwise the streaming trailing paragraph — the buffer after
-   * `streamableBuffer()`'s last `\n\n`. Everything chronologically before it (`streamableBuffer()`)
-   * is the intermediate region that folds into the collapsed block. The two recombine to the whole
-   * buffer, so this is a positional split with no length/content heuristic (R4).
+   * `lastParagraphBreak()`. Everything chronologically before it (`streamableBuffer()`) is the
+   * intermediate region that folds into the collapsed block. The two recombine to the whole buffer,
+   * so this is a positional split with no length/content heuristic (R4).
    */
   private collapseTailMd(): string {
     if (this.transient != null) return this.transient;
-    const lastBreak = this.buffer.lastIndexOf("\n\n");
+    const lastBreak = this.lastParagraphBreak();
     return lastBreak === -1 ? this.buffer : this.buffer.slice(lastBreak + 2);
   }
 
@@ -392,17 +396,13 @@ export class StreamRenderer {
   }
 
   /**
-   * The payload to render on each flush (DLT-064). One entry point for both branches: when collapse
-   * is active, build a structured payload — `header ⊕ wrapExpandable(intermediate) ⊕ tail` — so every
-   * settled segment folds into one collapsed block while the live tail stays expanded; otherwise take
-   * today's markdown path (`toTelegramEntities(compose())`). The header is converted separately and
-   * prepended via `concatPayloads` so it anchors above the block, never nested inside it (DES-009, S6).
-   * An empty tail (all-intermediate) collapses to the whole body being the block via `concatPayloads`'
-   * empty-operand rule. Rebuilt from the buffer on every flush — the retroactive fold.
+   * The structured payload built when collapse is active (DLT-064) — `header ⊕ wrapExpandable(intermediate)
+   * ⊕ tail` — so every settled segment folds into one collapsed block while the live tail stays expanded.
+   * The header is converted separately and prepended via `concatPayloads` so it anchors above the block,
+   * never nested inside it (DES-009, S6). An empty tail (all-intermediate) collapses to the whole body
+   * being the block via `concatPayloads`' empty-operand rule. Callers gate on `collapseActive()`.
    */
-  private composePayload(): TelegramPayload {
-    if (!this.collapseActive()) return toTelegramEntities(this.compose());
-
+  private composeCollapsePayload(): TelegramPayload {
     const intermediate = toTelegramEntities(this.streamableBuffer());
     const tail = toTelegramEntities(this.collapseTailMd());
     const block = concatPayloads(wrapExpandable(intermediate), tail);
