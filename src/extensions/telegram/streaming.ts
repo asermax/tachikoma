@@ -337,16 +337,6 @@ export class StreamRenderer {
   }
 
   /**
-   * Index of the last paragraph break (`\n\n`) in the buffer, or -1 when there is none. Drives the
-   * paragraph-gated streaming display in `streamableBuffer()` (everything before it renders while text
-   * streams; the in-progress trailing paragraph waits). The collapse split no longer uses this — it keys
-   * off content-type transitions (`tailStart`) instead (DLT-064).
-   */
-  private lastParagraphBreak(): number {
-    return this.buffer.lastIndexOf("\n\n");
-  }
-
-  /**
    * The streaming-visible text. While a live line (tool/status) is showing the
    * preceding text has settled, so the whole buffer renders beneath it. While
    * text is actively streaming only complete paragraphs render — the in-progress
@@ -355,8 +345,7 @@ export class StreamRenderer {
   private streamableBuffer(): string {
     if (this.transient != null) return this.buffer;
 
-    const lastBreak = this.lastParagraphBreak();
-
+    const lastBreak = this.buffer.lastIndexOf("\n\n");
     return lastBreak === -1 ? "" : this.buffer.slice(0, lastBreak);
   }
 
