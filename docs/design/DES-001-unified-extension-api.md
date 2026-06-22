@@ -69,6 +69,7 @@ Session factories receive pi's native `ExtensionAPI` (unmodified) plus their **b
 | `app.git` | high-level git operations over the core git helpers (`src/git/`): `commitAll(options)`, `smartPush(cwd, remote, branch, { log?, resolver? })`, `smartPull(cwd, remote, branch, { log?, resolver? })`; `log` defaults to the extension logger. Lets extensions (projects, memory) consume git without depending on the git extension; low-level `runGit`/`runGitCapture` may be imported from `src/git/git.ts` directly, and the agent-backed `createGitResolver` resolver factory from `src/git/resolve.ts` |
 | `app.bootstrap(name, hook)` | ordered, idempotent startup hooks |
 | `app.onShutdown(name, hook)` | hook run once during shutdown, before the coordinator's final delivery drain (so it can push queued output into that drain); error-isolated |
+| `app.requestRestart(restart)` | deferred process-restart thunk (`() => never`, re-execs); run only after the current exchange completes and the coordinator's graceful drain + channel/scheduler teardown finish, so the in-flight response and post-exchange work are never cut short. Used by the `restart_self` / `upgrade_self` tools; first-write-wins |
 | `app.status(text)` | progress line surfaced through the active channel during processing |
 
 ### Pipelines
