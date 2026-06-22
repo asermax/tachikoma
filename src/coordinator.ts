@@ -50,6 +50,13 @@ export class Coordinator {
   /** Single shared timer driving the next queue re-evaluation (never one-per-item). */
   private deliveryTimer: ReturnType<typeof setTimeout> | null = null;
   private exchanging = false;
+  /**
+   * InboundMessages steered into the live run this exchange, awaiting consumption
+   * confirmation. `submit()` pushes here when it steers; `handle()`'s finally reconciles
+   * them against pi's pending-steering queue and rescues any the run orphaned. Cleared
+   * every run-end.
+   */
+  private readonly steered: InboundMessage[] = [];
   private shuttingDown = false;
   private channel: Channel | null = null;
   /** True while a lifecycle trunk-close pipeline runs — routes `status()` to the lifecycle message. */
@@ -153,9 +160,17 @@ export class Coordinator {
         "message steered into live run",
       );
 
-      void session
-        .steer(renderPrompt(normalized))
-        .catch((error) => this.log.error({ err: error }, "steering failed — message dropped"));
+      // Track the steered message so handle()'s finally can rescue it if the run ends
+      // without consuming it. steer() resolves at injection time and never rejects on an
+      // ended run, so the only reliable orphan signal is pi's pending-steering queue at
+      // run-end. A steer() rejection means the message never reached the run — rescue it
+      // directly here (R3.1); a rejected steer is never in pi's queue, so the run-end
+      // rescue classifies it as consumed and never double-rescues it.
+      this.steered.push(normalized);
+      void session.steer(renderPrompt(normalized)).catch((error) => {
+        this.log.warn({ err: error }, "steering rejected — enqueuing for the next turn");
+        this.enqueue(normalized);
+      });
       return;
     }
 
@@ -164,7 +179,15 @@ export class Coordinator {
       "message enqueued",
     );
 
-    this.inbox.push(normalized);
+    this.enqueue(normalized);
+  }
+
+  /**
+   * Push `message` onto the inbox as the next exchange and wake the parked loop. Shared by
+   * `submit()`'s normal enqueue path and the orphan-steer rescue so both land the same way.
+   */
+  private enqueue(message: InboundMessage): void {
+    this.inbox.push(message);
     this.wake?.();
     this.wake = null;
   }
@@ -697,6 +720,7 @@ export class Coordinator {
       await this.runExchangeProcessors(message);
     } finally {
       this.exchanging = false;
+      this.rescueOrphanedSteers();
       this.lastExchangeAt = this.now();
 
       this.log.info(
@@ -710,6 +734,46 @@ export class Coordinator {
       );
 
       this.scheduleDelivery();
+    }
+  }
+
+  /**
+   * Rescue steered messages the just-ended run never consumed. `submit()` steers
+   * mid-exchange input into the live run fire-and-forget; pi drains its steering queue at
+   * run-start and after each turn, so a steer landing in the run's final tail is orphaned
+   * (the run ends before consuming it). Without this, the message is silently lost — or,
+   * via the next `prompt()`'s initial steering drain, mis-attributed to the following
+   * exchange. Here, at the definitive run-end moment, pi's pending-steering queue holds
+   * exactly this run's orphans: re-enqueue them as their own next exchange (like `/queue`)
+   * and clear pi's queue so the next run doesn't re-inject them.
+   */
+  private rescueOrphanedSteers(): void {
+    if (this.steered.length === 0) return;
+
+    try {
+      const active = this.active;
+      if (active == null) return; // trunk gone before run-end — can't read pending; drop tracked steers
+      const pending = new Set(active.session.getSteeringMessages());
+      let rescued = 0;
+      for (const message of this.steered) {
+        if (!pending.has(renderPrompt(message))) continue; // consumed by the run — leave it
+        this.log.debug(
+          { origin: message.metadata.origin, channel: message.channel },
+          "steered message orphaned by run end — enqueuing for the next turn",
+        );
+        this.enqueue(message);
+        rescued += 1;
+      }
+      if (rescued > 0) {
+        this.log.info({ rescued }, "steered messages rescued after run end");
+      }
+      // Clear pi's steering queue so the next prompt() doesn't drain these orphans back
+      // into the following run (surgical clear — reset() would wipe the whole transcript).
+      active.session.agent.clearSteeringQueue();
+    } catch (error) {
+      this.log.error({ err: error }, "steer rescue failed");
+    } finally {
+      this.steered.length = 0;
     }
   }
 
