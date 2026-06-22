@@ -285,6 +285,14 @@ export interface AppContext<C = unknown> {
    * delivery flush, so a hook can push any held output into that flush. Error-isolated.
    */
   onShutdown(name: string, hook: () => void | Promise<void>): void;
+  /**
+   * Request a deferred process restart (`restart_self` / `upgrade_self`). The restart thunk
+   * runs only after the current exchange completes and the coordinator's graceful drain +
+   * channel/scheduler teardown finish — so the in-flight response and post-exchange work are
+   * never cut short by the re-exec. The thunk is `never`-returning (it re-execs the process).
+   * First-write-wins.
+   */
+  requestRestart(restart: () => never): void;
   /** Surface a progress line through the active channel while processing. */
   status(text: string): void;
   /**

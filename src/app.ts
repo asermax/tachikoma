@@ -140,6 +140,13 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
     scheduler.stopAll();
   }
 
+  // A deferred restart (restart_self / upgrade_self) was requested mid-exchange: the
+  // coordinator's run loop exited after the exchange completed and the graceful drain ran
+  // above. Re-exec now, as the last thing the process does — the restarter spawnSyncs the
+  // replacement and never returns.
+  const restart = coordinator.consumeRestartRequest();
+  if (restart != null) restart();
+
   // A crash-initiated drain completed: exit non-zero so supervisors (e.g. systemd) restart us.
   // exitCode (not process.exit) lets the event loop empty and pino flush; the controller's own
   // timeout/second-signal backstop still uses process.exit(1).

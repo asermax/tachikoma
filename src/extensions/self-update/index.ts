@@ -73,15 +73,14 @@ export default defineExtension<SelfUpdateConfig>({
     const upgradeDeps = (): UpgradeDeps => ({
       registry,
       installer,
-      restarter,
       devInstall,
       state,
       currentVersion,
       log: app.log,
     });
 
-    app.agent.use(createUpgradeToolFactory(upgradeDeps));
-    app.agent.use(createRestartToolFactory(() => restarter, app.log));
+    app.agent.use(createUpgradeToolFactory(upgradeDeps, () => restarter, app.requestRestart));
+    app.agent.use(createRestartToolFactory(() => restarter, app.requestRestart, app.log));
 
     app.agent.use(provideContext(SELF_UPDATE_USAGE, "self-update-usage"));
 

@@ -4,7 +4,7 @@
 
 ## Overview
 
-The self-update extension keeps a globally-installed Tachikoma current with its published npm package (`@asermax/tachikoma`). On a configurable cadence it compares the running version against the latest published version on the npm registry and, when a newer stable release exists, emits a `notify` event so the user hears about it. An `upgrade_self` agent tool installs the latest version globally and re-execs the process so the new code takes over. Because the process modifies and then restarts itself, every upgrade records an "in progress" marker beforehand; on the next boot the extension reconciles that marker — announcing success, or automatically rolling back to the previous version when the new one fails to come up — and a loop guard prevents re-attempting a version that just rolled back. The extension also contributes a usage context section (scope: main only) covering the update/restart tools and the don't-run-npm-directly rule.
+The self-update extension keeps a globally-installed Tachikoma current with its published npm package (`@asermax/tachikoma`). On a configurable cadence it compares the running version against the latest published version on the npm registry and, when a newer stable release exists, emits a `notify` event so the user hears about it. An `upgrade_self` agent tool installs the latest version globally and re-execs the process so the new code takes over. Because the process modifies and then restarts itself, every upgrade records an "in progress" marker beforehand; on the next boot the extension reconciles that marker — announcing success, or automatically rolling back to the previous version when the new one fails to come up — and a loop guard prevents re-attempting a version that just rolled back. The re-exec is deferred until the current exchange completes, so the agent's response is delivered in full and post-exchange work (exchange processors, held-delivery drain) runs before the process is replaced. The extension also contributes a usage context section (scope: main only) covering the update/restart tools and the don't-run-npm-directly rule.
 
 All dangerous operations (registry fetch, global install, process re-exec) sit behind injectable seams so the version-comparison, check, upgrade-gate, and rollback decisions are pure and unit-tested.
 
@@ -27,16 +27,17 @@ All dangerous operations (registry fetch, global install, process re-exec) sit b
 | R4 | When a strictly-newer stable version exists that is not the known-failed version and has not already been notified, emit a `notify` event (source `self-update`, severity `info`) telling the user the current → latest transition |
 | R5 | The same newer version is not notified twice; the last-notified version is persisted in the extension's namespaced KV state (no dedicated table / migration) |
 | R6 | A registry lookup failure is a quiet no-op for that tick: nothing is notified and the check bookkeeping is left untouched |
-| R7 | The `upgrade_self` agent tool upgrades to the latest published version: it gates on the same decision (refuses when already current, when the registry is unavailable, when the target is the known-failed version, or when running from a development install — see R15a), otherwise writes the in-progress marker, installs the target, and re-execs |
+| R7 | The `upgrade_self` agent tool upgrades to the latest published version: it gates on the same decision (refuses when already current, when the registry is unavailable, when the target is the known-failed version, or when running from a development install — see R15a), otherwise writes the in-progress marker, installs the target, and schedules a deferred restart (R16) so the current exchange completes before the process re-execs |
 | R8 | Before installing, an upgrade marker (`previousVersion`, `targetVersion`, `startedAt`) is persisted; if the install itself throws, the marker is cleared, the target is recorded as the failed version (loop guard), and no restart happens |
-| R9 | After a successful install the process re-execs via `spawnSync(process.execPath, process.argv.slice(1), { stdio: "inherit" })` — the script args are `process.argv.slice(1)` (dropping the node executable in `argv[0]`) — and the parent exits with the child's status so the newly-installed version takes over |
+| R9 | After a successful install the process re-execs via `spawnSync(process.execPath, process.argv.slice(1), { stdio: "inherit" })` — the script args are `process.argv.slice(1)` (dropping the node executable in `argv[0]`) — and the parent exits with the child's status so the newly-installed version takes over. The re-exec is the deferred one (R16): the coordinator triggers it after the exchange completes, not from inside the tool |
 | R10 | On startup the extension reconciles any upgrade marker: running the marker's target version means the upgrade landed — announce "back online" and clear both the marker and the loop guard; not running it means the new version failed — record the target as failed (loop guard), reinstall the previous version, clear the marker, and re-exec back onto the known-good build |
 | R11 | The loop guard (`failedVersion`) suppresses both notification (R4) and upgrade (R7) for a version that rolled back, until a strictly-newer version supersedes it; a successful boot clears it |
 | R12 | If a rollback's own install fails, no restart happens and an `urgent` notification reports that manual intervention is needed |
 | R13 | The global install command is configurable via `installCommand`, a template where `{version}` is substituted with the target version (default `npm install -g @asermax/tachikoma@{version}`) |
 | R14 | Every state transition (check outcome, marker write, install, restart, rollback) is logged |
-| R15 | A `restart_self` agent tool re-execs the running process in place via the `Restarter` seam *without* upgrading (to pick up config or state changes); on success the re-exec replaces the process and the tool call does not return — any returned text means the restart did not happen |
+| R15 | A `restart_self` agent tool re-execs the running process in place via the `Restarter` seam *without* upgrading (to pick up config or state changes). The restart is deferred (R16): the tool returns a result, the current exchange completes, and only then does the process re-exec |
 | R15a | `upgrade_self` refuses when the running copy is a development install (detected by `DevInstallDetector.isDevInstall` — e.g. an `npm link` symlink into a checkout, or a source-run; detection failures conservatively treat the install as development), returning a `dev-install` status that tells the user to upgrade manually from their working tree; no marker is written, nothing is installed, and the process is not restarted |
+| R16 | A `restart_self` / `upgrade_self` restart is deferred until after the current exchange completes: the tool records a pending-restart request on the coordinator (via `app.requestRestart`) and returns a result instead of re-execing from inside the tool. Once the exchange finishes (response streamed, exchange processors run, held deliveries drained), the coordinator exits its run loop, its graceful-drain teardown runs, and the process re-execs. This guarantees the agent's response is delivered in full and post-exchange work runs before the process is replaced |
 
 ## Behaviors
 
@@ -51,17 +52,18 @@ The scheduled tick surfaces a newer published version exactly once.
 - Given the registry reports a prerelease as latest, then it is not treated as an upgrade and nothing is emitted
 - Given the registry lookup fails (null), then nothing is emitted and the check bookkeeping is unchanged
 
-### Upgrade and Restart (R7, R8, R9)
+### Upgrade and Restart (R7, R8, R9, R15, R16)
 
-The `upgrade_self` tool installs the latest version and hands control to it.
+The `upgrade_self` tool installs the latest version and schedules a deferred restart so the new code takes over once the current exchange completes.
 
 **Acceptance Criteria**:
-- Given a newer version exists, when `upgrade_self` runs, then the upgrade marker is written, the installer is invoked with the target version, and the process re-execs (the tool call does not return on success)
+- Given a newer version exists, when `upgrade_self` runs, then the upgrade marker is written, the installer is invoked with the target version, the tool returns a `started` message, and a deferred restart is scheduled (R16) — the process re-execs only after the exchange completes
 - Given the running version is already latest, then the tool returns "up to date" without writing a marker, installing, or restarting
 - Given the registry is unavailable, then the tool returns a registry-unavailable message and does nothing else
 - Given the install throws, then the marker is cleared, the target is recorded as the failed version, no restart happens, and the failure is surfaced
 - Given the running copy is a development install (linked or source checkout), when `upgrade_self` runs, then it returns a `dev-install` message advising a manual upgrade and does not write a marker, install, or restart
-- Given the user explicitly asks to restart without upgrading, when `restart_self` runs, then the process re-execs in place (same version) and the tool call does not return on success
+- Given the user explicitly asks to restart without upgrading, when `restart_self` runs, then the tool returns a result and the process re-execs in place (same version) after the exchange completes
+- Given a deferred restart is pending, when the current exchange completes, then the agent's response was streamed in full and exchange processors ran before the run loop exits, the graceful drain flushes any held deliveries, and the process re-execs (R16)
 
 ### Startup Reconciliation and Rollback (R10, R11, R12)
 
