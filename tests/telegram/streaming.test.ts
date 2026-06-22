@@ -674,7 +674,7 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     expect(last.text).not.toContain("Reading /b.ts");
   });
 
-  it("makes the whole body the collapsed block for an all-intensive turn with no final text (R10)", async () => {
+  it("keeps the last preface + trailing tool expanded, folding earlier units (R4/R10)", async () => {
     const api = fakeApi();
     const renderer = make(api, true, 1);
     await renderer.appendTool("read", { path: "/a.ts" });
@@ -682,32 +682,42 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     await renderer.appendTool("read", { path: "/b.ts" });
     await renderer.appendText("second\n\n"); // boundary 2 ⇒ active
     await renderer.appendTool("read", { path: "/c.ts" }); // trailing tool — no following text
-    await renderer.finalize(); // bakes c's summary; adds no boundary; whole body becomes the block
+    await renderer.finalize(); // bakes c's summary into the LAST unit (expanded), not the block
 
     const last = api.calls.at(-1);
     const block = mustEntity(last, "expandable_blockquote");
-    // No expanded content outside the block: it spans the whole finalized text, and the trailing
-    // tool's baked summary is inside it (non-empty, expandable).
-    expect(block.offset).toBe(0);
-    expect(block.offset + block.length).toBe(last.text.length);
-    expect(last.text.slice(block.offset, block.offset + block.length)).toContain("c.ts");
+    const blockText = last.text.slice(block.offset, block.offset + block.length);
+    const tailText = last.text.slice(block.offset + block.length);
+    // Earlier units fold: the "first" preface and the a/b tool summaries sit inside the block.
+    expect(blockText).toContain("first");
+    expect(blockText).toContain("a.ts");
+    expect(blockText).toContain("b.ts");
+    // The last unit stays expanded: the "second" preface and the trailing c.ts summary sit after it.
+    expect(tailText).toContain("second");
+    expect(tailText).toContain("c.ts");
+    expect(tailText).not.toContain("first");
     expect(last.text.length).toBeGreaterThan(0);
   });
 
-  it("keeps a running tool's live line expanded as the tail (R3)", async () => {
+  it("keeps a running tool's preface + live line expanded as the tail (R3)", async () => {
     const api = fakeApi();
     const renderer = make(api, true, 1);
     await renderer.appendTool("read", { path: "/a.ts" });
     await renderer.appendText("first\n\n");
     await renderer.appendTool("read", { path: "/b.ts" });
     await renderer.appendText("second\n\n"); // boundary 2 ⇒ active
-    // A tool is running — its live line is the tail and stays expanded.
+    // A tool is running — its preface "second" stays visible with its live activity line as the tail.
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendTool("grep", { pattern: "needle" });
 
     const last = api.calls.at(-1);
     const block = mustEntity(last, "expandable_blockquote");
-    expect(last.text.slice(block.offset + block.length)).toContain("Searching for 'needle'");
+    const tailText = last.text.slice(block.offset + block.length);
+    // The tail holds the preface text AND the running tool's activity line (the last unit), expanded.
+    expect(tailText).toContain("second");
+    expect(tailText).toContain("Searching for 'needle'");
+    // Only earlier units fold: "first" is inside the block, not the tail.
+    expect(last.text.slice(block.offset, block.offset + block.length)).toContain("first");
   });
 
   it("folds earlier inline segments retroactively when the threshold is crossed (R2/R3)", async () => {
@@ -858,5 +868,116 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
       expect(e.offset).toBeGreaterThanOrEqual(0);
       expect(e.offset + e.length).toBeLessThanOrEqual(payload.text.length);
     }
+  });
+
+  it("keeps the whole streaming text segment expanded until a tool resumes, not paragraph-by-paragraph (R1)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1); // 2 boundaries ⇒ active
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n"); // boundary 1
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ active; split moves to "second"
+    // Stream two more paragraphs of the SAME text segment (no tool between them).
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("third\n\n");
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("fourth\n\n");
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    const blockText = last.text.slice(block.offset, block.offset + block.length);
+    const tailText = last.text.slice(block.offset + block.length);
+    // The whole final segment ("second" onward) stays expanded — not folded paragraph-by-paragraph.
+    expect(tailText).toContain("second");
+    expect(tailText).toContain("third");
+    expect(tailText).toContain("fourth");
+    // ...contiguously, in order, after the block (nothing in this segment is folded into it).
+    const secondIdx = tailText.indexOf("second");
+    expect(tailText.indexOf("third")).toBeGreaterThan(secondIdx);
+    expect(tailText.indexOf("fourth")).toBeGreaterThan(tailText.indexOf("third"));
+    expect(blockText).not.toContain("second");
+    expect(blockText).not.toContain("third");
+    expect(blockText).not.toContain("fourth");
+    // Only content before the last tool marker folds.
+    expect(blockText).toContain("first");
+  });
+
+  it("folds a unit only at the next tool-group → new-text transition (R2)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n"); // boundary 1
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ active; "first"+/a fold, "second" is the tail
+    // A new tool group runs, then text resumes ⇒ the "second" unit folds, the new text is the tail.
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/c.ts" });
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("third\n\n"); // boundary 3 ⇒ "second"+/b fold
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    const blockText = last.text.slice(block.offset, block.offset + block.length);
+    const tailText = last.text.slice(block.offset + block.length);
+    // The prior units ("first"+/a, "second"+/b) folded; the new unit "third" is the expanded tail.
+    expect(blockText).toContain("first");
+    expect(blockText).toContain("second");
+    expect(tailText).toContain("third");
+    expect(tailText).not.toContain("first");
+    expect(tailText).not.toContain("second");
+  });
+
+  it("keeps a multi-paragraph final answer fully expanded at finalize (R4)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n"); // boundary 1
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("answer p1\n\nanswer p2\n\n"); // boundary 2 ⇒ active; multi-paragraph answer
+    await renderer.finalize();
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    const blockText = last.text.slice(block.offset, block.offset + block.length);
+    const tailText = last.text.slice(block.offset + block.length);
+    // The whole multi-paragraph final answer stays expanded; only prior units fold.
+    expect(tailText).toContain("answer p1");
+    expect(tailText).toContain("answer p2");
+    expect(blockText).toContain("first");
+    expect(tailText).not.toContain("first");
+  });
+
+  it("folds pre-overflow tail content once collapse re-activates after an overflow (R6/AC6b)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("seed\n\n"); // boundary 1
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/b.ts" });
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    // Overflow: commits the intensive chunk with its own block; detection resets on the kept tail.
+    await renderer.appendText(`${"x".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 10)}\n\n`);
+    expect(renderer.collapseActive()).toBe(false);
+
+    // Two new boundaries on the tail re-activate collapse. The first tail unit must fold into the new
+    // block once the second forms — verifying the overflow reset left the split valid from zero.
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/c.ts" });
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("tail one\n\n"); // boundary 1 on the tail (1 > 1 ⇒ inactive)
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/d.ts" });
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("tail two\n\n"); // boundary 2 on the tail ⇒ re-activate
+    expect(renderer.collapseActive()).toBe(true);
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    const blockText = last.text.slice(block.offset, block.offset + block.length);
+    const tailText = last.text.slice(block.offset + block.length);
+    // The first tail unit ("tail one") folded into the block; only "tail two" is the expanded tail.
+    expect(blockText).toContain("tail one");
+    expect(tailText).toContain("tail two");
+    expect(tailText).not.toContain("tail one");
   });
 });
