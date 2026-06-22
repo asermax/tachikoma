@@ -1,3 +1,10 @@
+# [3.42.0](https://github.com/asermax/tachikoma/compare/v3.41.1...v3.42.0) (2026-06-22)
+
+
+### Features
+
+* **self-update:** defer restart until the exchange completes ([dc1f8ae](https://github.com/asermax/tachikoma/commit/dc1f8aec34903f9cc23edc2ae57b5f2cd1a54731))
+
 ## [3.41.1](https://github.com/asermax/tachikoma/compare/v3.41.0...v3.41.1) (2026-06-22)
 
 
