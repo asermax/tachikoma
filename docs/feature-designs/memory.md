@@ -108,12 +108,8 @@ Branch cutting is non-destructive by construction: pi's `SessionManager.createBr
 - `complete()` one-shots without tools: the agent could not read existing memories, grep for overlap, or edit files.
 **Consequences**:
 - Pro: full-fidelity context; thin processors over `forkAndContinue`.
-<<<<<<< HEAD
-- Con: the fork loads the branch turns as live tokens, so cost scales with branch length (×2 stores).
-- The branch set is the **topic-filtered** enumeration: summarized tangents and reversed summaries are excluded (a tangent's content is already in the main-line summary; a reversed summary is a decision the user undid) — the same `kind` discriminator that serves `ask_branch` and branch enumeration serves extraction, so only genuine topics are forked.
-=======
 - Con: the fork loads the branch turns as live tokens, so cost scales with branch length (×2 forks per branch: episodic + the shared topics+learnings fork).
->>>>>>> katachi/DLT-123
+- The branch set is the **topic-filtered** enumeration: summarized tangents and reversed summaries are excluded (a tangent's content is already in the main-line summary; a reversed summary is a decision the user undid) — the same `kind` discriminator that serves `ask_branch` and branch enumeration serves extraction, so only genuine topics are forked.
 
 ### Empty-file deletion protocol with host-side sweep
 
