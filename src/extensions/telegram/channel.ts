@@ -52,6 +52,10 @@ export interface TelegramChannelOptions {
   pushNotifications: boolean;
   /** Minimum streamed-response duration (seconds) before a completion push is forced. */
   pushNotificationMinSeconds: number;
+  /** Collapse intensive-work sections into an expandable blockquote (DLT-064); false renders as today. */
+  collapseIntensiveWork: boolean;
+  /** Tool→text boundaries a message must exceed to activate collapse (DLT-064); a trigger, not a quota. */
+  intensiveWorkThreshold: number;
   mediaDir: string;
   /** Abort the in-flight agent run — wired from sessions.abortExchange. */
   stop: () => Promise<void>;
@@ -438,6 +442,8 @@ export class TelegramChannel implements Channel {
         log,
         seedMessageId,
         this.options.pushNotifications,
+        this.options.collapseIntensiveWork,
+        this.options.intensiveWorkThreshold,
       );
       this.activeRenderer = created;
       return created;

@@ -448,3 +448,130 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     );
   });
 });
+
+describe("StreamRenderer intensive-work detection (DLT-064)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Construct with the collapse config as trailing args (mirroring channel.ts); defaults keep the
+  // existing suites byte-identical. `collapse`/`threshold` are the last two StreamRenderer params.
+  const make = (api: ReturnType<typeof fakeApi>, collapse = true, threshold = 4): StreamRenderer =>
+    new StreamRenderer(api, 42, fakeLog, null, false, collapse, threshold);
+
+  it("counts a block of tools followed by text as a single boundary, not one per tool (R1)", async () => {
+    const api = fakeApi();
+    // threshold 1: a count of 1 stays inactive (1 > 1 is false), but a per-tool count of 5 would be active.
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendTool("read", { path: "/c.ts" });
+    await renderer.appendTool("read", { path: "/d.ts" });
+    await renderer.appendTool("read", { path: "/e.ts" });
+    await renderer.appendText("All read.\n\n");
+
+    expect(renderer.collapseActive()).toBe(false);
+  });
+
+  it("does not count a trailing tool block with no following text (R9)", async () => {
+    const api = fakeApi();
+    // threshold 1: one boundary stays inactive; a second would flip it active.
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("step\n\n"); // boundary 1
+    expect(renderer.collapseActive()).toBe(false);
+
+    // Trailing tool with no following text — its summary bakes at finalize but adds no boundary.
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.finalize();
+
+    expect(renderer.collapseActive()).toBe(false);
+  });
+
+  it("completes a boundary with even a single character of text (R1)", async () => {
+    const api = fakeApi();
+    // threshold 0: one boundary flips collapse active.
+    const renderer = make(api, true, 0);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    expect(renderer.collapseActive()).toBe(false);
+
+    await renderer.appendText("x"); // any text, even one char, completes the boundary
+    expect(renderer.collapseActive()).toBe(true);
+  });
+
+  it("does not count a status (transient) event as a boundary (R1)", async () => {
+    const api = fakeApi();
+    // threshold 1: two boundaries are active, one is not — so a spurious status boundary would show.
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("first\n\n"); // boundary 1
+    await renderer.showTransient("Compacting…"); // status — NOT a boundary
+    await renderer.appendText("second\n\n"); // no pending tools → no boundary
+    expect(renderer.collapseActive()).toBe(false);
+
+    // Contrast: a second tool→text transition does add a boundary → active.
+    const other = make(fakeApi(), true, 1);
+    await other.appendTool("read", { path: "/a.ts" });
+    await other.appendText("first\n\n");
+    await other.appendTool("read", { path: "/b.ts" });
+    await other.appendText("second\n\n"); // boundary 2 → active
+    expect(other.collapseActive()).toBe(true);
+  });
+
+  it("activates collapse only once the count exceeds the default threshold of 4 (R6)", async () => {
+    const api = fakeApi();
+    const renderer = make(api); // defaults: collapse on, threshold 4
+    for (let i = 0; i < 4; i += 1) {
+      await renderer.appendTool("read", { path: `/f${i}.ts` });
+      await renderer.appendText(`step ${i}\n\n`); // four boundaries
+    }
+    expect(renderer.collapseActive()).toBe(false); // 4 > 4 is false
+
+    await renderer.appendTool("read", { path: "/f4.ts" });
+    await renderer.appendText("step 4\n\n"); // fifth boundary
+    expect(renderer.collapseActive()).toBe(true); // 5 > 4
+  });
+
+  it("honors a custom intensiveWorkThreshold (R6)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, true, 1);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("one\n\n"); // boundary 1 → 1 > 1 false
+    expect(renderer.collapseActive()).toBe(false);
+
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("two\n\n"); // boundary 2 → 2 > 1 true
+    expect(renderer.collapseActive()).toBe(true);
+  });
+
+  it("never collapses when collapseIntensiveWork is disabled (R7)", async () => {
+    const api = fakeApi();
+    const renderer = make(api, false, 4);
+    for (let i = 0; i < 6; i += 1) {
+      await renderer.appendTool("read", { path: `/f${i}.ts` });
+      await renderer.appendText(`step ${i}\n\n`); // six boundaries
+    }
+    expect(renderer.collapseActive()).toBe(false);
+  });
+
+  it("resets detection at each message boundary (overflow commit) so the tail is evaluated independently (R9)", async () => {
+    const api = fakeApi();
+    // threshold 0: a single tool→text boundary makes collapse active.
+    const renderer = make(api, true, 0);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("seed\n\n"); // boundary 1 → active
+    expect(renderer.collapseActive()).toBe(true);
+
+    // Advance past the throttle so the next flush reaches commitOverflow, then overflow the buffer
+    // past the 4096-char edit limit. commitOverflow finalizes the earlier chunk(s) in place and
+    // resets the boundary counter, so the streaming tail message starts fresh from zero.
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText(`${"x".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 10)}\n\n`);
+
+    expect(renderer.collapseActive()).toBe(false);
+  });
+});

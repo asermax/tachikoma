@@ -26,6 +26,16 @@ const TelegramConfigSchema = Type.Object({
     description:
       "Minimum streamed-response duration (seconds) before a completion push is forced; shorter turns stream without a push (the user is assumed to still be watching)",
   }),
+  collapseIntensiveWork: Type.Boolean({
+    default: true,
+    description:
+      "Collapse intensive-work sections (rapid tool→text turns) into a Telegram expandable blockquote so the final answer is prominent; set false to render every turn exactly as today",
+  }),
+  intensiveWorkThreshold: Type.Number({
+    default: 4,
+    description:
+      "Number of tool→text boundaries a single message must EXCEED for collapse to activate (a trigger, not a quota; no enforced floor)",
+  }),
   extraFileRoots: Type.Array(Type.String(), {
     default: [],
     description: "Extra absolute roots send_telegram_file may read from",
@@ -51,6 +61,8 @@ export default defineExtension<TelegramConfig>({
       allowMedia,
       pushNotifications,
       pushNotificationMinSeconds,
+      collapseIntensiveWork,
+      intensiveWorkThreshold,
       extraFileRoots,
     } = app.extensionConfig;
 
@@ -99,6 +111,8 @@ export default defineExtension<TelegramConfig>({
       allowMedia,
       pushNotifications,
       pushNotificationMinSeconds,
+      collapseIntensiveWork,
+      intensiveWorkThreshold,
       mediaDir,
       stop: () => app.sessions.abortExchange(),
       store,

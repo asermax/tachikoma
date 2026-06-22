@@ -39,6 +39,16 @@ export class StreamRenderer {
   private lastEditAt = 0;
   private broken = false;
   private readonly silent: boolean;
+  /** Whether intensive-work collapse is enabled (DLT-064); false ⇒ render exactly as today. */
+  private readonly collapseIntensiveWork: boolean;
+  /** Tool→text boundaries a message must exceed to activate collapse (DLT-064); a trigger, not a quota. */
+  private readonly intensiveWorkThreshold: number;
+  /**
+   * Tool→text boundaries accumulated in the current uncommitted message (DLT-064). A block of one or
+   * more tool calls followed by any text counts as one boundary; the count drives `collapseActive()`.
+   * Reset at each message boundary (overflow commit) so the streaming tail is evaluated independently.
+   */
+  private boundaryCount = 0;
   /**
    * A turn-scoped decision header (R8) anchored above the streamed text. Set before streaming begins
    * and recomposed on every edit so the streamed body never overwrites it (KD9). Dropped (set to null)
@@ -55,6 +65,11 @@ export class StreamRenderer {
    * push notifications are on so the streamed work-in-progress and any overflow
    * chunks never fire partial pushes — the single push is forced on completion by
    * copying the finalized message (see `forceNotification`), never by these sends.
+   * @param collapseIntensiveWork Fold intensive-work sections into a collapsed
+   * expandable blockquote once the boundary count exceeds the threshold (DLT-064).
+   * Default on; the threshold default keeps every below-threshold turn byte-identical.
+   * @param intensiveWorkThreshold Tool→text boundaries a single message must exceed
+   * for collapse to activate — a trigger (count > threshold), not a quota.
    */
   constructor(
     api: StreamApi,
@@ -62,12 +77,27 @@ export class StreamRenderer {
     log: Logger,
     seedMessageId: number | null = null,
     silent = false,
+    collapseIntensiveWork = true,
+    intensiveWorkThreshold = 4,
   ) {
     this.api = api;
     this.chatId = chatId;
     this.log = log;
     this.messageId = seedMessageId;
     this.silent = silent;
+    this.collapseIntensiveWork = collapseIntensiveWork;
+    this.intensiveWorkThreshold = intensiveWorkThreshold;
+  }
+
+  /**
+   * Whether intensive-work collapse is active for the current message (DLT-064). The
+   * threshold is a trigger, not a quota: collapse activates only once the boundary count
+   * *strictly exceeds* it, and never when the feature is disabled — so below-threshold
+   * and disabled turns render exactly as today. This is the counter's sole output; the
+   * detection suite and the compose/finalize paths (Batch 3) both read it here.
+   */
+  collapseActive(): boolean {
+    return this.collapseIntensiveWork && this.boundaryCount > this.intensiveWorkThreshold;
   }
 
   /**
@@ -80,6 +110,10 @@ export class StreamRenderer {
   }
 
   async appendText(text: string): Promise<void> {
+    // A boundary forms when text resumes after one or more pending tools (DLT-064). Capture before
+    // bakePendingTools clears them, then count one increment for the whole tool block regardless of how
+    // many tools it held — a block of N tools followed by any text is a single boundary, not N.
+    if (this.pendingTools.length > 0) this.boundaryCount += 1;
     this.bakePendingTools();
     this.transient = null;
     this.buffer += text;
@@ -228,7 +262,20 @@ export class StreamRenderer {
       }
     }
 
+    // The committed chunks were the previous message boundary; the streaming tail is a new message,
+    // so intensive-work detection resets and the tail is evaluated independently from zero (DLT-064, R9).
+    // (Batch 3 evaluates collapse for each committed chunk at commit time before this reset.)
+    this.resetMessageBoundary();
     this.lastRendered = "";
+  }
+
+  /**
+   * Reset intensive-work detection for the current message (DLT-064, R9). Called after an overflow
+   * commit finalizes the earlier chunk(s) in place, so the streaming tail is a fresh message boundary
+   * and its boundaries re-accumulate from zero.
+   */
+  private resetMessageBoundary(): void {
+    this.boundaryCount = 0;
   }
 
   /**
