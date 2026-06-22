@@ -34,6 +34,8 @@ interface FakeSession {
   prompt: ReturnType<typeof vi.fn>;
   steer: ReturnType<typeof vi.fn>;
   abort: ReturnType<typeof vi.fn>;
+  getSteeringMessages: ReturnType<typeof vi.fn>;
+  agent: { clearSteeringQueue: ReturnType<typeof vi.fn> };
   systemPrompt: string;
   sessionManager: {
     getEntries: () => unknown[];
@@ -50,6 +52,10 @@ const createSession = (overrides: Partial<FakeSession> = {}): FakeSession => ({
   prompt: vi.fn().mockResolvedValue(undefined),
   steer: vi.fn().mockResolvedValue(undefined),
   abort: vi.fn().mockResolvedValue(undefined),
+  // Defaults to "consumed": the rescue sees an empty pending queue and skips. Tests that
+  // exercise the orphan path override this to return the still-pending steer texts.
+  getSteeringMessages: vi.fn(() => []),
+  agent: { clearSteeringQueue: vi.fn() },
   systemPrompt: "you are a helpful assistant",
   sessionManager: {
     getEntries: () => [],
@@ -296,6 +302,116 @@ describe("Coordinator.submit steering", () => {
     // reaches the inbound middleware (the boundary command handler) — evidenced by a 2nd prompt.
     await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(2));
     expect(session.steer).not.toHaveBeenCalled();
+
+    controller.abort();
+    await loop;
+  });
+});
+
+describe("Coordinator.submit steer orphan rescue", () => {
+  // Drives one exchange ("first") that steers `steeredTexts` mid-run from inside the first
+  // `respond` only, then returns what the run-end rescue did. `pendingAtRunEnd` is what the
+  // fake session reports as still-pending steering at run-end — the orphan signal.
+  const driveRescueExchange = async (
+    pendingAtRunEnd: string[],
+    steeredTexts: string[],
+    sessionOverrides: Partial<FakeSession> = {},
+  ) => {
+    const session = createSession({
+      prompt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
+          }),
+      ),
+      getSteeringMessages: vi.fn(() => pendingAtRunEnd),
+      ...sessionOverrides,
+    });
+    const regs = createRegistrations();
+    const processed: string[] = [];
+    regs.exchangeProcessors.push({
+      name: "rec",
+      process: async (ctx) => {
+        processed.push(ctx.userText);
+      },
+    });
+    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
+
+    let steeredOnce = false;
+    coordinator.attachChannel(
+      createChannel({
+        respond: vi.fn(async (exchange: Exchange) => {
+          // Steer only during the first exchange so a rescued message (which becomes its
+          // own exchange) doesn't re-steer and loop.
+          if (!steeredOnce) {
+            steeredOnce = true;
+            for (const text of steeredTexts) coordinator.submit(textMsg(text));
+          }
+          for await (const _ of exchange.events) {
+            // drain
+          }
+        }),
+      }),
+    );
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("first"));
+
+    return { session, processed, controller, loop };
+  };
+
+  it("rescues a steered message the run never consumed as the next exchange", async () => {
+    const { session, processed, controller, loop } = await driveRescueExchange(
+      ["rescue me"],
+      ["rescue me"],
+    );
+
+    await vi.waitFor(() => expect(processed).toEqual(["first", "rescue me"]));
+    expect(session.agent.clearSteeringQueue).toHaveBeenCalled();
+
+    controller.abort();
+    await loop;
+  });
+
+  it("does not rescue a steered message the run consumed", async () => {
+    const { session, processed, controller, loop } = await driveRescueExchange(
+      [], // pending empty at run-end ⇒ the run consumed the steer
+      ["rescue me"],
+    );
+
+    await vi.waitFor(() => expect(session.steer).toHaveBeenCalledWith("rescue me"));
+    // Let the first exchange and its run-end rescue fully settle, then confirm no second
+    // exchange was spawned.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    expect(processed).toEqual(["first"]);
+
+    controller.abort();
+    await loop;
+  });
+
+  it("rescues multiple orphaned steers in arrival order", async () => {
+    const { processed, controller, loop } = await driveRescueExchange(
+      ["first orphan", "second orphan"],
+      ["first orphan", "second orphan"],
+    );
+
+    await vi.waitFor(() => expect(processed).toEqual(["first", "first orphan", "second orphan"]));
+
+    controller.abort();
+    await loop;
+  });
+
+  it("rescues a steered message when steer() rejects", async () => {
+    // A rejected steer never reaches pi's queue, so the run-end rescue sees nothing
+    // pending; submit()'s catch-path enqueue lands it as the next exchange instead.
+    const { processed, controller, loop } = await driveRescueExchange([], ["rescue me"], {
+      steer: vi.fn().mockRejectedValue(new Error("extension command")),
+    });
+
+    await vi.waitFor(() => expect(processed).toEqual(["first", "rescue me"]));
 
     controller.abort();
     await loop;
