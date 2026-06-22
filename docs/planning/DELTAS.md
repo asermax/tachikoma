@@ -80,13 +80,6 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Complexity**: Medium
 **Description**: Currently all agents run with `bypassPermissions` and no path restrictions, meaning they can modify any file the process has OS-level access to. Confine file writes, edits, and shell commands to the workspace path while preserving read access for broader system context. All agent instances must be subject to the sandbox boundary, regardless of how they are created. The specific sandboxing mechanism (runtime-level configuration, permission mode restrictions, or another approach) should be evaluated during speccing.
 
-### DLT-064: Collapse intensive work sections in Telegram
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: When the agent performs intensive work — rapid sequences of tool calls interspersed with short text responses (e.g. reading, editing, and searching files during code implementation) — the Telegram channel currently renders every tool summary and intermediate text inline, producing long, noisy messages that obscure the final answer. This delta adds detection of intensive work patterns within the Telegram renderer: when the number of tool-to-text boundaries within a single Telegram message exceeds a configurable threshold, subsequent intermediate content (tool summaries and short bridging text) is wrapped in a collapsible section, leaving only the final substantive text visible by default. Detection resets at each Telegram message boundary (when the message splits due to length). The collapsing mechanism (Telegram's ExpandableBlockQuote, spoiler tags, or another approach) and the threshold tuning should be evaluated during speccing. Collapsible sections must only collapse after the tool execution is complete — in-progress tools should remain visible (expanded) so the user can see active work, transitioning to collapsed only when the next text or tool boundary confirms the tool has finished.
-
 ### DLT-065: Parallel conversation sessions
 **Status**: ✗ Defined
 **Depends on**: None
