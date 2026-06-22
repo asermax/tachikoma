@@ -896,6 +896,9 @@ export class Coordinator {
         },
         transcriptPath: trunk.sessionFile,
         log: this.log,
+        // Arrow form: `status` reads `this.lifecycleActive`/`this.channel`, so the `this` binding
+        // must be preserved (a bare `this.status` reference would lose it).
+        status: (text: string) => this.status(text),
       },
       log: this.log,
       onProcessorStart: (processor) =>

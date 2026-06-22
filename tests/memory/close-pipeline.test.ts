@@ -387,6 +387,7 @@ describe("createTrunkClosePipeline", () => {
 
       return { text: "done" };
     });
+    const status = vi.fn();
 
     const processor = createTrunkClosePipeline({
       extraction: { agent: { forkAndContinue, branchFile }, workspaceRoot: workspace },
@@ -400,27 +401,49 @@ describe("createTrunkClosePipeline", () => {
       trunk: { session, sessionFile: "/s/trunk.jsonl", day: "2026-06-15", branchRecords: records },
       transcriptPath: "/s/trunk.jsonl",
       log: fakeLog,
+      status,
     });
 
     // Six extracts (3 branches × 2 forks — EXTRACTION_STORES excludes learnings), then prune (3
     // store passes: episodic + topics + learnings), consolidate (no-op), core (context).
     expect(events.slice(0, 6)).toEqual(Array(6).fill("extract"));
     expect(events.slice(6)).toEqual(["store", "store", "store", "context"]);
+
+    // The pipeline threads granular progress through `status`: an opener naming the day + branch
+    // count, a begin/complete pair per branch, a per-store prune line, then the consolidate and
+    // core-context phase starts. The coordinator owns the terminal "Trunk closed" line — not this.
+    expect(status.mock.calls.map((call) => call[0])).toEqual([
+      "Closing 2026-06-15 — 3 branches",
+      "Extracting branch 1/3…",
+      "Extracted branch 1/3",
+      "Extracting branch 2/3…",
+      "Extracted branch 2/3",
+      "Extracting branch 3/3…",
+      "Extracted branch 3/3",
+      "Pruning episodic memories…",
+      "Pruning topics memories…",
+      "Pruning learnings memories…",
+      "Consolidating memories…",
+      "Updating core context…",
+    ]);
   });
 
   it("no-ops for a background run with no trunk", async () => {
     const forkAndContinue = vi.fn();
     const branchFile = vi.fn();
     const run = vi.fn();
+    const status = vi.fn();
 
     const processor = createTrunkClosePipeline({
       extraction: { agent: { forkAndContinue, branchFile }, workspaceRoot: workspace },
       phases: phaseDeps(run),
     });
 
-    await processor.process({ trunk: null, transcriptPath: null, log: fakeLog });
+    await processor.process({ trunk: null, transcriptPath: null, log: fakeLog, status });
 
     expect(forkAndContinue).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
+    // No trunk ⇒ the early return fires before any status line is emitted (AC3).
+    expect(status).not.toHaveBeenCalled();
   });
 });

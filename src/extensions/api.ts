@@ -51,6 +51,14 @@ export interface PostProcessorContext {
   /** Path to the pi session JSONL transcript (the trunk session file), when one persisted. */
   transcriptPath: string | null;
   log: Logger;
+  /**
+   * Optional callback to surface a user-facing progress line during the run — e.g. the trunk-close
+   * pipeline threads per-branch/per-phase lines through it. Routed by the coordinator onto the
+   * persistent lifecycle message during a lifecycle close (or the reclaimable lead-in otherwise).
+   * No-op when absent (headless runs build their own context without it), so every emission should
+   * be optional-chained.
+   */
+  status?: (text: string) => void;
 }
 
 export interface PostProcessor {

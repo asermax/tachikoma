@@ -55,6 +55,7 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 | R27 | Learnings reuse the topic store's file conventions: one theme of recurring friction per `<slug>.md`, broad future-mergeable slugs (never incident- or date-scoped), and concise files (~50 lines); maintenance consolidates per-incident fragmentation into broad slug files |
 | R28 | A branch's store extractions (episodic, topics) run concurrently by default — the stores write disjoint directories, so there is no contention; `parallelizeExtraction = false` (under `[memory.maintenance]`) falls back to one store at a time. Branches are always extracted one at a time, because same-store extraction across branches shares the canonical store files (a read-modify-write); each store fork is awaited to settlement before the branch's shared throwaway file is deleted, so a sibling fork is never left reading a file being torn down |
 >>>>>>> katachi/DLT-123
+| R30 | The trunk-close pipeline surfaces live, phased progress through the post-processor context's optional `status` callback: an opener naming the trunk's day and branch count, a begin/complete pair per extracted branch, a per-store prune line, and the consolidate and core-context phase starts. The coordinator routes each line onto the persistent lifecycle message during a lifecycle close (nightly/stale) and the reclaimable lead-in otherwise; a headless run with no callback emits nothing; the coordinator owns the terminal success/failure line |
 
 ## Behaviors
 
@@ -90,6 +91,7 @@ Memory agents have no delete tool: files to be removed are emptied by the agent 
 - Given a background/headless run with no trunk, when the `memory-trunk-close` processor runs, then it no-ops (there are no day's branches to fold)
 - Given the agent emptied a file (merge or obsolescence), when the run completes, then the sweep deletes it while non-empty files survive; for the topics+learnings fork the sweep covers both `topics/` and `learnings/`
 - Given a branch with unextracted stores and `parallelizeExtraction` at its default, when extraction runs, then the branch's episodic and topics forks run concurrently (they touch disjoint directories) and both are awaited to settlement before the branch is marked extracted; given `parallelizeExtraction = false`, then the stores extract one at a time. Branches are always extracted serially
+- Given a lifecycle trunk close (nightly or stale recovery) with N branches, when the pipeline runs, then the user sees live progress on the persistent lifecycle message — an opener naming the day and N, a begin/complete pair per extracted branch, a per-store prune line, and the consolidate and core-context phase starts — ending at the coordinator's terminal success/failure line; given a transient close, the same lines render on the reclaimable lead-in; given a headless run with no `status` callback, then no progress is emitted and nothing throws (R30)
 
 ### Shared Topics+Learnings Extraction Classifies Each Signal (R11, R12)
 

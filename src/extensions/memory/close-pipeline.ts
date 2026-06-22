@@ -77,6 +77,13 @@ export interface ClosePhaseDeps {
   now?: () => Date;
   /** Commit the files a phase touched (so the staged result is durable alongside its marker). */
   commitChanges?: (message: string) => Promise<void>;
+  /**
+   * Optional progress surface: each phase emits a user-facing line as it starts (extraction emits
+   * per branch too). Populated per invocation by `createTrunkClosePipeline` alongside the
+   * per-invocation `log` override, since the coordinator's lifecycle routing is transient per
+   * close. Optional-chained so a headless run with no callback emits nothing.
+   */
+  status?: (text: string) => void;
 }
 
 /**
@@ -105,6 +112,7 @@ export const extractBranches = async (
   { agent, workspaceRoot, parallelize = true }: CloseExtractionDeps,
   day: string,
   log: Logger,
+  status?: (text: string) => void,
 ): Promise<void> => {
   const sessionFile = session.sessionFile;
 
@@ -114,8 +122,14 @@ export const extractBranches = async (
   }
 
   const failed: string[] = [];
+  const n = records.length;
+  let i = 0;
 
   for (const record of records) {
+    // Position over ALL records (1-based): advances even for already-extracted or unforkable
+    // branches, so the counter reflects the true branch position in the day's set.
+    i += 1;
+
     if (isBranchExtracted(session, record.branchId)) {
       log.debug({ branchId: record.branchId }, "branch already extracted — skipping");
       continue;
@@ -129,6 +143,8 @@ export const extractBranches = async (
       log.warn({ branchId: record.branchId }, "could not fork branch for extraction — skipping");
       continue;
     }
+
+    status?.(`Extracting branch ${i}/${n}…`);
 
     const start = Date.now();
 
@@ -167,9 +183,12 @@ export const extractBranches = async (
 
       markBranchExtracted(session, record.branchId);
 
+      status?.(`Extracted branch ${i}/${n}`);
+
       log.info({ branchId: record.branchId, durationMs: Date.now() - start }, "branch extracted");
     } catch (error) {
       failed.push(record.branchId);
+      status?.(`Branch ${i}/${n} failed — will retry`);
       log.error({ err: error, branchId: record.branchId }, "branch extraction failed — skipping");
     }
   }
@@ -201,6 +220,7 @@ export const prunePhase = async (session: AgentSession, deps: ClosePhaseDeps): P
   }
 
   for (const store of MEMORY_STORES) {
+    deps.status?.(`Pruning ${store} memories…`);
     await runStoreMaintenance(store, deps);
   }
 
@@ -226,6 +246,10 @@ export const consolidatePhase = async (
     return;
   }
 
+  // Surface the phase boundary even while the body is an interim no-op, so the close narrative
+  // stays complete (and ready for the consolidation body DLT-173 will slot in here).
+  deps.status?.("Consolidating memories…");
+
   markStepDone(session, CLOSE_STEPS.consolidate);
 };
 
@@ -241,6 +265,8 @@ export const coreContextStep = async (
     deps.log.debug("core-context step already done — skipping");
     return;
   }
+
+  deps.status?.("Updating core context…");
 
   await runContextMaintenance(deps);
 
@@ -305,28 +331,42 @@ export const createTrunkClosePipeline = (deps: TrunkClosePipelineDeps): PostProc
   phase: "main",
   statusLabel: "Processing memories",
 
-  async process({ trunk, log }) {
+  async process({ trunk, log, status }) {
     if (trunk == null) {
       log.debug("no trunk — skipping trunk-close memory pipeline");
       return;
     }
 
-    log.info(
-      { day: trunk.day, branches: trunk.branchRecords.length },
-      "trunk-close memory pipeline started",
+    const branches = trunk.branchRecords.length;
+
+    // Open with the day + branch count. The generic statusLabel fired by the coordinator just
+    // preceded this, so this specific opener immediately supersedes it.
+    status?.(
+      `Closing ${trunk.day}${branches > 0 ? ` — ${branches} branch${branches > 1 ? "es" : ""}` : ""}`,
     );
+
+    log.info({ day: trunk.day, branches }, "trunk-close memory pipeline started");
 
     const start = Date.now();
 
-    const phases = { ...deps.phases, log };
+    // `status` is per-invocation (the coordinator's lifecycle routing is transient per close), so it
+    // rides alongside the per-invocation `log` override into the phase deps.
+    const phases = { ...deps.phases, log, status };
 
-    await extractBranches(trunk.session, trunk.branchRecords, deps.extraction, trunk.day, log);
+    await extractBranches(
+      trunk.session,
+      trunk.branchRecords,
+      deps.extraction,
+      trunk.day,
+      log,
+      status,
+    );
     await prunePhase(trunk.session, phases);
     await consolidatePhase(trunk.session, phases);
     await coreContextStep(trunk.session, phases);
 
     log.info(
-      { day: trunk.day, branches: trunk.branchRecords.length, durationMs: Date.now() - start },
+      { day: trunk.day, branches, durationMs: Date.now() - start },
       "trunk-close memory pipeline completed",
     );
   },
