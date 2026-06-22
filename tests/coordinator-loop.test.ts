@@ -312,7 +312,11 @@ describe("Coordinator.submit steer orphan rescue", () => {
   // Drives one exchange ("first") that steers `steeredTexts` mid-run from inside the first
   // `respond` only, then returns what the run-end rescue did. `pendingAtRunEnd` is what the
   // fake session reports as still-pending steering at run-end — the orphan signal.
-  const driveRescueExchange = async (pendingAtRunEnd: string[], steeredTexts: string[]) => {
+  const driveRescueExchange = async (
+    pendingAtRunEnd: string[],
+    steeredTexts: string[],
+    sessionOverrides: Partial<FakeSession> = {},
+  ) => {
     const session = createSession({
       prompt: vi.fn(
         () =>
@@ -321,6 +325,7 @@ describe("Coordinator.submit steer orphan rescue", () => {
           }),
       ),
       getSteeringMessages: vi.fn(() => pendingAtRunEnd),
+      ...sessionOverrides,
     });
     const regs = createRegistrations();
     const processed: string[] = [];
@@ -400,45 +405,11 @@ describe("Coordinator.submit steer orphan rescue", () => {
   });
 
   it("rescues a steered message when steer() rejects", async () => {
-    const session = createSession({
-      prompt: vi.fn(
-        () =>
-          new Promise<void>((resolve) => {
-            setTimeout(resolve, 0);
-          }),
-      ),
+    // A rejected steer never reaches pi's queue, so the run-end rescue sees nothing
+    // pending; submit()'s catch-path enqueue lands it as the next exchange instead.
+    const { processed, controller, loop } = await driveRescueExchange([], ["rescue me"], {
       steer: vi.fn().mockRejectedValue(new Error("extension command")),
-      getSteeringMessages: vi.fn(() => []),
     });
-    const regs = createRegistrations();
-    const processed: string[] = [];
-    regs.exchangeProcessors.push({
-      name: "rec",
-      process: async (ctx) => {
-        processed.push(ctx.userText);
-      },
-    });
-    const { coordinator } = makeCoordinator(db, createAgent(session), regs);
-
-    let steeredOnce = false;
-    coordinator.attachChannel(
-      createChannel({
-        respond: vi.fn(async (exchange: Exchange) => {
-          if (!steeredOnce) {
-            steeredOnce = true;
-            coordinator.submit(textMsg("rescue me"));
-          }
-          for await (const _ of exchange.events) {
-            // drain
-          }
-        }),
-      }),
-    );
-
-    const controller = new AbortController();
-    const loop = coordinator.run(controller.signal);
-
-    coordinator.submit(textMsg("first"));
 
     await vi.waitFor(() => expect(processed).toEqual(["first", "rescue me"]));
 

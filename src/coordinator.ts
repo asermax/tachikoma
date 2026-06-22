@@ -766,10 +766,12 @@ export class Coordinator {
       }
       if (rescued > 0) {
         this.log.info({ rescued }, "steered messages rescued after run end");
+        // Clear pi's steering queue so the next prompt() doesn't drain these rescued
+        // orphans back into the following run (surgical — reset() would wipe the whole
+        // transcript). Skipped when nothing was rescued: a consumed steer was already
+        // drained from the queue by the run, so there is nothing left to clear.
+        active.session.agent.clearSteeringQueue();
       }
-      // Clear pi's steering queue so the next prompt() doesn't drain these orphans back
-      // into the following run (surgical clear — reset() would wipe the whole transcript).
-      active.session.agent.clearSteeringQueue();
     } catch (error) {
       this.log.error({ err: error }, "steer rescue failed");
     } finally {
