@@ -1,3 +1,10 @@
+## [3.43.1](https://github.com/asermax/tachikoma/compare/v3.43.0...v3.43.1) (2026-06-22)
+
+
+### Bug Fixes
+
+* **telegram:** keep last collapse unit expanded via content-type split ([ef5b503](https://github.com/asermax/tachikoma/commit/ef5b5034e1529a2cd3dfb9ba935f87442e544813))
+
 # [3.43.0](https://github.com/asermax/tachikoma/compare/v3.42.0...v3.43.0) (2026-06-22)
 
 
