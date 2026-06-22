@@ -378,3 +378,44 @@ export const splitMessageWithEntities = (
     .map((chunk) => ({ ...chunk, text: chunk.text.replace(/\n+$/, "") }))
     .filter((chunk) => chunk.text.length > 0);
 };
+
+/**
+ * Wrap a converted payload in one collapsed `expandable_blockquote` span. The text
+ * is unchanged and inner entities keep their offsets — they nest validly inside the
+ * blockquote (Bot API: only `blockquote`/`expandable_blockquote` can't nest *each
+ * other*). The outer entity is prepended so it precedes the inner spans at offset 0,
+ * matching Telegram's outer-before-inner ordering at a shared offset. See S4 /
+ * SPIKE-DLT-064 for the emission-path decision.
+ */
+export const wrapExpandable = (payload: TelegramPayload): TelegramPayload => ({
+  text: payload.text,
+  entities: [
+    { type: "expandable_blockquote", offset: 0, length: payload.text.length },
+    ...payload.entities,
+  ],
+});
+
+/**
+ * Join two payloads with a separator, rebasing the second's entity offsets — the
+ * structured-payload composition the collapse path builds its `header ⊕ block ⊕ tail`
+ * message from. `a`'s entities are already offset from the start, so they are kept
+ * as-is; each of `b`'s entities is shifted by `a.text.length + sep.length` (UTF-16
+ * code units, matching `rebase`'s offset math).
+ *
+ * Empty-operand rule: an empty operand is returned **unchanged with no separator**
+ * — so the all-intensive case (no tail) drops the trailing separator cleanly and
+ * yields just the left payload, rather than a payload ending on a blank line.
+ */
+export const concatPayloads = (
+  a: TelegramPayload,
+  b: TelegramPayload,
+  sep = "\n\n",
+): TelegramPayload => {
+  if (b.text.length === 0) return a;
+  if (a.text.length === 0) return b;
+  const delta = a.text.length + sep.length;
+  return {
+    text: a.text + sep + b.text,
+    entities: [...a.entities, ...b.entities.map((e) => ({ ...e, offset: e.offset + delta }))],
+  };
+};

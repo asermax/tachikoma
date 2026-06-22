@@ -2,9 +2,11 @@ import type { MessageEntity } from "grammy/types";
 import { describe, expect, it } from "vitest";
 import { TELEGRAM_MAX_MESSAGE_LENGTH } from "../../src/extensions/telegram/chunking.ts";
 import {
+  concatPayloads,
   splitMessageWithEntities,
   type TelegramPayload,
   toTelegramEntities,
+  wrapExpandable,
 } from "../../src/extensions/telegram/entities.ts";
 
 const find = (payload: TelegramPayload, type: string) =>
@@ -242,5 +244,127 @@ describe("splitMessageWithEntities", () => {
     expect(chunks).toHaveLength(2);
     expect(chunks[0].text.replace(/\n+$/, "")).toBe(a);
     expect(chunks[1].text).toBe(b);
+  });
+});
+
+describe("wrapExpandable", () => {
+  it("wraps plain text in a single expandable_blockquote entity spanning the text", () => {
+    const payload = toTelegramEntities("just some text");
+
+    const wrapped = wrapExpandable(payload);
+
+    expect(wrapped.text).toBe("just some text");
+    expect(wrapped.entities).toEqual([
+      { type: "expandable_blockquote", offset: 0, length: "just some text".length },
+    ]);
+  });
+
+  it("prepends the blockquote span over inner entities without changing their offsets", () => {
+    // A summary-style marker: _🔧 reading files_ renders as one italic span.
+    const payload = toTelegramEntities("_🔧 reading files_");
+    const innerItalic = must(payload, "italic");
+
+    const wrapped = wrapExpandable(payload);
+
+    expect(wrapped.text).toBe(payload.text);
+    // The outer blockquote covers the whole text and is prepended (sits at offset 0).
+    expect(wrapped.entities[0]).toMatchObject({
+      type: "expandable_blockquote",
+      offset: 0,
+      length: payload.text.length,
+    });
+    // The inner italic survives with its original offset/length (it nests inside).
+    const wrappedItalic = must(wrapped, "italic");
+    expect(wrappedItalic).toMatchObject({ offset: innerItalic.offset, length: innerItalic.length });
+    // And still points at the same substring of the unchanged text.
+    expect(
+      wrapped.text.slice(wrappedItalic.offset, wrappedItalic.offset + wrappedItalic.length),
+    ).toBe(payload.text.slice(innerItalic.offset, innerItalic.offset + innerItalic.length));
+  });
+
+  it("preserves all inner entities and the text unchanged", () => {
+    const payload = toTelegramEntities("a **bold** and `code` mix");
+    const inner = payload.entities;
+
+    const wrapped = wrapExpandable(payload);
+
+    expect(wrapped.text).toBe(payload.text);
+    // Every inner entity survives unchanged after the prepended blockquote.
+    expect(wrapped.entities.slice(1)).toEqual(inner);
+    expect(wrapped.entities[0]).toMatchObject({
+      type: "expandable_blockquote",
+      offset: 0,
+      length: payload.text.length,
+    });
+  });
+});
+
+describe("concatPayloads", () => {
+  it("rebases b's entities by exactly a.text.length + sep.length", () => {
+    const a = toTelegramEntities("**bold** here");
+    const b = toTelegramEntities("with _italic_");
+    const sep = "\n\n";
+
+    const joined = concatPayloads(a, b, sep);
+
+    expect(joined.text).toBe(`${a.text}${sep}${b.text}`);
+    // a's bold keeps its original offset (it sits at the start of the joined text).
+    const aBold = must(a, "bold");
+    expect(must(joined, "bold")).toMatchObject({ offset: aBold.offset, length: aBold.length });
+    // b's italic is shifted by exactly a.text.length + sep.length.
+    const delta = a.text.length + sep.length;
+    const bItalic = must(b, "italic");
+    expect(must(joined, "italic")).toMatchObject({
+      offset: bItalic.offset + delta,
+      length: bItalic.length,
+    });
+  });
+
+  it("returns a unchanged when b is empty (no separator added)", () => {
+    const a = toTelegramEntities("only a");
+    const empty: TelegramPayload = { text: "", entities: [] };
+
+    expect(concatPayloads(a, empty)).toEqual(a);
+    // And no separator leaked into the text.
+    expect(concatPayloads(a, empty).text).toBe("only a");
+  });
+
+  it("returns b unchanged when a is empty (no separator added)", () => {
+    const empty: TelegramPayload = { text: "", entities: [] };
+    const b = toTelegramEntities("only b");
+
+    expect(concatPayloads(empty, b)).toEqual(b);
+  });
+
+  it("defaults the separator to a blank line (\\n\\n)", () => {
+    const a = toTelegramEntities("first");
+    const b = toTelegramEntities("second");
+
+    expect(concatPayloads(a, b).text).toBe("first\n\nsecond");
+  });
+
+  it("reflects a custom separator in the joined text and the offset delta", () => {
+    const a = toTelegramEntities("AAA");
+    const b = toTelegramEntities("BBB `c`");
+    const sep = "\n---\n";
+
+    const joined = concatPayloads(a, b, sep);
+
+    expect(joined.text).toBe(`AAA${sep}BBB c`);
+    const code = must(joined, "code");
+    expect(code).toMatchObject({ offset: `AAA${sep}BBB `.length, length: 1 });
+    expect(joined.text.slice(code.offset, code.offset + code.length)).toBe("c");
+  });
+
+  it("keeps entities from both operands pointing at the correct substrings", () => {
+    const a = toTelegramEntities("**x**");
+    const b = toTelegramEntities("`y`");
+
+    const joined = concatPayloads(a, b);
+
+    const bold = must(joined, "bold");
+    const code = must(joined, "code");
+    expect(joined.text.slice(bold.offset, bold.offset + bold.length)).toBe("x");
+    expect(joined.text.slice(code.offset, code.offset + code.length)).toBe("y");
   });
 });
