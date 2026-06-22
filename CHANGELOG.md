@@ -1,3 +1,10 @@
+# [3.43.0](https://github.com/asermax/tachikoma/compare/v3.42.0...v3.43.0) (2026-06-22)
+
+
+### Features
+
+* **memory:** surface phased trunk-close progress via status callback ([f350228](https://github.com/asermax/tachikoma/commit/f35022887db0e49c6626a21788c983de6af4c8a5))
+
 # [3.42.0](https://github.com/asermax/tachikoma/compare/v3.41.1...v3.42.0) (2026-06-22)
 
 
