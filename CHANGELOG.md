@@ -1,3 +1,10 @@
+## [3.43.2](https://github.com/asermax/tachikoma/compare/v3.43.1...v3.43.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* **boundary:** recognize manual commands via channel-stamped token ([6dcebed](https://github.com/asermax/tachikoma/commit/6dcebed015d9f1a51531b4395c63804f8bad385a))
+
 ## [3.43.1](https://github.com/asermax/tachikoma/compare/v3.43.0...v3.43.1) (2026-06-22)
 
 
