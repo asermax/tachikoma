@@ -42,6 +42,16 @@ export const reactionQuote = (text: string | null | undefined): string | null =>
 export const replyTargetId = (message: Pick<Message, "reply_to_message">): string | null =>
   message.reply_to_message != null ? String(message.reply_to_message.message_id) : null;
 
+/**
+ * The leading slash-command token of `text` (`/checkpoint foo` → `checkpoint`), or null when `text` is
+ * not a command. Extracted from the RAW message text — before a reply quote is prepended — so a command
+ * sent as a reply (whose `text` later becomes `<quote>\n\n/command`) still stamps the token. Boundary
+ * commands dispatch on `metadata.command` rather than exact-matching the quote-laden `text`, which keeps
+ * them off the topic classifier and its "Checking conversation topic…" lead-in.
+ */
+export const commandToken = (text: string): string | null =>
+  /^\/(\w+)/.exec(text.trim())?.[1]?.toLowerCase() ?? null;
+
 export const mapTextMessage = (
   message: Pick<Message, "text" | "message_id" | "reply_to_message">,
   options?: { skipQuote?: boolean },
@@ -53,13 +63,19 @@ export const mapTextMessage = (
   // The quote is suppressed when the reply targets the session's latest message
   // (already live in the agent's context); routing metadata is still recorded.
   const quote = options?.skipQuote !== true ? replyQuote(message) : null;
+  // Stamp the command token from the raw text (before the quote is prepended above) so manual commands
+  // are recognized even when sent as a reply or with a trailing argument.
+  const command = commandToken(text);
 
   return {
     text: quote != null ? `${quote}\n\n${text}` : text,
     channel: CHANNEL_NAME,
     receivedAt: new Date(),
     media: [],
-    metadata: withReplyTarget({ messageId: message.message_id }, message),
+    metadata: withReplyTarget(
+      { messageId: message.message_id, ...(command != null ? { command } : {}) },
+      message,
+    ),
   };
 };
 

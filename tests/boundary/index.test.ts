@@ -24,6 +24,7 @@ interface SetupResult {
   complete: ReturnType<typeof vi.fn>;
   classify: ReturnType<typeof vi.fn>;
   deliver: ReturnType<typeof vi.fn>;
+  status: ReturnType<typeof vi.fn>;
   registeredFactory: boolean;
 }
 
@@ -36,6 +37,7 @@ const setup = (config: SetupConfig = {}): SetupResult => {
   const complete = vi.fn().mockResolvedValue("a summary");
   const classify = vi.fn();
   const deliver = vi.fn();
+  const status = vi.fn();
 
   const app = {
     extensionConfig: { enabled, autoSetCheckpoint, autoSummarizeToCheckpoint },
@@ -54,7 +56,7 @@ const setup = (config: SetupConfig = {}): SetupResult => {
     },
     channels: { deliver },
     sessions: { activeTrunkSession: () => null },
-    status: vi.fn(),
+    status,
     log: fakeLog,
   } as unknown as AppContext<{
     enabled: boolean;
@@ -70,6 +72,7 @@ const setup = (config: SetupConfig = {}): SetupResult => {
     complete,
     classify,
     deliver,
+    status,
     registeredFactory,
   };
 };
@@ -385,6 +388,29 @@ describe("boundary middleware", () => {
     expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
     expect(deliver).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("No checkpoint"), immediate: true }),
+    );
+  });
+
+  it("handles a reply-quoted /checkpoint (command token stamped) before the classifier", async () => {
+    const { middleware, shadowFork, deliver, status } = setup();
+    const trunk = makeTrunk();
+    const next = vi.fn();
+    // The channel prepended a reply quote but stamped metadata.command from the raw text — so the
+    // command is still recognized and never reaches the classifier (no "Checking conversation topic").
+    const message = textMessage("test", "Replied to:\n> earlier\n\n/checkpoint");
+    message.metadata.command = "checkpoint";
+
+    await middleware(message, context(trunk), next);
+
+    expect(message.metadata.handled).toBe(true);
+    expect(next).not.toHaveBeenCalled();
+    expect(shadowFork).not.toHaveBeenCalled();
+    expect(status).not.toHaveBeenCalledWith("Checking conversation topic…");
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("📌 Checkpoint set"),
+        immediate: true,
+      }),
     );
   });
 

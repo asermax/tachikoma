@@ -240,6 +240,27 @@ describe("handleRollbackCommand (/rollback) — eligibility + no-ops", () => {
     expect(replay).not.toHaveBeenCalled();
   });
 
+  it("recognizes /rollback via the stamped command token when a reply quote lards the text", async () => {
+    const fake = makeSession([messageEntry("m1", "user", "hi")]);
+    const replay = vi.fn();
+    const theDeps = deps(replay);
+    const message = msg("Replied to:\n> earlier\n\n/rollback");
+    message.metadata.command = "rollback";
+
+    const handled = await handleRollbackCommand(theDeps, message, trunkFrom(fake));
+
+    // Recognized (handled) even though the text no longer exact-matches "/rollback"; no-op notice since
+    // there is no recent auto decision to reverse.
+    expect(handled).toBe(true);
+    expect(message.metadata.handled).toBe(true);
+    expect(theDeps.deliver).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Nothing to roll back"),
+        immediate: true,
+      }),
+    );
+  });
+
   it("no-ops with a notice when there is no recent auto decision (R7/R11)", async () => {
     const fake = makeSession([
       messageEntry("m1", "user", "hi"),
