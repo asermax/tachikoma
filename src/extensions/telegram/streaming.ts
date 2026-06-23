@@ -338,17 +338,6 @@ export class StreamRenderer {
   }
 
   /**
-   * The streaming-visible text. While a live line (tool/status) is showing the
-   * preceding text has settled, so the whole buffer renders beneath it. While
-   * text is actively streaming nothing renders — the in-progress segment stays
-   * buffered in full and is revealed in one go when the next tool/status line
-   * settles it or `finalize()` flushes it, so a segment is never cut mid-stream.
-   */
-  private streamableBuffer(): string {
-    return this.transient == null ? "" : this.buffer;
-  }
-
-  /**
    * The intermediate region that folds into the collapsed block (DLT-064): everything before the last
    * content-type unit — `buffer.slice(0, tailStart)`. The live tool/status line belongs to the last unit
    * and is not folded here (it rides in the tail alongside its preface), so there is no transient special
@@ -385,13 +374,14 @@ export class StreamRenderer {
    * stays dropped (no flicker) for the rest of the exchange.
    */
   private compose(): string {
-    const text = this.streamableBuffer();
     const transient = this.transient;
+    // The buffer renders only once a live line (tool/status) settles the segment; while text streams
+    // (`transient == null`) it stays buffered in full — see the class doc for the rationale.
+    const text = transient == null ? "" : this.buffer;
 
     // Body = settled text + optional live line, joined by a blank line. Shared by the header and
     // no-header paths so the header is a pure prefix over the existing composition.
-    const body =
-      transient == null ? text : text.length === 0 ? transient : `${text}\n\n${transient}`;
+    const body = text.length === 0 ? (transient ?? "") : `${text}\n\n${transient}`;
 
     const header = this.headerText();
 
