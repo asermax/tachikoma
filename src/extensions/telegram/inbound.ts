@@ -49,10 +49,8 @@ export const replyTargetId = (message: Pick<Message, "reply_to_message">): strin
  * commands dispatch on `metadata.command` rather than exact-matching the quote-laden `text`, which keeps
  * them off the topic classifier and its "Checking conversation topic…" lead-in.
  */
-export const commandToken = (text: string): string | null => {
-  const match = /^\/(\w+)/.exec(text.trim());
-  return match?.[1]?.toLowerCase() ?? null;
-};
+export const commandToken = (text: string): string | null =>
+  /^\/(\w+)/.exec(text.trim())?.[1]?.toLowerCase() ?? null;
 
 export const mapTextMessage = (
   message: Pick<Message, "text" | "message_id" | "reply_to_message">,
