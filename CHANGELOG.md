@@ -1,3 +1,10 @@
+# [3.44.0](https://github.com/asermax/tachikoma/compare/v3.43.2...v3.44.0) (2026-06-23)
+
+
+### Features
+
+* add Body Structure Guide to skill-authoring ([df5bc0c](https://github.com/asermax/tachikoma/commit/df5bc0c938ea3f9cf1d9365bf1fc4a2612be6833))
+
 ## [3.43.2](https://github.com/asermax/tachikoma/compare/v3.43.1...v3.43.2) (2026-06-23)
 
 
