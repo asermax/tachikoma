@@ -96,38 +96,42 @@ describe("StreamRenderer", () => {
     vi.useRealTimers();
   });
 
-  it("holds an in-progress paragraph until a paragraph boundary closes it", async () => {
+  it("holds streamed text until a tool call or finalize reveals it in one go", async () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    // No paragraph break yet — nothing renders during streaming.
+    // Nothing renders while text streams — no progressive paragraph streaming.
     await renderer.appendText("Hello");
     expect(api.calls).toEqual([]);
 
-    // Completing the paragraph reveals everything up to the break.
+    // More text (even past a paragraph break) still streams invisibly...
     await renderer.appendText(" there.\n\nSecond");
-    expect(api.calls).toEqual([{ type: "send", text: rendered("Hello there.") }]);
+    expect(api.calls).toEqual([]);
+
+    // ...until finalize reveals the whole segment in one go.
+    expect(await renderer.finalize()).toBe(1);
+    expect(api.calls.at(-1)).toEqual({ type: "send", text: rendered("Hello there.\n\nSecond") });
   });
 
-  it("renders complete paragraphs and throttles subsequent edits", async () => {
+  it("throttles rapid tool-boundary reveals", async () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    await renderer.appendText("First.\n\n");
-    expect(api.calls).toEqual([{ type: "send", text: rendered("First.") }]);
-
-    // Within the throttle window the new paragraph is buffered, not edited in.
-    await renderer.appendText("Second.\n\n");
+    // Text streams invisibly; the first tool call reveals it as one unit.
+    await renderer.appendText("First.");
+    await renderer.appendTool("read", { path: "/a.ts" });
     expect(api.calls).toHaveLength(1);
 
+    // More text streams; a second tool call within the throttle window is buffered.
+    await renderer.appendText("Second.");
+    await renderer.appendTool("read", { path: "/b.ts" });
+    expect(api.calls).toHaveLength(1);
+
+    // Past the throttle window, the next tool call reveals the settled text.
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("Third.\n\n");
+    await renderer.appendTool("read", { path: "/c.ts" });
     expect(api.calls).toHaveLength(2);
-    expect(api.calls[1]).toEqual({
-      type: "edit",
-      messageId: 1,
-      text: rendered("First.\n\nSecond.\n\nThird."),
-    });
+    expect(api.calls.at(-1)).toMatchObject({ type: "edit", messageId: 1 });
   });
 
   it("bakes a tool marker between text segments and shows a live line while running", async () => {
@@ -143,9 +147,12 @@ describe("StreamRenderer", () => {
       text: rendered("Let me search.\n\n_🔧 Searching for 'skippable'_"),
     });
 
-    // Text after the tool bakes the summary marker, separated by blank lines.
+    // Text after the tool is held until finalize bakes the summary marker.
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText("Found it.\n\n");
+    expect(api.calls).toHaveLength(1);
+
+    await renderer.finalize();
     expect(api.calls.at(-1)).toMatchObject({
       type: "edit",
       messageId: 1,
@@ -195,17 +202,19 @@ describe("StreamRenderer", () => {
     const first = "a".repeat(3000);
     const second = "b".repeat(3000);
 
+    // Both segments stream invisibly until the buffer crosses the edit limit...
     await renderer.appendText(`${first}\n\n`);
-    expect(api.calls).toEqual([{ type: "send", text: rendered(first) }]);
+    expect(api.calls).toEqual([]);
 
+    // ...then the overflow commits the first chunk as its own message and keeps
+    // the tail held.
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText(`${second}\n\n`);
+    expect(api.calls).toEqual([{ type: "send", text: rendered(first) }]);
 
-    expect(api.calls).toEqual([
-      { type: "send", text: rendered(first) },
-      { type: "edit", messageId: 1, text: rendered(first) },
-      { type: "send", text: rendered(second) },
-    ]);
+    // finalize flushes the held tail as a second message.
+    expect(await renderer.finalize()).toBe(2);
+    expect(api.calls.at(-1)).toEqual({ type: "send", text: rendered(second) });
   });
 
   it("chunks overflow at finalize when the throttle held the last flushes back", async () => {
@@ -230,12 +239,20 @@ describe("StreamRenderer", () => {
     api.editMessageText.mockRejectedValueOnce(notModifiedError());
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    await renderer.appendText("Hello\n\n");
-    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("again\n\n");
+    // The first tool call reveals the held text as a new message.
+    await renderer.appendText("Hello.");
+    await renderer.appendTool("read", { path: "/a.ts" });
 
+    // A second tool call past the throttle edits it in place; the "not modified"
+    // rejection is swallowed (the visible content already matches).
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("more\n\n");
+    await renderer.appendText("again.");
+    await renderer.appendTool("read", { path: "/b.ts" });
+
+    // The renderer keeps going past the benign rejection.
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("more.");
+    await renderer.appendTool("read", { path: "/c.ts" });
 
     expect(api.calls.at(-1)).toMatchObject({ type: "edit", messageId: 1 });
   });
@@ -245,17 +262,23 @@ describe("StreamRenderer", () => {
     api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    await renderer.appendText("Hello\n\n");
+    // The first tool call sends the held text; the second tool call's edit fails,
+    // marking the renderer broken.
+    await renderer.appendText("Hello.");
+    await renderer.appendTool("read", { path: "/a.ts" });
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("world\n\n");
+    await renderer.appendText("world.");
+    await renderer.appendTool("read", { path: "/b.ts" });
 
-    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("tail\n\n");
+    // Only the initial send went out before the renderer broke.
     expect(api.calls.filter((call) => call.type === "send")).toHaveLength(1);
 
     expect(await renderer.finalize()).toBe(2);
     expect(api.calls.at(-2)).toEqual({ type: "delete", messageId: 1 });
-    expect(api.calls.at(-1)).toEqual({ type: "send", text: rendered("Hello\n\nworld\n\ntail") });
+    expect(api.calls.at(-1)).toMatchObject({
+      type: "send",
+      text: rendered("Hello.\n\n_🔧 Reading `a.ts`_\n\nworld.\n\n_🔧 Reading `b.ts`_"),
+    });
   });
 
   it("deletes the placeholder when only markers were shown", async () => {
@@ -280,10 +303,13 @@ describe("StreamRenderer", () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
-    // Render a streaming message, then make the final in-place edit reject so finalize
-    // falls back to sending that chunk as a brand-new message.
-    await renderer.appendText("Hello.\n\n");
-    expect(api.calls).toEqual([{ type: "send", text: rendered("Hello.") }]);
+    // A tool call reveals the held text, creating a message to edit at finalize.
+    await renderer.appendText("Hello.");
+    await renderer.appendTool("read", { path: "/a.ts" });
+    expect(api.calls.at(-1)).toMatchObject({
+      type: "send",
+      text: rendered("Hello.\n\n_🔧 Reading /a.ts_"),
+    });
 
     api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
@@ -294,7 +320,10 @@ describe("StreamRenderer", () => {
       expect.anything(),
       "final edit failed — sending as a new message",
     );
-    expect(api.calls.at(-1)).toEqual({ type: "send", text: rendered("Hello.") });
+    expect(api.calls.at(-1)).toMatchObject({
+      type: "send",
+      text: rendered("Hello.\n\n_🔧 Reading `a.ts`_"),
+    });
     expect(lastId).toBe(2);
   });
 
@@ -376,7 +405,7 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     vi.useRealTimers();
   });
 
-  it("anchors the header above the streamed body and recomposes it across edits", async () => {
+  it("surfaces the header at stream start and joins the held body at finalize", async () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);
     renderer.setHeader({
@@ -386,15 +415,19 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     });
 
     await renderer.appendText("First.\n\n");
-    // The header is recomposed on every edit (KD9): editMessageText replaces the full text, so the
-    // renderer must prepend the header each time.
+    // The header renders immediately (R8 best-effort); the body is held with the stream.
     expect(api.calls[0]).toMatchObject({
       type: "send",
-      text: rendered("_📌 Checkpoint set — main line parked_\n\nFirst."),
+      text: rendered("_📌 Checkpoint set — main line parked_"),
     });
 
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText("Second.\n\n");
+    // Still held — no new render while text streams.
+    expect(api.calls).toHaveLength(1);
+
+    // finalize recomposes the header above the now-settled body, edited in place.
+    expect(await renderer.finalize()).toBe(1);
     expect(api.calls.at(-1)).toMatchObject({
       type: "edit",
       messageId: 1,
@@ -407,8 +440,11 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     const renderer = new StreamRenderer(api, 42, fakeLog);
 
     await renderer.appendText("Hello.\n\n");
+    // No header and no tool — nothing renders while text streams.
+    expect(api.calls).toEqual([]);
 
-    expect(api.calls[0]).toEqual({ type: "send", text: rendered("Hello.") });
+    expect(await renderer.finalize()).toBe(1);
+    expect(api.calls.at(-1)).toEqual({ type: "send", text: rendered("Hello.") });
   });
 
   it("renders a label-only header when the note is empty", async () => {
@@ -417,8 +453,11 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     renderer.setHeader({ label: "🆕 New topic", note: "", rollbackable: false });
 
     await renderer.appendText("Body.\n\n");
+    // The label-only header renders at start; the body is held.
+    expect(api.calls[0]?.text).toBe(rendered("_🆕 New topic_"));
 
-    expect(api.calls[0]?.text).toBe(rendered("_🆕 New topic_\n\nBody."));
+    expect(await renderer.finalize()).toBe(1);
+    expect(api.calls.at(-1)?.text).toBe(rendered("_🆕 New topic_\n\nBody."));
   });
 
   it("keeps the header above a transient line, recomposed each edit", async () => {
@@ -444,8 +483,13 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     // Body just under the limit on its own; header + body overflows it.
     const big = `${"a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH - 5)}\n\n`;
     await renderer.appendText(big);
+    // The header renders at start while the body is still held.
+    expect(api.calls.at(-1)?.text).toBe(rendered("_📌 Checkpoint set — parked_"));
 
-    // The header was dropped so the body alone renders; the descriptor is logged (R8 best-effort).
+    // A tool call composes header + held body, which overflows the edit limit, so the
+    // header drops and the body alone renders; the descriptor is logged (R8 best-effort).
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/x.ts" });
     expect(api.calls.at(-1)?.text).toBe(rendered(big));
     expect(fakeLog.info).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -475,8 +519,11 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     renderer.setHeader({ label: "📌 Checkpoint set", note: "parked", rollbackable: true });
 
     await renderer.appendText("First.\n\n");
+    // The header renders at start (the send succeeds); the body is held.
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("Second.\n\n");
+    await renderer.appendText("Second.");
+    // A tool call triggers the in-place edit, which fails and marks the renderer broken.
+    await renderer.appendTool("read", { path: "/a.ts" });
 
     // The edit failure marks the renderer broken and logs the dropped descriptor.
     expect(fakeLog.info).toHaveBeenCalledWith(
@@ -730,8 +777,10 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendTool("read", { path: "/b.ts" });
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    await renderer.appendText("second\n\n"); // boundary 2 ⇒ crossing
-    // The previously-inline "first" segment is now rebuilt from the buffer into the block.
+    await renderer.appendText("second\n\n"); // boundary 2 ⇒ crossing; held until finalize
+    // The previously-inline "first" segment is rebuilt from the buffer into the block,
+    // revealed when finalize renders the collapse payload.
+    await renderer.finalize();
     const crossed = api.calls.at(-1);
     const block = mustEntity(crossed, "expandable_blockquote");
     expect(crossed.text.slice(block.offset, block.offset + block.length)).toContain("first");
@@ -882,6 +931,8 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     await renderer.appendText("third\n\n");
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText("fourth\n\n");
+    // The segment is held throughout; finalize reveals the collapse payload.
+    await renderer.finalize();
 
     const last = api.calls.at(-1);
     const block = mustEntity(last, "expandable_blockquote");
@@ -914,6 +965,9 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     await renderer.appendTool("read", { path: "/c.ts" });
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText("third\n\n"); // boundary 3 ⇒ "second"+/b fold
+
+    // "third" streams held; finalize renders the final fold ("second"+/b fold, "third" is the tail).
+    await renderer.finalize();
 
     const last = api.calls.at(-1);
     const block = mustEntity(last, "expandable_blockquote");
@@ -970,6 +1024,9 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText("tail two\n\n"); // boundary 2 on the tail ⇒ re-activate
     expect(renderer.collapseActive()).toBe(true);
+
+    // "tail two" streams held; finalize renders the re-activated fold ("tail one" folds, "tail two" is the tail).
+    await renderer.finalize();
 
     const last = api.calls.at(-1);
     const block = mustEntity(last, "expandable_blockquote");

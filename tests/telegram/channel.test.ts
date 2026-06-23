@@ -641,8 +641,10 @@ describe("preparation lead-in handoff", () => {
       ]),
     });
 
+    // Text is held while it streams; finalize reveals the whole turn in one go as a
+    // fresh message (no lead-in was created to reclaim).
     expect(calls.filter((call) => call.type === "send")).toEqual([
-      { type: "send", text: rendered("Hello paragraph one.") },
+      { type: "send", text: rendered("Hello paragraph one.\n\nParagraph two.") },
     ]);
   });
 

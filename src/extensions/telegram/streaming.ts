@@ -23,14 +23,15 @@ export type StreamApi = Pick<SendApi, "sendMessage" | "editMessageText" | "delet
 
 /**
  * Progressive renderer for one agent exchange. Text accumulates in a buffer and
- * is rendered a complete paragraph at a time — pi streams token-level deltas, so
- * gating on paragraph boundaries avoids the mid-word churn that editing on every
- * delta would produce. A running tool shows as a live italic line below the text;
- * when text resumes the tools that ran fold into a persistent `🔧 …` marker baked
- * into the buffer, which both records the activity and supplies the blank line
- * separating one text segment from the next. When the buffer outgrows Telegram's
- * edit limit the full chunks are finalized in place and the tail keeps streaming.
- * Edit failures degrade to the plain final-send behavior.
+ * is held while it streams — revealed in one go when the next tool/status line
+ * settles the segment (the model moved on, so the preceding text is complete) or
+ * when `finalize()` flushes the remainder, so a segment is never cut mid-stream.
+ * A running tool shows as a live italic line below the text; when text resumes
+ * the tools that ran fold into a persistent `🔧 …` marker baked into the buffer,
+ * which both records the activity and supplies the blank line separating one text
+ * segment from the next. When the buffer outgrows Telegram's edit limit the full
+ * chunks are finalized in place and the tail keeps streaming. Edit failures
+ * degrade to the plain final-send behavior.
  */
 export class StreamRenderer {
   private readonly api: StreamApi;
@@ -339,14 +340,12 @@ export class StreamRenderer {
   /**
    * The streaming-visible text. While a live line (tool/status) is showing the
    * preceding text has settled, so the whole buffer renders beneath it. While
-   * text is actively streaming only complete paragraphs render — the in-progress
-   * trailing paragraph stays buffered until it closes or finalize() flushes it.
+   * text is actively streaming nothing renders — the in-progress segment stays
+   * buffered in full and is revealed in one go when the next tool/status line
+   * settles it or `finalize()` flushes it, so a segment is never cut mid-stream.
    */
   private streamableBuffer(): string {
-    if (this.transient != null) return this.buffer;
-
-    const lastBreak = this.buffer.lastIndexOf("\n\n");
-    return lastBreak === -1 ? "" : this.buffer.slice(0, lastBreak);
+    return this.transient == null ? "" : this.buffer;
   }
 
   /**
