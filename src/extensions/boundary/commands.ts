@@ -23,6 +23,16 @@ export interface CommandDeps {
 }
 
 /**
+ * Whether `message` is the `/${name}` manual command. Dispatches on the channel-stamped
+ * `metadata.command` token — robust to a reply quote, trailing argument, or unresolved-reply hint
+ * prepended to `text` (any of which would defeat an exact `text` match and let the command fall through
+ * to the classifier, surfacing its "Checking conversation topic…" lead-in) — and falls back to an
+ * exact-text match for any path that does not stamp the token.
+ */
+export const isCommand = (message: InboundMessage, name: string): boolean =>
+  message.metadata.command === name || message.text.trim() === `/${name}`;
+
+/**
  * `/checkpoint`: set a checkpoint at the current main-line tip (R1). One is active at a time — setting
  * a new tip overrides a prior checkpoint (R2). Idempotent at the tip: setting the same tip twice is a
  * no-op with a notice (R11 — manual and auto checkpointing coincide rather than conflict). Returns
@@ -33,7 +43,7 @@ export const handleCheckpointCommand = (
   message: InboundMessage,
   trunk: TrunkInbound,
 ): boolean => {
-  if (message.text.trim() !== "/checkpoint") return false;
+  if (!isCommand(message, "checkpoint")) return false;
 
   message.metadata.handled = true;
 
@@ -71,7 +81,7 @@ export const handleBackCommand = async (
   message: InboundMessage,
   trunk: TrunkInbound,
 ): Promise<boolean> => {
-  if (message.text.trim() !== "/back") return false;
+  if (!isCommand(message, "back")) return false;
 
   message.metadata.handled = true;
 

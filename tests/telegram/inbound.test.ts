@@ -2,6 +2,7 @@ import type { MessageReactionUpdated } from "grammy/types";
 import { describe, expect, it } from "vitest";
 
 import {
+  commandToken,
   mapButtonTap,
   mapMediaMessage,
   mapReaction,
@@ -86,6 +87,48 @@ describe("mapTextMessage", () => {
 
     expect(inbound?.text).toBe("what about this?");
     expect(inbound?.metadata).toEqual({ messageId: 7, replyToMessageId: "3" });
+  });
+
+  it("stamps the command token from the raw text for bare, arg'd, and reply forms", () => {
+    // Bare command.
+    expect(mapTextMessage({ message_id: 1, text: "/checkpoint" })?.metadata).toMatchObject({
+      messageId: 1,
+      command: "checkpoint",
+    });
+    // Command with a trailing argument.
+    expect(
+      mapTextMessage({ message_id: 2, text: "/checkpoint some message" })?.metadata,
+    ).toMatchObject({ messageId: 2, command: "checkpoint" });
+    // A reply prepends a quote to `text`, but the token is stamped from the raw text — so the command is
+    // still recognizable downstream even though the text no longer exact-matches "/back".
+    const replied = mapTextMessage({
+      message_id: 3,
+      text: "/back",
+      reply_to_message: { message_id: 9, text: "earlier" } as never,
+    });
+    expect(replied?.text).toBe("Replied to:\n> earlier\n\n/back");
+    expect(replied?.metadata).toMatchObject({ messageId: 3, command: "back" });
+  });
+
+  it("does not stamp a command for non-command text", () => {
+    expect(mapTextMessage({ message_id: 1, text: "hello" })?.metadata.command).toBeUndefined();
+    expect(
+      mapTextMessage({ message_id: 2, text: "see /checkpoint later" })?.metadata.command,
+    ).toBeUndefined();
+  });
+});
+
+describe("commandToken", () => {
+  it("extracts the leading command word, lowercased", () => {
+    expect(commandToken("/checkpoint")).toBe("checkpoint");
+    expect(commandToken("/Checkpoint Foo")).toBe("checkpoint");
+    expect(commandToken("  /back   ")).toBe("back");
+  });
+
+  it("returns null for non-command text", () => {
+    expect(commandToken("hello")).toBeNull();
+    expect(commandToken("")).toBeNull();
+    expect(commandToken("see /checkpoint")).toBeNull();
   });
 });
 

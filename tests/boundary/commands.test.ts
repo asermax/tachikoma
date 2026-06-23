@@ -242,6 +242,38 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
     expect(message.metadata.handled).toBeUndefined();
     expect(deliverFn).not.toHaveBeenCalled();
   });
+
+  it("recognizes /checkpoint via the stamped command token when a reply quote lards the text", () => {
+    const fake = makeSession([
+      messageEntry("m1", "user", "hi"),
+      messageEntry("m2", "assistant", "hello"),
+    ]);
+    const deliverFn = deliver();
+    // Reply form: the channel prepended a quote but stamped metadata.command from the raw text — an
+    // exact text match would miss this and let the command fall through to the classifier.
+    const message = msg("Replied to:\n> earlier\n\n/checkpoint");
+    message.metadata.command = "checkpoint";
+
+    expect(
+      handleCheckpointCommand({ side, log: fakeLog, deliver: deliverFn }, message, trunkFrom(fake)),
+    ).toBe(true);
+    expect(message.metadata.handled).toBe(true);
+    expect(readBoomerangState(fake.session)?.checkpointId).toBe("m2");
+  });
+
+  it("recognizes /checkpoint with a trailing argument via the command token", () => {
+    const fake = makeSession([
+      messageEntry("m1", "user", "hi"),
+      messageEntry("m2", "assistant", "hello"),
+    ]);
+    const message = msg("/checkpoint some message");
+    message.metadata.command = "checkpoint";
+
+    expect(
+      handleCheckpointCommand({ side, log: fakeLog, deliver: deliver() }, message, trunkFrom(fake)),
+    ).toBe(true);
+    expect(message.metadata.handled).toBe(true);
+  });
 });
 
 describe("handleBackCommand (/back)", () => {
@@ -390,5 +422,29 @@ describe("handleBackCommand (/back)", () => {
     ).toBe(false);
     expect(message.metadata.handled).toBeUndefined();
     expect(deliverFn).not.toHaveBeenCalled();
+  });
+
+  it("recognizes /back via the stamped command token when a reply quote lards the text", async () => {
+    const fake = makeSession([
+      messageEntry("m1", "user", "main"),
+      messageEntry("m2", "assistant", "line"),
+    ]);
+    setCheckpoint(fake.session, "m2");
+    fake.appendMessage(messageEntry("t1", "user", "quick side question"));
+    fake.appendMessage(messageEntry("t2", "assistant", "side answer"));
+
+    const deliverFn = deliver();
+    const message = msg("Replied to:\n> earlier\n\n/back");
+    message.metadata.command = "back";
+
+    const handled = await handleBackCommand(
+      { side, log: fakeLog, deliver: deliverFn },
+      message,
+      trunkFrom(fake),
+    );
+
+    expect(handled).toBe(true);
+    expect(message.metadata.handled).toBe(true);
+    expect(fake.branchCalls).toHaveLength(1);
   });
 });

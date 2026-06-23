@@ -23,6 +23,7 @@ import {
 } from "../../sessions/trunk.ts";
 import type { TrunkInbound } from "../api.ts";
 import { collapseCurrentTopic } from "./collapse.ts";
+import { isCommand } from "./commands.ts";
 
 /**
  * `/rollback` (DLT-181, R7) — the load-bearing flow (KD4). Reverses the most-recent *automatic*
@@ -130,7 +131,7 @@ export const handleRollbackCommand = async (
   message: InboundMessage,
   trunk: TrunkInbound,
 ): Promise<boolean> => {
-  if (message.text.trim() !== "/rollback") return false;
+  if (!isCommand(message, "rollback")) return false;
 
   message.metadata.handled = true;
 
