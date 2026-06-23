@@ -120,6 +120,49 @@ Workflows are directory-based step definitions executed through dedicated lifecy
 
 Skills can bundle executable scripts or data files anywhere in the skill directory; the agent runs them with its shell tool when the SKILL.md body says to. Organize additional content as needed (`data/`, `templates/`, `examples/`). Keep generated runtime state out of the skill directory — a skill should stay a read-only package.
 
+## Body Structure Guide
+
+Not every skill needs every section. Use this guide to pick what applies:
+
+### If your skill has workflows
+
+Add a **Triggers & Workflows** section that maps every user action to a specific workflow. Open with the guardrail, then list each trigger as a bold heading:
+
+**Always use a workflow when one matches the request.** Do not call CLI commands directly — the workflow handles the correct sequence.
+
+#### Trigger name → `workflow-name`
+
+**Anytime [condition], immediately start `workflow-name`.** Don't run `command` directly. The workflow handles X, Y, Z in the correct order.
+
+This prevents agents from shortcutting past workflows when they can see the raw commands.
+
+### If your skill has reference files
+
+Add a **References** section as a table with consistent format:
+
+| Task | Reference |
+|------|-----------|
+| CLI commands | `references/cli.md` |
+| Setup instructions | `references/setup.md` |
+
+### If your skill has a CLI
+
+Move all commands to `references/cli.md`. Don't embed them in SKILL.md — only include a pointer in the **Key Paths** table:
+
+| What | Where |
+|------|-------|
+| **CLI** | `skills/my-skill/my-skill` — see `references/cli.md` |
+
+Agents will shortcut past workflows if they can see the raw commands. The CLI is an implementation detail for workflows to use, not a routing surface.
+
+### If your skill has a pipeline or domain model
+
+Add a section explaining states, scoring rules, or lifecycle — whatever's specific to the domain. Keep it concise; detailed specs belong in reference files.
+
+### If your skill has none of the above
+
+Keep it simple — an Overview and a When to Use section is enough.
+
 ## Writing Best Practices
 
 ### Explain the Why
