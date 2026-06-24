@@ -1,3 +1,10 @@
+## [3.45.1](https://github.com/asermax/tachikoma/compare/v3.45.0...v3.45.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* **telegram:** preserve visible body when pure text streams after a tool settles it ([a71af6b](https://github.com/asermax/tachikoma/commit/a71af6bd48c193ba61c0f7ab38051146ad436e7b))
+
 # [3.45.0](https://github.com/asermax/tachikoma/compare/v3.44.0...v3.45.0) (2026-06-24)
 
 
