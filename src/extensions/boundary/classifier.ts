@@ -63,7 +63,7 @@ const buildClassifierPrompt = (message: string, checkpointActive: boolean): stri
           '- "summarize-to-checkpoint": a checkpoint is currently active (a side task is in flight) and',
           "  this message clearly returns to the main line — the side task is over and we resume the",
           "  original workflow or conversation. Use it ONLY when the side task is clearly finished; keep",
-          '  using "continue" for further side-task turns, and "shift" if a new unrelated topic begins.',
+          '  using "continue" for further side-task turns, and "shift" if a new substantive topic begins.',
         ]
       : [
           '- "set-checkpoint": the message starts a short, self-contained side topic that is unrelated to',

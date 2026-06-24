@@ -147,7 +147,7 @@ A topic shift calls `collapseCurrentTopic` (`src/extensions/boundary/collapse.ts
 
 ### Scenario: Auto set-checkpoint then summarize-to-checkpoint
 
-**Given**: A checkpoint is not active and the classifier detects a tangent beginning
+**Given**: A checkpoint is not active and the classifier detects a short side task beginning
 **When**: It returns `set-checkpoint`
 **Then**: A checkpoint is set, `lastAutoDecision` records it, a "📌 Checkpoint set" header (advertising `/rollback`) is set, and the message streams as the first tangent turn. Later, with the checkpoint active, `summarize-to-checkpoint` folds the tangent and resumes the main line.
 
