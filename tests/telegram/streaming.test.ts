@@ -475,6 +475,30 @@ describe("StreamRenderer decision header (DLT-181)", () => {
     );
   });
 
+  it("does not clear the visible body when pure text streams after a tool settles it", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({ label: "📌 Checkpoint set", note: "parked", rollbackable: true });
+
+    // A tool settles the first segment: the header renders at start, then header + body + tool on the settle.
+    await renderer.appendText("Body.");
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/a.ts" });
+    expect(api.calls.at(-1)?.text).toBe(
+      rendered("_📌 Checkpoint set — parked_\n\nBody.\n\n_🔧 Reading /a.ts_"),
+    );
+    expect(api.calls).toHaveLength(2); // the start header send + the settle edit
+
+    // More pure text streams past the throttle: the message must keep the settled body — it must NOT
+    // be edited back to a header-only message that clears the visible body mid-stream.
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("More pure text streaming in.");
+    expect(api.calls).toHaveLength(2); // no new render — the visible body is preserved
+    expect(api.calls.at(-1)?.text).toBe(
+      rendered("_📌 Checkpoint set — parked_\n\nBody.\n\n_🔧 Reading /a.ts_"),
+    );
+  });
+
   it("drops the header (best-effort) when the body exceeds the edit limit and logs the descriptor", async () => {
     const api = fakeApi();
     const renderer = new StreamRenderer(api, 42, fakeLog);

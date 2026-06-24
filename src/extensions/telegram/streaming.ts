@@ -366,7 +366,10 @@ export class StreamRenderer {
 
   /**
    * The display text to render: an optional decision header anchored above the streamed body and live
-   * line. The header is recomposed on every edit so streaming never overwrites it (KD9). Because
+   * line. The header is recomposed on every edit so streaming never overwrites it (KD9). While a segment
+   * streams (no tool/status line has settled it) the body is held; the header surfaces as the initial
+   * reveal only — once anything has rendered it returns "" so flush() no-ops and preserves the visible
+   * body rather than editing it back to header-only mid-stream. Because
    * `editMessageText` replaces the FULL message text (re-confirmed vs the Telegram Bot API), the
    * 4096-char limit applies to the whole composition: the transient (lowest priority) is dropped first,
    * then — best-effort (R8) — the header itself is dropped once the body grows past the limit, so a
@@ -392,7 +395,11 @@ export class StreamRenderer {
     }
 
     // With a header: anchor it above the body. Drop the transient first if the composition is too long.
-    const withTransient = body.length > 0 ? `${header}\n\n${body}` : header;
+    // `body` is empty only while a segment streams (`transient == null`): surface the header as the
+    // initial reveal (before any body has settled); once anything has rendered, hold it — return "" so
+    // flush() no-ops and preserves the visible body instead of editing it back to header-only mid-stream.
+    const initialHeaderReveal = this.lastRendered.length === 0 ? header : "";
+    const withTransient = body.length > 0 ? `${header}\n\n${body}` : initialHeaderReveal;
     if (withTransient.length <= TELEGRAM_MAX_MESSAGE_LENGTH) return withTransient;
 
     if (transient != null && text.length > 0) {
