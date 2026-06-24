@@ -1,3 +1,12 @@
+# [3.45.0](https://github.com/asermax/tachikoma/compare/v3.44.0...v3.45.0) (2026-06-24)
+
+
+### Features
+
+* **boundary:** align classifier and docs on side-task framing ([01ef5bd](https://github.com/asermax/tachikoma/commit/01ef5bd2287e8cb271e91a2207f2d4f2dde16654))
+* **boundary:** redefine set-checkpoint as a short unrelated side interruption ([8fe6225](https://github.com/asermax/tachikoma/commit/8fe6225b3445c80411f963530bbbd65396ee5ed3))
+* **issue-368:** wip patch ([6f0c3c4](https://github.com/asermax/tachikoma/commit/6f0c3c4e1eb8bb2dfaa5ac2b57aa092653733635))
+
 # [3.44.0](https://github.com/asermax/tachikoma/compare/v3.43.2...v3.44.0) (2026-06-23)
 
 
