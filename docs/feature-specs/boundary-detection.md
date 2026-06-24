@@ -14,6 +14,7 @@ Side conversations are realized as **checkpoints**: a passive marker at the main
 
 - As a user, I want topic shifts detected so unrelated conversations become separate branches on the day's trunk and context doesn't bleed between them
 - As a user, I want to take a quick side tangent and then return to the main thread with its context intact, like a scratch buffer, so a tangent doesn't force a new topic or collapse the work in progress
+- As a user mid-workflow, I want a quick unrelated side request (e.g. logging an expense) handled inline and folded away, then to resume my workflow where I left off — without it starting a new topic or losing my place
 - As a user, I want to reverse a wrong automatic topic/checkpoint decision and have my message re-answered under the right framing
 - As the agent, I want to recover missing context from a previous topic branch's full conversation when a summary doesn't carry the detail
 - As a developer, I want boundary detection to be best-effort so classification failures never block message handling
@@ -45,7 +46,7 @@ Side conversations are realized as **checkpoints**: a passive marker at the main
 
 ### Topic Classification (R0, R1, R4, R5)
 
-The inbound middleware (`src/extensions/boundary/index.ts`) calls `classifyShift` (`src/extensions/boundary/classifier.ts`), which forks the live branch into a throwaway headless session on the `classifier` tier, asks it which decision fits the incoming message, and returns one of `continue` / `shift` / `set-checkpoint` / `summarize-to-checkpoint`. The middleware injects whether a checkpoint is active so the classifier only offers the checkpoint decision valid for the current state.
+The inbound middleware (`src/extensions/boundary/index.ts`) calls `classifyShift` (`src/extensions/boundary/classifier.ts`), which forks the live branch into a throwaway headless session on the `classifier` tier, asks it which decision fits the incoming message, and returns one of `continue` / `shift` / `set-checkpoint` / `summarize-to-checkpoint`. The middleware injects whether a checkpoint is active so the classifier only offers the checkpoint decision valid for the current state. The `set-checkpoint` result targets a short, self-contained, **unrelated** side request the user makes while mid-workflow or mid-conversation (the classifier reads that context from the conversation history): the main line is parked and resumes once the side task is done, rather than shifting to a fresh topic. `shift` is reserved for a substantive new topic, and ambiguity conservatively falls back to `continue` (or `shift`).
 
 **Acceptance Criteria**:
 - Given a branch with a completed assistant turn and an incoming message, when the middleware runs, then the classifier decides among the four results using the live system prompt and the incoming message
