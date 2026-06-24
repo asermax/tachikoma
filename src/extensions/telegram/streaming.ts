@@ -395,9 +395,8 @@ export class StreamRenderer {
     }
 
     // With a header: anchor it above the body. Drop the transient first if the composition is too long.
-    // `body` is empty only while a segment streams (`transient == null`): surface the header as the
-    // initial reveal (before any body has settled); once anything has rendered, hold it — return "" so
-    // flush() no-ops and preserves the visible body instead of editing it back to header-only mid-stream.
+    // `body` is empty only while a segment streams (`transient == null`): reveal the header on the first
+    // render, then hold — return "" so flush() no-ops and preserves the visible body instead of erasing it.
     const initialHeaderReveal = this.lastRendered.length === 0 ? header : "";
     const withTransient = body.length > 0 ? `${header}\n\n${body}` : initialHeaderReveal;
     if (withTransient.length <= TELEGRAM_MAX_MESSAGE_LENGTH) return withTransient;
