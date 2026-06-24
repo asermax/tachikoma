@@ -42,15 +42,15 @@ describe("classifyShift", () => {
     expect(fork.dispose).toHaveBeenCalledOnce();
   });
 
-  it("returns set-checkpoint when the classifier detects a tangent beginning (no checkpoint active)", async () => {
-    const fork = forkReturning('{"decision":"set-checkpoint","reason":"side tangent"}');
+  it("returns set-checkpoint when the classifier detects a short side task beginning (no checkpoint active)", async () => {
+    const fork = forkReturning('{"decision":"set-checkpoint","reason":"short side task"}');
     const deps = makeDeps({ shadowFork: vi.fn().mockResolvedValue(fork) });
 
     await expect(classifyShift(deps, input)).resolves.toBe("set-checkpoint");
     expect(fork.dispose).toHaveBeenCalledOnce();
   });
 
-  it("returns summarize-to-checkpoint when the classifier detects the tangent ending (checkpoint active)", async () => {
+  it("returns summarize-to-checkpoint when the classifier detects the side task ending (checkpoint active)", async () => {
     const fork = forkReturning('{"decision":"summarize-to-checkpoint","reason":"back to main"}');
     const deps = makeDeps({ shadowFork: vi.fn().mockResolvedValue(fork) });
 
@@ -115,7 +115,7 @@ describe("classifyShift", () => {
     const prompt = fork.prompt.mock.calls[0]?.[0] as string;
     // The set-checkpoint conditional block is present; the summarize-to-checkpoint block is not. (The
     // shared JSON-enum line lists all four values, so assert on the block's distinctive phrasing.)
-    expect(prompt).toContain("clearly starts a related side tangent");
+    expect(prompt).toContain("short, self-contained side topic");
     expect(prompt).not.toContain("a checkpoint is currently active");
   });
 
@@ -129,6 +129,6 @@ describe("classifyShift", () => {
     expect(fork.prompt).toHaveBeenCalledOnce();
     const prompt = fork.prompt.mock.calls[0]?.[0] as string;
     expect(prompt).toContain("a checkpoint is currently active");
-    expect(prompt).not.toContain("clearly starts a related side tangent");
+    expect(prompt).not.toContain("short, self-contained side topic");
   });
 });

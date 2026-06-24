@@ -4,7 +4,7 @@ import type { AgentApi } from "../api.ts";
 /**
  * Shadow-fork conversation-boundary classifier. On each idle user message it forks the live branch
  * into a throwaway headless session and asks the conversation itself how the message should be handled:
- * continue the current topic, shift to a new one, or (DLT-181) park/return a checkpointed side tangent.
+ * continue the current topic, shift to a new one, or (DLT-181) park/return a short, unrelated side task against a checkpoint.
  * The live session is never mutated (R6). Detection fails open (R11): any error or unparseable output is
  * treated as "continue" so a classifier failure never blocks the message.
  */
@@ -26,7 +26,7 @@ export interface ShiftInput {
   currentBranchHasAssistantTurn: boolean;
   message: string;
   /**
-   * Whether a checkpoint is currently active (a side tangent is in flight). The classifier runs on a
+   * Whether a checkpoint is currently active (a side task is in flight). The classifier runs on a
    * detached shadowFork and cannot read the live trunk's state, so the middleware injects this. It
    * gates which checkpoint decision is even valid: `set-checkpoint` only when none is active,
    * `summarize-to-checkpoint` only when one is (S3/KD8).
@@ -36,9 +36,9 @@ export interface ShiftInput {
 
 /**
  * The classifier's decision. `continue`/`shift` are the original topic-boundary results; the two
- * checkpoint results (DLT-181) drive the side-conversation auto-flow: `set-checkpoint` parks the main
- * line as a tangent begins, `summarize-to-checkpoint` folds the tangent back when the conversation
- * returns to the main line.
+ * checkpoint results (DLT-181) drive the side-task auto-flow: `set-checkpoint` parks the main line
+ * when a short, unrelated side task begins (e.g. a quick expense log mid-workflow), and
+ * `summarize-to-checkpoint` folds that side task back when the conversation returns to the main line.
  */
 export type ShiftDecision = "continue" | "shift" | "set-checkpoint" | "summarize-to-checkpoint";
 
@@ -56,20 +56,23 @@ const buildClassifierPrompt = (message: string, checkpointActive: boolean): stri
     "Decisions:",
     '- "continue": the message is a follow-up, clarification, answer to me, correction, short reply,',
     "  reaction, or otherwise continues the current thread. This is the default when uncertain.",
-    '- "shift": the message clearly starts an unrelated task or topic that should begin fresh.',
+    '- "shift": the message clearly starts a new, substantive topic or task that should become the',
+    "  main line and begin fresh (the current topic is effectively done or being set aside).",
     ...(checkpointActive
       ? [
-          '- "summarize-to-checkpoint": a checkpoint is currently active (a side tangent is in flight) and',
-          "  this message clearly returns to the main line — the side tangent is over and we are resuming",
-          '  the original thread. Use it ONLY when the tangent is clearly finished. Keep using "continue"',
-          '  for further tangent turns, and "shift" if a new unrelated topic begins instead.',
+          '- "summarize-to-checkpoint": a checkpoint is currently active (a side task is in flight) and',
+          "  this message clearly returns to the main line — the side task is over and we resume the",
+          "  original workflow or conversation. Use it ONLY when the side task is clearly finished; keep",
+          '  using "continue" for further side-task turns, and "shift" if a new unrelated topic begins.',
         ]
       : [
-          '- "set-checkpoint": the message clearly starts a related side tangent — a quick, related',
-          "  question or sub-thread worth answering inline and then folding away, WITHOUT starting a",
-          "  brand-new topic and WITHOUT being an ordinary follow-up. Use it ONLY when a side tangent is",
-          '  clearly beginning and no checkpoint is active. Prefer "continue" for normal follow-ups and',
-          '  "shift" for a genuinely new topic.',
+          '- "set-checkpoint": the message starts a short, self-contained side topic that is unrelated to',
+          "  the current workflow or conversation but not important enough to warrant a full topic shift",
+          "  — a quick side request made while the user is mid-task (e.g. logging an expense, a quick",
+          "  lookup, a brief question). The main line stays parked and resumes once the side task is done.",
+          "  Use it ONLY when no checkpoint is active, the current line is worth resuming, and the side",
+          '  task is clearly short (about 1-2 turns). Prefer "continue" for follow-ups to the current task',
+          '  and "shift" for a substantive new topic.',
         ]),
     "",
     "Be conservative about parking a side conversation: only choose a checkpoint decision when it is",
