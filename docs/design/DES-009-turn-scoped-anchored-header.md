@@ -10,10 +10,11 @@ When a channel renders an agent exchange by sending one message and **editing it
 
 The defining constraint: an in-place edit (`editMessageText` and its analogs) replaces the **full** message text — there is no append/patch. So a prefix cannot be sent once and left; the renderer must rebuild `header + body (+ transient)` on every flush. "Persistent" here means *resistant to the streaming renderer within one turn*, not sticky across turns — the header is read fresh from the exchange's metadata, anchored before the first chunk streams, and never carried to a later exchange.
 
-Two correctness details recur:
+Three correctness details recur:
 
 - **Turn-scoped by construction.** The header is a field on the per-exchange renderer, set from that exchange's descriptor, not a channel-global banner. The next exchange starts with no header unless its own metadata carries one.
 - **Best-effort under length limits.** The full composition is bounded by the platform's message-length limit. When the body grows past it, degrade in priority order — drop the transient live line first, then the header itself (and log it) — because the streamed body is the point of the turn. The descriptor already took effect regardless of whether its header renders.
+- **Initial-reveal only, then hold.** The prefix surfaces header-only as the *initial reveal* — before the first body segment has settled — so the decision shows early; but while a segment streams (nothing new settled) the renderer returns an empty display so its flush no-ops and *preserves the visible body*, never re-rendering a header-only message that would erase it. (A no-text turn still surfaces the header alone at finalize.) "Nothing rendered yet for this message" is the trigger, which resets naturally at each message boundary.
 
 ## Rationale
 
