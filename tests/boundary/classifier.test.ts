@@ -131,4 +131,20 @@ describe("classifyShift", () => {
     expect(prompt).toContain("a checkpoint is currently active");
     expect(prompt).not.toContain("short, self-contained side topic");
   });
+
+  it("recognizes a return to the main-line topic in the summarize-to-checkpoint prompt (e.g. 'going back to…')", async () => {
+    const fork = forkReturning('{"decision":"continue"}');
+    const shadowFork = vi.fn().mockResolvedValue(fork);
+    const deps = makeDeps({ shadowFork });
+
+    await classifyShift(deps, { ...input, checkpointActive: true });
+
+    const prompt = fork.prompt.mock.calls[0]?.[0] as string;
+    // The return signal is main-line-topic alignment + explicit "going back" phrasing — the reframe
+    // that makes summarize-to-checkpoint fire for a message resuming the pre-checkpoint conversation,
+    // not only when the side task is explicitly finished.
+    expect(prompt).toContain("returns to that main line");
+    expect(prompt).toContain("going back to the report");
+    expect(prompt).toContain("matches the main-line topic");
+  });
 });
