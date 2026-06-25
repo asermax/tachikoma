@@ -1,3 +1,10 @@
+## [3.47.1](https://github.com/asermax/tachikoma/compare/v3.47.0...v3.47.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **telegram:** pin the current response by deferring the pin to finalization ([d96fd14](https://github.com/asermax/tachikoma/commit/d96fd14236c9300fa9a0c80063a156be347d312f))
+
 # [3.47.0](https://github.com/asermax/tachikoma/compare/v3.46.1...v3.47.0) (2026-06-25)
 
 
