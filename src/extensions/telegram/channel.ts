@@ -102,10 +102,10 @@ export const UNRESOLVED_REACTION_NOTICE =
   "I couldn't find the conversation that message belongs to, so I couldn't apply your reaction there.";
 
 /**
- * Agent tools that already deliver a notifying message during the turn (a file, a
- * pin, an inline-button message). When one of these runs the user is already
- * pushed, so forcing an extra push on the streamed response would double-notify —
- * the copy-delete is skipped.
+ * Agent tools that deliver their own notifying message (a file, an inline-button
+ * message, or — for pin_message — the audible pin fired at finalization). When one
+ * runs the user is pushed by that tool, so forcing an extra push on the streamed
+ * response would double-notify — the copy-delete is skipped.
  */
 const NOTIFYING_TOOLS = new Set(["send_telegram_file", "pin_message", "send_message_with_buttons"]);
 
@@ -119,6 +119,13 @@ export class TelegramChannel implements Channel {
   private lastInboundId: number | null = null;
   private lastOutboundId: number | null = null;
   private activeRenderer: StreamRenderer | null = null;
+  /**
+   * A pin requested mid-exchange via `pin_message`. The tool can't resolve "most recent response"
+   * at execution time — the response message is created/recorded by this channel's event loop only
+   * as the stream settles, racing past the tool's synchronous read — so it records intent here and
+   * the channel performs the audible pin at finalization, once the response's message id is final.
+   */
+  private pinRequested = false;
   /**
    * Provisional message shown during preparation (boundary/preprocessor status
    * lines). respond() seeds the StreamRenderer with it so the streamed response
@@ -147,6 +154,14 @@ export class TelegramChannel implements Channel {
   /** Last message this channel sent — target for pin_message. */
   get lastOutboundMessageId(): number | null {
     return this.lastOutboundId;
+  }
+
+  /**
+   * Record a pin request from `pin_message` for the in-flight response. Idempotent within a turn
+   * (multiple calls just re-set the flag; one pin fires) — the pin is deferred per `pinRequested`.
+   */
+  requestPin(): void {
+    this.pinRequested = true;
   }
 
   async start(runtime: ChannelRuntime): Promise<void> {
@@ -333,6 +348,9 @@ export class TelegramChannel implements Channel {
     // reclaims it (or deletes it on a no-text turn) instead of orphaning it.
     const startedAt = Date.now();
     let notifyingToolUsed = false;
+    // Clear any pin request an aborted prior exchange left behind (one that skipped
+    // finalizeResponse). Each turn's request is set during this exchange and consumed at finalize.
+    this.pinRequested = false;
 
     // Initialize the renderer on first event (agent_start), under a brief mutex hold.
     // Returns null if no events arrive (e.g. aborted before agent_start).
@@ -490,8 +508,41 @@ export class TelegramChannel implements Channel {
 
       if (outboundId != null) this.lastOutboundId = outboundId;
 
+      // A pin requested mid-exchange (pin_message) is honored now that the response's message id is
+      // final — the audible pin is the turn's single push (the completion copy-delete above is
+      // skipped because pin_message is a notifying tool). Consumed regardless of outcome so a
+      // failure or a no-text turn can't leak the request into the next exchange.
+      await this.performDeferredPin(outboundId, log);
+
       return outboundId;
     });
+  }
+
+  /**
+   * Pin the just-finalized response if `pin_message` requested it during the exchange. Audible
+   * (`disable_notification: false`) so the pin delivers the push. A null outbound id (no-text turn)
+   * or an API failure is logged and swallowed — the response is already delivered either way.
+   */
+  private async performDeferredPin(outboundId: number | null, log: Logger): Promise<void> {
+    if (!this.pinRequested) return;
+    this.pinRequested = false;
+
+    if (outboundId == null) {
+      log.debug(
+        { tool: "pin_message" },
+        "pin requested but the exchange produced no message to pin",
+      );
+      return;
+    }
+
+    try {
+      await this.bot.api.pinChatMessage(this.options.chatId, outboundId, {
+        disable_notification: false,
+      });
+      log.debug({ tool: "pin_message", messageId: outboundId }, "response message pinned");
+    } catch (error) {
+      log.warn({ err: error, messageId: outboundId }, "deferred pin failed");
+    }
   }
 
   private recordMessage(

@@ -96,6 +96,8 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     setMyCommands: vi.fn(async () => true),
     getFile: vi.fn(async () => ({ file_path: "documents/file.bin" })),
     editMessageReplyMarkup: vi.fn(async () => true),
+    pinChatMessage: vi.fn(async () => true),
+    unpinChatMessage: vi.fn(async () => true),
   };
 
   let errorHandler: (boundary: { error: unknown }) => void = () => {};
@@ -523,6 +525,133 @@ describe("respond push notification", () => {
       routing: { treeEntryId: "entry-1", branchId: "topic-1" },
       direction: "outgoing",
     });
+  });
+});
+
+describe("deferred pin (pin_message)", () => {
+  // The pin_message tool runs mid-exchange, so requestPin() is invoked while the response streams —
+  // not before respond(). These tests drive the stream with pushableStream and call requestPin()
+  // mid-turn to mirror that, the way the real tool would.
+  it("pins the just-finalized response audibly when a pin is requested mid-turn", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+
+    const { events, push, end } = pushableStream();
+    const responding = channel.respond({ message: textMessage("telegram", "hi"), events });
+    push({ kind: "text", text: "Here are your recommendations." });
+    await settle();
+    channel.requestPin();
+    end();
+    await responding;
+
+    // The streamed response is message id 1; with a pin in the turn there is no copy-delete, so the
+    // pin targets that id — not a previous exchange's message.
+    expect(api.pinChatMessage).toHaveBeenCalledWith(42, 1, { disable_notification: false });
+    expect(channel.lastOutboundMessageId).toBe(1);
+  });
+
+  it("pins the current response, not a previous exchange's stale id", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+
+    // A first exchange leaves lastOutboundId pointing at message id 1.
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Earlier response." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+    expect(channel.lastOutboundMessageId).toBe(1);
+    expect(api.pinChatMessage).not.toHaveBeenCalled();
+
+    // The next exchange streams a new response (id 2) and the tool requests a pin mid-turn.
+    const { events, push, end } = pushableStream();
+    const responding = channel.respond({ message: textMessage("telegram", "more"), events });
+    push({ kind: "text", text: "Recommendations." });
+    await settle();
+    channel.requestPin();
+    end();
+    await responding;
+
+    // The pin targets the current response (2), not the stale id (1).
+    expect(api.pinChatMessage).toHaveBeenCalledTimes(1);
+    expect(api.pinChatMessage).toHaveBeenCalledWith(42, 2, { disable_notification: false });
+  });
+
+  it("does not pin when no pin was requested", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(api.pinChatMessage).not.toHaveBeenCalled();
+  });
+
+  it("skips the pin without throwing when the exchange yields no message", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+
+    const { events, end } = pushableStream();
+    const responding = channel.respond({ message: textMessage("telegram", "hi"), events });
+    channel.requestPin();
+    end();
+    await expect(responding).resolves.toBeUndefined();
+
+    expect(api.pinChatMessage).not.toHaveBeenCalled();
+  });
+
+  it("still delivers the response and warns when the deferred pin fails", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+    api.pinChatMessage.mockRejectedValueOnce(new Error("not authorized to pin"));
+
+    const { events, push, end } = pushableStream();
+    const responding = channel.respond({ message: textMessage("telegram", "hi"), events });
+    push({ kind: "text", text: "Hello." });
+    await settle();
+    channel.requestPin();
+    end();
+    await expect(responding).resolves.toBeUndefined();
+
+    // The response was delivered (its id tracked) despite the pin failure, and the failure is logged.
+    expect(channel.lastOutboundMessageId).toBe(1);
+    expect(fakeLog.warn).toHaveBeenCalledWith(expect.anything(), "deferred pin failed");
+  });
+
+  it("consumes the pin request so a later exchange with no request does not pin", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+
+    // First exchange: the tool requests a pin mid-turn, and finalize consumes it.
+    const first = pushableStream();
+    const firstRespond = channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: first.events,
+    });
+    first.push({ kind: "text", text: "First." });
+    await settle();
+    channel.requestPin();
+    first.end();
+    await firstRespond;
+    expect(api.pinChatMessage).toHaveBeenCalledTimes(1);
+
+    // A second exchange with no new request must not pin.
+    await channel.respond({
+      message: textMessage("telegram", "more"),
+      events: stream([
+        { kind: "text", text: "Second." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(api.pinChatMessage).toHaveBeenCalledTimes(1);
   });
 });
 
