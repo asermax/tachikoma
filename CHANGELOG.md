@@ -1,3 +1,10 @@
+## [3.46.1](https://github.com/asermax/tachikoma/compare/v3.46.0...v3.46.1) (2026-06-25)
+
+
+### Bug Fixes
+
+* **telegram:** anchor header above first committed chunk on mid-stream overflow ([7007ac3](https://github.com/asermax/tachikoma/commit/7007ac3dd309e7c6958a3211abf166fab073fa1d))
+
 # [3.46.0](https://github.com/asermax/tachikoma/compare/v3.45.1...v3.46.0) (2026-06-25)
 
 
