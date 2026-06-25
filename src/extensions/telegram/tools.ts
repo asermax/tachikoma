@@ -209,8 +209,6 @@ export const handlePinMessage = async (
   // message. The channel performs the audible pin at finalization once the id is known.
   deps.requestPin();
 
-  deps.log.debug({ tool: "pin_message" }, "pin requested for the in-flight response");
-
   return "Pinning the current response.";
 };
 

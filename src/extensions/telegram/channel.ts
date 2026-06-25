@@ -102,10 +102,10 @@ export const UNRESOLVED_REACTION_NOTICE =
   "I couldn't find the conversation that message belongs to, so I couldn't apply your reaction there.";
 
 /**
- * Agent tools that already deliver a notifying message during the turn (a file, a
- * pin, an inline-button message). When one of these runs the user is already
- * pushed, so forcing an extra push on the streamed response would double-notify —
- * the copy-delete is skipped.
+ * Agent tools that deliver their own notifying message (a file, an inline-button
+ * message, or — for pin_message — the audible pin fired at finalization). When one
+ * runs the user is pushed by that tool, so forcing an extra push on the streamed
+ * response would double-notify — the copy-delete is skipped.
  */
 const NOTIFYING_TOOLS = new Set(["send_telegram_file", "pin_message", "send_message_with_buttons"]);
 
@@ -157,9 +157,8 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * Record a pin request from `pin_message`. The actual pin is deferred to `finalizeResponse`,
-   * where the just-sent response's message id is final — see `pinRequested`. Idempotent within a
-   * turn (multiple calls just re-set the flag; one pin fires).
+   * Record a pin request from `pin_message` for the in-flight response. Idempotent within a turn
+   * (multiple calls just re-set the flag; one pin fires) — the pin is deferred per `pinRequested`.
    */
   requestPin(): void {
     this.pinRequested = true;
@@ -525,9 +524,8 @@ export class TelegramChannel implements Channel {
    * or an API failure is logged and swallowed — the response is already delivered either way.
    */
   private async performDeferredPin(outboundId: number | null, log: Logger): Promise<void> {
-    const requested = this.pinRequested;
+    if (!this.pinRequested) return;
     this.pinRequested = false;
-    if (!requested) return;
 
     if (outboundId == null) {
       log.debug(
