@@ -1,3 +1,10 @@
+# [3.47.0](https://github.com/asermax/tachikoma/compare/v3.46.1...v3.47.0) (2026-06-25)
+
+
+### Features
+
+* **boundary:** recognize return-to-main-line in summarize-to-checkpoint ([9464c41](https://github.com/asermax/tachikoma/commit/9464c41669f7844ec8418cde9cfff5a36caea6ec))
+
 ## [3.46.1](https://github.com/asermax/tachikoma/compare/v3.46.0...v3.46.1) (2026-06-25)
 
 
