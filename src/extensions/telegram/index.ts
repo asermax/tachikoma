@@ -139,7 +139,7 @@ export default defineExtension<TelegramConfig>({
         workspaceRoot: app.workspace.root,
         allowedRoots,
         getLastInboundMessageId: () => channel.lastInboundMessageId,
-        getLastOutboundMessageId: () => channel.lastOutboundMessageId,
+        requestPin: () => channel.requestPin(),
         store,
         currentRouting,
       });

@@ -196,29 +196,27 @@ describe("handleReactToMessage", () => {
 });
 
 describe("pinning", () => {
-  it("pins the last outbound message audibly", async () => {
+  it("defers the pin to the channel rather than pinning inline", async () => {
+    const requestPin = vi.fn();
     const api = fakeApi();
 
-    const result = await handlePinMessage({
-      api,
-      log: fakeLog,
-      chatId: 42,
-      getLastOutboundMessageId: () => 7,
-    });
+    const result = await handlePinMessage({ log: fakeLog, requestPin });
 
-    expect(result).toBe("Message pinned (ID: 7)");
-    expect(api.pinChatMessage).toHaveBeenCalledWith(42, 7, { disable_notification: false });
+    expect(requestPin).toHaveBeenCalledTimes(1);
+    expect(result).toBe("Pinning the current response.");
+    // The tool no longer pins inline — the channel performs the pin at finalization.
+    expect(api.pinChatMessage).not.toHaveBeenCalled();
   });
 
-  it("fails to pin when nothing was sent yet", async () => {
-    await expect(
-      handlePinMessage({
-        api: fakeApi(),
-        log: fakeLog,
-        chatId: 42,
-        getLastOutboundMessageId: () => null,
-      }),
-    ).rejects.toThrow("No message available to pin");
+  it("records the pin request even with no prior outbound message", async () => {
+    // The tool can't know mid-turn whether a response will be produced, so it never throws —
+    // it just signals intent and lets the channel decide at finalization.
+    const requestPin = vi.fn();
+
+    const result = await handlePinMessage({ log: fakeLog, requestPin });
+
+    expect(requestPin).toHaveBeenCalledTimes(1);
+    expect(result).toBe("Pinning the current response.");
   });
 
   it("unpins by message id", async () => {
@@ -446,7 +444,7 @@ describe("registerTelegramTools", () => {
     workspaceRoot: "/tmp/ws",
     allowedRoots: ["/tmp/ws"],
     getLastInboundMessageId: () => 5,
-    getLastOutboundMessageId: () => 7,
+    requestPin: vi.fn(),
     store: { record: vi.fn(), resolve: vi.fn(() => null) },
     currentRouting: () => ({ treeEntryId: "entry-1", branchId: "topic-1" }),
   });
@@ -472,7 +470,7 @@ describe("registerTelegramTools", () => {
     expect(api.setMessageReaction).toHaveBeenCalled();
 
     const pin = await tools.get("pin_message")?.execute("call-2", {});
-    expect(pin?.content[0].text).toBe("Message pinned (ID: 7)");
+    expect(pin?.content[0].text).toBe("Pinning the current response.");
 
     const unpin = await tools.get("unpin_message")?.execute("call-3", { messageId: 7 });
     expect(unpin?.content[0].text).toBe("Message unpinned (ID: 7)");
