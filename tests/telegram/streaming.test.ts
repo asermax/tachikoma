@@ -557,6 +557,54 @@ describe("StreamRenderer decision header (DLT-181)", () => {
       "decision header dropped after a render failure (best-effort surfacing)",
     );
   });
+
+  it("anchors the header above the first committed chunk when the body overflows mid-stream (no seed)", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({ label: "🆕 New topic", note: "", rollbackable: false });
+
+    // The very first segment already exceeds the edit limit, so commitOverflow commits a chunk before
+    // any body is revealed. The header must ride that first committed chunk — not land as a separate
+    // header-only message after the body.
+    const big = `${"a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 200)}\n\n`;
+    await renderer.appendText(big);
+    await renderer.finalize();
+
+    const sends = api.calls.filter((call) => call.type === "send");
+    // The header rides the first send, above the body chunk…
+    expect(sends[0]?.text).toContain("New topic");
+    // …appears exactly once…
+    expect(sends.filter((call) => call.text?.includes("New topic"))).toHaveLength(1);
+    // …and is never sent as a header-only message.
+    expect(sends.every((call) => call.text !== rendered("_🆕 New topic_"))).toBe(true);
+  });
+
+  it("keeps the header on the first message when streaming later overflows the edit limit", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    renderer.setHeader({ label: "📌 Checkpoint set", note: "parked", rollbackable: true });
+
+    // A short lead segment reveals the header on message 1 (the common reveal).
+    await renderer.appendText("Lead paragraph.\n\n");
+    expect(api.calls[0]).toMatchObject({
+      type: "send",
+      text: rendered("_📌 Checkpoint set — parked_"),
+    });
+
+    // Streaming then pushes the buffer past the edit limit: commitOverflow must edit message 1 to the
+    // first body chunk WITH the header still anchored above it — not clobber the header and re-reveal it
+    // on a separate trailing message.
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText(`${"a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 200)}\n\n`);
+    await renderer.finalize();
+
+    const editsToFirst = api.calls.filter((call) => call.type === "edit" && call.messageId === 1);
+    // The first message keeps the header anchored above its body chunk.
+    expect(editsToFirst.at(-1)?.text).toContain("Checkpoint set");
+    // After the initial reveal, no call reverts to a header-only message.
+    const headerOnly = rendered("_📌 Checkpoint set — parked_");
+    expect(api.calls.slice(1).every((call) => call.text !== headerOnly)).toBe(true);
+  });
 });
 
 describe("StreamRenderer intensive-work detection (DLT-064)", () => {

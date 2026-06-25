@@ -308,12 +308,13 @@ export class StreamRenderer {
     // The committed chunks share the running collapse state at commit time — the reset happens once,
     // after the loop, so the tally isn't lost mid-commit (DLT-064, Step 9). A committed chunk carries
     // its own collapsed block when collapse is active (all-intermediate: no tail); the turn-scoped
-    // header rides the first committed chunk above its block (DES-009) and is consumed there so the
-    // streaming tail doesn't duplicate it. In the common case collapse is inactive at commit, so
-    // chunks render inline exactly as today and the header stays on the tail.
+    // header rides the first committed chunk regardless of collapse — above the block when collapsed,
+    // above the chunk when inline — and is consumed there so the streaming tail doesn't duplicate it.
+    // This matches `finalizeMarkdown`, which anchors header + body on chunk[0]; previously the inline
+    // path left the header to be re-revealed on the tail, landing it below the already-committed body.
     const collapse = this.collapseActive();
     for (const [index, chunk] of chunks.slice(0, -1).entries()) {
-      const headerOnChunk = index === 0 && collapse && this.header != null;
+      const headerOnChunk = index === 0 && this.header != null;
       const body = collapse ? wrapExpandable(toTelegramEntities(chunk)) : toTelegramEntities(chunk);
       const payload = headerOnChunk
         ? concatPayloads(toTelegramEntities(this.headerText()), body)

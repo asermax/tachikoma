@@ -169,6 +169,7 @@ When an exchange carries a decision header (a branching decision or a rollback, 
 - Given a header is anchored, when the streamed text is edited in place, then the header is recomposed atop the new body on every edit and is never overwritten by the streamed text
 - Given a header is anchored and body text has been shown, when more text streams without a new tool/status line settling a segment, then the visible body is preserved — the message is not edited back to a header-only render; the header surfaces alone only as the initial reveal, before any body settles
 - Given a response that overflows into multiple chunks, when it finalizes, then the header rides the first chunk
+- Given a streamed response that overflows the edit limit mid-stream (before finalize), when the renderer commits the first overflow chunk, then the header rides that first committed chunk — it is consumed there and never re-revealed on a later tail message below the already-committed body
 - Given a streamed body that grows past the 4096-character edit limit, when the composition no longer fits, then the header is dropped (and logged) for the rest of the exchange — the decision itself still took effect; the transient live line is dropped first
 - Given a render failure mid-stream, when the renderer goes broken, then the header is logged and the response degrades to a plain send (best-effort surfacing)
 - Given a header was anchored for one exchange, when the next exchange renders with no header, then none is carried forward — it is turn-scoped
