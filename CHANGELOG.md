@@ -1,3 +1,11 @@
+# [3.46.0](https://github.com/asermax/tachikoma/compare/v3.45.1...v3.46.0) (2026-06-25)
+
+
+### Features
+
+* **memory:** align topics prompts with broadened scope ([e20908b](https://github.com/asermax/tachikoma/commit/e20908bf27ed35c282b538b115527f146dc6cf0e))
+* **memory:** broaden topics scope and episodic day-summary ([6021f30](https://github.com/asermax/tachikoma/commit/6021f30f7953bfaf03c5c94b5d6e2d226617423d))
+
 ## [3.45.1](https://github.com/asermax/tachikoma/compare/v3.45.0...v3.45.1) (2026-06-24)
 
 
