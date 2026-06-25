@@ -117,7 +117,7 @@ If the directory is empty or contains no \`.md\` files, stop immediately — not
 
 ## Evaluation Criteria
 
-Read all topic files and evaluate each for these issues. A topic file holds everything known about a subject — both stable reference facts and the user's subjective preferences — so evaluate the file as a whole, not by signal type.
+Read all topic files and evaluate each for these issues. A topic file holds everything worth remembering about a subject — reference facts, preferences, insights, decisions, and conclusions — so evaluate the file as a whole, not by signal type.
 
 ### Staleness
 
@@ -155,7 +155,7 @@ Beyond pairwise overlap, look for clusters of many small files that fragment a s
   - If a broad-topic file already exists in the cluster, merge the others into it. Otherwise, pick a broad name and create the consolidated file.
   - Delete the original narrow files after merging.
 - Generic examples of clusters to consolidate (patterns, not literal names): files matching \`<project>-<bug-description>-<YYYY-MM-DD>.md\`, \`<project>-patch-<issue-id>.md\`, \`<system>-incident-<date>.md\`, \`<topic>-session-<date>.md\` — all of these should fold into the broad \`<project>.md\`, \`<system>.md\`, or \`<topic>.md\` file.
-- Preserve substantive content during the merge — both the reference facts and the preferences; deduplicate restated information and discard incidental detail that does not belong in durable topics.
+- Preserve substantive content during the merge — reference facts, preferences, insights, decisions, and conclusions; deduplicate restated information and discard incidental detail that does not belong in durable topics.
 
 ### Size Enforcement
 

@@ -24,7 +24,7 @@ describe("storeInstruction", () => {
     expect(instruction).toContain("SILENT background memory-maintenance step");
     expect(instruction).toContain("Do NOT");
     // The unified topics instruction folds every kind of durable signal into one store.
-    expect(instruction).toContain("stable reference facts");
+    expect(instruction).toContain("reference facts");
     expect(instruction).toContain("preferences");
     expect(instruction).toContain("memories/topics/");
     // The criteria are broadened beyond facts + preferences: insights, decisions, and patterns are in scope too.

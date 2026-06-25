@@ -15,7 +15,7 @@ const INDEX_ENTRY_RE = /^\[([^\]]+)\]\(\.\/([^)]+\.md)\):\s*(.+)$/gm;
 
 const STORE_DESCRIPTIONS: Partial<Record<MemoryStore, string>> = {
   topics:
-    "Everything known about a subject: stable reference facts and the user's subjective\npreferences together, one topic per file. Browse the entries below. When a file seems\nrelevant to the current conversation, read it with the read tool to get the full content.",
+    "Everything worth remembering about a subject: reference facts, preferences, insights,\ndecisions, and conclusions together, one topic per file. Browse the entries below. When a file seems\nrelevant to the current conversation, read it with the read tool to get the full content.",
   learnings:
     "Experience notes: recurring friction, hard constraints, and hard-won lessons — what\nbites and what worked, one theme per file (drafts are tentative, confirmed entries are\nrecurring). Browse the entries below. When a file seems relevant to the current\nconversation, read it with the read tool to get the full content.",
 };
@@ -25,7 +25,7 @@ const LAYOUT_SECTION = `## Memory
 The workspace keeps long-term memory as markdown files under \`memories/\`:
 
 - \`memories/episodic/\` — date-stamped conversation summaries (\`YYYY-MM-DD.md\`, plus weekly \`YYYY-WNN.md\` and monthly \`YYYY-MM.md\` rollups)
-- \`memories/topics/\` — everything known about a subject (stable reference facts and the user's preferences together), one topic per file, indexed in \`MEMORY.md\`
+- \`memories/topics/\` — everything worth remembering about a subject (reference facts, preferences, insights, decisions, and conclusions together), one topic per file, indexed in \`MEMORY.md\`
 - \`memories/learnings/\` — recurring friction, hard constraints, and hard-won lessons (experience, not knowledge), one theme per file, indexed in \`MEMORY.md\`
 - \`memories/transcripts/\` — archived raw conversation transcripts
 
