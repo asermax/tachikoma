@@ -60,10 +60,14 @@ const buildClassifierPrompt = (message: string, checkpointActive: boolean): stri
     "  main line and begin fresh (the current topic is effectively done or being set aside).",
     ...(checkpointActive
       ? [
-          '- "summarize-to-checkpoint": a checkpoint is currently active (a side task is in flight) and',
-          "  this message clearly returns to the main line — the side task is over and we resume the",
-          "  original workflow or conversation. Use it ONLY when the side task is clearly finished; keep",
-          '  using "continue" for further side-task turns, and "shift" if a new substantive topic begins.',
+          '- "summarize-to-checkpoint": a checkpoint is currently active (a side task is in flight). The',
+          "  main line is the conversation that came before this side task. Choose this when the message",
+          "  clearly returns to that main line — either it explicitly references going back to or resuming",
+          '  what was discussed before the side task (e.g. "going back to the report"), or its topic clearly',
+          "  matches the main-line topic. This is a RETURN to an existing conversation, not a new topic, so do",
+          '  not choose "shift" for it. Keep choosing "continue" for further side-task turns, and choose',
+          '  "shift" only for a genuinely new topic that is neither the side task nor the main line. When',
+          '  unsure whether the message returns to the main line, prefer "continue".',
         ]
       : [
           '- "set-checkpoint": the message starts a short, self-contained side topic that is unrelated to',
