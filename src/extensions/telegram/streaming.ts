@@ -310,8 +310,7 @@ export class StreamRenderer {
     // its own collapsed block when collapse is active (all-intermediate: no tail); the turn-scoped
     // header rides the first committed chunk regardless of collapse — above the block when collapsed,
     // above the chunk when inline — and is consumed there so the streaming tail doesn't duplicate it.
-    // This matches `finalizeMarkdown`, which anchors header + body on chunk[0]; previously the inline
-    // path left the header to be re-revealed on the tail, landing it below the already-committed body.
+    // Mirrors `finalizeMarkdown`, which anchors header + body together on chunk[0].
     const collapse = this.collapseActive();
     for (const [index, chunk] of chunks.slice(0, -1).entries()) {
       const headerOnChunk = index === 0 && this.header != null;
