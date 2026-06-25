@@ -17,16 +17,19 @@ afterEach(async () => {
 });
 
 describe("storeInstruction", () => {
-  it("targets the topics store, folds both signal types, and has no classification self-check", () => {
+  it("targets the topics store, folds all durable signal types, and has no classification self-check", () => {
     const instruction = storeInstruction("topics", workspace);
 
     expect(instruction).toContain(join(workspace, "memories", "topics"));
     expect(instruction).toContain("SILENT background memory-maintenance step");
     expect(instruction).toContain("Do NOT");
-    // The unified topics instruction folds both signal types into one store.
+    // The unified topics instruction folds every kind of durable signal into one store.
     expect(instruction).toContain("stable reference facts");
     expect(instruction).toContain("preferences");
     expect(instruction).toContain("memories/topics/");
+    // The criteria are broadened beyond facts + preferences: insights, decisions, and patterns are in scope too.
+    expect(instruction).toContain("Insights from content consumed");
+    expect(instruction).toContain("Observed patterns");
     // It contains no facts-vs-preferences classification self-check.
     expect(instruction).not.toContain("Classification self-check");
     expect(instruction).not.toContain("classification self-check");
@@ -75,6 +78,8 @@ describe("storeInstruction", () => {
     expect(instruction).toContain("We just finished the conversation above");
     expect(instruction).toContain("Today's date is");
     expect(instruction).toContain(join(workspace, "memories", "episodic"));
+    // Episodic keeps a generic summary of the day's activity, not just notable one-time events.
+    expect(instruction).toContain("summary of what happened");
   });
 
   it("stamps the given day (not wall-clock) so a late close files episodic under its real date", () => {

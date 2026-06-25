@@ -21,7 +21,7 @@ Today's date is {date}.
 
 1. **Read existing files** in \`$WORKSPACE/memories/episodic/\` to see what's there.
 
-2. Analyze the conversation for meaningful events, discussions, and activities.
+2. Build a concise summary of what happened during the day — the topics discussed, work done, decisions made, and outcomes. This is a general record of the day's activity, not just a list of notable one-time events: capture the ongoing discussions and routine work too, even when nothing exceptional occurred.
 
 3. **Write to exactly one file per day: \`{date}.md\`.**
    - The ONLY valid filename is the date itself. No suffixes, no variants. \`{date}.md\` is correct. \`{date}-consolidated.md\`, \`{date}-final.md\`, \`{date}-updated.md\` are ALL WRONG — never create files like these.
@@ -30,9 +30,9 @@ Today's date is {date}.
 
 4. **Keep entries short and scannable:**
    - One heading per session or topic, not per conversational turn
-   - 2-5 bullet points per heading capturing key outcomes
+   - 2-5 bullet points per heading capturing what was discussed and accomplished
    - Target: 30-80 lines per day, even for busy days with many sessions
-   - DO NOT include: verbatim quotes, step-by-step technical details, full lists of files changed, implementation specifics, or routine activity status
+   - DO NOT include: verbatim quotes, step-by-step technical details, full lists of files changed, or implementation specifics
 
 5. **Cleanup duty**: If you see files that don't match the \`YYYY-MM-DD.md\` pattern (e.g., files with \`-consolidated\`, \`-final\`, \`-updated\` suffixes), merge any useful content into the correct \`YYYY-MM-DD.md\` file and empty the variant so it gets cleaned up. This corrects filename format violations — episodic entries are never deleted based on their content.
 
@@ -40,31 +40,24 @@ Today's date is {date}.
    - Only create or modify files within \`$WORKSPACE/memories/episodic/\`
    - If the conversation was trivial or contained no meaningful information, it is perfectly acceptable to create no files
 
-Remember: These memories help the assistant maintain context across sessions. Focus on what would be useful to remember, not a transcript of what happened.`;
+Remember: These memories help the assistant maintain context across sessions. Aim for a concise summary of the day's activity — what was discussed, worked on, and decided — not a verbatim transcript or an implementation log.`;
 
-const TOPICS_BASE_PROMPT = `We just finished the conversation above. Using what you already know from it, extract or update everything worth remembering about the subjects that came up — both the stable reference facts and the user's subjective preferences — so future conversations start informed.
+const TOPICS_BASE_PROMPT = `We just finished the conversation above. Using what you already know from it, extract or update everything worth remembering about the subjects that came up — reference facts, preferences, insights, decisions, and any conclusions reached about each — so future conversations start informed.
 
 ## Instructions
 
 1. **Read existing files** in \`$WORKSPACE/memories/topics/\` to see what is already stored about each subject.
 
-2. Analyze the conversation for BOTH kinds of durable signal, and fold each into the topic it concerns:
+2. Analyze the conversation for durable signal worth remembering, and fold each into the topic it concerns. Worth capturing includes, but is not limited to:
 
-   **Stable reference information** — things that stay true across conversations:
-   - Personal details about the user (job, location, family, contacts)
-   - Important dates, deadlines, or upcoming events
-   - Stable routines or commitments (structure only, not daily logs)
-   - Key people and their roles/relationships
-   - Technical decisions, configurations, or architecture that affect future work
-   - Account info, service subscriptions, tool setups
+   - **Topics explored with depth** — a subject discussed substantively: the understanding reached, the conclusions drawn, and any open questions left (the durable takeaways, not a narrative of how the discussion went — that's episodic).
+   - **Stable reference information** — things that stay true across conversations: personal details about the user (job, location, family, contacts), important dates/deadlines/upcoming events, stable routines or commitments (structure only, not daily logs), key people and their roles/relationships, technical decisions/configurations/architecture that affect future work, and account info/service subscriptions/tool setups.
+   - **Subjective preferences** — how the user wants things done, with their reasoning: communication style/workflows/formats, approaches they prefer or want to avoid, tool/framework/methodology preferences, and scheduling or organizational preferences.
+   - **Insights from content consumed** — durable takeaways the user drew from articles, videos, discussions, or other external content (the understanding reached, not the content itself).
+   - **Decisions and their reasoning** — choices made and the why behind them, where the rationale is worth honoring or revisiting later.
+   - **Observed patterns** — recurring themes or regularities the user notices across subjects or over time (knowledge of how things tend to be — distinct from the *friction* that belongs in learnings).
 
-   **Subjective preferences** — how the user wants things done, with their reasoning:
-   - How they like things done (communication style, workflows, formats)
-   - Approaches they prefer or want to avoid
-   - Tool, framework, or methodology preferences
-   - Scheduling or organizational preferences
-
-   A single subject often yields both (a project's architecture is reference information; how the user wants work on it sequenced is a preference). Record both in the SAME topic file — they belong together. There is no separate store for facts versus preferences, so never choose between them: identify the subject and consolidate everything known about it into that topic.
+   A single subject often yields several of these at once (a project's architecture is reference information; how the user wants work on it sequenced is a preference; a conclusion reached about its direction is a topic explored). Fold them all into the SAME topic file — they belong together. There is no separate store by content type, so never choose between them: identify the subject and consolidate everything known about it into that topic.
 
    DO NOT store as topics:
    - Daily activity logs or status updates (that's episodic memory)
@@ -103,7 +96,7 @@ const TOPICS_BASE_PROMPT = `We just finished the conversation above. Using what 
    - **Do NOT prune based on**: vague hints ("I might switch..."), old dates alone (age is not staleness), or assumptions not backed by conversation evidence
 
 7. Each topic file should contain:
-   - Everything known about the subject — stable reference facts and the user's preferences, together in clear prose
+   - Everything known about the subject — reference facts, preferences, insights, decisions, and conclusions, together in clear prose
    - Relevant context or details, kept concise
    - Keep files under ~50 lines. If a subject needs more detail, the detail probably belongs in a project file or episodic memory, not in a topic file.
 
@@ -115,7 +108,7 @@ const TOPICS_BASE_PROMPT = `We just finished the conversation above. Using what 
    - Before writing content, ask: "Will this still be useful in a month?" If no — it describes something that happened once, has a specific date, or is a record of an event — it belongs in episodic memory, not here
    - Do not restate content already captured in a context file (see the Context File Deduplication section below)
 
-Remember: These memories help the assistant maintain context across sessions. Focus on durable, accurate knowledge about each subject — both the reference facts and the preferences — not activity logs or documents.`;
+Remember: These memories help the assistant maintain context across sessions. Focus on durable, accurate knowledge about each subject — reference facts, preferences, insights, decisions, and conclusions — not activity logs or documents.`;
 
 // Folded into the topics instruction so one pass classifies each signal as topic or learning and
 // writes it to exactly one store.
