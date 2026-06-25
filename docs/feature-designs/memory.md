@@ -15,7 +15,7 @@ pi sessions are in-process JSONL trees stored on disk and forkable: `SessionMana
 
 Memory is organized as three stores, distinct in *kind*:
 
-- **topics** (knowledge): each `<topic>.md` file holds everything known about a subject — both the stable reference facts and the user's subjective preferences — together in free-form unified prose, with one `MEMORY.md` index entry. Collapsing the former separate `facts/` (stable, objective) and `preferences/` (subjective) stores into one removes the error-prone classification/routing boundary that fragmented a single subject across two files (a stable detail in one, a related preference in the other), so recall never depends on guessing which store a piece of knowledge was filed under.
+- **topics** (knowledge): each `<topic>.md` file holds everything worth remembering about a subject — reference facts, preferences, insights, decisions, and conclusions — together in free-form unified prose, with one `MEMORY.md` index entry. Collapsing the former separate `facts/` (stable, objective) and `preferences/` (subjective) stores into one removes the error-prone classification/routing boundary that fragmented a single subject across two files (a stable detail in one, a related preference in the other), so recall never depends on guessing which store a piece of knowledge was filed under.
 - **learnings** (experience): each `<slug>.md` file holds one theme of recurring friction — what bites and what worked — under `## Drafts` (tentative) and `## Confirmed` (permanent) sections. Experience is different in kind from knowledge: a topic says what is true; a learning says what bites, repeatedly, or what approach turned out to be a dead end. Without it every session rediscovers the same gotchas.
 - **episodic** (narrative): date-stamped summaries of what happened.
 
@@ -83,7 +83,7 @@ Branch cutting is non-destructive by construction: pi's `SessionManager.createBr
 
 ### One unified topics store (not a reformed two-store model)
 
-**Choice**: The topics store is a single topic-oriented store; each `<topic>.md` file holds everything known about a subject — both stable reference facts and subjective preferences — together in free-form prose. (Episodic and learnings are separate stores of different kinds — narrative and experience — not a split of this knowledge store.)
+**Choice**: The topics store is a single topic-oriented store; each `<topic>.md` file holds everything worth remembering about a subject — reference facts, preferences, insights, decisions, and conclusions — together in free-form prose. (Episodic and learnings are separate stores of different kinds — narrative and experience — not a split of this knowledge store.)
 **Why**: The classification/routing boundary is the root problem — any model that keeps two homes for a subject reintroduces the guess of "which store" and a misclassification backstop to correct it. A single home per subject means recall never depends on the classification.
 **Alternatives Considered**:
 - Two stores (objective facts / subjective preferences) with a better classifier: the boundary itself is the defect; a better classifier can still be wrong and still fragments a subject across files.
@@ -94,8 +94,8 @@ Branch cutting is non-destructive by construction: pi's `SessionManager.createBr
 
 ### Authority hierarchy: Skills > Topics > Context, with learnings orthogonal
 
-**Choice**: Topics hold the durable detail (reference facts + preferences) and sit above the root context files (SOUL/USER/AGENTS); skills remain highest. Learnings does **not** join this ladder — it is orthogonal to it: a learning and a topic about the same subject are different *kinds* of information (experience vs knowledge), so neither overrides the other, and both are surfaced.
-**Why**: Topics hold the durable detail (reference + preference); context files are concise summaries/pointers, so they defer to topics. Under the old `Skills > Facts > Context`, preferences had no tier — folding them into topics gives them a defined place. Learnings is kept off the ladder because placing it on it would imply a learning defers to or overrides a topic about the same subject, collapsing two kinds of information into one conflict-resolution axis.
+**Choice**: Topics hold the durable detail (reference facts, preferences, insights, decisions, and conclusions) and sit above the root context files (SOUL/USER/AGENTS); skills remain highest. Learnings does **not** join this ladder — it is orthogonal to it: a learning and a topic about the same subject are different *kinds* of information (experience vs knowledge), so neither overrides the other, and both are surfaced.
+**Why**: Topics hold the durable detail (reference facts, preferences, insights, decisions, and conclusions); context files are concise summaries/pointers, so they defer to topics. Under the old `Skills > Facts > Context`, preferences had no tier — folding them into topics gives them a defined place. Learnings is kept off the ladder because placing it on it would imply a learning defers to or overrides a topic about the same subject, collapsing two kinds of information into one conflict-resolution axis.
 **Alternatives Considered**: Topics below context files — context files are deliberately terse and would wrongly outrank the detailed topic content; learnings inserted into the ladder (e.g. `Skills > Topics > Learnings > Context`) — rejected for the same collapsing-the-two-kinds reason.
 **Consequences**: When a topic duplicates a context file, the topic trims to a pointer; when content conflicts, the higher source wins. A learning is never folded into a topic nor pruned in deference to one; both coexist and surface independently about the same subject.
 
