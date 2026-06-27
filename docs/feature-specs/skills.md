@@ -28,6 +28,7 @@ Skills give the agent packaged expertise: Agent Skills-format directories from b
 | R5b | `delegate_to_agent` requires a `description` parameter — a short label for the delegation surfaced in tool-activity displays; it is display-only (required by the schema, but rendering degrades gracefully to the agent-only label when empty) and is never forwarded to the delegated run, which sees only the `task` |
 | R6 | Agents that declare no tools run with the default read-only set: `read`, `grep`, `find`, `ls` |
 | R6a | An agent that declares a `model` runs its headless delegation on that model; an agent without one runs on the side-runner's default tier |
+| R6b | `delegate_to_agent` takes an optional `tools` parameter that fully overrides the agent's tool set for that run, validated against pi's built-in tools (`read`, `grep`, `find`, `ls`, `bash`, `edit`, `write`); an unknown name throws a self-correcting error (only built-in tools are grantable — web/extension tools are not available to subagents), and an empty or omitted value leaves the agent's declared tools (or the read-only default) in place. When the built-in `general-purpose` agent is granted a mutation/exec tool (`bash`/`edit`/`write`), its worker prompt is rebuilt from the granted set (`buildSubagentSystemPrompt`) so it no longer claims read-only; skill agents keep their author-authored prompt |
 | R7 | Invalid agent files are logged and skipped; a missing skills root or agents directory yields empty discovery, never an error |
 | R8 | Agent discovery re-runs at every session creation and on every `delegate_to_agent` execution, so new and edited agents apply without a restart |
 | R9 | The extension can be disabled via `[extensions.skills] enabled = false` (default enabled) |
@@ -63,14 +64,17 @@ The session factory answers pi's `resources_discover` event with the workspace s
 - Given an agent file without a `description`, when discovery runs, then the file is skipped with a warning and other agents still load
 - Given a skill without an `agents/` directory, or a missing skills root, when discovery runs, then an empty list is returned
 
-### Delegation (R5, R5a, R5b, R6, R6a)
+### Delegation (R5, R5a, R5b, R6, R6a, R6b)
 
-The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists the available agents (the built-in `general-purpose` agent first, then discovered skill agents) in its description and runs the chosen agent in a fully isolated headless session via `app.agent.side.run` (`isolatePrompt: true`), passing the agent's declared `model` when set.
+The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists the available agents (the built-in `general-purpose` agent first, then discovered skill agents) in its description and runs the chosen agent in a fully isolated headless session via `app.agent.side.run` (`isolatePrompt: true`), passing the agent's declared `model` when set and accepting an optional per-delegation `tools` override (R6b).
 
 **Acceptance Criteria**:
 - Given the built-in agent plus discovered skill agents, when the tool description is built, then `general-purpose` is listed first, followed by each skill agent as `<skill>/<name>: <description>`
 - Given a delegation call with a known agent, when the tool executes, then the headless run uses the agent's system prompt, its declared tools, the task as the prompt, and `isolatePrompt: true` (the run sees only the agent's own prompt); the agent's final text is the tool result
 - Given an agent with no declared tools, when delegated to, then the run uses the default read-only tool set
+- Given a delegation that passes `tools: ["read", "grep", "bash"]`, when the tool executes, then the headless run uses exactly those tools (overriding the agent's declared set) and remains fully isolated (`isolatePrompt: true`); the built-in `general-purpose` agent's prompt reflects that it may modify files / run commands rather than claiming read-only
+- Given a delegation that passes a tool that is not a built-in (e.g. a web tool), when the tool executes, then it throws an error listing the grantable built-in tools; no run is attempted
+- Given a delegation that passes an empty `tools: []` or omits it, when the tool executes, then the run uses the agent's declared tools, or the read-only default if the agent declares none
 - Given an agent that declares a `model`, when delegated to, then the headless run is pinned to that model; an agent without a `model` runs on the side-runner's default tier
 - Given an unknown agent name, when the tool executes, then it throws an error listing the available agents (including `general-purpose`); no run is attempted
 - Given no skill agents exist, when a session is created and the skills extension is enabled, then `delegate_to_agent` is still registered and lists the built-in `general-purpose` agent; when the extension is disabled, no `delegate_to_agent` tool is registered

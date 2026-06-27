@@ -39,7 +39,7 @@ Seven small modules. `index.ts` wires: a bootstrap hook ensures the workspace sk
 | `src/extensions/skills/builtins.ts` | `BUILTIN_AGENTS`: agents shipped with Tachikoma rather than bundled in a skill | The `general-purpose` agent uses a bare name (no `<skill>/` namespace, so it cannot collide with discovered agents), `tools: null` (delegate's default read-only set), `model: null` (default tier), and the core-owned `SUBAGENT_SYSTEM_PROMPT` ([DES-005](../design/DES-005-base-prompt-ownership.md)) |
 | `src/extensions/skills/reload.ts` | `registerReload`: the `/reload` command (calls `ctx.reload()`) and the `reload_resources` tool that queues `/reload` as a follow-up | Reload must run in command context, so the tool re-injects `/reload` via `pi.sendUserMessage(..., { deliverAs: "followUp" })` rather than reloading inline |
 | `src/extensions/skills/agents.ts` | `discoverSkillAgents`: scan skills root for `agents/*.md`, parse frontmatter via pi's `parseFrontmatter` | Synchronous fs reads (small trees, called at session creation and tool execution); per-file error isolation — one bad definition never blocks the rest; names namespaced `<skill>/<agent>`; optional `model` parsed as a non-empty string (validated against the registry only at delegation time) — a non-string value warns and falls back to `null` rather than dropping the agent |
-| `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; `tools` accepts YAML list or comma-separated string (matches pi's subagent example); a declared `model` is threaded into `side.run` to pin the delegated run's model; every run passes `isolatePrompt: true` so no delegated agent inherits pi's append / project context files / skills catalog; a required display-only `description` param labels each delegation for tool-activity displays and is never forwarded to the run |
+| `src/extensions/skills/delegate.ts` | `createDelegateTool`: the `delegate_to_agent` `ToolDefinition` | Depends on `AgentRunner = Pick<SideRunner, "run">` for test fakes; output truncated with pi's `truncateTail`; agent frontmatter `tools` accepts YAML list or comma-separated string (matches pi's subagent example); a declared `model` is threaded into `side.run` to pin the delegated run's model; every run passes `isolatePrompt: true` so no delegated agent inherits pi's append / project context files / skills catalog; a required display-only `description` param labels each delegation for tool-activity displays and is never forwarded to the run; an optional per-delegation `tools` param fully overrides the agent's tool set, validated by the pure `resolveTools` against pi's built-ins (`read`, `grep`, `find`, `ls`, `bash`, `edit`, `write`) — an unknown name throws a self-correcting error, and an empty/omitted value falls back to the agent's declared tools then the read-only default; agents may set `dynamicPrompt(tools)` so the built-in `general-purpose` worker is rebuilt via `buildSubagentSystemPrompt` to match the granted tools (skill agents keep their own prompt) |
 
 ## Key Decisions
 
@@ -91,6 +91,14 @@ Seven small modules. `index.ts` wires: a bootstrap hook ensures the workspace sk
 - Pro: tool registration is independent of how many agents exist
 - Con: agent selection is free-text — guarded by the error path rather than the schema
 
+### Per-delegation tool selection, validated against the built-ins
+
+**Choice**: An optional `tools` parameter on `delegate_to_agent` fully overrides the agent's tool set for that run; a non-empty value wins over the agent's declared tools, which in turn win over the read-only default (`resolveTools`: `params.tools` → `agent.tools` → `DEFAULT_AGENT_TOOLS`). The value is validated against pi's built-in tools (`read`, `grep`, `find`, `ls`, `bash`, `edit`, `write`) and an unknown name throws a self-correcting error. The built-in `general-purpose` agent carries a `dynamicPrompt(tools)` so its worker prompt is rebuilt from the granted tools (`buildSubagentSystemPrompt`) — a worker handed `bash` is told it may run commands instead of being told it is read-only; skill agents keep their author-authored prompt. An empty array is treated as "not specified", never "no tools".
+**Why**: Lets the calling agent grant a subagent exactly the tools a task needs (shell commands via `bash`, file changes via `edit`/`write`) without a new abstraction, composing with the existing agent-declared `tools`. Replace-semantics (a complete list) is predictable and matches how an agent's declared tools already work. Throwing on unknown tools mirrors the unknown-agent error and tells the model that only built-ins are grantable, so it stops reaching for web/extension tools.
+**Consequences**:
+- Pro: shell-capable and file-modifying subagents are now possible per delegation, while read-only stays the default and the run stays fully isolated (`bare`/`inMemory`/`isolatePrompt` unchanged)
+- Con: only pi's built-in tools are grantable — extension and web tools (e.g. a Firecrawl scrape/search extension) are factory tools that a bare isolated session cannot bind, so they remain unreachable from subagents; exposing them is tracked separately as DLT-184 (a curated factory-binding mechanism, expected to need an ADR)
+
 ## System Behavior
 
 ### Scenario: Delegation to a skill-bundled agent
@@ -104,6 +112,18 @@ Seven small modules. `index.ts` wires: a bootstrap hook ensures the workspace sk
 **Given**: A workspace with no skill agents installed
 **When**: The main agent calls `delegate_to_agent(agent="general-purpose", task="find where X is configured")`
 **Then**: `delegate_to_agent` is registered regardless (the built-in is always discovered and listed first), and a fully isolated headless run executes with the core-owned `SUBAGENT_SYSTEM_PROMPT` and the default read-only tool set; its final text returns as the tool result.
+
+### Scenario: Delegation with a per-delegation tool override
+
+**Given**: A task that needs to run a shell command, not just read files
+**When**: The main agent calls `delegate_to_agent(agent="general-purpose", task="report disk usage by extension", tools=["read", "grep", "bash"])`
+**Then**: `resolveTools` returns `["read", "grep", "bash"]` (overriding the read-only default), the headless run is opened with exactly those tools and stays fully isolated (`isolatePrompt: true`), and the built-in worker's prompt is rebuilt via `buildSubagentSystemPrompt` so it is told it may run commands rather than being read-only.
+
+### Scenario: Delegation requesting a tool a subagent cannot have
+
+**Given**: The main agent tries to delegate web research, naming a tool that is not one of pi's built-ins
+**When**: It calls `delegate_to_agent(agent="general-purpose", task="search the web for X", tools=["read", "web_search"])`
+**Then**: `resolveTools` throws `Unknown tools for delegate_to_agent: web_search` listing the grantable built-ins and noting web/extension tools are not available to subagents; no headless run starts, so the model is steered toward doing the web work itself (until DLT-184 lands).
 
 ### Scenario: Delegation to an agent with a declared model
 
