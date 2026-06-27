@@ -1,3 +1,10 @@
+# [3.48.0](https://github.com/asermax/tachikoma/compare/v3.47.1...v3.48.0) (2026-06-27)
+
+
+### Features
+
+* **skills:** grant per-delegation tools to subagents ([ace63f2](https://github.com/asermax/tachikoma/commit/ace63f22c9d2d58c7696e530f370e67e6f4e1d1f))
+
 ## [3.47.1](https://github.com/asermax/tachikoma/compare/v3.47.0...v3.47.1) (2026-06-25)
 
 
