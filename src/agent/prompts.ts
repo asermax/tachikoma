@@ -54,24 +54,11 @@ export interface BackgroundSystemPromptParts {
 export const buildBackgroundSystemPrompt = ({ dateHeader }: BackgroundSystemPromptParts): string =>
   `Current date and time: ${dateHeader}\n\n${BACKGROUND_IDENTITY}\n\n${BACKGROUND_GUIDANCE}`;
 
-/**
- * Delegated general-purpose subagent: a focused, read-only worker whose final message IS the
- * result returned to the caller. Omits date/working-directory — pi appends both even under a
- * custom system prompt. This is the read-only default; {@link buildSubagentSystemPrompt} produces
- * the equivalent prompt parameterized by the granted tools (used when the caller grants
- * mutation/exec tools, so the worker is no longer told it is read-only).
- */
-export const SUBAGENT_SYSTEM_PROMPT = `You are a focused worker assisting Tachikoma, a personal assistant. Tachikoma has handed you one self-contained sub-task — typically exploring or searching files, or gathering specific information — and is waiting on the result.
-
-Your final message IS the result returned to Tachikoma: make it complete and self-contained, with the concrete findings (paths, values, excerpts) the task asked for. Do not narrate your process, and do not ask follow-up questions — you have no further turns.
-
-Stay strictly within the delegated task; do not expand scope. You are read-only: you have the read, grep, find, and ls tools and cannot modify anything.
-
-## How you work
-${OPERATIONAL_GUIDANCE}`;
-
 /** Tools that modify files or run commands — their presence moves the subagent off read-only. */
 const SUBAGENT_MUTATION_TOOLS = new Set(["bash", "edit", "write"]);
+
+/** The read-only tool set a delegated subagent runs with by default. */
+const SUBAGENT_DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
 
 export interface SubagentSystemPromptParts {
   /** The granted tool names (pi built-ins), used to describe what the worker may do. */
@@ -81,8 +68,8 @@ export interface SubagentSystemPromptParts {
 /**
  * Delegated subagent base prompt parameterized by its granted tools. With no mutation/exec tool
  * (`bash`/`edit`/`write`) the worker is read-only; once one is granted it is told it may modify
- * files and run commands as the task requires. The body matches {@link SUBAGENT_SYSTEM_PROMPT}
- * apart from the tool-list line, so granting the four read tools reproduces the read-only default.
+ * files and run commands as the task requires. {@link SUBAGENT_SYSTEM_PROMPT} is this builder
+ * applied to {@link SUBAGENT_DEFAULT_TOOLS}, so the two share one body and never drift.
  */
 export const buildSubagentSystemPrompt = ({ tools }: SubagentSystemPromptParts): string => {
   const isReadOnly = !tools.some((tool) => SUBAGENT_MUTATION_TOOLS.has(tool));
@@ -100,3 +87,13 @@ ${toolLine}
 ## How you work
 ${OPERATIONAL_GUIDANCE}`;
 };
+
+/**
+ * Delegated general-purpose subagent: a focused, read-only worker whose final message IS the
+ * result returned to the caller. Omits date/working-directory — pi appends both even under a
+ * custom system prompt. This is the read-only default — {@link buildSubagentSystemPrompt} applied
+ * to {@link SUBAGENT_DEFAULT_TOOLS} — used as the built-in agent's fallback `systemPrompt`. The
+ * builder is called with the granted tools when the caller grants mutation/exec tools, so the
+ * worker is no longer told it is read-only.
+ */
+export const SUBAGENT_SYSTEM_PROMPT = buildSubagentSystemPrompt({ tools: SUBAGENT_DEFAULT_TOOLS });
