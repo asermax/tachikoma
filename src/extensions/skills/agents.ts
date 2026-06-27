@@ -13,6 +13,13 @@ export interface SkillAgent {
   /** "provider/model-id[:thinkingLevel]" reference; null runs on the side-runner's default tier. */
   model: string | null;
   systemPrompt: string;
+  /**
+   * Optional: rebuild the system prompt from the granted tool set at delegation time. Only the
+   * built-in agents set this, so their guidance reflects whatever tools the caller granted (a
+   * worker handed `bash` must not be told it is read-only). Skill agents keep their author-authored
+   * `systemPrompt` unchanged and never set this.
+   */
+  dynamicPrompt?: (tools: string[]) => string;
   skill: string;
 }
 

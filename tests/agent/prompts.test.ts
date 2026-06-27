@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildBackgroundSystemPrompt,
   buildMainSystemPrompt,
+  buildSubagentSystemPrompt,
   OPERATIONAL_GUIDANCE,
   SUBAGENT_SYSTEM_PROMPT,
 } from "../../src/agent/prompts.ts";
@@ -69,5 +70,44 @@ describe("role system prompts", () => {
     // pi appends date/cwd even under a custom prompt, so the subagent prompt must not duplicate them.
     expect(SUBAGENT_SYSTEM_PROMPT).not.toContain("Current date");
     expect(SUBAGENT_SYSTEM_PROMPT).not.toContain("working directory");
+  });
+});
+
+describe("buildSubagentSystemPrompt", () => {
+  it("frames a read-only tool set as read-only and lists the granted tools", () => {
+    const prompt = buildSubagentSystemPrompt({ tools: ["read", "grep"] });
+
+    expect(prompt).toContain("read-only");
+    expect(prompt).toContain("you have the read, grep tools");
+    expect(prompt).not.toContain("Modify files or run commands");
+    expect(prompt).toContain(OPERATIONAL_GUIDANCE);
+  });
+
+  it("switches to a mutation/exec framing when bash, edit, or write is granted", () => {
+    for (const tools of [
+      ["read", "bash"],
+      ["read", "edit"],
+      ["read", "write"],
+    ] as string[][]) {
+      const prompt = buildSubagentSystemPrompt({ tools });
+
+      expect(prompt).not.toContain("read-only");
+      expect(prompt).toContain("Modify files or run commands");
+      expect(prompt).toContain(`You have these tools: ${tools.join(", ")}.`);
+      expect(prompt).toContain(OPERATIONAL_GUIDANCE);
+    }
+  });
+
+  it("keeps the final-message-is-the-result framing regardless of tools", () => {
+    expect(buildSubagentSystemPrompt({ tools: ["read"] })).toContain("final message IS the result");
+    expect(buildSubagentSystemPrompt({ tools: ["read", "bash"] })).toContain(
+      "final message IS the result",
+    );
+  });
+
+  it("reproduces the read-only default prompt's tool list for the four read tools", () => {
+    expect(buildSubagentSystemPrompt({ tools: ["read", "grep", "find", "ls"] })).toContain(
+      "you have the read, grep, find, ls tools",
+    );
   });
 });

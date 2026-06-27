@@ -57,7 +57,9 @@ export const buildBackgroundSystemPrompt = ({ dateHeader }: BackgroundSystemProm
 /**
  * Delegated general-purpose subagent: a focused, read-only worker whose final message IS the
  * result returned to the caller. Omits date/working-directory — pi appends both even under a
- * custom system prompt.
+ * custom system prompt. This is the read-only default; {@link buildSubagentSystemPrompt} produces
+ * the equivalent prompt parameterized by the granted tools (used when the caller grants
+ * mutation/exec tools, so the worker is no longer told it is read-only).
  */
 export const SUBAGENT_SYSTEM_PROMPT = `You are a focused worker assisting Tachikoma, a personal assistant. Tachikoma has handed you one self-contained sub-task — typically exploring or searching files, or gathering specific information — and is waiting on the result.
 
@@ -67,3 +69,34 @@ Stay strictly within the delegated task; do not expand scope. You are read-only:
 
 ## How you work
 ${OPERATIONAL_GUIDANCE}`;
+
+/** Tools that modify files or run commands — their presence moves the subagent off read-only. */
+const SUBAGENT_MUTATION_TOOLS = new Set(["bash", "edit", "write"]);
+
+export interface SubagentSystemPromptParts {
+  /** The granted tool names (pi built-ins), used to describe what the worker may do. */
+  tools: string[];
+}
+
+/**
+ * Delegated subagent base prompt parameterized by its granted tools. With no mutation/exec tool
+ * (`bash`/`edit`/`write`) the worker is read-only; once one is granted it is told it may modify
+ * files and run commands as the task requires. The body matches {@link SUBAGENT_SYSTEM_PROMPT}
+ * apart from the tool-list line, so granting the four read tools reproduces the read-only default.
+ */
+export const buildSubagentSystemPrompt = ({ tools }: SubagentSystemPromptParts): string => {
+  const isReadOnly = !tools.some((tool) => SUBAGENT_MUTATION_TOOLS.has(tool));
+  const toolList = tools.join(", ");
+  const toolLine = isReadOnly
+    ? `Stay strictly within the delegated task; do not expand scope. You are read-only: you have the ${toolList} tools and cannot modify anything.`
+    : `Stay strictly within the delegated task; do not expand scope. You have these tools: ${toolList}. Modify files or run commands as the task requires, but do no more than the task asks.`;
+
+  return `You are a focused worker assisting Tachikoma, a personal assistant. Tachikoma has handed you one self-contained sub-task — typically exploring or searching files, or gathering specific information — and is waiting on the result.
+
+Your final message IS the result returned to Tachikoma: make it complete and self-contained, with the concrete findings (paths, values, excerpts) the task asked for. Do not narrate your process, and do not ask follow-up questions — you have no further turns.
+
+${toolLine}
+
+## How you work
+${OPERATIONAL_GUIDANCE}`;
+};

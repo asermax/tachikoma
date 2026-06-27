@@ -1,9 +1,13 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
-
+import { buildSubagentSystemPrompt } from "../../src/agent/prompts.ts";
 import type { SkillAgent } from "../../src/extensions/skills/agents.ts";
 import { BUILTIN_AGENTS } from "../../src/extensions/skills/builtins.ts";
-import { type AgentRunner, createDelegateTool } from "../../src/extensions/skills/delegate.ts";
+import {
+  type AgentRunner,
+  createDelegateTool,
+  resolveTools,
+} from "../../src/extensions/skills/delegate.ts";
 import type { Logger } from "../../src/log.ts";
 
 const fakeLog = Object.assign(
@@ -206,5 +210,144 @@ describe("delegate_to_agent with the built-in general-purpose agent", () => {
       }),
     );
     expect(run.mock.calls[0]?.[0]).not.toHaveProperty("model");
+  });
+});
+
+describe("delegate_to_agent per-delegation tool selection", () => {
+  const toolFor = (runner: AgentRunner) =>
+    createDelegateTool({ discover: () => [...BUILTIN_AGENTS, ...agents], runner, log: fakeLog });
+
+  it("overrides the agent's tools when `tools` is given (AC2)", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "ok" });
+    const tool = toolFor({ run });
+
+    await tool.execute(
+      "call-ov",
+      {
+        agent: "general-purpose",
+        task: "run a shell check",
+        description: "shell check",
+        tools: ["read", "grep", "bash"],
+      },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: ["read", "grep", "bash"], isolatePrompt: true }),
+    );
+  });
+
+  it("rebuilds the built-in prompt from the granted tools (no read-only claim) (AC2)", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "ok" });
+    const tool = toolFor({ run });
+
+    await tool.execute(
+      "call-prompt",
+      {
+        agent: "general-purpose",
+        task: "run a shell check",
+        description: "shell check",
+        tools: ["read", "grep", "bash"],
+      },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    const system = run.mock.calls[0]?.[0]?.system as string;
+    expect(system).toBe(buildSubagentSystemPrompt({ tools: ["read", "grep", "bash"] }));
+    expect(system).not.toContain("read-only");
+    expect(system).toContain("Modify files or run commands");
+  });
+
+  it("keeps a skill agent's own prompt when its tools are overridden", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "ok" });
+    const tool = toolFor({ run });
+
+    await tool.execute(
+      "call-skill",
+      {
+        agent: "research/scout",
+        task: "find then patch",
+        description: "scout+patch",
+        tools: ["read", "bash"],
+      },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    // Override wins over the declared [read, grep]; the skill agent's prompt is used as-is.
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: ["read", "bash"], system: "You are a scout." }),
+    );
+  });
+
+  it("rejects unknown tools listing the grantable built-ins (AC3)", async () => {
+    const run = vi.fn();
+    const tool = toolFor({ run });
+
+    await expect(
+      tool.execute(
+        "call-bad",
+        {
+          agent: "general-purpose",
+          task: "research the web",
+          description: "web research",
+          tools: ["read", "web_search"],
+        },
+        undefined,
+        undefined,
+        fakeCtx,
+      ),
+    ).rejects.toThrow(
+      /Unknown tools for delegate_to_agent: web_search[\s\S]*bash[\s\S]*not available to subagents/,
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("treats an empty `tools` array as 'not specified' (AC4)", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "ok" });
+    const tool = toolFor({ run });
+
+    await tool.execute(
+      "call-empty",
+      {
+        agent: "research/scout",
+        task: "find sources",
+        description: "find sources",
+        tools: [],
+      },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ tools: ["read", "grep"] }));
+  });
+});
+
+describe("resolveTools", () => {
+  it("returns the requested set when non-empty, overriding declared/default", () => {
+    expect(resolveTools(["read", "bash"], ["read", "grep"])).toEqual(["read", "bash"]);
+    expect(resolveTools(["read", "bash"], null)).toEqual(["read", "bash"]);
+  });
+
+  it("falls back to the agent's declared tools when nothing is requested", () => {
+    expect(resolveTools(undefined, ["read", "grep"])).toEqual(["read", "grep"]);
+    expect(resolveTools([], ["read", "grep"])).toEqual(["read", "grep"]);
+  });
+
+  it("falls back to the read-only default when neither is set", () => {
+    expect(resolveTools(undefined, null)).toEqual(["read", "grep", "find", "ls"]);
+    expect(resolveTools([], null)).toEqual(["read", "grep", "find", "ls"]);
+  });
+
+  it("throws on unknown tools, naming them and the grantable built-ins", () => {
+    expect(() => resolveTools(["read", "web_search"], null)).toThrow(
+      /Unknown tools for delegate_to_agent: web_search[\s\S]*not available to subagents/,
+    );
   });
 });
