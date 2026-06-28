@@ -380,18 +380,24 @@ export const splitMessageWithEntities = (
 };
 
 /**
- * Wrap a converted payload in one collapsed `expandable_blockquote` span. The text
- * is unchanged and inner entities keep their offsets — they nest validly inside the
- * blockquote (Bot API: only `blockquote`/`expandable_blockquote` can't nest *each
- * other*). The outer entity is prepended so it precedes the inner spans at offset 0,
- * matching Telegram's outer-before-inner ordering at a shared offset. See S4 /
- * SPIKE-DLT-064 for the emission-path decision.
+ * Wrap a converted payload in one collapsed `expandable_blockquote` span, flattening
+ * any inner `blockquote`/`expandable_blockquote` entities to plain text. Telegram
+ * forbids these from nesting each other (or themselves), and the wrapped content is
+ * agent markdown that may itself contain `>` quotes — a surviving inner `blockquote`
+ * would split the message into several blockquotes (or be rejected outright as "can't
+ * parse entities"). The text is unchanged; only the conflicting blockquote-family
+ * spans are dropped, so inner formatting (bold/italic/code/links) keeps its offsets and
+ * still nests validly. The outer entity is prepended so it precedes the inner spans at
+ * offset 0, matching Telegram's outer-before-inner ordering at a shared offset. See S4
+ * / SPIKE-DLT-064 for the emission-path decision.
  */
 export const wrapExpandable = (payload: TelegramPayload): TelegramPayload => ({
   text: payload.text,
   entities: [
     { type: "expandable_blockquote", offset: 0, length: payload.text.length },
-    ...payload.entities,
+    ...payload.entities.filter(
+      (e) => e.type !== "blockquote" && e.type !== "expandable_blockquote",
+    ),
   ],
 });
 

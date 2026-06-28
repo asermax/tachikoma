@@ -297,6 +297,30 @@ describe("wrapExpandable", () => {
       length: payload.text.length,
     });
   });
+
+  it("flattens inner blockquote entities so the result is one valid expandable blockquote", () => {
+    // The wrapped region is agent markdown that may contain `>` quotes; a surviving
+    // inner `blockquote` would nest inside the `expandable_blockquote`, which Telegram
+    // forbids — so it is dropped to plain text while the quote's inner formatting and
+    // the surrounding text are preserved.
+    const payload = toTelegramEntities("intro\n\n> a **bold** quote\n\noutro");
+    // Sanity: the source quote did produce a blockquote entity before wrapping.
+    expect(find(payload, "blockquote")).toBeDefined();
+
+    const wrapped = wrapExpandable(payload);
+
+    // Text is unchanged (the `>` was already stripped by parsing; only the span goes).
+    expect(wrapped.text).toBe(payload.text);
+    // Exactly one expandable_blockquote spans the whole text; no blockquote survives.
+    expect(must(wrapped, "expandable_blockquote")).toMatchObject({
+      offset: 0,
+      length: payload.text.length,
+    });
+    expect(find(wrapped, "blockquote")).toBeUndefined();
+    // The quote's inner bold survives at its original offset, still slicing the same text.
+    const bold = must(wrapped, "bold");
+    expect(wrapped.text.slice(bold.offset, bold.offset + bold.length)).toBe("bold");
+  });
 });
 
 describe("concatPayloads", () => {

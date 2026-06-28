@@ -768,6 +768,34 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     expect(last.text.slice(block.offset + block.length)).toContain("final answer");
   });
 
+  it("flattens nested `>` in the folded region so the block stays one expandable_blockquote (R1)", async () => {
+    // The folded region is agent markdown that may contain `>` quotes; those would nest a
+    // `blockquote` inside the `expandable_blockquote` (Telegram forbids it) and split the
+    // message. wrapExpandable flattens them — while a `>` in the expanded tail stays a real
+    // blockquote (it is outside the block).
+    const api = fakeApi();
+    const renderer = make(api, true, 1); // 2 boundaries ⇒ active
+    await renderer.appendTool("read", { path: "/a.ts" });
+    await renderer.appendText("> early quote\n\n"); // boundary 1 — folds into the block
+    await renderer.appendTool("read", { path: "/b.ts" });
+    await renderer.appendText("> late quote"); // boundary 2 ⇒ active; last unit ⇒ expanded tail
+    await renderer.finalize();
+
+    const last = api.calls.at(-1);
+    const block = mustEntity(last, "expandable_blockquote");
+    const blockEnd = block.offset + block.length;
+    // The folded `>` is plain text inside the block (its blockquote entity was stripped).
+    expect(last.text.slice(block.offset, blockEnd)).toContain("early quote");
+    expect(last.text.slice(block.offset, blockEnd)).not.toContain("late quote");
+    // Exactly one blockquote survives — the tail's — and it sits entirely after the block.
+    expect((last.entities ?? []).filter((e) => e.type === "blockquote")).toHaveLength(1);
+    const tailQuote = mustEntity(last, "blockquote");
+    expect(tailQuote.offset).toBeGreaterThanOrEqual(blockEnd);
+    expect(last.text.slice(tailQuote.offset, tailQuote.offset + tailQuote.length)).toContain(
+      "late quote",
+    );
+  });
+
   it("carries the baked tool-summary markers nested inside the block, not live activity labels (R2/R5)", async () => {
     const api = fakeApi();
     const renderer = make(api, true, 1);
