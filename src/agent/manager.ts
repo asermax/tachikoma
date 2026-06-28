@@ -105,16 +105,19 @@ export const selectExtensionFactories = (
   sources: Pick<AgentSessionSources, "piFactories" | "backgroundFactories" | "subagentFactories">,
 ): ExtensionFactory[] => {
   // A bare session is headless side work and binds nothing by default; two curated subsets are
-  // opted into explicitly. background wins over subagent (precedence), then subagent, then none.
-  if (options.bare === true && options.bindBackgroundFactories !== true) {
-    if (options.bindSubagentFactories === true) {
-      return sources.subagentFactories.map((factory) => (pi) => factory(pi, { scope: "subagent" }));
-    }
-    return [];
-  }
+  // opted into explicitly. background takes precedence; subagent applies only to a bare session;
+  // a non-bare session binds every factory. See the case table above.
+  const bare = options.bare === true;
   const background = options.bindBackgroundFactories === true;
-  const factories = background ? sources.backgroundFactories : sources.piFactories;
-  const scope = background ? "background" : "main";
+  const subagent = !background && bare && options.bindSubagentFactories === true;
+  const factories = background
+    ? sources.backgroundFactories
+    : subagent
+      ? sources.subagentFactories
+      : bare
+        ? []
+        : sources.piFactories;
+  const scope = background ? "background" : subagent ? "subagent" : "main";
   return factories.map((factory) => (pi) => factory(pi, { scope }));
 };
 
