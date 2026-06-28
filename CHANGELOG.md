@@ -1,3 +1,12 @@
+# [3.49.0](https://github.com/asermax/tachikoma/compare/v3.48.0...v3.49.0) (2026-06-28)
+
+
+### Features
+
+* **agent:** grant resolved extension tools in SideRunner headless runs ([75f3c72](https://github.com/asermax/tachikoma/commit/75f3c72475599e958c378b1fd5d59f0df1a1f57f))
+* **extensions:** add subagent session scope for delegated factory binding ([053cdd8](https://github.com/asermax/tachikoma/commit/053cdd883a8b341acc19450b8fa001d1446cec4c))
+* **skills:** add `extensionTools` grant to delegate_to_agent ([8b30b34](https://github.com/asermax/tachikoma/commit/8b30b34bead040bff1e6d59efb1184a3c0fd26a0))
+
 # [3.48.0](https://github.com/asermax/tachikoma/compare/v3.47.1...v3.48.0) (2026-06-27)
 
 
