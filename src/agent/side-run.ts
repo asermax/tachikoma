@@ -46,6 +46,13 @@ export interface HeadlessRunOptions {
   isolatePrompt?: boolean;
   /** Bind the registered background factories (tools + skill sources) into this run. */
   backgroundExtensions?: boolean;
+  /**
+   * Exposed extension tool names to grant this run, additive on top of `tools` (the resolved
+   * built-ins). Empty/omitted = none granted (takes the built-in-allowlist path unchanged). Each
+   * name is resolved source-agnostically against the opened session at execute time — a name that
+   * does not register throws a self-correcting error before the run starts (see DLT-184).
+   */
+  extensionTools?: string[];
 }
 
 export interface HeadlessRunResult {
@@ -59,6 +66,15 @@ export interface BackgroundSessionOptions {
   sessionFile?: string | null;
   tier?: ModelTier;
 }
+
+/**
+ * pi's built-in tool names — used to tell granted extension tools apart from built-ins when listing
+ * the valid names in an unresolved-extension error. Mirrors the set the `delegate_to_agent` `tools`
+ * param validates against (`src/extensions/skills/delegate.ts`); duplicated here because the agent
+ * layer does not import from the skills extension. Reconcile into one shared source if pi's
+ * built-in surface changes.
+ */
+const BUILTIN_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "bash", "edit", "write"]);
 
 const textOf = (message: AssistantMessage): string =>
   message.content
@@ -212,10 +228,27 @@ export class SideRunner {
     model,
     isolatePrompt,
     backgroundExtensions,
+    extensionTools,
   }: HeadlessRunOptions): Promise<HeadlessRunResult> {
-    this.log.debug({ tier, model, tools, backgroundExtensions }, "headless run starting");
+    // A non-empty `extensionTools` takes the grant path: bind the subagent-scoped factories and
+    // resolve the requested names source-agnostically against the opened session (see DLT-184). An
+    // empty/omitted list keeps the unchanged built-in-allowlist path.
+    const requestedExtensions =
+      extensionTools != null && extensionTools.length > 0 ? extensionTools : undefined;
+
+    this.log.debug(
+      { tier, model, tools, backgroundExtensions, extensionTools },
+      "headless run starting",
+    );
 
     const startedAt = Date.now();
+
+    // A hard `tools` allowlist also filters out extension/custom tools, so a run that binds
+    // factories — a background run OR an extension-grant run — must NOT set one: the bound factory
+    // tools would otherwise be masked (the double-block). The grant run narrows the active set to
+    // the resolved built-ins plus granted tools via setActiveToolsByName after open; other runs
+    // keep an explicit built-in allowlist (plus their custom tools' names).
+    const dropToolAllowlist = backgroundExtensions === true || requestedExtensions != null;
 
     const session = await this.manager.open({
       inMemory: true,
@@ -224,11 +257,8 @@ export class SideRunner {
       ...(model != null ? { model } : {}),
       ...(isolatePrompt === true ? { isolatePrompt: true } : {}),
       ...(backgroundExtensions === true ? { bindBackgroundFactories: true } : {}),
-      // A hard tool allowlist (`options.tools`) also filters out extension/custom tools, so a
-      // background run that binds factories must NOT set one — it runs with the main session's
-      // tool model (default built-ins + all bound factory and custom tools active). Other runs
-      // keep an explicit built-in allowlist (plus their custom tools' names).
-      ...(backgroundExtensions === true
+      ...(requestedExtensions != null ? { bindSubagentFactories: true } : {}),
+      ...(dropToolAllowlist
         ? {}
         : { tools: [...tools, ...(customTools ?? []).map((tool) => tool.name)] }),
       ...(customTools != null ? { customTools } : {}),
@@ -236,6 +266,30 @@ export class SideRunner {
     });
 
     try {
+      if (requestedExtensions != null) {
+        // Resolve every requested name against the session's full registry (Tachikoma-factory and
+        // pi-native tools alike — source-agnostic), then narrow the active set to exactly the
+        // resolved built-ins plus the granted tools. An unresolved name throws a self-correcting
+        // error BEFORE the prompt runs, steering the model to a valid name (no run is attempted).
+        // getAllTools/setActiveToolsByName are synchronous on the installed SDK (no await).
+        const allTools = session.getAllTools();
+        const available = new Set(allTools.map((tool) => tool.name));
+        const missing = requestedExtensions.filter((name) => !available.has(name));
+        if (missing.length > 0) {
+          const grantable = allTools
+            .map((tool) => tool.name)
+            .filter((name) => !BUILTIN_TOOL_NAMES.has(name));
+          const grantableText =
+            grantable.length > 0 ? grantable.join(", ") : "(none are currently exposed)";
+          throw new Error(
+            `Unknown extension tools for delegate_to_agent: ${missing.join(", ")}. Exposed extension tools you can request via \`extensionTools\`: ${grantableText}.`,
+          );
+        }
+        // setActiveToolsByName rebuilds the system prompt to reflect the new tool set; the change
+        // takes effect on the next turn (`session.prompt` below).
+        session.setActiveToolsByName([...tools, ...requestedExtensions]);
+      }
+
       await session.prompt(prompt);
 
       this.log.debug({ tier, durationMs: Date.now() - startedAt }, "headless run finished");
