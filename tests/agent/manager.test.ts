@@ -140,6 +140,7 @@ const makeSources = (
 ) => ({
   piFactories: [{ id: "pi" }] as unknown as ExtensionFactory[],
   backgroundFactories: [{ id: "bg" }] as unknown as ExtensionFactory[],
+  subagentFactories: [{ id: "sub" }] as unknown as ExtensionFactory[],
   ...overrides,
 });
 
@@ -208,7 +209,11 @@ describe("selectExtensionFactories", () => {
     const a = factory("a");
     const b = factory("b");
     const c = factory("c");
-    const sources = { piFactories: [a, b, c], backgroundFactories: [a, c] };
+    const sources = {
+      piFactories: [a, b, c],
+      backgroundFactories: [a, c],
+      subagentFactories: [a, c],
+    };
 
     const selected = selectExtensionFactories(
       { bindBackgroundFactories: true, bare: true },
@@ -222,9 +227,49 @@ describe("selectExtensionFactories", () => {
     expect(b).not.toHaveBeenCalled();
   });
 
+  it("binds the subagent subset, each with the subagent scope, for a delegated subagent run", () => {
+    const a = factory("a");
+    const b = factory("b");
+    const c = factory("c");
+    const sources = {
+      piFactories: [a, b, c],
+      backgroundFactories: [a, c],
+      subagentFactories: [a, c],
+    };
+
+    const selected = selectExtensionFactories({ bindSubagentFactories: true, bare: true }, sources);
+
+    expect(selected).toHaveLength(2);
+    invoke(selected);
+    expect(a).toHaveBeenCalledWith(expect.anything(), { scope: "subagent" });
+    expect(c).toHaveBeenCalledWith(expect.anything(), { scope: "subagent" });
+    expect(b).not.toHaveBeenCalled();
+  });
+
+  it("gives background precedence over subagent when both flags are set", () => {
+    const a = factory("a");
+    const b = factory("b");
+    const sources = {
+      piFactories: [a, b],
+      backgroundFactories: [a],
+      subagentFactories: [b],
+    };
+
+    const selected = selectExtensionFactories(
+      { bindBackgroundFactories: true, bindSubagentFactories: true, bare: true },
+      sources,
+    );
+
+    // background wins: the background subset (a) binds, the subagent subset (b) does not.
+    expect(selected).toHaveLength(1);
+    invoke(selected);
+    expect(a).toHaveBeenCalledWith(expect.anything(), { scope: "background" });
+    expect(b).not.toHaveBeenCalled();
+  });
+
   it("binds nothing for other bare side runs", () => {
     const a = factory("a");
-    const sources = { piFactories: [a], backgroundFactories: [a] };
+    const sources = { piFactories: [a], backgroundFactories: [a], subagentFactories: [a] };
 
     expect(selectExtensionFactories({ bare: true }, sources)).toEqual([]);
   });
@@ -232,7 +277,7 @@ describe("selectExtensionFactories", () => {
   it("binds every factory, each with the main scope, for a normal (non-bare) session", () => {
     const a = factory("a");
     const b = factory("b");
-    const sources = { piFactories: [a, b], backgroundFactories: [] };
+    const sources = { piFactories: [a, b], backgroundFactories: [], subagentFactories: [] };
 
     const selected = selectExtensionFactories({ bare: false }, sources);
 

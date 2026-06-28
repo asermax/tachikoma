@@ -28,12 +28,13 @@ import type { Registrations } from "./registrations.ts";
  */
 export const factoryBindingTargets = (
   options?: Pick<UseFactoryOptions, "sessionScopes">,
-): { main: boolean; background: boolean } => {
+): { main: boolean; background: boolean; subagent: boolean } => {
   const scopes = options?.sessionScopes ?? [SESSION_SCOPES.main];
 
   return {
     main: scopes.includes(SESSION_SCOPES.main),
     background: scopes.includes(SESSION_SCOPES.background),
+    subagent: scopes.includes(SESSION_SCOPES.subagent),
   };
 };
 
@@ -202,6 +203,7 @@ export class ExtensionHost {
 
           if (targets.main) services.regs.piFactories.push(factory);
           if (targets.background) services.regs.backgroundFactories.push(factory);
+          if (targets.subagent) services.regs.subagentFactories.push(factory);
         },
         models: services.agent.tiers,
         side,

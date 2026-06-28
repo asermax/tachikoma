@@ -138,6 +138,8 @@ export const SESSION_SCOPES = {
   main: "main",
   /** Autonomous background task runs. */
   background: "background",
+  /** A delegated subagent run that requested extension tools. */
+  subagent: "subagent",
 } as const;
 
 export type SessionScope = (typeof SESSION_SCOPES)[keyof typeof SESSION_SCOPES];
@@ -166,10 +168,14 @@ export interface UseFactoryOptions {
   /**
    * Which session contexts this factory binds into (default `["main"]`). Each scope is
    * independent: include `"main"` to bind the conversational session, `"background"` to
-   * bind autonomous task runs, both to bind both, or `"background"` alone for a factory only
-   * background runs should see. Binding is by membership, so an out-of-union scope binds
-   * nothing rather than throwing. Use `"background"` for tools a background task legitimately
-   * needs (skills, git, projects, detached processes, notifications, task management).
+   * bind autonomous task runs, `"subagent"` to expose the factory's tools for delegated
+   * subagent runs that request them via `delegate_to_agent`'s `extensionTools`, or any
+   * combination of the three. A scope given alone restricts the factory to that one session
+   * type (e.g. `"background"` alone for a factory only background runs should see). Binding
+   * is by membership, so an out-of-union scope binds nothing rather than throwing. Use
+   * `"background"` for tools a background task legitimately needs (skills, git, projects,
+   * detached processes, notifications, task management); use `"subagent"` for tools a
+   * delegated subagent may be granted on request.
    */
   sessionScopes?: SessionScope[];
 }

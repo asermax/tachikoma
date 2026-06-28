@@ -21,6 +21,12 @@ export interface Registrations {
    * piFactories — a factory scoped to `"background"` only lives here without being a main factory.
    */
   backgroundFactories: AgentExtensionFactory[];
+  /**
+   * Factories whose tools/resources are bound into delegated subagent runs that request extension
+   * tools (via `delegate_to_agent`'s `extensionTools`). Independent of piFactories/backgroundFactories
+   * — a factory scoped to `"subagent"` only lives here without being a main or background factory.
+   */
+  subagentFactories: AgentExtensionFactory[];
   exchangeProcessors: ExchangeProcessor[];
   postProcessors: PostProcessor[];
   inboundMiddleware: InboundMiddleware[];
@@ -34,6 +40,7 @@ export interface Registrations {
 export const createRegistrations = (): Registrations => ({
   piFactories: [],
   backgroundFactories: [],
+  subagentFactories: [],
   exchangeProcessors: [],
   postProcessors: [],
   inboundMiddleware: [],

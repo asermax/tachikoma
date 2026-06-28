@@ -39,6 +39,8 @@ export interface AgentSessionSources {
   piFactories: AgentExtensionFactory[];
   /** Factories bound into background task runs (scoped via `app.agent.use(f, { sessionScopes: [..., "background"] })`). */
   backgroundFactories: AgentExtensionFactory[];
+  /** Factories bound into delegated subagent runs that request extension tools (scoped via `app.agent.use(f, { sessionScopes: [..., "subagent"] })`). */
+  subagentFactories: AgentExtensionFactory[];
 }
 
 export interface OpenSessionOptions {
@@ -74,21 +76,42 @@ export interface OpenSessionOptions {
    * capabilities (skills, git, projects, etc.) — see `app.agent.use(f, { sessionScopes: [..., "background"] })`.
    */
   bindBackgroundFactories?: boolean;
+  /**
+   * Bind the registered subagent factories (their tools + resource sources) instead of no
+   * factories. For delegated subagent runs that request extension tools via `delegate_to_agent`'s
+   * `extensionTools` — see `app.agent.use(f, { sessionScopes: [..., "subagent"] })`. Mutually
+   * exclusive with `bindBackgroundFactories` at open time; a bare session opened with neither
+   * binds nothing (the usual headless side work).
+   */
+  bindSubagentFactories?: boolean;
 }
 
 /**
- * Which extension factories a session binds: the background subset for autonomous task runs, none
- * for other bare side work, all of them otherwise. Each factory is wrapped to receive its binding
- * session type ({@link FactorySessionContext}) so it can adapt to the session it runs in. Pure so
- * the selection (and the scope it hands each factory) is unit-testable.
+ * Which extension factories a session binds: the background subset for autonomous task runs, the
+ * subagent subset for delegated runs that requested extension tools, none for other bare side
+ * work, all of them otherwise. Each factory is wrapped to receive its binding session type
+ * ({@link FactorySessionContext}) so it can adapt to the session it runs in. Pure so the selection
+ * (and the scope it hands each factory) is unit-testable.
+ *
+ * Background precedence is preserved and subagent is a distinct bare-session subset — the three
+ * session types are mutually exclusive at open time:
+ *   bare + bindBackgroundFactories → background subset, scope "background" (unchanged)
+ *   bare + bindSubagentFactories   → subagent subset,   scope "subagent"   (new)
+ *   bare (neither)                 → []                                   (unchanged)
+ *   non-bare                       → all piFactories,   scope "main"       (unchanged)
  */
 export const selectExtensionFactories = (
-  options: Pick<OpenSessionOptions, "bindBackgroundFactories" | "bare">,
-  sources: Pick<AgentSessionSources, "piFactories" | "backgroundFactories">,
+  options: Pick<OpenSessionOptions, "bindBackgroundFactories" | "bindSubagentFactories" | "bare">,
+  sources: Pick<AgentSessionSources, "piFactories" | "backgroundFactories" | "subagentFactories">,
 ): ExtensionFactory[] => {
-  // A background task run opens a bare session yet still binds the background-scoped subset, so
-  // the background flag wins over `bare`; any other bare side run binds nothing.
-  if (options.bare === true && options.bindBackgroundFactories !== true) return [];
+  // A bare session is headless side work and binds nothing by default; two curated subsets are
+  // opted into explicitly. background wins over subagent (precedence), then subagent, then none.
+  if (options.bare === true && options.bindBackgroundFactories !== true) {
+    if (options.bindSubagentFactories === true) {
+      return sources.subagentFactories.map((factory) => (pi) => factory(pi, { scope: "subagent" }));
+    }
+    return [];
+  }
   const background = options.bindBackgroundFactories === true;
   const factories = background ? sources.backgroundFactories : sources.piFactories;
   const scope = background ? "background" : "main";
