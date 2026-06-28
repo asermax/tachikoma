@@ -68,6 +68,30 @@ const makeManager = (
   return { manager, resolve, apiKeyFor, open };
 };
 
+const GRANT_SESSION_TOOLS = [
+  { name: "read" },
+  { name: "grep" },
+  { name: "find" },
+  { name: "ls" },
+  { name: "web_search" },
+];
+
+/** A fake in-memory session exposing the source-agnostic primitives the grant path leans on. */
+const makeGrantSession = (messages: AssistantMessage[] = []) => {
+  const getAllTools = vi.fn(() => GRANT_SESSION_TOOLS);
+  const setActiveToolsByName = vi.fn();
+  const prompt = vi.fn(async () => undefined);
+  const dispose = vi.fn();
+  const session = { prompt, dispose, getAllTools, setActiveToolsByName, messages };
+  return {
+    session: session as unknown as AgentSession,
+    getAllTools,
+    setActiveToolsByName,
+    prompt,
+    dispose,
+  };
+};
+
 describe("lastAssistantText", () => {
   it("returns the joined text of the last assistant message", () => {
     const messages = [
@@ -277,6 +301,120 @@ describe("SideRunner.run", () => {
 
     await expect(runner.run({ prompt: "go" })).rejects.toThrow("prompt blew up");
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("grants a resolved extension tool alongside the built-ins", async () => {
+    const { session, getAllTools, setActiveToolsByName, prompt, dispose } = makeGrantSession([
+      assistantMessage("researched"),
+    ]);
+    const open = vi.fn(async () => session);
+
+    const { manager } = makeManager({ open });
+    const runner = new SideRunner(manager, makeLogger());
+
+    const result = await runner.run({
+      prompt: "go",
+      tools: ["read"],
+      extensionTools: ["web_search"],
+    });
+
+    expect(result).toEqual({ text: "researched" });
+
+    const opts = open.mock.calls[0][0];
+    expect(opts).toMatchObject({
+      inMemory: true,
+      bare: true,
+      bindSubagentFactories: true,
+    });
+    // NO `tools` allowlist — bound factory tools must register and enumerate.
+    expect(opts.tools).toBeUndefined();
+    expect(opts.bindBackgroundFactories).toBeUndefined();
+
+    expect(getAllTools).toHaveBeenCalledOnce();
+    expect(setActiveToolsByName).toHaveBeenCalledWith(["read", "web_search"]);
+    expect(prompt).toHaveBeenCalledWith("go");
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("throws before the prompt when an extension tool does not resolve, listing grantables", async () => {
+    const { session, getAllTools, setActiveToolsByName, prompt, dispose } = makeGrantSession();
+    const open = vi.fn(async () => session);
+
+    const { manager } = makeManager({ open });
+    const runner = new SideRunner(manager, makeLogger());
+
+    let caught: unknown;
+    try {
+      await runner.run({ prompt: "go", extensionTools: ["web_srch"] });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toMatch(/web_srch/);
+    // Lists the grantable (non-builtin) names, not the built-ins.
+    expect(message).toContain("web_search");
+    expect(message).not.toContain("grep");
+
+    expect(getAllTools).toHaveBeenCalledOnce();
+    expect(prompt).not.toHaveBeenCalled();
+    expect(setActiveToolsByName).not.toHaveBeenCalled();
+    // Disposes the session even when validation throws.
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("fails the whole request when only some extension tools resolve", async () => {
+    const { session, setActiveToolsByName, prompt, dispose } = makeGrantSession();
+    const open = vi.fn(async () => session);
+
+    const { manager } = makeManager({ open });
+    const runner = new SideRunner(manager, makeLogger());
+
+    await expect(
+      runner.run({ prompt: "go", extensionTools: ["web_search", "web_srch"] }),
+    ).rejects.toThrow(/web_srch/);
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(setActiveToolsByName).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("treats an empty extensionTools array like omitting it (built-in allowlist path)", async () => {
+    const { session, getAllTools, setActiveToolsByName, prompt, dispose } = makeGrantSession();
+    const open = vi.fn(async () => session);
+
+    const { manager } = makeManager({ open });
+    const runner = new SideRunner(manager, makeLogger());
+
+    await runner.run({ prompt: "go", tools: ["read"], extensionTools: [] });
+
+    const opts = open.mock.calls[0][0];
+    expect(opts.tools).toEqual(["read"]);
+    expect(opts.bindSubagentFactories).toBeUndefined();
+    expect(opts.bindBackgroundFactories).toBeUndefined();
+    // Never the grant path — and never "no tools".
+    expect(getAllTools).not.toHaveBeenCalled();
+    expect(setActiveToolsByName).not.toHaveBeenCalled();
+    expect(prompt).toHaveBeenCalledWith("go");
+    expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("omitting extensionTools keeps the built-in allowlist path (regression)", async () => {
+    const { session, getAllTools, setActiveToolsByName } = makeGrantSession();
+    const open = vi.fn(async () => session);
+
+    const { manager } = makeManager({ open });
+    const runner = new SideRunner(manager, makeLogger());
+
+    const custom = [{ name: "myTool" }] as never;
+    await runner.run({ prompt: "go", tools: ["read"], customTools: custom });
+
+    const opts = open.mock.calls[0][0];
+    expect(opts.tools).toEqual(["read", "myTool"]);
+    expect(opts.bindSubagentFactories).toBeUndefined();
+    expect(getAllTools).not.toHaveBeenCalled();
+    expect(setActiveToolsByName).not.toHaveBeenCalled();
   });
 });
 

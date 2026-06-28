@@ -285,12 +285,12 @@ describe("delegate_to_agent per-delegation tool selection", () => {
     );
   });
 
-  it("rejects unknown tools listing the grantable built-ins (AC3)", async () => {
+  it("rejects unknown `tools` listing the built-ins and pointing to `extensionTools` (AC3)", async () => {
     const run = vi.fn();
     const tool = toolFor({ run });
 
-    await expect(
-      tool.execute(
+    const error = await tool
+      .execute(
         "call-bad",
         {
           agent: "general-purpose",
@@ -301,11 +301,95 @@ describe("delegate_to_agent per-delegation tool selection", () => {
         undefined,
         undefined,
         fakeCtx,
-      ),
-    ).rejects.toThrow(
-      /Unknown tools for delegate_to_agent: web_search[\s\S]*bash[\s\S]*not available to subagents/,
+      )
+      .then(
+        () => undefined,
+        (err: Error) => err,
+      );
+
+    expect(error?.message).toMatch(
+      /Unknown tools for delegate_to_agent: web_search[\s\S]*bash[\s\S]*extensionTools/,
     );
+    expect(error?.message).not.toContain("not available to subagents");
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("threads `extensionTools` into `runner.run` when given", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "searched" });
+    const tool = toolFor({ run });
+
+    await tool.execute(
+      "call-ext",
+      {
+        agent: "general-purpose",
+        task: "research the web",
+        description: "web research",
+        extensionTools: ["web_search"],
+      },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ extensionTools: ["web_search"] }));
+  });
+
+  it("omits `extensionTools` when empty or omitted (built-ins still apply, never 'no tools')", async () => {
+    // omitted
+    const runOmitted = vi.fn().mockResolvedValue({ text: "ok" });
+    await toolFor({ run: runOmitted }).execute(
+      "call-no-ext",
+      { agent: "general-purpose", task: "explore", description: "explore" },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+    expect(runOmitted.mock.calls[0]?.[0]).not.toHaveProperty("extensionTools");
+    expect(runOmitted).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: ["read", "grep", "find", "ls"] }),
+    );
+
+    // empty array
+    const runEmpty = vi.fn().mockResolvedValue({ text: "ok" });
+    await toolFor({ run: runEmpty }).execute(
+      "call-empty-ext",
+      {
+        agent: "general-purpose",
+        task: "explore",
+        description: "explore",
+        extensionTools: [],
+      },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+    expect(runEmpty.mock.calls[0]?.[0]).not.toHaveProperty("extensionTools");
+    expect(runEmpty).toHaveBeenCalledWith(
+      expect.objectContaining({ tools: ["read", "grep", "find", "ls"] }),
+    );
+  });
+
+  it("passes `extensionTools` through without built-in validation in execute", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "ok" });
+    const tool = toolFor({ run });
+
+    // `web_search` is not a built-in, so `tools: ["web_search"]` would throw — but `extensionTools`
+    // is validated source-agnostically in SideRunner, not here, so execute does not throw.
+    await expect(
+      tool.execute(
+        "call-pass",
+        {
+          agent: "general-purpose",
+          task: "research",
+          description: "research",
+          extensionTools: ["web_search"],
+        },
+        undefined,
+        undefined,
+        fakeCtx,
+      ),
+    ).resolves.toEqual(expect.any(Object));
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ extensionTools: ["web_search"] }));
   });
 
   it("treats an empty `tools` array as 'not specified' (AC4)", async () => {
@@ -345,9 +429,29 @@ describe("resolveTools", () => {
     expect(resolveTools([], null)).toEqual(["read", "grep", "find", "ls"]);
   });
 
-  it("throws on unknown tools, naming them and the grantable built-ins", () => {
+  it("throws on unknown tools, naming them, the built-ins, and `extensionTools`", () => {
     expect(() => resolveTools(["read", "web_search"], null)).toThrow(
-      /Unknown tools for delegate_to_agent: web_search[\s\S]*not available to subagents/,
+      /Unknown tools for delegate_to_agent: web_search[\s\S]*bash[\s\S]*extensionTools/,
     );
+    expect(() => resolveTools(["read", "web_search"], null)).not.toThrow(
+      /not available to subagents/,
+    );
+  });
+});
+
+describe("delegate_to_agent agent-facing guidance", () => {
+  const tool = createDelegateTool({
+    discover: () => BUILTIN_AGENTS,
+    runner: { run: vi.fn() },
+    log: fakeLog,
+  });
+
+  it("advertises the `extensionTools` grant and drops the 'not available to subagents' messaging", () => {
+    const guidelines = (tool.promptGuidelines ?? []).join("\n");
+
+    expect(tool.description).toContain("extensionTools");
+    expect(tool.description).not.toContain("not available to subagents");
+    expect(guidelines).toContain("extensionTools");
+    expect(guidelines).not.toContain("not available to subagents");
   });
 });

@@ -58,14 +58,15 @@ const createServices = (overrides: Partial<HostServices> = {}): HostServices => 
 
 describe("factoryBindingTargets", () => {
   it("binds the main session only when scopes are omitted (AC1)", () => {
-    expect(factoryBindingTargets()).toEqual({ main: true, background: false });
-    expect(factoryBindingTargets({})).toEqual({ main: true, background: false });
+    expect(factoryBindingTargets()).toEqual({ main: true, background: false, subagent: false });
+    expect(factoryBindingTargets({})).toEqual({ main: true, background: false, subagent: false });
   });
 
   it('treats explicit ["main"] like the omitted default (AC5)', () => {
     expect(factoryBindingTargets({ sessionScopes: ["main"] })).toEqual({
       main: true,
       background: false,
+      subagent: false,
     });
   });
 
@@ -73,6 +74,7 @@ describe("factoryBindingTargets", () => {
     expect(factoryBindingTargets({ sessionScopes: ["main", "background"] })).toEqual({
       main: true,
       background: true,
+      subagent: false,
     });
   });
 
@@ -80,6 +82,23 @@ describe("factoryBindingTargets", () => {
     expect(factoryBindingTargets({ sessionScopes: ["background"] })).toEqual({
       main: false,
       background: true,
+      subagent: false,
+    });
+  });
+
+  it("binds the subagent list when the subagent scope is present", () => {
+    expect(factoryBindingTargets({ sessionScopes: ["main", "subagent"] })).toEqual({
+      main: true,
+      background: false,
+      subagent: true,
+    });
+  });
+
+  it("binds subagent only when main and background are absent", () => {
+    expect(factoryBindingTargets({ sessionScopes: ["subagent"] })).toEqual({
+      main: false,
+      background: false,
+      subagent: true,
     });
   });
 
@@ -87,12 +106,13 @@ describe("factoryBindingTargets", () => {
     expect(factoryBindingTargets({ sessionScopes: [] })).toEqual({
       main: false,
       background: false,
+      subagent: false,
     });
   });
 
   it("ignores out-of-union scopes rather than throwing (AC6)", () => {
     expect(factoryBindingTargets({ sessionScopes: ["main", "unknown"] as SessionScope[] })).toEqual(
-      { main: true, background: false },
+      { main: true, background: false, subagent: false },
     );
   });
 });
@@ -136,6 +156,45 @@ describe("agent.use context-section registration", () => {
     // "both" + "main-only" bind main; "both" + "bg-only" bind background.
     expect(regs.piFactories).toHaveLength(2);
     expect(regs.backgroundFactories).toHaveLength(2);
+  });
+
+  it("routes a subagent-scoped factory into subagentFactories and not the other lists", async () => {
+    const regs = createRegistrations();
+    const log = Object.assign(
+      { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
+      { child() {} },
+    );
+    log.child = () => log;
+
+    const services = {
+      config: { extensions: {} },
+      workspace: { dataDir: "/tmp", resolve: (p: string) => p },
+      log,
+      db: {},
+      events: {},
+      scheduler: {},
+      agent: { tiers: {} },
+      coordinator: {},
+      regs,
+    } as unknown as HostServices;
+
+    const subOnly = provideContext("S", "sub-only");
+    const mainAndSub = provideContext("MS", "main+sub");
+
+    const ext = defineExtension({
+      name: "sub-scope-test",
+      setup(app) {
+        app.agent.use(subOnly, { sessionScopes: ["subagent"] });
+        app.agent.use(mainAndSub, { sessionScopes: ["main", "subagent"] });
+      },
+    });
+
+    await new ExtensionHost(services).load([ext] as TachikomaExtension<never>[]);
+
+    // "sub-only" and "main+sub" both reach subagentFactories; only "main+sub" reaches piFactories.
+    expect(regs.subagentFactories).toEqual([subOnly, mainAndSub]);
+    expect(regs.piFactories).toEqual([mainAndSub]);
+    expect(regs.backgroundFactories).toEqual([]);
   });
 });
 
