@@ -1,0 +1,128 @@
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { Logger } from "../log.ts";
+import { BRANCH_SUMMARY } from "../sessions/trunk.ts";
+import {
+  type BranchSummaryDetails,
+  branchEntriesSinceBase,
+  branchWithSummary,
+  getLeafId,
+  messageText,
+} from "./session-tree.ts";
+import type { SideRunner } from "./side-run.ts";
+
+/**
+ * Branch collapse with an LLM summary — core machinery shared by the topic-shift path (boundary
+ * extension) and the trunk-close path (coordinator). On collapse the current branch is summarized and
+ * recorded on the trunk as a `branch_summary` entry; the abandoned branch survives in the append-only
+ * tree, reachable through the `originalLeafId` stored in the entry's details. This module owns the
+ * generic summarize-and-collapse; callers own their own post-bookkeeping (e.g. the boundary writes the
+ * boomerang shift snapshot, which is a feature concern, not a collapse concern).
+ *
+ * The verified pi seam is tracked in `docs/reference/pi-sdk-notes.md`. See ADR-014 (session file as the
+ * source of truth) and DES-001 (core owns primitives shared across features).
+ */
+
+export const SUMMARY_SYSTEM = [
+  "You summarize a conversation branch so the assistant can continue from a compact",
+  "trunk later. Write a self-contained narrative describing what happened on this branch:",
+  "- what was discussed and explored",
+  "- what decisions were made and why",
+  "- what work was completed and what was produced (files, commands, outputs)",
+  "- any important context or details the agent needs to know",
+  "",
+  "Do NOT include open questions, next steps, goals, or task lists — the branch is finished.",
+  "Output only the summary prose, no preamble.",
+].join("\n");
+
+/** The branch's own turns: entries on the leaf path strictly after `currentBaseId`. */
+export const renderBranchTranscript = (
+  session: AgentSession,
+  currentBaseId: string | null,
+): string => {
+  const sections: string[] = [];
+
+  for (const entry of branchEntriesSinceBase(session, currentBaseId)) {
+    if (entry.type !== "message") continue;
+
+    const role = entry.message.role;
+    if (role !== "user" && role !== "assistant") continue;
+
+    const text = messageText(entry);
+    if (text === "") continue;
+
+    sections.push(`${role === "user" ? "User" : "Assistant"}: ${text}`);
+  }
+
+  return sections.join("\n\n");
+};
+
+export interface BranchCollapseDeps {
+  side: Pick<SideRunner, "complete">;
+  log: Logger;
+}
+
+export interface BranchCollapseArgs {
+  session: AgentSession;
+  /** The base (current trunk tip) the live branch extends; the branch's own turns start after it. */
+  currentBaseId: string | null;
+  /** Deterministic `topic-N` id for the collapsing branch. */
+  branchId: string;
+  reason?: string;
+  lastExchange?: string | null;
+}
+
+/**
+ * Summarize the live branch (since `currentBaseId`) and collapse it into a `topic`-kind
+ * `branch_summary`, re-seating the leaf onto the new summary. Returns `{ newBaseId }` on success, or
+ * `null` on any failure (R11 graceful degrade: the caller proceeds with no content lost, since the
+ * abandoned branch survives in the append-only tree). Does NOT write boomerang state — that is the
+ * caller's concern (the topic-shift path records a shift snapshot; the trunk-close path does not).
+ *
+ * `originalLeafId` (the abandoned tip, captured before the collapse) is stored in the summary details so
+ * `ask_branch` and per-branch extraction can still recover the full branch.
+ */
+export const collapseLiveTopicBranch = async (
+  deps: BranchCollapseDeps,
+  args: BranchCollapseArgs,
+): Promise<{ newBaseId: string } | null> => {
+  try {
+    const originalLeafId = getLeafId(args.session);
+
+    if (originalLeafId == null) {
+      deps.log.warn({ branchId: args.branchId }, "collapse skipped — session has no leaf");
+      return null;
+    }
+
+    const summary = await deps.side.complete({
+      tier: "processor",
+      system: SUMMARY_SYSTEM,
+      user: renderBranchTranscript(args.session, args.currentBaseId),
+    });
+
+    const details: BranchSummaryDetails = {
+      customType: BRANCH_SUMMARY,
+      branchId: args.branchId,
+      // Topic collapses are the default branch kind; tangents set "tangent" via collapseTangent.
+      kind: "topic",
+      originalLeafId,
+      baseId: args.currentBaseId,
+      reason: args.reason,
+      lastExchange: args.lastExchange,
+    };
+
+    const newBaseId = branchWithSummary(args.session, args.currentBaseId, summary, details);
+
+    deps.log.info(
+      { branchId: args.branchId, newBaseId, originalLeafId, summaryLen: summary.length },
+      "branch collapsed",
+    );
+
+    return { newBaseId };
+  } catch (error) {
+    deps.log.error(
+      { err: error, branchId: args.branchId },
+      "branch collapse failed — proceeding on current branch",
+    );
+    return null;
+  }
+};
