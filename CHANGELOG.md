@@ -1,3 +1,10 @@
+# [3.51.0](https://github.com/asermax/tachikoma/compare/v3.50.0...v3.51.0) (2026-06-29)
+
+
+### Features
+
+* **coordinator:** serialize concurrent trunk close with run loop ([bb3b98e](https://github.com/asermax/tachikoma/commit/bb3b98e7a58a489a68b23d6a4a0c4d115c42bb26))
+
 # [3.50.0](https://github.com/asermax/tachikoma/compare/v3.49.2...v3.50.0) (2026-06-29)
 
 
