@@ -655,13 +655,11 @@ export class Coordinator {
   /**
    * Close the live trunk (nightly cron via closeTrunkIfDue, or explicit). No-op when no trunk is open.
    *
-   * The close runs under `closeInFlight` — a promise covering the pipeline AND its trailing
-   * `clearActive` — so a concurrent `ensureTrunk` (a message arriving mid-close) awaits it rather than
-   * racing into a second close on the same trunk. The field is set synchronously after nulling
-   * `active`/`trunkLive` (no `await` between, so the run is atomic w.r.t. the event loop; nulling
-   * `active` first is required so a concurrent `ensureTrunk` falls through its early-return to the
-   * guard instead of returning the trunk being closed), and cleared identity-guarded so a later close
-   * can never null a different promise.
+   * Runs under `closeInFlight` so a concurrent `ensureTrunk` (a message arriving mid-close) awaits the
+   * whole close instead of racing into a second one. `active` is nulled before the field is set — no
+   * `await` between — so a concurrent `ensureTrunk` sees no trunk and falls through to the in-flight
+   * guard rather than returning the trunk being closed. See docs/feature-designs/conversation-loop.md
+   * ("Close-in-flight hold") for the race this prevents.
    */
   async closeTrunk(visibility: TrunkCloseVisibility = "transient"): Promise<void> {
     const active = this.active;
@@ -682,7 +680,7 @@ export class Coordinator {
     try {
       await promise;
     } finally {
-      if (this.closeInFlight === promise) this.closeInFlight = null;
+      this.closeInFlight = null;
     }
   }
 
