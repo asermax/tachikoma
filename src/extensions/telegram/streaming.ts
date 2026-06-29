@@ -110,8 +110,9 @@ export class StreamRenderer {
    * Whether intensive-work collapse is active for the current message (DLT-064). The
    * threshold is a trigger, not a quota: collapse activates only once the boundary count
    * *strictly exceeds* it, and never when the feature is disabled — so below-threshold
-   * and disabled turns render exactly as today. This is the counter's sole output; the
-   * detection suite and the compose/finalize paths (Batch 3) both read it here.
+   * and disabled turns render exactly as today. This is the counter's sole output; it is
+   * read only at `finalize()` (collapse is deferred — the live stream renders fully expanded),
+   * and by the detection suite.
    */
   collapseActive(): boolean {
     return this.collapseIntensiveWork && this.boundaryCount > this.intensiveWorkThreshold;
@@ -259,15 +260,13 @@ export class StreamRenderer {
       const display = this.compose();
       if (display.length === 0 || display === this.lastRendered) return;
 
-      // Collapse-aware payload for both the send and edit sites (DLT-064). The non-collapse path
-      // reuses the `display` string already computed above — for the empty/unchanged short-circuit
-      // guard and for compose()'s best-effort header-drop side effect, which has already run by
-      // here — so the common case composes once and scans the buffer once, as before. The collapse
-      // path rebuilds a structured payload from the buffer on every flush (the retroactive fold),
-      // exactly as the header/body are today (DES-009).
-      const payload = this.collapseActive()
-        ? this.composeCollapsePayload()
-        : toTelegramEntities(display);
+      // Streaming always renders the expanded `display` (header + body + transient, inline). The
+      // intensive-work collapse is deferred to `finalize()` — the live message never folds as it
+      // streams, so a long turn reads as one continuous expanded stream and collapses once, on the
+      // final message, when the agent finishes. `compose()` has already run by here (it owns the
+      // empty/unchanged short-circuit guard and the best-effort header-drop side effect), so the
+      // common case still composes once and scans the buffer once.
+      const payload = toTelegramEntities(display);
       if (this.messageId == null) {
         this.messageId = await this.sendPayload(payload);
       } else {
@@ -305,16 +304,14 @@ export class StreamRenderer {
     const chunks = splitMessage(this.buffer);
     this.buffer = chunks.at(-1) ?? "";
 
-    // The committed chunks share the running collapse state at commit time — the reset happens once,
-    // after the loop, so the tally isn't lost mid-commit (DLT-064, Step 9). A committed chunk carries
-    // its own collapsed block when collapse is active (all-intermediate: no tail); the turn-scoped
-    // header rides the first committed chunk regardless of collapse — above the block when collapsed,
-    // above the chunk when inline — and is consumed there so the streaming tail doesn't duplicate it.
-    // Mirrors `finalizeMarkdown`, which anchors header + body together on chunk[0].
-    const collapse = this.collapseActive();
+    // Committed chunks render inline — collapse is finalize-only, so an overflow-committed chunk (sent
+    // while streaming) never carries its own collapsed block; the turn folds at most once, on the final
+    // message, when `finalize()` runs. The turn-scoped header rides the first committed chunk above its
+    // inline body and is consumed there so the streaming tail doesn't duplicate it. Mirrors
+    // `finalizeMarkdown`, which anchors header + body together on chunk[0].
     for (const [index, chunk] of chunks.slice(0, -1).entries()) {
       const headerOnChunk = index === 0 && this.header != null;
-      const body = collapse ? wrapExpandable(toTelegramEntities(chunk)) : toTelegramEntities(chunk);
+      const body = toTelegramEntities(chunk);
       const payload = headerOnChunk
         ? concatPayloads(toTelegramEntities(this.headerText()), body)
         : body;

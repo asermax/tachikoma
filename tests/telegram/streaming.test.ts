@@ -818,28 +818,34 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     expect(last.text.length).toBeGreaterThan(0);
   });
 
-  it("keeps a running tool's preface + live line expanded as the tail (R3)", async () => {
+  it("renders fully expanded while streaming and folds only at finalize (R3)", async () => {
     const api = fakeApi();
     const renderer = make(api, true, 1);
     await renderer.appendTool("read", { path: "/a.ts" });
-    await renderer.appendText("first\n\n");
+    await renderer.appendText("first\n\n"); // boundary 1
     await renderer.appendTool("read", { path: "/b.ts" });
     await renderer.appendText("second\n\n"); // boundary 2 ⇒ active
-    // A tool is running — its preface "second" stays visible with its live activity line as the tail.
+    // A tool is running — collapse is active, yet the live message stays fully expanded (no block):
+    // the running tool's preface and its live activity line are both visible.
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendTool("grep", { pattern: "needle" });
 
+    const streaming = api.calls.at(-1);
+    expect(findEntity(streaming, "expandable_blockquote")).toBeUndefined();
+    expect(streaming.text).toContain("second");
+    expect(streaming.text).toContain("Searching for 'needle'");
+
+    // The fold lands only at finalize: earlier units collapse, the last unit (preface + tail) expands.
+    await renderer.finalize();
     const last = api.calls.at(-1);
     const block = mustEntity(last, "expandable_blockquote");
     const tailText = last.text.slice(block.offset + block.length);
-    // The tail holds the preface text AND the running tool's activity line (the last unit), expanded.
     expect(tailText).toContain("second");
-    expect(tailText).toContain("Searching for 'needle'");
     // Only earlier units fold: "first" is inside the block, not the tail.
     expect(last.text.slice(block.offset, block.offset + block.length)).toContain("first");
   });
 
-  it("folds earlier inline segments retroactively when the threshold is crossed (R2/R3)", async () => {
+  it("folds earlier inline segments at finalize once the threshold is crossed (R2/R3)", async () => {
     const api = fakeApi();
     const renderer = make(api, true, 1);
     await renderer.appendTool("read", { path: "/a.ts" });
@@ -850,8 +856,9 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     await renderer.appendTool("read", { path: "/b.ts" });
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendText("second\n\n"); // boundary 2 ⇒ crossing; held until finalize
-    // The previously-inline "first" segment is rebuilt from the buffer into the block,
-    // revealed when finalize renders the collapse payload.
+    // Collapse is deferred — nothing folds while streaming, even after the threshold is crossed.
+    expect(api.calls.every((c) => !findEntity(c, "expandable_blockquote"))).toBe(true);
+    // The previously-inline "first" segment folds into the block only when finalize renders it.
     await renderer.finalize();
     const crossed = api.calls.at(-1);
     const block = mustEntity(crossed, "expandable_blockquote");
@@ -926,7 +933,7 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     expect(findEntity(last, "expandable_blockquote")).toBeUndefined();
   });
 
-  it("renders a status transient as the expanded tail, outside the block (R11)", async () => {
+  it("renders a status transient fully expanded while streaming, with no block (R11)", async () => {
     const api = fakeApi();
     const renderer = make(api, true, 1);
     await renderer.appendTool("read", { path: "/a.ts" });
@@ -936,8 +943,10 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.showTransient("Compacting…");
     const last = api.calls.at(-1);
-    const block = mustEntity(last, "expandable_blockquote");
-    expect(last.text.slice(block.offset + block.length)).toContain("Compacting…");
+    // Collapse is deferred to finalize, so the live message stays fully expanded — no block —
+    // and the transient renders inline beneath the body.
+    expect(findEntity(last, "expandable_blockquote")).toBeUndefined();
+    expect(last.text).toContain("Compacting…");
   });
 
   it("delivers plain inline text with no block on the broken-render fallback (R11)", async () => {
@@ -954,7 +963,7 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     expect(api.calls.every((c) => !findEntity(c, "expandable_blockquote"))).toBe(true);
   });
 
-  it("evaluates collapse per message on overflow: a committed chunk carries its own block, the tail resets (R9)", async () => {
+  it("renders every overflow-committed chunk inline; collapse is finalize-only and the tail resets (R9)", async () => {
     const api = fakeApi();
     const renderer = make(api, true, 1);
     await renderer.appendTool("read", { path: "/a.ts" });
@@ -962,12 +971,12 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendTool("read", { path: "/b.ts" });
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    // boundary 2 ⇒ active; the buffer overflows 4096 so commitOverflow commits the intensive chunk
-    // (carrying its own collapsed block) and resets detection for the streaming tail.
-    await renderer.appendText(`${"x".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 10)}\n\n`);
+    // boundary 2 ⇒ active; a single huge append overflows into ≥2 committed chunks at once while
+    // collapse is active. Collapse is finalize-only, so every committed chunk renders inline —
+    // none carries its own block (the bug was each chunk carrying its own collapsed block).
+    await renderer.appendText(`${"z".repeat(TELEGRAM_MAX_MESSAGE_LENGTH * 2 + 50)}\n\n`);
 
-    const committed = api.calls.find((c) => findEntity(c, "expandable_blockquote") != null);
-    expect(committed).toBeDefined();
+    expect(api.calls.every((c) => !findEntity(c, "expandable_blockquote"))).toBe(true);
     // After the reset the streaming tail is evaluated independently from zero.
     expect(renderer.collapseActive()).toBe(false);
   });
@@ -1081,7 +1090,7 @@ describe("StreamRenderer intensive-work collapse (DLT-064)", () => {
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
     await renderer.appendTool("read", { path: "/b.ts" });
     vi.advanceTimersByTime(EDIT_THROTTLE_MS);
-    // Overflow: commits the intensive chunk with its own block; detection resets on the kept tail.
+    // Overflow: commits the intensive chunk inline (collapse is finalize-only); detection resets on the kept tail.
     await renderer.appendText(`${"x".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 10)}\n\n`);
     expect(renderer.collapseActive()).toBe(false);
 
