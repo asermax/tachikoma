@@ -3,8 +3,10 @@ import { existsSync } from "node:fs";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { streamPrompt } from "./agent/adapter.ts";
+import { collapseLiveTopicBranch } from "./agent/branch-collapse.ts";
 import type { AgentManager } from "./agent/manager.ts";
 import { branchEntriesSinceBase, sessionCreatedAt } from "./agent/session-tree.ts";
+import { SideRunner } from "./agent/side-run.ts";
 import { buildDigest } from "./channels/delivery-digest.ts";
 import { compareQueued, evaluate, type QueuedItem } from "./channels/delivery-queue.ts";
 import type { Channel, Delivery } from "./channels/types.ts";
@@ -79,6 +81,12 @@ export class Coordinator {
 
   private readonly trunkState: TrunkState;
   private readonly agent: AgentManager;
+  /**
+   * Side-channel LLM runner for trunk-close work that runs off the main conversation — currently the
+   * live-branch summary generated when finalizing the day's final topic before extraction. Constructed
+   * from `agent`/`log` exactly as each extension's `app.agent.side` is (see `host.ts`).
+   */
+  private readonly side: SideRunner;
   private readonly regs: Registrations;
   private readonly events: EventBus;
   private readonly log: Logger;
@@ -104,6 +112,7 @@ export class Coordinator {
   ) {
     this.trunkState = trunkState;
     this.agent = agent;
+    this.side = new SideRunner(agent, log);
     this.regs = regs;
     this.events = events;
     this.log = log;
@@ -629,22 +638,19 @@ export class Coordinator {
   }
 
   /**
-   * Run the close pipeline over a trunk: dispose the live session, post-process the trunk, then retire
-   * it from the unclosed index. The retire happens ONLY after post-processing completes (the
-   * write-ordering invariant's second half) so a crash mid-close keeps the trunk recoverable.
+   * Run the close pipeline over a trunk: finalize the live branch (so the extraction pipeline picks it
+   * up), dispose the live session, post-process the trunk, then retire it from the unclosed index. The
+   * retire happens ONLY after post-processing completes (the write-ordering invariant's second half) so
+   * a crash mid-close keeps the trunk recoverable.
+   *
+   * The lifecycle status flags wrap the whole body (cleared in `finally` so a throw can't leave
+   * `status()` misrouted): the live-branch collapse emits a status line too, and on a lifecycle close it
+   * must land on the dedicated lifecycle message rather than the reclaimable lead-in.
    */
   private async closeTrunkSession(
     trunk: ActiveTrunk,
     visibility: TrunkCloseVisibility,
   ): Promise<void> {
-    trunk.session.dispose();
-
-    this.log.info({ sessionFile: trunk.sessionFile, day: trunk.day }, "trunk closed");
-    this.events.emit("session:closed", { sessionFile: trunk.sessionFile, day: trunk.day });
-
-    // A lifecycle close steers the pipeline's status() lines onto the dedicated lifecycle message via
-    // these flags. They wrap post-processing only (cleared in finally so a throw can't leave status()
-    // misrouted); the final outcome is rendered afterward, directly rather than through status().
     if (visibility === "lifecycle") {
       this.lifecycleActive = true;
       this.lifecycleFresh = true;
@@ -652,7 +658,27 @@ export class Coordinator {
 
     let failures = 0;
     try {
-      failures = await this.runPostProcessing(trunk);
+      // Finalize the live branch BEFORE disposing the session (the collapse runs on the live session,
+      // mirroring the topic-shift path) and before `runPostProcessing` snapshots the branch records — so
+      // the just-collapsed branch is included in the extraction set. A failed collapse aborts the close
+      // (failures = 1) so the trunk stays unclosed and retries; the collapse is idempotent, so a retry
+      // that already collapsed the branch skips it (see `collapseLiveBranchForClose`).
+      const collapseOk = await this.collapseLiveBranchForClose(trunk);
+
+      trunk.session.dispose();
+
+      this.log.info({ sessionFile: trunk.sessionFile, day: trunk.day }, "trunk closed");
+      this.events.emit("session:closed", { sessionFile: trunk.sessionFile, day: trunk.day });
+
+      if (collapseOk) {
+        failures = await this.runPostProcessing(trunk);
+      } else {
+        failures = 1;
+        this.log.warn(
+          { sessionFile: trunk.sessionFile, day: trunk.day },
+          "live-branch collapse failed — leaving trunk unclosed for retry",
+        );
+      }
     } finally {
       if (visibility === "lifecycle") {
         this.lifecycleActive = false;
@@ -677,6 +703,41 @@ export class Coordinator {
     }
 
     this.trunkState.retireTrunk(trunk.sessionFile);
+  }
+
+  /**
+   * Collapse the trunk's live branch as a topic branch so the close pipeline extracts it. Reuses the
+   * topic-shift collapse (LLM summary + `branchWithSummary`); skipped when the live branch has no
+   * assistant turn yet — the same empty-branch guard a topic shift uses, which is also what makes this
+   * idempotent (after a collapse the leaf is re-seated onto the new summary, so the guard reads false on
+   * a retry). Returns false only when the collapse itself failed, so the caller can abort the close and
+   * retry rather than retire a trunk whose final conversation was never extracted.
+   */
+  private async collapseLiveBranchForClose(trunk: ActiveTrunk): Promise<boolean> {
+    const branchRecords = getBranchRecords(trunk.session);
+    const boomerang = readBoomerangState(trunk.session);
+    const currentBaseId =
+      boomerang?.currentTopicBaseId ?? branchRecords.at(-1)?.summaryEntryId ?? null;
+
+    if (!hasAssistantTurnSinceBase(trunk.session, currentBaseId)) {
+      // Empty (or already-collapsed) live branch — nothing to finalize. Treat as success so the close
+      // proceeds; this is also the idempotent skip on a retry after a prior collapse.
+      return true;
+    }
+
+    this.status("Closing the current topic…");
+
+    const result = await collapseLiveTopicBranch(
+      { side: this.side, log: this.log },
+      {
+        session: trunk.session,
+        currentBaseId,
+        branchId: nextBranchId(branchRecords),
+        reason: "trunk close",
+      },
+    );
+
+    return result != null;
   }
 
   /**
