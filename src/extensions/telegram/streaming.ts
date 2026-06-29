@@ -215,12 +215,11 @@ export class StreamRenderer {
   }
 
   /**
-   * The finalized structured payload, chunked entity-safely (DLT-064, S5). At finalize `transient` is
-   * null, so `composeCollapsePayload()` splits intermediate = every unit before the last, tail = the last
-   * unit: the final answer text, or `[last preface + trailing tool summary]` when the turn ends on a
-   * trailing tool. `header ⊕ wrapExpandable(intermediate) ⊕ tail`; an all-intensive turn with no text at
-   * all collapses to the whole body being the block. Empty payload ⇒ no chunks ⇒ the caller deletes the
-   * placeholder.
+   * The finalized structured payload, chunked entity-safely (DLT-064, S5). `composeCollapsePayload()`
+   * splits intermediate = every unit before the last, tail = the last unit: the final answer text, or
+   * `[last preface + trailing tool summary]` when the turn ends on a trailing tool.
+   * `header ⊕ wrapExpandable(intermediate) ⊕ tail`; an all-intensive turn with no text at all collapses
+   * to the whole body being the block. Empty payload ⇒ no chunks ⇒ the caller deletes the placeholder.
    */
   private finalizeCollapseChunks(): TelegramPayload[] {
     const payload = this.composeCollapsePayload();
@@ -262,10 +261,8 @@ export class StreamRenderer {
 
       // Streaming always renders the expanded `display` (header + body + transient, inline). The
       // intensive-work collapse is deferred to `finalize()` — the live message never folds as it
-      // streams, so a long turn reads as one continuous expanded stream and collapses once, on the
-      // final message, when the agent finishes. `compose()` has already run by here (it owns the
-      // empty/unchanged short-circuit guard and the best-effort header-drop side effect), so the
-      // common case still composes once and scans the buffer once.
+      // streams, so a long turn reads as one continuous expanded stream and folds once, on the final
+      // message, when the agent finishes.
       const payload = toTelegramEntities(display);
       if (this.messageId == null) {
         this.messageId = await this.sendPayload(payload);
@@ -336,29 +333,23 @@ export class StreamRenderer {
 
   /**
    * The intermediate region that folds into the collapsed block (DLT-064): everything before the last
-   * content-type unit — `buffer.slice(0, tailStart)`. The live tool/status line belongs to the last unit
-   * and is not folded here (it rides in the tail alongside its preface), so there is no transient special
-   * case. `collapseTailMd()` is its exact complement from `tailStart`.
+   * content-type unit — `buffer.slice(0, tailStart)`. Built only at `finalize()` (collapse is deferred),
+   * over the settled buffer. `collapseTailMd()` is its exact complement from `tailStart`.
    */
   private collapseIntermediateMd(): string {
     return this.buffer.slice(0, this.tailStart);
   }
 
   /**
-   * The expanded tail's markdown for the collapse split (DLT-064): the last content-type unit — the
-   * final text segment (the preface to the current or last tool group) from `tailStart`, with the live
-   * transient line (a running tool/status) appended below it when one is showing. The preface explains
-   * the tool group, so it stays visible with it rather than folding. Everything before it
-   * (`collapseIntermediateMd()`) is the intermediate region that folds into the collapsed block.
+   * The expanded tail's markdown for the collapse split (DLT-064): the last content-type unit from
+   * `tailStart` — the final answer text, or the last preface plus its trailing tool summary when the turn
+   * ends on a trailing tool. Built only at `finalize()` (collapse is deferred), over the settled buffer,
+   * so it is a plain slice with no live-line handling. The preface explains the tool group, so it stays
+   * visible with it rather than folding. Everything before it (`collapseIntermediateMd()`) is the
+   * intermediate region that folds into the collapsed block.
    */
   private collapseTailMd(): string {
-    const segment = this.buffer.slice(this.tailStart);
-    if (this.transient == null) return segment;
-    // Trim the segment's trailing paragraph separator so a segment ending in `\n\n` (a just-baked
-    // marker's terminator) doesn't stack with the join's `\n\n`; markdown-it would normalize either
-    // form, but a single blank line keeps the raw markdown legible.
-    const trimmed = segment.trimEnd();
-    return trimmed.length > 0 ? `${trimmed}\n\n${this.transient}` : this.transient;
+    return this.buffer.slice(this.tailStart);
   }
 
   /**
@@ -415,7 +406,7 @@ export class StreamRenderer {
   /**
    * The structured payload built when collapse is active (DLT-064) — `header ⊕ wrapExpandable(intermediate)
    * ⊕ tail` — so every unit before the last folds into one collapsed block while the last unit (preface
-   * text plus a live or trailing tool) stays expanded. The intermediate/tail split keys off content-type
+   * text plus a trailing tool) stays expanded. The intermediate/tail split keys off content-type
    * transitions (`tailStart`), not paragraph breaks. The header is converted separately and prepended via
    * `concatPayloads` so it anchors above the block, never nested inside it (DES-009, S6). An empty tail
    * collapses to the whole body being the block via `concatPayloads`' empty-operand rule. Callers gate on
