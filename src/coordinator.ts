@@ -714,12 +714,9 @@ export class Coordinator {
    * retry rather than retire a trunk whose final conversation was never extracted.
    */
   private async collapseLiveBranchForClose(trunk: ActiveTrunk): Promise<boolean> {
-    const branchRecords = getBranchRecords(trunk.session);
-    const boomerang = readBoomerangState(trunk.session);
-    const currentBaseId =
-      boomerang?.currentTopicBaseId ?? branchRecords.at(-1)?.summaryEntryId ?? null;
+    const { currentBaseId, liveBranchId, hasAssistantTurnSinceBase } = this.trunkBranchState(trunk);
 
-    if (!hasAssistantTurnSinceBase(trunk.session, currentBaseId)) {
+    if (!hasAssistantTurnSinceBase) {
       // Empty (or already-collapsed) live branch — nothing to finalize. Treat as success so the close
       // proceeds; this is also the idempotent skip on a retry after a prior collapse.
       return true;
@@ -732,7 +729,7 @@ export class Coordinator {
       {
         session: trunk.session,
         currentBaseId,
-        branchId: nextBranchId(branchRecords),
+        branchId: liveBranchId,
         reason: "trunk close",
       },
     );
@@ -898,23 +895,34 @@ export class Coordinator {
     await invoke(0);
   }
 
-  /** Snapshot the live trunk for the inbound middleware (base, branch records, checkpoint state). */
-  private buildTrunkInbound(active: ActiveTrunk): TrunkInbound {
+  /**
+   * Resolve the live branch's state relative to the current base — shared by the inbound middleware
+   * snapshot (`buildTrunkInbound`) and trunk-close finalization (`collapseLiveBranchForClose`) so the
+   * base-resolution precedence (boomerang's topic base, else the latest branch summary, else null) and
+   * the empty-branch guard live in one place rather than drifting between the two paths.
+   */
+  private trunkBranchState(active: ActiveTrunk) {
     const branchRecords = getBranchRecords(active.session);
     const boomerang = readBoomerangState(active.session);
     const currentBaseId =
       boomerang?.currentTopicBaseId ?? branchRecords.at(-1)?.summaryEntryId ?? null;
-    const checkpointId = boomerang?.checkpointId ?? null;
 
     return {
-      session: active.session,
-      sessionFile: active.sessionFile,
       currentBaseId,
       branchRecords,
       liveBranchId: nextBranchId(branchRecords),
       hasAssistantTurnSinceBase: hasAssistantTurnSinceBase(active.session, currentBaseId),
-      checkpointId,
+      checkpointId: boomerang?.checkpointId ?? null,
       lastAutoDecision: boomerang?.lastAutoDecision ?? null,
+    };
+  }
+
+  /** Snapshot the live trunk for the inbound middleware (base, branch records, checkpoint state). */
+  private buildTrunkInbound(active: ActiveTrunk): TrunkInbound {
+    return {
+      session: active.session,
+      sessionFile: active.sessionFile,
+      ...this.trunkBranchState(active),
     };
   }
 
