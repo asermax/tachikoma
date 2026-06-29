@@ -1,3 +1,10 @@
+## [3.49.2](https://github.com/asermax/tachikoma/compare/v3.49.1...v3.49.2) (2026-06-29)
+
+
+### Bug Fixes
+
+* **telegram:** flatten inner blockquotes inside expandable blockquote ([5dcc299](https://github.com/asermax/tachikoma/commit/5dcc299dde1fa064d0091e5536058a3977b3fc42))
+
 ## [3.49.1](https://github.com/asermax/tachikoma/compare/v3.49.0...v3.49.1) (2026-06-29)
 
 
