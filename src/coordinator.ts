@@ -46,6 +46,15 @@ export class Coordinator {
   private active: ActiveTrunk | null = null;
   /** True only while a trunk is open; the delivery gate holds drains until this flips. */
   private trunkLive = false;
+  /**
+   * Non-null only while a `closeTrunk` close (the pipeline plus its trailing `clearActive`) is in
+   * flight. Awaited by `ensureTrunk` to serialize close-before-open, so a message arriving mid-close
+   * holds until the close settles instead of racing into a second close on the same trunk. NOT set by
+   * `closeStaleActivePointer` (driven by `ensureTrunk` itself — advertising there would self-deadlock)
+   * nor `recoverStaleTrunks` (startup-only, before the run loop). In-memory and unpersisted, so a
+   * crash drops it and recovery never observes an in-flight close.
+   */
+  private closeInFlight: Promise<void> | null = null;
   private readonly heldDeliveries: QueuedItem[] = [];
   /** Timestamp of the most recently completed exchange; the queue's idle-window anchor. */
   private lastExchangeAt: Date | null = null;
@@ -544,6 +553,24 @@ export class Coordinator {
   private async ensureTrunk(): Promise<ActiveTrunk> {
     if (this.active != null) return this.active;
 
+    // A `closeTrunk` close is in flight (nightly cron / `app.sessions.close()`): wait for it to
+    // fully settle (pipeline + trailing `clearActive`) before resolving today's trunk. Otherwise this
+    // would race ahead, find the closing trunk's stale-day pointer still set, and start a SECOND close
+    // pipeline on the same session file via `closeStaleActivePointer` — duplicating branch extraction
+    // and letting the late close's `clearActive()` wipe the newer trunk's pointer. A rejecting close
+    // is caught so `closeStaleActivePointer` retries it idempotently rather than propagating the
+    // failure into this exchange.
+    if (this.closeInFlight != null) {
+      try {
+        await this.closeInFlight;
+      } catch (error) {
+        this.log.warn(
+          { err: error },
+          "in-flight trunk close rejected — retrying via lazy backstop",
+        );
+      }
+    }
+
     const today = localDay(this.now, this.timezone);
 
     await this.closeStaleActivePointer(today);
@@ -625,7 +652,17 @@ export class Coordinator {
     await this.closeTrunk("lifecycle");
   }
 
-  /** Close the live trunk (nightly cron via closeTrunkIfDue, or explicit). No-op when no trunk is open. */
+  /**
+   * Close the live trunk (nightly cron via closeTrunkIfDue, or explicit). No-op when no trunk is open.
+   *
+   * The close runs under `closeInFlight` — a promise covering the pipeline AND its trailing
+   * `clearActive` — so a concurrent `ensureTrunk` (a message arriving mid-close) awaits it rather than
+   * racing into a second close on the same trunk. The field is set synchronously after nulling
+   * `active`/`trunkLive` (no `await` between, so the run is atomic w.r.t. the event loop; nulling
+   * `active` first is required so a concurrent `ensureTrunk` falls through its early-return to the
+   * guard instead of returning the trunk being closed), and cleared identity-guarded so a later close
+   * can never null a different promise.
+   */
   async closeTrunk(visibility: TrunkCloseVisibility = "transient"): Promise<void> {
     const active = this.active;
     if (active == null) return;
@@ -633,8 +670,20 @@ export class Coordinator {
     this.active = null;
     this.trunkLive = false;
 
-    await this.closeTrunkSession(active, visibility);
-    this.trunkState.clearActive();
+    const run = async (): Promise<void> => {
+      await this.closeTrunkSession(active, visibility);
+      // Unconditional: by the time we land here, the closeInFlight hold guarantees no concurrent
+      // ensureTrunk has opened a newer trunk (see the guard in ensureTrunk), so this clears exactly
+      // the trunk we just closed.
+      this.trunkState.clearActive();
+    };
+    const promise = run();
+    this.closeInFlight = promise; // assigned before run()'s first await yields
+    try {
+      await promise;
+    } finally {
+      if (this.closeInFlight === promise) this.closeInFlight = null;
+    }
   }
 
   /**

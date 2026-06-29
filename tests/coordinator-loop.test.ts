@@ -1121,6 +1121,146 @@ describe("Coordinator.closeTrunkIfDue (nightly close trigger)", () => {
     controller.abort();
     await loop;
   });
+
+  it("holds a message arriving mid-close until the close settles — one pipeline, pointer survives", async () => {
+    // The trunk's session file must exist on disk: without the hold, ensureTrunk→closeStaleActivePointer
+    // would re-close it, and that path checks existsSync before starting a second pipeline.
+    const trunkFile = join(dir, "trunk.jsonl");
+    await writeFile(trunkFile, "");
+
+    const session = createSession({ sessionFile: trunkFile });
+    const agent = createAgent(session);
+
+    const regs = createRegistrations();
+    const processed: string[] = [];
+    regs.exchangeProcessors.push({
+      name: "rec",
+      process: async (ctx) => {
+        processed.push(ctx.userText);
+      },
+    });
+
+    // A close-pipeline post-processor gated on its FIRST call, so the close stays in-flight long
+    // enough for messages to arrive mid-close. A second invocation (the duplicate the bug would
+    // spawn) resolves immediately so the unpatched run settles rather than hanging.
+    let release: ((value?: undefined) => void) | null = null;
+    let closeCalls = 0;
+    const closeProcess = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          closeCalls += 1;
+          if (closeCalls === 1) release = resolve;
+          else resolve();
+        }),
+    );
+    regs.postProcessors.push({ name: "gated-close", phase: "main", process: closeProcess });
+
+    const now = () => new Date("2026-06-15T10:00:00Z");
+    const { coordinator, trunkState } = makeCoordinator(db, agent, regs, now);
+    coordinator.attachChannel(createChannel());
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    // Open today's trunk with a first message.
+    coordinator.submit(textMsg("hello"));
+    await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(1));
+
+    // Rewind the active pointer's day to yesterday. This is load-bearing: closeStaleActivePointer
+    // closes only when pointer.day < today, so without it the lazy backstop would no-op and the race
+    // would never be exercised.
+    trunkState.setActive({
+      sessionFile: trunkFile,
+      day: "2026-06-14",
+      openedAt: "2026-06-14T10:00:00Z",
+    });
+
+    // Fire the nightly close fire-and-forget (as the cron does); wait for it to be in-flight.
+    const closeP = coordinator.closeTrunkIfDue();
+    await vi.waitFor(() => expect(closeProcess).toHaveBeenCalledTimes(1));
+
+    // Two messages arrive while the close is in flight. They must be HELD — not processed, and not
+    // triggering a second close pipeline.
+    coordinator.submit(textMsg("second"));
+    coordinator.submit(textMsg("third"));
+    expect(session.prompt).toHaveBeenCalledTimes(1); // still only "hello"
+
+    // Let the close finish (pipeline + clearActive). The held messages then open the new trunk and
+    // process in arrival order.
+    release?.();
+    await closeP;
+
+    await vi.waitFor(() => expect(processed).toEqual(["hello", "second", "third"]));
+
+    // Exactly one close pipeline ran and the new trunk's active pointer survived. Without the hold,
+    // closeStaleActivePointer would have spawned a second close (closeProcess twice) and the late
+    // close's clearActive() would have wiped the new trunk's pointer.
+    expect(closeProcess).toHaveBeenCalledTimes(1);
+    expect(trunkState.getActive()).not.toBeNull();
+    expect(trunkState.getActive()?.day).toBe("2026-06-15");
+
+    controller.abort();
+    await loop;
+  });
+
+  it("does not drop or deadlock a held message when the in-flight close rejects", async () => {
+    const trunkFile = join(dir, "trunk.jsonl");
+    await writeFile(trunkFile, "");
+
+    // dispose throws once (the first close rejects) then succeeds (the lazy-backstop retry closes).
+    // dispose is a real throw point inside closeTrunkSession; on an empty session the collapse is
+    // skipped, so no collapse harness is needed.
+    const session = createSession({
+      sessionFile: trunkFile,
+      dispose: vi
+        .fn()
+        .mockImplementationOnce(() => {
+          throw new Error("dispose boom");
+        })
+        .mockImplementation(() => {}),
+    });
+    const agent = createAgent(session);
+
+    const processed: string[] = [];
+    const regs = createRegistrations();
+    regs.exchangeProcessors.push({
+      name: "rec",
+      process: async (ctx) => {
+        processed.push(ctx.userText);
+      },
+    });
+
+    const now = () => new Date("2026-06-15T10:00:00Z");
+    const { coordinator, trunkState } = makeCoordinator(db, agent, regs, now);
+    coordinator.attachChannel(createChannel());
+
+    const controller = new AbortController();
+    const loop = coordinator.run(controller.signal);
+
+    coordinator.submit(textMsg("hello"));
+    await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledTimes(1));
+
+    // Stale-day pointer so the lazy backstop retries the failed close (pointer.day < today).
+    trunkState.setActive({
+      sessionFile: trunkFile,
+      day: "2026-06-14",
+      openedAt: "2026-06-14T10:00:00Z",
+    });
+
+    // Fire the close fire-and-forget (it rejects); submit a message around the rejection. Whether the
+    // message's ensureTrunk observes the close still in-flight (the rejection is caught + logged) or
+    // already settled (closeInFlight null), the lazy backstop retries the close and the message must
+    // not be dropped or deadlock the loop.
+    const closeP = coordinator.closeTrunkIfDue();
+    coordinator.submit(textMsg("after the failed close"));
+    await closeP.catch(() => {});
+
+    await vi.waitFor(() => expect(processed).toContain("after the failed close"));
+    expect(trunkState.getActive()?.day).toBe("2026-06-15");
+
+    controller.abort();
+    await loop;
+  });
 });
 
 describe("Coordinator decision-header forwarding (DLT-181)", () => {
