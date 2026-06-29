@@ -1,3 +1,10 @@
+## [3.49.1](https://github.com/asermax/tachikoma/compare/v3.49.0...v3.49.1) (2026-06-29)
+
+
+### Bug Fixes
+
+* **telegram:** defer intensive-work collapse to finalize ([a588e75](https://github.com/asermax/tachikoma/commit/a588e75e9d8f96accbdfebf5ddee3ec639f42434))
+
 # [3.49.0](https://github.com/asermax/tachikoma/compare/v3.48.0...v3.49.0) (2026-06-28)
 
 
