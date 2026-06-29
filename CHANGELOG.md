@@ -1,3 +1,10 @@
+# [3.50.0](https://github.com/asermax/tachikoma/compare/v3.49.2...v3.50.0) (2026-06-29)
+
+
+### Features
+
+* **coordinator:** collapse live branch on trunk close ([c1844e8](https://github.com/asermax/tachikoma/commit/c1844e8660d502a094e70cbc76a674e5b3a2ae76))
+
 ## [3.49.2](https://github.com/asermax/tachikoma/compare/v3.49.1...v3.49.2) (2026-06-29)
 
 
