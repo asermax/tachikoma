@@ -120,12 +120,19 @@ export class TelegramChannel implements Channel {
   private lastOutboundId: number | null = null;
   private activeRenderer: StreamRenderer | null = null;
   /**
-   * A pin requested mid-exchange via `pin_message`. The tool can't resolve "most recent response"
-   * at execution time — the response message is created/recorded by this channel's event loop only
-   * as the stream settles, racing past the tool's synchronous read — so it records intent here and
-   * the channel performs the audible pin at finalization, once the response's message id is final.
+   * Rendezvous between the `pin_message` tool and this channel's event loop. The tool runs
+   * mid-exchange, so its `execute()` awaits `requestPin()`; the channel performs the inline pin
+   * (and settles the promise with the pinned message id, or null when there's no response to
+   * pin) when it processes `pin_message`'s own `tool-start` — the moment the response message
+   * comes into existence. Mirrors the legacy `get_last_message_id` + inline pin. Reset each
+   * exchange. `pinResult` buffers the outcome for a tool that awaits after the channel has
+   * already settled (and vice-versa: `pinPromise` awaits a channel that hasn't settled yet).
    */
-  private pinRequested = false;
+  private pinPromise: Promise<number | null> | null = null;
+  private pinResolve: ((id: number | null) => void) | null = null;
+  private pinReject: ((error: unknown) => void) | null = null;
+  private pinSettled = false;
+  private pinResult: { ok: true; id: number | null } | { ok: false; error: unknown } | null = null;
   /**
    * Provisional message shown during preparation (boundary/preprocessor status
    * lines). respond() seeds the StreamRenderer with it so the streamed response
@@ -157,11 +164,53 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * Record a pin request from `pin_message` for the in-flight response. Idempotent within a turn
-   * (multiple calls just re-set the flag; one pin fires) — the pin is deferred per `pinRequested`.
+   * Await the id of the message `pin_message` pins. Resolves when the channel processes the
+   * pin's `tool-start` and performs the inline pin (legacy replica). Settles with null when there
+   * is no response to pin; rejects when the pin API fails. Idempotent within a turn: a second
+   * await reuses the same outcome (the pinned message id is unchanged).
    */
-  requestPin(): void {
-    this.pinRequested = true;
+  requestPin(): Promise<number | null> {
+    if (this.pinSettled && this.pinResult != null) {
+      return this.pinResult.ok
+        ? Promise.resolve(this.pinResult.id)
+        : Promise.reject(this.pinResult.error);
+    }
+    if (this.pinPromise == null) {
+      this.pinPromise = new Promise((resolve, reject) => {
+        this.pinResolve = resolve;
+        this.pinReject = reject;
+      });
+    }
+    return this.pinPromise;
+  }
+
+  /** Resolve the pending pin request with the pinned message id (or null for nothing to pin). */
+  private settlePin(id: number | null): void {
+    this.pinSettled = true;
+    this.pinResult = { ok: true, id };
+    this.pinResolve?.(id);
+    this.pinResolve = null;
+    this.pinReject = null;
+    this.pinPromise = null;
+  }
+
+  /** Reject the pending pin request when the inline pin API call fails. */
+  private failPin(error: unknown): void {
+    this.pinSettled = true;
+    this.pinResult = { ok: false, error };
+    this.pinReject?.(error);
+    this.pinResolve = null;
+    this.pinReject = null;
+    this.pinPromise = null;
+  }
+
+  /** Clear pin rendezvous state at the start of each exchange. */
+  private resetPinRendezvous(): void {
+    this.pinSettled = false;
+    this.pinResult = null;
+    this.pinResolve = null;
+    this.pinReject = null;
+    this.pinPromise = null;
   }
 
   async start(runtime: ChannelRuntime): Promise<void> {
@@ -348,9 +397,9 @@ export class TelegramChannel implements Channel {
     // reclaims it (or deletes it on a no-text turn) instead of orphaning it.
     const startedAt = Date.now();
     let notifyingToolUsed = false;
-    // Clear any pin request an aborted prior exchange left behind (one that skipped
-    // finalizeResponse). Each turn's request is set during this exchange and consumed at finalize.
-    this.pinRequested = false;
+    // Reset the pin rendezvous for this exchange (clears any state an aborted prior exchange
+    // left behind). The pin is performed inline at the pin_message tool-start, not at finalize.
+    this.resetPinRendezvous();
 
     // Initialize the renderer on first event (agent_start), under a brief mutex hold.
     // Returns null if no events arrive (e.g. aborted before agent_start).
@@ -375,6 +424,12 @@ export class TelegramChannel implements Channel {
             // redundant — skip the copy-delete so the user isn't double-notified.
             if (NOTIFYING_TOOLS.has(event.toolName)) notifyingToolUsed = true;
             await renderer.appendTool(event.toolName, event.args);
+            // pin_message pins the in-flight response inline — this is the moment the message
+            // materializes (appendTool just revealed the held text) and the tool is awaiting the
+            // id, so pin here and settle the rendezvous with the id (legacy get_last_message_id).
+            if (event.toolName === "pin_message") {
+              await this.performInlinePin(renderer, log);
+            }
             break;
 
           case "status":
@@ -508,40 +563,40 @@ export class TelegramChannel implements Channel {
 
       if (outboundId != null) this.lastOutboundId = outboundId;
 
-      // A pin requested mid-exchange (pin_message) is honored now that the response's message id is
-      // final — the audible pin is the turn's single push (the completion copy-delete above is
-      // skipped because pin_message is a notifying tool). Consumed regardless of outcome so a
-      // failure or a no-text turn can't leak the request into the next exchange.
-      await this.performDeferredPin(outboundId, log);
-
       return outboundId;
     });
   }
 
   /**
-   * Pin the just-finalized response if `pin_message` requested it during the exchange. Audible
-   * (`disable_notification: false`) so the pin delivers the push. A null outbound id (no-text turn)
-   * or an API failure is logged and swallowed — the response is already delivered either way.
+   * Pin the in-flight response inline, at the `pin_message` tool-start — the moment the message
+   * materializes — and settle the pin rendezvous with its id so the tool can return it (legacy
+   * `get_last_message_id` + inline pin). Audible (`disable_notification: false`) so the pin
+   * delivers the push; `pin_message` is a notifying tool, so the completion copy-delete is skipped
+   * and the streamed message keeps this id through finalize. No message / no rendered text ⇒ null
+   * (the tool throws "No message available to pin"); an API failure rejects the rendezvous so the
+   * tool surfaces it — the response is already delivered either way.
    */
-  private async performDeferredPin(outboundId: number | null, log: Logger): Promise<void> {
-    if (!this.pinRequested) return;
-    this.pinRequested = false;
-
-    if (outboundId == null) {
+  private async performInlinePin(renderer: StreamRenderer, log: Logger): Promise<void> {
+    await renderer.flushNow();
+    const messageId = renderer.getMessageId();
+    if (messageId == null || !renderer.hasContent()) {
       log.debug(
         { tool: "pin_message" },
         "pin requested but the exchange produced no message to pin",
       );
+      this.settlePin(null);
       return;
     }
 
     try {
-      await this.bot.api.pinChatMessage(this.options.chatId, outboundId, {
+      await this.bot.api.pinChatMessage(this.options.chatId, messageId, {
         disable_notification: false,
       });
-      log.debug({ tool: "pin_message", messageId: outboundId }, "response message pinned");
+      log.debug({ tool: "pin_message", messageId }, "response message pinned");
+      this.settlePin(messageId);
     } catch (error) {
-      log.warn({ err: error, messageId: outboundId }, "deferred pin failed");
+      log.warn({ err: error, messageId }, "inline pin failed");
+      this.failPin(error);
     }
   }
 

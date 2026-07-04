@@ -528,11 +528,11 @@ describe("respond push notification", () => {
   });
 });
 
-describe("deferred pin (pin_message)", () => {
-  // The pin_message tool runs mid-exchange, so requestPin() is invoked while the response streams —
-  // not before respond(). These tests drive the stream with pushableStream and call requestPin()
-  // mid-turn to mirror that, the way the real tool would.
-  it("pins the just-finalized response audibly when a pin is requested mid-turn", async () => {
+describe("inline pin (pin_message)", () => {
+  // pin_message pins the in-flight response inline at its own tool-start — the moment the held
+  // response text is revealed and the message id is known — and resolves requestPin() with that
+  // id so the tool can return it. These tests drive the pin via a pin_message tool-start event.
+  it("pins the in-flight response when the pin_message tool runs mid-turn", async () => {
     const { channel, runtime, api } = makeChannel();
     await channel.start(runtime);
 
@@ -540,7 +540,7 @@ describe("deferred pin (pin_message)", () => {
     const responding = channel.respond({ message: textMessage("telegram", "hi"), events });
     push({ kind: "text", text: "Here are your recommendations." });
     await settle();
-    channel.requestPin();
+    push({ kind: "tool-start", toolCallId: "p1", toolName: "pin_message", args: {} });
     end();
     await responding;
 
@@ -548,6 +548,8 @@ describe("deferred pin (pin_message)", () => {
     // pin targets that id — not a previous exchange's message.
     expect(api.pinChatMessage).toHaveBeenCalledWith(42, 1, { disable_notification: false });
     expect(channel.lastOutboundMessageId).toBe(1);
+    // And the tool would learn that id.
+    expect(await channel.requestPin()).toBe(1);
   });
 
   it("pins the current response, not a previous exchange's stale id", async () => {
@@ -565,12 +567,12 @@ describe("deferred pin (pin_message)", () => {
     expect(channel.lastOutboundMessageId).toBe(1);
     expect(api.pinChatMessage).not.toHaveBeenCalled();
 
-    // The next exchange streams a new response (id 2) and the tool requests a pin mid-turn.
+    // The next exchange streams a new response (id 2) and pin_message runs mid-turn.
     const { events, push, end } = pushableStream();
     const responding = channel.respond({ message: textMessage("telegram", "more"), events });
     push({ kind: "text", text: "Recommendations." });
     await settle();
-    channel.requestPin();
+    push({ kind: "tool-start", toolCallId: "p1", toolName: "pin_message", args: {} });
     end();
     await responding;
 
@@ -579,7 +581,7 @@ describe("deferred pin (pin_message)", () => {
     expect(api.pinChatMessage).toHaveBeenCalledWith(42, 2, { disable_notification: false });
   });
 
-  it("does not pin when no pin was requested", async () => {
+  it("does not pin when pin_message is not used", async () => {
     const { channel, runtime, api } = makeChannel();
     await channel.start(runtime);
 
@@ -594,20 +596,22 @@ describe("deferred pin (pin_message)", () => {
     expect(api.pinChatMessage).not.toHaveBeenCalled();
   });
 
-  it("skips the pin without throwing when the exchange yields no message", async () => {
+  it("does not pin when the exchange yields no response text", async () => {
     const { channel, runtime, api } = makeChannel();
     await channel.start(runtime);
 
-    const { events, end } = pushableStream();
+    const { events, push, end } = pushableStream();
     const responding = channel.respond({ message: textMessage("telegram", "hi"), events });
-    channel.requestPin();
+    push({ kind: "tool-start", toolCallId: "p1", toolName: "pin_message", args: {} });
     end();
     await expect(responding).resolves.toBeUndefined();
 
+    // No response text ⇒ nothing to pin; requestPin resolves null (the tool throws upstream).
     expect(api.pinChatMessage).not.toHaveBeenCalled();
+    expect(await channel.requestPin()).toBeNull();
   });
 
-  it("still delivers the response and warns when the deferred pin fails", async () => {
+  it("still delivers the response and warns when the inline pin fails", async () => {
     const { channel, runtime, api } = makeChannel();
     await channel.start(runtime);
     api.pinChatMessage.mockRejectedValueOnce(new Error("not authorized to pin"));
@@ -616,20 +620,20 @@ describe("deferred pin (pin_message)", () => {
     const responding = channel.respond({ message: textMessage("telegram", "hi"), events });
     push({ kind: "text", text: "Hello." });
     await settle();
-    channel.requestPin();
+    push({ kind: "tool-start", toolCallId: "p1", toolName: "pin_message", args: {} });
     end();
     await expect(responding).resolves.toBeUndefined();
 
     // The response was delivered (its id tracked) despite the pin failure, and the failure is logged.
     expect(channel.lastOutboundMessageId).toBe(1);
-    expect(fakeLog.warn).toHaveBeenCalledWith(expect.anything(), "deferred pin failed");
+    expect(fakeLog.warn).toHaveBeenCalledWith(expect.anything(), "inline pin failed");
   });
 
-  it("consumes the pin request so a later exchange with no request does not pin", async () => {
+  it("does not carry a pin across exchanges", async () => {
     const { channel, runtime, api } = makeChannel();
     await channel.start(runtime);
 
-    // First exchange: the tool requests a pin mid-turn, and finalize consumes it.
+    // First exchange: pin_message runs and pins inline.
     const first = pushableStream();
     const firstRespond = channel.respond({
       message: textMessage("telegram", "hi"),
@@ -637,12 +641,12 @@ describe("deferred pin (pin_message)", () => {
     });
     first.push({ kind: "text", text: "First." });
     await settle();
-    channel.requestPin();
+    first.push({ kind: "tool-start", toolCallId: "p1", toolName: "pin_message", args: {} });
     first.end();
     await firstRespond;
     expect(api.pinChatMessage).toHaveBeenCalledTimes(1);
 
-    // A second exchange with no new request must not pin.
+    // A second exchange without pin_message must not pin again.
     await channel.respond({
       message: textMessage("telegram", "more"),
       events: stream([

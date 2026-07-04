@@ -119,6 +119,26 @@ export class StreamRenderer {
   }
 
   /**
+   * Force a flush now, bypassing the edit throttle — used by `pin_message` to materialize the
+   * in-flight response so its message id is known before the tool returns it. Held text is
+   * normally revealed only at a tool/status boundary, and the pin's own `tool-start` is exactly
+   * that boundary, so forcing here is consistent with the normal reveal cadence.
+   */
+  flushNow(): Promise<void> {
+    return this.flush(true);
+  }
+
+  /** The current streaming message id, or null while no text/transient has been sent yet. */
+  getMessageId(): number | null {
+    return this.messageId;
+  }
+
+  /** Whether any response text (or baked tool marker) has accumulated — i.e. there is something to pin. */
+  hasContent(): boolean {
+    return this.buffer.trim().length > 0;
+  }
+
+  /**
    * Anchor a turn-scoped decision header (R8) above the streamed text. Set before streaming begins;
    * `compose()` recomposes it on every edit so the body never overwrites it. Best-effort: it is dropped
    * (and logged) if the body grows past the edit limit or a render fails.

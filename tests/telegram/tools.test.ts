@@ -196,27 +196,31 @@ describe("handleReactToMessage", () => {
 });
 
 describe("pinning", () => {
-  it("defers the pin to the channel rather than pinning inline", async () => {
-    const requestPin = vi.fn();
-    const api = fakeApi();
+  it("returns the pinned message id resolved by the channel", async () => {
+    // The channel pins the in-flight response inline (at the tool's tool-start) and resolves
+    // requestPin with the message id — the tool hands that id back so a later turn can unpin it.
+    const requestPin = vi.fn().mockResolvedValue(42);
 
     const result = await handlePinMessage({ log: fakeLog, requestPin });
 
     expect(requestPin).toHaveBeenCalledTimes(1);
-    expect(result).toBe("Pinning the current response.");
-    // The tool no longer pins inline — the channel performs the pin at finalization.
-    expect(api.pinChatMessage).not.toHaveBeenCalled();
+    expect(result).toBe("Message pinned (ID: 42)");
   });
 
-  it("records the pin request even with no prior outbound message", async () => {
-    // The tool can't know mid-turn whether a response will be produced, so it never throws —
-    // it just signals intent and lets the channel decide at finalization.
-    const requestPin = vi.fn();
+  it("throws when the channel reports no message available to pin", async () => {
+    const requestPin = vi.fn().mockResolvedValue(null);
 
-    const result = await handlePinMessage({ log: fakeLog, requestPin });
+    await expect(handlePinMessage({ log: fakeLog, requestPin })).rejects.toThrow(
+      "No message available to pin",
+    );
+  });
 
-    expect(requestPin).toHaveBeenCalledTimes(1);
-    expect(result).toBe("Pinning the current response.");
+  it("propagates a pin failure from the channel", async () => {
+    const requestPin = vi.fn().mockRejectedValue(new Error("not authorized to pin"));
+
+    await expect(handlePinMessage({ log: fakeLog, requestPin })).rejects.toThrow(
+      "not authorized to pin",
+    );
   });
 
   it("unpins by message id", async () => {
@@ -444,7 +448,7 @@ describe("registerTelegramTools", () => {
     workspaceRoot: "/tmp/ws",
     allowedRoots: ["/tmp/ws"],
     getLastInboundMessageId: () => 5,
-    requestPin: vi.fn(),
+    requestPin: vi.fn().mockResolvedValue(7),
     store: { record: vi.fn(), resolve: vi.fn(() => null) },
     currentRouting: () => ({ treeEntryId: "entry-1", branchId: "topic-1" }),
   });
@@ -470,7 +474,7 @@ describe("registerTelegramTools", () => {
     expect(api.setMessageReaction).toHaveBeenCalled();
 
     const pin = await tools.get("pin_message")?.execute("call-2", {});
-    expect(pin?.content[0].text).toBe("Pinning the current response.");
+    expect(pin?.content[0].text).toBe("Message pinned (ID: 7)");
 
     const unpin = await tools.get("unpin_message")?.execute("call-3", { messageId: 7 });
     expect(unpin?.content[0].text).toBe("Message unpinned (ID: 7)");

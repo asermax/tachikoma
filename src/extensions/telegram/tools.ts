@@ -59,8 +59,12 @@ export interface ToolDeps {
   /** Resolved, deduplicated roots that send_telegram_file accepts. */
   allowedRoots: string[];
   getLastInboundMessageId: () => number | null;
-  /** Defer a pin of the in-flight response until the channel finalizes it (its id is final then). */
-  requestPin: () => void;
+  /**
+   * Pin the in-flight response inline and resolve with its message id (or null when there is no
+   * response to pin). The channel performs the pin at the `pin_message` tool-start and resolves
+   * once the message id is known — so the tool can return the id of what it pinned.
+   */
+  requestPin: () => Promise<number | null>;
   /** Record/lookup message→branch mappings for reply-to routing. */
   store: ChannelMessageStore;
   /** The current trunk routing (live leaf entry + branch), for outbound recording. */
@@ -204,12 +208,13 @@ export const handlePinMessage = async (
 ): Promise<string> => {
   deps.log.info({ tool: "pin_message" }, "telegram tool invoked");
 
-  // Defer the pin to the channel: the response's message id isn't final (or even created) at
-  // tool-execution time, so resolving "most recent response" here would race and pin the wrong
-  // message. The channel performs the audible pin at finalization once the id is known.
-  deps.requestPin();
+  // The channel pins the in-flight response inline (at this tool's tool-start, where the message
+  // materializes) and resolves with its id — so the tool returns the id of what it pinned, letting
+  // a later turn unpin that specific message. Resolves null when there is no response to pin.
+  const messageId = await deps.requestPin();
+  if (messageId == null) throw new Error("No message available to pin");
 
-  return "Pinning the current response.";
+  return `Message pinned (ID: ${messageId})`;
 };
 
 const UnpinParams = Type.Object({
@@ -313,9 +318,10 @@ are rejected by the API.`;
 
 const PIN_DESCRIPTION = `Pin the most recent response message in the Telegram chat.
 
-The pin is applied once the current response is sent, so it always targets the response being
-produced (never a previous one). The pin triggers a push notification so the user sees the pinned
-message promptly. Idempotent: pinning an already-pinned message succeeds.`;
+The pin always targets the response being produced (never a previous one) and triggers a push
+notification so the user sees the pinned message promptly. Returns the pinned message's Telegram
+ID — store it so a later turn can unpin that specific message with unpin_message (which needs the
+ID). Idempotent: pinning an already-pinned message succeeds.`;
 
 const UNPIN_DESCRIPTION = `Unpin a previously pinned message in the Telegram chat.
 
