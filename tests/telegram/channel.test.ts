@@ -1523,6 +1523,25 @@ describe("media handling", () => {
     );
   });
 
+  it("records a media message as the last inbound (target for react_to_message)", async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new ArrayBuffer(4),
+    })) as unknown as typeof fetch;
+
+    const { channel, runtime, dispatchMessage } = makeChannel({
+      allowMedia: true,
+      mediaDir: "/tmp/tachi-media-test",
+    });
+    await channel.start(runtime);
+
+    await dispatchMessage(documentMessage({ message_id: 55 }));
+
+    // lastInboundId is set before the download, so the react_to_message default targets media
+    // of any kind, not just text.
+    expect(channel.lastInboundMessageId).toBe(55);
+  });
+
   it("fires typing before downloading an inbound media message", async () => {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
