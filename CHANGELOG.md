@@ -1,3 +1,10 @@
+# [3.52.0](https://github.com/asermax/tachikoma/compare/v3.51.1...v3.52.0) (2026-07-05)
+
+
+### Features
+
+* **telegram:** record sent file messages against live branch routing ([540e9e8](https://github.com/asermax/tachikoma/commit/540e9e88f8d039ff26221234b05e02ac77eb8cc6))
+
 ## [3.51.1](https://github.com/asermax/tachikoma/compare/v3.51.0...v3.51.1) (2026-07-05)
 
 
