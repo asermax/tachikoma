@@ -1523,7 +1523,7 @@ describe("media handling", () => {
     );
   });
 
-  it("records a media message as the last inbound (target for react_to_message)", async () => {
+  it("sets lastInboundMessageId for media of any kind (react_to_message default target)", async () => {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       arrayBuffer: async () => new ArrayBuffer(4),
