@@ -121,6 +121,25 @@ export const validateFilePath = async (
   return resolved;
 };
 
+/**
+ * Record an outbound tool message against the current trunk routing, best-effort — mirrors the
+ * channel's `recordMessage`: a recording failure is logged, never thrown, so it can't break a
+ * send that already succeeded. Routing is resolved from the live leaf so a later reply/reaction
+ * on the message resolves back to the branch that produced it.
+ */
+const recordOutbound = (
+  deps: Pick<ToolDeps, "log" | "store" | "currentRouting">,
+  messageId: number,
+): void => {
+  const routing = deps.currentRouting();
+  if (routing == null) return;
+  try {
+    deps.store.record(String(messageId), routing, "outgoing");
+  } catch (error) {
+    deps.log.warn({ err: error, messageId }, "recording channel message failed");
+  }
+};
+
 const SendFileParams = Type.Object({
   filePath: Type.String({
     description:
@@ -163,13 +182,10 @@ export const handleSendFile = async (
       break;
   }
 
-  // Map the sent file message to the current trunk routing so a later reply/reaction can resolve
-  // it back to the branch that sent it — mirroring send_message_with_buttons. Without this, a
-  // reaction on the file message is dropped as unresolved (its meaning is bound to its target).
-  const routing = deps.currentRouting();
-  if (routing != null) {
-    deps.store.record(String(messageId), routing, "outgoing");
-  }
+  // Map the sent file message to the current trunk routing so a later reply/reaction on the file
+  // resolves to the branch that sent it (mirroring send_message_with_buttons); without this, a
+  // reaction on the file is dropped as unresolved.
+  recordOutbound(deps, messageId);
 
   deps.log.debug(
     { tool: "send_telegram_file", path: resolved, mediaType, messageId },
@@ -299,11 +315,8 @@ export const handleSendMessageWithButtons = async (
   );
 
   // Map the button message to the current trunk routing so a later tap routes back to the branch
-  // that asked the question, mirroring regular outbound recording.
-  const routing = deps.currentRouting();
-  if (routing != null) {
-    deps.store.record(String(messageId), routing, "outgoing");
-  }
+  // that asked the question.
+  recordOutbound(deps, messageId);
 
   deps.log.debug({ tool: "send_message_with_buttons", messageId }, "telegram buttons sent");
 
