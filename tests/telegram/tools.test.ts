@@ -78,6 +78,9 @@ describe("handleSendFile", () => {
     chatId: 42,
     workspaceRoot: workspace,
     allowedRoots: [workspace],
+    store: { record: vi.fn(), resolve: vi.fn(() => null) },
+    // No active trunk by default so existing cases don't trigger recording.
+    currentRouting: () => null,
   });
 
   it("sends images as photos with the caption", async () => {
@@ -135,6 +138,8 @@ describe("handleSendFile", () => {
         chatId: 42,
         workspaceRoot: workspace,
         allowedRoots: [`${workspace}${sep}`],
+        store: { record: vi.fn(), resolve: vi.fn(() => null) },
+        currentRouting: () => null,
       },
       { filePath: "notes.txt" },
     );
@@ -158,6 +163,51 @@ describe("handleSendFile", () => {
       handleSendFile(deps(api), { filePath: join(outside, "secret.txt") }),
     ).rejects.toThrow(/allowed roots/);
     expect(api.sendDocument).not.toHaveBeenCalled();
+  });
+
+  it("records the sent file message against the current branch routing", async () => {
+    const api = fakeApi();
+    const record = vi.fn();
+
+    await handleSendFile(
+      {
+        api,
+        log: fakeLog,
+        chatId: 42,
+        workspaceRoot: workspace,
+        allowedRoots: [workspace],
+        store: { record, resolve: vi.fn(() => null) },
+        currentRouting: () => ({ treeEntryId: "entry-1", branchId: "topic-1" }),
+      },
+      { filePath: "pic.png" },
+    );
+
+    // sendPhoto returns message_id: 12 in the fake api; the file message maps to the live branch.
+    expect(record).toHaveBeenCalledWith(
+      "12",
+      { treeEntryId: "entry-1", branchId: "topic-1" },
+      "outgoing",
+    );
+  });
+
+  it("skips recording when no trunk is active", async () => {
+    const api = fakeApi();
+    const record = vi.fn();
+
+    await handleSendFile(
+      {
+        api,
+        log: fakeLog,
+        chatId: 42,
+        workspaceRoot: workspace,
+        allowedRoots: [workspace],
+        store: { record, resolve: vi.fn(() => null) },
+        currentRouting: () => null,
+      },
+      { filePath: "notes.txt" },
+    );
+
+    expect(record).not.toHaveBeenCalled();
   });
 });
 

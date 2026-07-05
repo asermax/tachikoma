@@ -133,7 +133,10 @@ const SendFileParams = Type.Object({
 });
 
 export const handleSendFile = async (
-  deps: Pick<ToolDeps, "api" | "log" | "chatId" | "workspaceRoot" | "allowedRoots">,
+  deps: Pick<
+    ToolDeps,
+    "api" | "log" | "chatId" | "workspaceRoot" | "allowedRoots" | "store" | "currentRouting"
+  >,
   params: Static<typeof SendFileParams>,
 ): Promise<string> => {
   deps.log.info({ tool: "send_telegram_file", filePath: params.filePath }, "telegram tool invoked");
@@ -144,22 +147,34 @@ export const handleSendFile = async (
 
   const mediaType = detectMediaType(resolved);
 
+  let messageId: number;
   switch (mediaType) {
     case "photo":
-      await deps.api.sendPhoto(deps.chatId, file, other);
+      messageId = (await deps.api.sendPhoto(deps.chatId, file, other)).message_id;
       break;
     case "audio":
-      await deps.api.sendAudio(deps.chatId, file, other);
+      messageId = (await deps.api.sendAudio(deps.chatId, file, other)).message_id;
       break;
     case "video":
-      await deps.api.sendVideo(deps.chatId, file, other);
+      messageId = (await deps.api.sendVideo(deps.chatId, file, other)).message_id;
       break;
     default:
-      await deps.api.sendDocument(deps.chatId, file, other);
+      messageId = (await deps.api.sendDocument(deps.chatId, file, other)).message_id;
       break;
   }
 
-  deps.log.debug({ tool: "send_telegram_file", path: resolved, mediaType }, "telegram file sent");
+  // Map the sent file message to the current trunk routing so a later reply/reaction can resolve
+  // it back to the branch that sent it — mirroring send_message_with_buttons. Without this, a
+  // reaction on the file message is dropped as unresolved (its meaning is bound to its target).
+  const routing = deps.currentRouting();
+  if (routing != null) {
+    deps.store.record(String(messageId), routing, "outgoing");
+  }
+
+  deps.log.debug(
+    { tool: "send_telegram_file", path: resolved, mediaType, messageId },
+    "telegram file sent",
+  );
 
   return `File sent: ${basename(resolved)}`;
 };
