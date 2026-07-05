@@ -108,6 +108,7 @@ const captureAndHandleMiddleware = (sink: InboundMessage[]): Registrations => {
 interface Harness {
   coordinator: Coordinator;
   status: ReturnType<typeof vi.fn>;
+  deliver: ReturnType<typeof vi.fn>;
   session: FakeSession;
   stop: () => Promise<void>;
 }
@@ -133,12 +134,14 @@ const startHarness = (
     overrides.ttlMs ?? 120_000,
   );
   const status = vi.fn();
-  coordinator.attachChannel(createChannel({ status }));
+  const deliver = vi.fn(async () => {});
+  coordinator.attachChannel(createChannel({ status, deliver }));
   const controller = new AbortController();
   const loop = coordinator.run(controller.signal);
   return {
     coordinator,
     status,
+    deliver,
     session,
     stop: async () => {
       controller.abort();
@@ -162,15 +165,19 @@ afterEach(() => {
 describe("Coordinator pending-input (R9)", () => {
   it("renders the pending prompt for a bare /new and starts no agent exchange", async () => {
     const seen: InboundMessage[] = [];
-    const { coordinator, status, session, stop } = startHarness(
+    const { coordinator, deliver, session, stop } = startHarness(
       db,
       captureAndHandleMiddleware(seen),
     );
 
     coordinator.submit(textMsg("/new"));
 
-    // The non-LLM prompt is rendered through the channel-agnostic status surface.
-    expect(status).toHaveBeenCalledWith("What's the first message for the new topic?");
+    // The non-LLM prompt is rendered as its own dedicated message (immediate deliver), never appended
+    // to an in-progress streaming response.
+    expect(deliver).toHaveBeenCalledWith({
+      text: "What's the first message for the new topic?",
+      immediate: true,
+    });
     // Nothing was enqueued — the bare command never reached the agent or the middleware.
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(seen).toHaveLength(0);
@@ -195,10 +202,13 @@ describe("Coordinator pending-input (R9)", () => {
 
   it("captures the argument for /queue and /skill too", async () => {
     const seen: InboundMessage[] = [];
-    const { coordinator, status, stop } = startHarness(db, captureAndHandleMiddleware(seen));
+    const { coordinator, deliver, stop } = startHarness(db, captureAndHandleMiddleware(seen));
 
     coordinator.submit(textMsg("/queue"));
-    expect(status).toHaveBeenCalledWith("What should I queue for the next turn?");
+    expect(deliver).toHaveBeenCalledWith({
+      text: "What should I queue for the next turn?",
+      immediate: true,
+    });
     coordinator.submit(textMsg("do this later"));
     await vi.waitFor(() => expect(seen).toHaveLength(1));
     expect(seen[0]).toMatchObject({ text: "do this later", metadata: { queued: true } });
@@ -206,7 +216,10 @@ describe("Coordinator pending-input (R9)", () => {
     seen.length = 0;
 
     coordinator.submit(textMsg("/skill"));
-    expect(status).toHaveBeenCalledWith("Which skill should I load?");
+    expect(deliver).toHaveBeenCalledWith({
+      text: "Which skill should I load?",
+      immediate: true,
+    });
     // /skill is pi-native (no coordinator prefix-strip), so it reaches the middleware verbatim.
     coordinator.submit(textMsg("code-review"));
     await vi.waitFor(() => expect(seen).toHaveLength(1));
@@ -232,12 +245,15 @@ describe("Coordinator pending-input (R9)", () => {
 
   it("re-enters pending-input when a different bare arg-command arrives during pending", async () => {
     const seen: InboundMessage[] = [];
-    const { coordinator, status, stop } = startHarness(db, captureAndHandleMiddleware(seen));
+    const { coordinator, deliver, stop } = startHarness(db, captureAndHandleMiddleware(seen));
 
     coordinator.submit(textMsg("/new")); // pending /new
     coordinator.submit(textMsg("/queue")); // cancels /new, re-enters pending for /queue
 
-    expect(status).toHaveBeenLastCalledWith("What should I queue for the next turn?");
+    expect(deliver).toHaveBeenLastCalledWith({
+      text: "What should I queue for the next turn?",
+      immediate: true,
+    });
     // Neither bare command reached the middleware.
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(seen).toHaveLength(0);

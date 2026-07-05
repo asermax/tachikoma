@@ -129,7 +129,7 @@ The channel gives immediate feedback the moment a message arrives and keeps a vi
 - Given a lead-in message exists when `respond()` starts, when the exchange yields no text, then the lead-in message is deleted
 - Given a message is steered into a live exchange or queued behind it, when submitted, then it skips preparation and no lead-in is shown for it
 - Given a nightly (`closeTrunkIfDue`) trunk close (or a stale-trunk recovery) with no exchange following, when post-processing runs, then no lead-in is created; instead the per-processor lines surface on a dedicated persistent `lifecycleStatus` message that the next exchange does not reclaim — opening fresh and editing in place through each phase to a final "Trunk closed" (or "Trunk close failed"). Recovery that runs before the channel attaches buffers the lines and flushes them in order at attach time (see [conversation-loop](conversation-loop.md) R20)
-- Given a bare argument-taking command (`/new`, `/queue`, `/skill`) the coordinator intercepted for pending-input, when its prompt is rendered, then it surfaces through this same `status()`/lead-in path (a non-LLM line the eventual streamed response reclaims), so the pending-input flow is channel-agnostic — the channel only renders the prompt text
+- Given a bare argument-taking command (`/new`, `/queue`, `/skill`) the coordinator intercepted for pending-input, when its prompt is rendered, then it is delivered as its own dedicated message via an immediate `deliver()` (R11, command UI) — not through the `status()`/lead-in path — so it is never appended to an in-progress streaming response nor reclaimed by a later one; the pending-input flow stays channel-agnostic (the channel only renders the prompt text)
 
 ### Inbound Media (R8, R9, R10)
 

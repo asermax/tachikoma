@@ -271,7 +271,7 @@ export class Coordinator {
     return false;
   }
 
-  /** Set a pending state for `chatKey` and render its non-LLM prompt via the channel status surface. */
+  /** Set a pending state for `chatKey` and render its non-LLM prompt as its own dedicated message. */
   private setPendingInput(chatKey: string, command: PendingCommand): void {
     this.clearPendingInput(chatKey); // replace any prior pending (clears its timer)
 
@@ -284,9 +284,12 @@ export class Coordinator {
 
     this.pendingInput.set(chatKey, { command, promptedAt, timer });
 
-    // Render through the channel-agnostic status/lead-in surface (R9): Telegram shows a lead-in the
-    // eventual streamed response reclaims; a future REPL channel renders it the same way.
-    this.status(PENDING_PROMPTS[command]);
+    // Render as a dedicated command-UI message via the immediate `deliver()` path (R14): it bypasses
+    // the priority queue and lands as its own message — never appended to an in-progress streaming
+    // response (which `status()` would do once a renderer materializes) and never a reclaimable
+    // lead-in that a later response overwrites. `deliver` is a required Channel member, so every
+    // channel renders the prompt the same way (R9 parity) without an optional-surface fallback.
+    this.deliver({ text: PENDING_PROMPTS[command], immediate: true });
   }
 
   /** Drop the pending state for `chatKey` (and its TTL timer), if any. */
