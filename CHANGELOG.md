@@ -1,3 +1,10 @@
+## [3.51.1](https://github.com/asermax/tachikoma/compare/v3.51.0...v3.51.1) (2026-07-05)
+
+
+### Bug Fixes
+
+* **coordinator:** deliver pending-input prompt as its own message ([479afe6](https://github.com/asermax/tachikoma/commit/479afe683178e565e1309b747a787b93388613dc))
+
 # [3.51.0](https://github.com/asermax/tachikoma/compare/v3.50.0...v3.51.0) (2026-06-29)
 
 
