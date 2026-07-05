@@ -103,9 +103,9 @@ export const UNRESOLVED_REACTION_NOTICE =
 
 /**
  * Agent tools that deliver their own notifying message (a file, an inline-button
- * message, or — for pin_message — the audible pin fired at finalization). When one
- * runs the user is pushed by that tool, so forcing an extra push on the streamed
- * response would double-notify — the copy-delete is skipped.
+ * message, or — for pin_message — the audible pin fired inline at its tool-start).
+ * When one runs the user is pushed by that tool, so forcing an extra push on the
+ * streamed response would double-notify — the copy-delete is skipped.
  */
 const NOTIFYING_TOOLS = new Set(["send_telegram_file", "pin_message", "send_message_with_buttons"]);
 
@@ -125,13 +125,13 @@ export class TelegramChannel implements Channel {
    * (and settles the promise with the pinned message id, or null when there's no response to
    * pin) when it processes `pin_message`'s own `tool-start` — the moment the response message
    * comes into existence. Mirrors the legacy `get_last_message_id` + inline pin. Reset each
-   * exchange. `pinResult` buffers the outcome for a tool that awaits after the channel has
-   * already settled (and vice-versa: `pinPromise` awaits a channel that hasn't settled yet).
+   * exchange. The outcome is buffered in `pinResult` when the channel settles before the tool
+   * awaits: a rejected promise is created lazily inside `requestPin()` (and immediately awaited),
+   * so a pin-API failure is never an unhandled rejection.
    */
   private pinPromise: Promise<number | null> | null = null;
   private pinResolve: ((id: number | null) => void) | null = null;
   private pinReject: ((error: unknown) => void) | null = null;
-  private pinSettled = false;
   private pinResult: { ok: true; id: number | null } | { ok: false; error: unknown } | null = null;
   /**
    * Provisional message shown during preparation (boundary/preprocessor status
@@ -170,7 +170,7 @@ export class TelegramChannel implements Channel {
    * await reuses the same outcome (the pinned message id is unchanged).
    */
   requestPin(): Promise<number | null> {
-    if (this.pinSettled && this.pinResult != null) {
+    if (this.pinResult != null) {
       return this.pinResult.ok
         ? Promise.resolve(this.pinResult.id)
         : Promise.reject(this.pinResult.error);
@@ -186,7 +186,6 @@ export class TelegramChannel implements Channel {
 
   /** Resolve the pending pin request with the pinned message id (or null for nothing to pin). */
   private settlePin(id: number | null): void {
-    this.pinSettled = true;
     this.pinResult = { ok: true, id };
     this.pinResolve?.(id);
     this.pinResolve = null;
@@ -196,7 +195,6 @@ export class TelegramChannel implements Channel {
 
   /** Reject the pending pin request when the inline pin API call fails. */
   private failPin(error: unknown): void {
-    this.pinSettled = true;
     this.pinResult = { ok: false, error };
     this.pinReject?.(error);
     this.pinResolve = null;
@@ -206,7 +204,6 @@ export class TelegramChannel implements Channel {
 
   /** Clear pin rendezvous state at the start of each exchange. */
   private resetPinRendezvous(): void {
-    this.pinSettled = false;
     this.pinResult = null;
     this.pinResolve = null;
     this.pinReject = null;
