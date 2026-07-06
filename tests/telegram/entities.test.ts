@@ -128,15 +128,22 @@ describe("toTelegramEntities", () => {
     expect(find(payload, "bold")).toMatchObject({ offset: 0, length: 4 });
   });
 
-  it("flattens a GFM table to bullets before conversion (via flattenTables)", () => {
+  it("flattens a GFM table to bullets before conversion, preserving the header (via flattenTables)", () => {
     const input = ["| Day | Plan |", "|---|---|", "| Mon | Piano 7-8 PM |"].join("\n");
     const payload = toTelegramEntities(input);
 
     expect(payload.text).toContain("• ");
+    // The header labels and the data survive into the converted text.
+    expect(payload.text).toContain("Day");
+    expect(payload.text).toContain("Plan");
     expect(payload.text).toContain("Mon");
     expect(payload.text).toContain("Piano 7-8 PM");
-    // The first cell became a bold label.
-    expect(find(payload, "bold")).toBeDefined();
+    // Every header cell is bolded (alongside the data-row label), so the
+    // header's bold spans survive as entities — not just the first bold span.
+    const boldTexts = payload.entities
+      .filter((e) => e.type === "bold")
+      .map((e) => payload.text.slice(e.offset, e.offset + e.length));
+    expect(boldTexts).toEqual(expect.arrayContaining(["Day", "Plan", "Mon"]));
   });
 });
 
