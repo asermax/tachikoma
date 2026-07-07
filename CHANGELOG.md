@@ -1,3 +1,10 @@
+## [3.52.1](https://github.com/asermax/tachikoma/compare/v3.52.0...v3.52.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **telegram:** preserve GFM table header as bold first bullet ([1bbbff4](https://github.com/asermax/tachikoma/commit/1bbbff46ed8e900b38f85121f1a0692af753b249))
+
 # [3.52.0](https://github.com/asermax/tachikoma/compare/v3.51.1...v3.52.0) (2026-07-05)
 
 
