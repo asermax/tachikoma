@@ -1,3 +1,10 @@
+# [3.53.0](https://github.com/asermax/tachikoma/compare/v3.52.1...v3.53.0) (2026-07-07)
+
+
+### Features
+
+* **boundary:** emit session:topic-changed to reset per-branch state ([5e815dd](https://github.com/asermax/tachikoma/commit/5e815dd1dac802f3dd3dcbb96f8b5bd553bce81b))
+
 ## [3.52.1](https://github.com/asermax/tachikoma/compare/v3.52.0...v3.52.1) (2026-07-07)
 
 
