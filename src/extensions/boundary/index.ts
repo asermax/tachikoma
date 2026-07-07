@@ -4,7 +4,7 @@ import { checkpointHasTangent, getLeafId } from "../../agent/session-tree.ts";
 import type { Delivery } from "../../channels/types.ts";
 import type { InboundMessage } from "../../domain/message.ts";
 import { SESSION_TOPIC_CHANGED_EVENT, type TopicChangedReason } from "../../events.ts";
-import { recordLastAutoDecision, setCheckpoint } from "../../sessions/trunk.ts";
+import { type BranchRecord, recordLastAutoDecision, setCheckpoint } from "../../sessions/trunk.ts";
 import { defineExtension } from "../api.ts";
 import { createAskBranchFactory } from "./ask-branch.ts";
 import { classifyShift } from "./classifier.ts";
@@ -117,29 +117,28 @@ export default defineExtension<BoundaryConfig>({
       };
 
       // Unified "start a new branch" used by both the auto-detected topic shift and the manual `/new`,
-      // so the two share the same collapse summary, status text, and related-branch context injection.
-      // The auto-shift caller layers its `/rollback` bookkeeping on top (R7 — manual `/new` is
-      // intentionally not a rollback target). Emits `session:topic-changed` so downstream consumers
-      // (proactive skill injection) reset per-branch state for the new branch — restoring the per-topic
-      // fresh evaluation the old session-per-topic model gave for free under the daily-trunk model.
-      // Emitted unconditionally: this runs only when a new branch is actually starting, whether or not
-      // the prior branch produced a collapse summary (empty-branch guard).
+      // so the two share the same collapse summary, status text, related-branch context injection,
+      // "topic shifted" log, and topic-changed signal. The auto-shift caller layers its `/rollback`
+      // bookkeeping on top (R7 — manual `/new` is intentionally not a rollback target). Emits
+      // `session:topic-changed` so downstream consumers (proactive skill injection) reset per-branch
+      // state for the new branch — restoring the per-topic fresh evaluation the old session-per-topic
+      // model gave for free under the daily-trunk model. The signal fires after the new base is
+      // established (matching the earlier-branch path below) and unconditionally — a new branch starts
+      // whether or not the prior branch produced a collapse summary (empty-branch guard).
       const startNewBranch = async (args: {
         message: InboundMessage;
         reason: TopicChangedReason;
         /** Human-readable collapse provenance recorded on the branch summary (distinct from the event reason). */
         collapseReason?: string;
-        findRelated: boolean;
-      }): Promise<{
-        collapsed: { newBaseId: string } | null | undefined;
-        related: Awaited<ReturnType<typeof findRelatedBranch>>;
-      }> => {
-        app.events.emit(SESSION_TOPIC_CHANGED_EVENT, { reason: args.reason });
-
+      }): Promise<{ newBaseId: string } | null | undefined> => {
         const collapsed = await collapseLiveBranch("Starting a new topic", args.collapseReason);
 
-        let related: Awaited<ReturnType<typeof findRelatedBranch>> = null;
-        if (collapsed != null && args.findRelated) {
+        // Signal after the collapse resolves so the phase matches the earlier-branch path and a future
+        // consumer reading post-collapse trunk state sees the fresh branch.
+        app.events.emit(SESSION_TOPIC_CHANGED_EVENT, { reason: args.reason });
+
+        let related: BranchRecord | null = null;
+        if (collapsed != null) {
           related = await findRelatedBranch(
             { side: app.agent.side, log: app.log },
             {
@@ -152,7 +151,16 @@ export default defineExtension<BoundaryConfig>({
           if (related != null) injectRelatedBranchContext(trunk.session, related, app.log);
         }
 
-        return { collapsed, related };
+        app.log.info(
+          {
+            collapsedBranchId: trunk.liveBranchId,
+            newBaseId: collapsed?.newBaseId ?? null,
+            relatedBranchId: related?.branchId ?? null,
+          },
+          "topic shifted",
+        );
+
+        return collapsed;
       };
 
       // Forced reply/reaction/button reference (Telegram resolves a referenced message to its branch).
@@ -198,7 +206,6 @@ export default defineExtension<BoundaryConfig>({
           message,
           reason: "/new",
           collapseReason: "user forced a new topic (/new)",
-          findRelated: true,
         });
 
         return next();
@@ -285,16 +292,16 @@ export default defineExtension<BoundaryConfig>({
         // pre-decision point /rollback rewinds to (Batch 4). Recorded only on a successful auto collapse.
         const preDecisionLeafId = getLeafId(trunk.session);
 
-        const { collapsed, related } = await startNewBranch({
+        const collapsed = await startNewBranch({
           message,
           reason: "auto-shift",
-          findRelated: true,
         });
 
         // An automatic topic shift is a /rollback target (Batch 4). Manual /new (forceNew above) does
         // NOT record it — only automatic decisions are rollback targets (R7). The decision surfaces on
         // the shifted response via the turn-scoped header, which signals /rollback is available — set
-        // it exactly where the decision is recorded so the two can never disagree (R8).
+        // it exactly where the decision is recorded so the two can never disagree (R8). The shared
+        // "topic shifted" log is emitted inside startNewBranch.
         if (collapsed != null && preDecisionLeafId != null) {
           recordLastAutoDecision(trunk.session, "new", preDecisionLeafId);
           message.metadata.decisionHeader = {
@@ -303,15 +310,6 @@ export default defineExtension<BoundaryConfig>({
             rollbackable: true,
           };
         }
-
-        app.log.info(
-          {
-            collapsedBranchId: trunk.liveBranchId,
-            newBaseId: collapsed?.newBaseId ?? null,
-            relatedBranchId: related?.branchId ?? null,
-          },
-          "topic shifted",
-        );
       }
 
       return next();
