@@ -67,6 +67,7 @@ const setup = async (
       side: { classify },
       isForking: () => false,
     },
+    events: { on: vi.fn(() => () => {}) },
   } as unknown as AppContext<{ enabled: boolean; proactiveLoading?: boolean }>;
 
   skills.setup(app);

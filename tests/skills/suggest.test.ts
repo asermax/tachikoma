@@ -40,6 +40,7 @@ const register = (
   handler: Handler;
   classify: ReturnType<typeof vi.fn>;
   status: ReturnType<typeof vi.fn>;
+  triggerTopicChanged: () => void;
 } => {
   let handler: Handler | undefined;
   const pi = {
@@ -54,16 +55,30 @@ const register = (
   // tests that care about the body or read failures override it.
   const readSkill = overrides.readSkill ?? (() => "Injected skill body.");
 
+  // Capture the topic-change handler so a test can fire it (simulating the boundary's
+  // session:topic-changed event) without constructing a real EventBus.
+  let topicChangedHandler: (() => void) | undefined;
+  const defaultOnTopicChanged = (h: () => void) => {
+    topicChangedHandler = h;
+    return () => {};
+  };
+
   registerSkillSuggestion(pi, {
     classifier: { classify },
     isForking: overrides.isForking ?? (() => false),
     status,
     log: fakeLog,
     readSkill,
+    onTopicChanged: overrides.onTopicChanged ?? defaultOnTopicChanged,
   });
 
   if (handler == null) throw new Error("handler not registered");
-  return { handler, classify, status };
+  return {
+    handler,
+    classify,
+    status,
+    triggerTopicChanged: () => topicChangedHandler?.(),
+  };
 };
 
 // Most cases need no prior conversation: empty branch → "first message".
@@ -133,6 +148,27 @@ describe("registerSkillSuggestion", () => {
     const second = await handler(event("merge more pdfs", [pdf]), emptyCtx());
     expect(second).toBeUndefined();
     expect(classify).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears injected skills on a topic change so the new branch re-evaluates (AC1)", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
+    const { handler, triggerTopicChanged } = register({ classifier: { classify } });
+
+    // Turn 1: inject pdf.
+    expect(await handler(event("merge pdfs", [pdf]), emptyCtx())).toBeDefined();
+
+    // Same branch: dedup — pdf not re-injected, classify not called again.
+    expect(await handler(event("more pdfs", [pdf]), emptyCtx())).toBeUndefined();
+    expect(classify).toHaveBeenCalledTimes(1);
+
+    // A topic shift (session:topic-changed) clears the per-branch injection record, so the new branch
+    // re-evaluates pdf and re-injects it even though it was injected on the collapsed prior branch.
+    triggerTopicChanged();
+    const after = await handler(event("merge pdfs again", [pdf]), emptyCtx());
+    expect(after).toBeDefined();
+    expect(after?.message.content).toContain('<injected-skill name="pdf-tools">');
+    expect(classify).toHaveBeenCalledTimes(2);
   });
 
   it("drops classifier names not in the eligible catalog (AC4)", async () => {

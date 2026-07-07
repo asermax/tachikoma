@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { Type } from "typebox";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
+import { SESSION_TOPIC_CHANGED_EVENT } from "../../events.ts";
 import { defineExtension, SESSION_SCOPES } from "../api.ts";
 import { discoverSkillAgents } from "./agents.ts";
 import { BUILTIN_AGENTS } from "./builtins.ts";
@@ -63,6 +64,13 @@ export default defineExtension<SkillsConfig>({
             // classifier running (its injected skill content is hidden, display:false) but give it no status
             // surface there — main sessions still surface the line through the channel.
             status: session.scope === SESSION_SCOPES.main ? app.status : () => {},
+            // Reset per-branch injection state on a genuine topic shift so the new branch re-evaluates
+            // skills from scratch. Main scope only — background task sessions have no topic shifts, and
+            // the main-session factory runs once per process (the single subscription lives for the trunk).
+            onTopicChanged:
+              session.scope === SESSION_SCOPES.main
+                ? (handler) => app.events.on(SESSION_TOPIC_CHANGED_EVENT, handler)
+                : undefined,
             log: app.log,
           });
         }

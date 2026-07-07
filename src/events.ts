@@ -2,6 +2,22 @@ import type { Logger } from "./log.ts";
 
 export type EventHandler<T> = (payload: T) => void | Promise<void>;
 
+// ---- cross-extension event contracts -----------------------------------------
+// Namespaced event names emitted across extensions, defined here so emitters and subscribers share one
+// constant instead of a stringly-typed coupling. The coordinator owns the `session:*` lifecycle events
+// (`session:opened`, `session:closed`, `session:post-processed`); the one below is emitted by the
+// boundary extension.
+
+/** A genuine topic change started a fresh branch on the daily trunk (not a tangent/checkpoint). */
+export const SESSION_TOPIC_CHANGED_EVENT = "session:topic-changed";
+
+/** What kind of action started the new branch. */
+export type TopicChangedReason = "auto-shift" | "/new" | "earlier-branch";
+
+export interface TopicChangedEvent {
+  reason: TopicChangedReason;
+}
+
 export class EventBus {
   private readonly handlers = new Map<string, Set<EventHandler<never>>>();
   private readonly log: Logger;

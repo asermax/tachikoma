@@ -1,6 +1,7 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import { textMessage } from "../../src/domain/message.ts";
+import { SESSION_TOPIC_CHANGED_EVENT } from "../../src/events.ts";
 import type {
   AppContext,
   InboundContext,
@@ -25,6 +26,7 @@ interface SetupResult {
   classify: ReturnType<typeof vi.fn>;
   deliver: ReturnType<typeof vi.fn>;
   status: ReturnType<typeof vi.fn>;
+  emit: ReturnType<typeof vi.fn>;
   registeredFactory: boolean;
 }
 
@@ -35,9 +37,12 @@ const setup = (config: SetupConfig = {}): SetupResult => {
 
   const shadowFork = vi.fn();
   const complete = vi.fn().mockResolvedValue("a summary");
-  const classify = vi.fn();
+  // Default to a clean no-match so findRelatedBranch returns null without logging an error; tests that
+  // want a related-branch match override this.
+  const classify = vi.fn().mockResolvedValue({ branchId: null, reason: "none" });
   const deliver = vi.fn();
   const status = vi.fn();
+  const emit = vi.fn();
 
   const app = {
     extensionConfig: { enabled, autoSetCheckpoint, autoSummarizeToCheckpoint },
@@ -56,6 +61,7 @@ const setup = (config: SetupConfig = {}): SetupResult => {
     },
     channels: { deliver },
     sessions: { activeTrunkSession: () => null },
+    events: { emit },
     status,
     log: fakeLog,
   } as unknown as AppContext<{
@@ -73,6 +79,7 @@ const setup = (config: SetupConfig = {}): SetupResult => {
     classify,
     deliver,
     status,
+    emit,
     registeredFactory,
   };
 };
@@ -188,7 +195,7 @@ describe("boundary middleware", () => {
   });
 
   it("forces a collapse on /new when the branch has an assistant turn", async () => {
-    const { middleware, shadowFork } = setup();
+    const { middleware, shadowFork, emit } = setup();
     const trunk = makeTrunk({ hasAssistantTurnSinceBase: true });
     const next = vi.fn();
     const message = textMessage("test", "start over");
@@ -199,6 +206,8 @@ describe("boundary middleware", () => {
     // Forced shift: no classifier, but the branch collapsed.
     expect(shadowFork).not.toHaveBeenCalled();
     expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledTimes(1);
+    // /new signals the topic change so downstream per-branch state (proactive skills) resets.
+    expect(emit).toHaveBeenCalledWith(SESSION_TOPIC_CHANGED_EVENT, { reason: "/new" });
     expect(next).toHaveBeenCalledTimes(1);
   });
 
@@ -216,7 +225,7 @@ describe("boundary middleware", () => {
   });
 
   it("collapses the current branch on a classified shift", async () => {
-    const { middleware, shadowFork } = setup();
+    const { middleware, shadowFork, emit } = setup();
     shadowFork.mockResolvedValue({
       prompt: vi.fn().mockResolvedValue('{"decision":"shift","reason":"new topic"}'),
       dispose: vi.fn().mockResolvedValue(undefined),
@@ -229,11 +238,13 @@ describe("boundary middleware", () => {
 
     expect(shadowFork).toHaveBeenCalledTimes(1);
     expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledTimes(1);
+    // An auto-detected shift signals the topic change (auto-only rollback bookkeeping happens too).
+    expect(emit).toHaveBeenCalledWith(SESSION_TOPIC_CHANGED_EVENT, { reason: "auto-shift" });
     expect(next).toHaveBeenCalledTimes(1);
   });
 
   it("does not collapse on a classified continue", async () => {
-    const { middleware, shadowFork } = setup();
+    const { middleware, shadowFork, emit } = setup();
     shadowFork.mockResolvedValue({
       prompt: vi.fn().mockResolvedValue('{"decision":"continue","reason":"follow-up"}'),
       dispose: vi.fn().mockResolvedValue(undefined),
@@ -246,6 +257,8 @@ describe("boundary middleware", () => {
 
     expect(shadowFork).toHaveBeenCalledTimes(1);
     expect(trunk.session.sessionManager.branchWithSummary).not.toHaveBeenCalled();
+    // No topic change on a continue → no event.
+    expect(emit).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledTimes(1);
   });
 
@@ -288,7 +301,7 @@ describe("boundary middleware", () => {
     });
 
   it("forces a shift and injects context for a reply/reaction referencing an earlier branch", async () => {
-    const { middleware, shadowFork } = setup();
+    const { middleware, shadowFork, emit } = setup();
     const trunk = earlierBranchTrunk();
     const next = vi.fn();
     const message = textMessage("test", "back to the earlier thing");
@@ -301,7 +314,51 @@ describe("boundary middleware", () => {
     expect(shadowFork).not.toHaveBeenCalled();
     expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledTimes(1);
     expect(trunk.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledTimes(1);
+    // Jumping to an earlier branch is a topic change too.
+    expect(emit).toHaveBeenCalledWith(SESSION_TOPIC_CHANGED_EVENT, { reason: "earlier-branch" });
     expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("/new pulls related-branch context like an auto-shift via the unified path", async () => {
+    const { middleware, classify, emit } = setup();
+    classify.mockResolvedValue({ branchId: "topic-1", reason: "same topic" });
+    const trunk = earlierBranchTrunk();
+    const next = vi.fn();
+    const message = textMessage("test", "start over");
+    message.metadata.forceNew = true;
+
+    await middleware(message, context(trunk), next);
+
+    // /new shares the auto-shift path: it collapses AND runs the related-branch matcher (classify
+    // here is the matcher's side.classify, not the shift detector's shadowFork), injecting a pointer.
+    expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledTimes(1);
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(trunk.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith(SESSION_TOPIC_CHANGED_EVENT, { reason: "/new" });
+  });
+
+  it("records a /rollback target on an auto-shift but not on /new", async () => {
+    // Auto-shift: the decision header (a /rollback target) is attached.
+    const auto = setup();
+    auto.shadowFork.mockResolvedValue({
+      prompt: vi.fn().mockResolvedValue('{"decision":"shift","reason":"new topic"}'),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    });
+    const autoTrunk = makeTrunk();
+    const autoMessage = textMessage("test", "new topic");
+    await auto.middleware(autoMessage, context(autoTrunk), vi.fn());
+    expect(autoMessage.metadata.decisionHeader).toMatchObject({
+      label: "🆕 New topic",
+      rollbackable: true,
+    });
+
+    // /new: no decision header — manual /new is intentionally not a rollback target (R7).
+    const manual = setup();
+    const manualTrunk = makeTrunk();
+    const manualMessage = textMessage("test", "start over");
+    manualMessage.metadata.forceNew = true;
+    await manual.middleware(manualMessage, context(manualTrunk), vi.fn());
+    expect(manualMessage.metadata.decisionHeader).toBeUndefined();
   });
 
   it("appends without collapse when the forced reference is the live branch", async () => {

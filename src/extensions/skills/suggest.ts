@@ -21,6 +21,13 @@ export interface SkillSuggestionDeps {
   log: Logger;
   /** Reads a matched skill's SKILL.md content; defaults to `readFileSync` (utf-8). Injectable for tests. */
   readSkill?: (filePath: string) => string;
+  /**
+   * Subscribe to a topic-change signal that resets per-branch injection state so the new branch
+   * re-evaluates from scratch. Wired (main scope only) to the boundary's `session:topic-changed` event
+   * by the factory; omitted for background sessions, which have no topic shifts. Returns an unsubscribe
+   * (the main-session factory runs once per process, so the single subscription lives for the trunk).
+   */
+  onTopicChanged?: (handler: () => void) => () => void;
 }
 
 export const SkillSelectionSchema = Type.Object({
@@ -95,9 +102,19 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
   const { classifier, isForking, status, log } = deps;
   const readSkill = deps.readSkill ?? ((filePath: string) => readFileSync(filePath, "utf-8"));
 
-  // Skills injected this session — never re-injected, since the message persists in the transcript.
-  // Per-session: the factory (and this closure) is recreated for each agent session.
+  // Skills injected this branch — not re-injected while the branch is live, since the message persists
+  // on the active transcript path. Per-session closure (the factory is recreated for each agent
+  // session). The daily trunk is one session for the whole day, so without a reset a skill injected on
+  // an earlier (later-collapsed) branch would stay "injected" after its content left the active path.
+  // The boundary emits `session:topic-changed` on a genuine topic shift (auto-shift, `/new`, or jumping
+  // to an earlier branch); subscribing clears the set so the new branch re-evaluates from scratch.
   const injected = new Set<string>();
+
+  deps.onTopicChanged?.(() => {
+    if (injected.size === 0) return;
+    injected.clear();
+    log.debug("topic changed — clearing proactive-skill injection state for re-evaluation");
+  });
 
   pi.on("before_agent_start", async (event, ctx): Promise<SkillSuggestionResult | undefined> => {
     // A non-bare fork binds every pi factory, so this handler also fires inside the memory/context
