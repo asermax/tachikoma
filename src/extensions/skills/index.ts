@@ -65,11 +65,14 @@ export default defineExtension<SkillsConfig>({
             // surface there — main sessions still surface the line through the channel.
             status: session.scope === SESSION_SCOPES.main ? app.status : () => {},
             // Reset per-branch injection state on a genuine topic shift so the new branch re-evaluates
-            // skills from scratch. Main scope only — background task sessions have no topic shifts, and
-            // the main-session factory runs once per process (the single subscription lives for the trunk).
+            // skills from scratch. Main scope only — background task sessions have no topic shifts. The
+            // factory is re-invoked when the trunk reopens (≈once per day), adding a fresh handler to the
+            // process-scoped bus; prior handlers go dormant once their trunk's injection set is empty.
             onTopicChanged:
               session.scope === SESSION_SCOPES.main
-                ? (handler) => app.events.on(SESSION_TOPIC_CHANGED_EVENT, handler)
+                ? (handler) => {
+                    app.events.on(SESSION_TOPIC_CHANGED_EVENT, handler);
+                  }
                 : undefined,
             log: app.log,
           });

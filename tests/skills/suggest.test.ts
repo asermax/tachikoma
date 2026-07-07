@@ -60,7 +60,6 @@ const register = (
   let topicChangedHandler: (() => void) | undefined;
   const defaultOnTopicChanged = (h: () => void) => {
     topicChangedHandler = h;
-    return () => {};
   };
 
   registerSkillSuggestion(pi, {

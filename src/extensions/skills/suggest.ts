@@ -24,10 +24,12 @@ export interface SkillSuggestionDeps {
   /**
    * Subscribe to a topic-change signal that resets per-branch injection state so the new branch
    * re-evaluates from scratch. Wired (main scope only) to the boundary's `session:topic-changed` event
-   * by the factory; omitted for background sessions, which have no topic shifts. Returns an unsubscribe
-   * (the main-session factory runs once per process, so the single subscription lives for the trunk).
+   * by the factory; omitted for background sessions, which have no topic shifts. The factory is
+   * re-invoked when the trunk reopens (≈once per day under the daily-trunk model), adding a fresh
+   * handler to the process-scoped bus each time; a prior trunk's handler goes dormant once its
+   * injection set is empty, so the slow accumulation is harmless.
    */
-  onTopicChanged?: (handler: () => void) => () => void;
+  onTopicChanged?: (handler: () => void) => void;
 }
 
 export const SkillSelectionSchema = Type.Object({
