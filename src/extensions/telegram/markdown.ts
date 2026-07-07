@@ -98,10 +98,5 @@ const renderRow = (cells: string[]): string => {
  * joined by a middle dot (data rows bold only the first cell and follow it with a
  * colon). An empty header cell is left plain so no broken `****` markup is emitted.
  */
-const renderHeader = (cells: string[]): string => {
-  if (cells.length <= 1) {
-    const only = cells[0] ?? "";
-    return only.length > 0 ? `- **${only}**` : `- ${only}`;
-  }
-  return `- ${cells.map((cell) => (cell.length > 0 ? `**${cell}**` : cell)).join(" · ")}`;
-};
+const renderHeader = (cells: string[]): string =>
+  `- ${cells.map((cell) => (cell.length > 0 ? `**${cell}**` : cell)).join(" · ")}`;
