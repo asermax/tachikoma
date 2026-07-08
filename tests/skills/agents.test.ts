@@ -37,6 +37,7 @@ describe("discoverSkillAgents", () => {
         name: "research/scout",
         description: "Finds sources",
         tools: ["read", "grep"],
+        extensionTools: null,
         model: null,
         systemPrompt: "You are a scout.",
         skill: "research",
@@ -206,5 +207,118 @@ describe("discoverSkillAgents", () => {
       expect.objectContaining({ skill: "research", agent: "dangling.md" }),
       "failed to load skill agent — skipped",
     );
+  });
+
+  it("parses an extensionTools YAML list from frontmatter", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\nextensionTools:\n  - web_search\n  - scrape\n---\n\nBody.",
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.extensionTools).toEqual([
+      "web_search",
+      "scrape",
+    ]);
+  });
+
+  it("parses extensionTools as a comma-separated string", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\nextensionTools: web_search, scrape\n---\n\nBody.",
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.extensionTools).toEqual([
+      "web_search",
+      "scrape",
+    ]);
+  });
+
+  it("defaults extensionTools to null when not declared", async () => {
+    await writeAgent("research", "scout.md", "---\ndescription: Finds sources\n---\n\nBody.");
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.extensionTools).toBeNull();
+  });
+
+  it("treats an empty extensionTools list as null", async () => {
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\nextensionTools: []\n---\n\nBody.",
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.extensionTools).toBeNull();
+  });
+
+  it("warns and falls back to null on an invalid extensionTools format, keeping the agent", async () => {
+    const warn = vi.mocked(fakeLog.warn).mockClear();
+
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\nextensionTools:\n  nested: true\n---\n\nBody.",
+    );
+
+    const agents = discoverSkillAgents(skillsRoot, fakeLog);
+
+    expect(agents[0]?.name).toBe("research/scout");
+    expect(agents[0]?.extensionTools).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      { skill: "research", agent: "scout.md" },
+      "skill agent has invalid extensionTools format — none will be auto-granted",
+    );
+  });
+
+  it("warns and drops unknown built-in tool names, keeping the valid ones", async () => {
+    const warn = vi.mocked(fakeLog.warn).mockClear();
+
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\ntools:\n  - read\n  - Glob\n---\n\nBody.",
+    );
+
+    const agents = discoverSkillAgents(skillsRoot, fakeLog);
+
+    expect(agents[0]?.tools).toEqual(["read"]);
+    expect(warn).toHaveBeenCalledWith(
+      { skill: "research", agent: "scout.md", tools: ["Glob"] },
+      expect.stringMatching(
+        /^skill agent declares unknown built-in tools \(Glob\) — dropping them/,
+      ),
+    );
+  });
+
+  it("warns and falls back to null when every declared tool name is unknown", async () => {
+    const warn = vi.mocked(fakeLog.warn).mockClear();
+
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\ntools:\n  - Glob\n  - WebSearch\n---\n\nBody.",
+    );
+
+    const agents = discoverSkillAgents(skillsRoot, fakeLog);
+
+    expect(agents[0]?.name).toBe("research/scout");
+    expect(agents[0]?.tools).toBeNull();
+    expect(warn).toHaveBeenCalledWith(
+      { skill: "research", agent: "scout.md", tools: ["Glob", "WebSearch"] },
+      expect.stringMatching(/declares unknown built-in tools \(Glob, WebSearch\)/),
+    );
+  });
+
+  it("leaves valid built-in tool names unchanged with no warning", async () => {
+    const warn = vi.mocked(fakeLog.warn).mockClear();
+
+    await writeAgent(
+      "research",
+      "scout.md",
+      "---\ndescription: Finds sources\ntools:\n  - read\n  - grep\n  - bash\n---\n\nBody.",
+    );
+
+    expect(discoverSkillAgents(skillsRoot, fakeLog)[0]?.tools).toEqual(["read", "grep", "bash"]);
+    expect(warn).not.toHaveBeenCalled();
   });
 });

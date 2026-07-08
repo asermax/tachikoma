@@ -15,6 +15,7 @@ export const BUILTIN_AGENTS: SkillAgent[] = [
     description:
       "Explore or search files and gather information, reporting findings back. Read-only by default; runs in its own context to keep the main conversation's context clear.",
     tools: null,
+    extensionTools: null,
     model: null,
     systemPrompt: SUBAGENT_SYSTEM_PROMPT,
     dynamicPrompt: (tools) => buildSubagentSystemPrompt({ tools }),

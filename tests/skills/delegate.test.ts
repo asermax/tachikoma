@@ -6,6 +6,7 @@ import { BUILTIN_AGENTS } from "../../src/extensions/skills/builtins.ts";
 import {
   type AgentRunner,
   createDelegateTool,
+  resolveExtensionTools,
   resolveTools,
 } from "../../src/extensions/skills/delegate.ts";
 import type { Logger } from "../../src/log.ts";
@@ -21,6 +22,7 @@ const agents: SkillAgent[] = [
     name: "research/scout",
     description: "Finds sources",
     tools: ["read", "grep"],
+    extensionTools: null,
     model: null,
     systemPrompt: "You are a scout.",
     skill: "research",
@@ -29,6 +31,7 @@ const agents: SkillAgent[] = [
     name: "research/writer",
     description: "Drafts summaries",
     tools: null,
+    extensionTools: null,
     model: null,
     systemPrompt: "You write.",
     skill: "research",
@@ -37,6 +40,7 @@ const agents: SkillAgent[] = [
     name: "research/analyst",
     description: "Deep analysis",
     tools: null,
+    extensionTools: null,
     model: "anthropic/claude-opus-4-5:high",
     systemPrompt: "You analyze.",
     skill: "research",
@@ -453,5 +457,103 @@ describe("delegate_to_agent agent-facing guidance", () => {
     expect(tool.description).not.toContain("not available to subagents");
     expect(guidelines).toContain("extensionTools");
     expect(guidelines).not.toContain("not available to subagents");
+  });
+});
+
+describe("resolveExtensionTools", () => {
+  it("returns the declared set when the caller requests nothing", () => {
+    expect(resolveExtensionTools(["web_search"], undefined)).toEqual(["web_search"]);
+    expect(resolveExtensionTools(["web_search"], [])).toEqual(["web_search"]);
+  });
+
+  it("returns the requested set when none are declared", () => {
+    expect(resolveExtensionTools(null, ["web_search"])).toEqual(["web_search"]);
+    expect(resolveExtensionTools([], ["web_search"])).toEqual(["web_search"]);
+  });
+
+  it("unions declared and requested, de-duplicated (declared first)", () => {
+    expect(resolveExtensionTools(["web_search"], ["scrape", "web_search"])).toEqual([
+      "web_search",
+      "scrape",
+    ]);
+  });
+
+  it("returns an empty array when neither declares nor requests any", () => {
+    expect(resolveExtensionTools(null, undefined)).toEqual([]);
+    expect(resolveExtensionTools([], [])).toEqual([]);
+  });
+});
+
+describe("delegate_to_agent frontmatter extensionTools", () => {
+  const declared: SkillAgent[] = [
+    {
+      name: "research/researcher",
+      description: "Web research",
+      tools: null,
+      extensionTools: ["web_search"],
+      model: null,
+      systemPrompt: "You research.",
+      skill: "research",
+    },
+  ];
+
+  const toolFor = (runner: AgentRunner) =>
+    createDelegateTool({ discover: () => declared, runner, log: fakeLog });
+
+  it("auto-grants the agent's declared extensionTools when the caller omits them", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "researched" });
+    await toolFor({ run }).execute(
+      "call-decl",
+      { agent: "research/researcher", task: "research X", description: "research X" },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ extensionTools: ["web_search"] }));
+  });
+
+  it("merges declared extensionTools with caller-provided ones (union, dedup)", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "researched" });
+    await toolFor({ run }).execute(
+      "call-merge",
+      {
+        agent: "research/researcher",
+        task: "research X",
+        description: "research X",
+        extensionTools: ["scrape", "web_search"],
+      },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({ extensionTools: ["web_search", "scrape"] }),
+    );
+  });
+
+  it("omits extensionTools when the agent declares none and the caller requests none", async () => {
+    const none: SkillAgent[] = [
+      {
+        name: "research/reader",
+        description: "Reads",
+        tools: null,
+        extensionTools: null,
+        model: null,
+        systemPrompt: "You read.",
+        skill: "research",
+      },
+    ];
+    const run = vi.fn().mockResolvedValue({ text: "read" });
+    await createDelegateTool({ discover: () => none, runner: { run }, log: fakeLog }).execute(
+      "call-none",
+      { agent: "research/reader", task: "read", description: "read" },
+      undefined,
+      undefined,
+      fakeCtx,
+    );
+
+    expect(run.mock.calls[0]?.[0]).not.toHaveProperty("extensionTools");
   });
 });

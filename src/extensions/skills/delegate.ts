@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import type { SideRunner } from "../../agent/side-run.ts";
 import type { Logger } from "../../log.ts";
 import type { SkillAgent } from "./agents.ts";
+import { BUILTIN_TOOL_NAMES } from "./tool-names.ts";
 
 export type AgentRunner = Pick<SideRunner, "run">;
 
@@ -15,14 +16,6 @@ export interface DelegateToolOptions {
 }
 
 const DEFAULT_AGENT_TOOLS = ["read", "grep", "find", "ls"];
-
-/**
- * pi's built-in tool names — the only names valid in the `tools` param. The `tools` param is
- * built-in-only: it fully overrides the agent's default built-ins, so an unknown name there is an
- * error. Extension and web tools are granted additively via the separate `extensionTools` param,
- * resolved source-agnostically at execute time in SideRunner (see DLT-184 / ADR-015).
- */
-const BUILTIN_TOOL_NAMES = new Set(["read", "grep", "find", "ls", "bash", "edit", "write"]);
 
 /**
  * Resolve a delegated run's built-in tool set. A non-empty per-delegation `requested` list fully
@@ -49,6 +42,30 @@ export const resolveTools = (
   }
 
   return declared ?? DEFAULT_AGENT_TOOLS;
+};
+
+/**
+ * Merge an agent's declared `extensionTools` with a per-delegation grant. Both are additive (granted
+ * on top of the resolved built-ins), so the effective set is their union, de-duplicated (declared
+ * names first, then caller additions — the order is cosmetic; only the set matters). A caller can
+ * extend an agent's declared grant but never narrow it: replace-semantics would let a caller silently
+ * strip a dependency the author declared, defeating the frontmatter field. Extension tool names are
+ * resolved source-agnostically against the opened subagent session in SideRunner.run (ADR-015), so
+ * neither set is name-validated here; an empty result means none are granted (the built-in-allowlist
+ * path).
+ */
+export const resolveExtensionTools = (
+  declared: string[] | null,
+  requested: string[] | undefined,
+): string[] => {
+  const merged: string[] = [];
+  const seen = new Set<string>();
+  for (const name of [...(declared ?? []), ...(requested ?? [])]) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    merged.push(name);
+  }
+  return merged;
 };
 
 const DelegateParams = Type.Object({
@@ -139,6 +156,7 @@ export const createDelegateTool = ({
     log.debug({ toolCallId, agent: agent.name }, "delegating task to skill agent");
 
     const tools = resolveTools(params.tools, agent.tools);
+    const extensionTools = resolveExtensionTools(agent.extensionTools, params.extensionTools);
     // The built-in agents rebuild their prompt from the granted tools (so a worker handed bash is
     // not told it is read-only); skill agents keep their author-authored system prompt.
     const system = agent.dynamicPrompt != null ? agent.dynamicPrompt(tools) : agent.systemPrompt;
@@ -153,10 +171,11 @@ export const createDelegateTool = ({
         prompt: params.task,
         isolatePrompt: true,
         ...(agent.model != null ? { model: agent.model } : {}),
-        // Additive grant on top of the resolved built-ins; validated source-agnostically in
+        // Additive grant on top of the resolved built-ins: the agent's declared extensionTools
+        // merged with the caller's (resolveExtensionTools). Validated source-agnostically in
         // SideRunner (not against BUILTIN_TOOL_NAMES here). Spread only when non-empty so an
         // empty/omitted request takes the built-in-allowlist path unchanged.
-        ...(params.extensionTools?.length ? { extensionTools: params.extensionTools } : {}),
+        ...(extensionTools.length > 0 ? { extensionTools } : {}),
       });
     } catch (error) {
       log.warn(

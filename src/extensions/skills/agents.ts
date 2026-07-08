@@ -4,12 +4,19 @@ import { join } from "node:path";
 import { parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 import type { Logger } from "../../log.ts";
+import { BUILTIN_TOOL_NAMES } from "./tool-names.ts";
 
 export interface SkillAgent {
   /** Namespaced as "<skill>/<agent>" to prevent collisions across skills. */
   name: string;
   description: string;
   tools: string[] | null;
+  /**
+   * Exposed extension tool names the agent declares it needs (e.g. web search/scrape), auto-granted
+   * additively on every delegation. `null` when not declared; names are resolved source-agnostically
+   * against the opened subagent session at execute time (ADR-015), so they are not validated here.
+   */
+  extensionTools: string[] | null;
   /** "provider/model-id[:thinkingLevel]" reference; null runs on the side-runner's default tier. */
   model: string | null;
   systemPrompt: string;
@@ -110,12 +117,43 @@ export const discoverSkillAgents = (skillsRoot: string, log: Logger): SkillAgent
           log.warn({ skill, agent: file }, "skill agent has invalid model — using default tier");
         }
 
-        const tools = parseTools(frontmatter.tools);
+        const parsedTools = parseTools(frontmatter.tools);
 
-        if (frontmatter.tools != null && tools == null) {
+        if (frontmatter.tools != null && parsedTools == null) {
           log.warn(
             { skill, agent: file },
             "skill agent has invalid tools format — using default tool set",
+          );
+        }
+
+        // Validate declared built-in tool names against pi's built-ins. A capitalized typo
+        // (e.g. `Glob`, `WebSearch`) would otherwise pass through as an unrecognized tool, so warn
+        // and drop unknown names while keeping valid ones (one bad entry never disables the agent;
+        // if all are invalid the read-only default applies). Extension tool names live in
+        // `extensionTools` and are resolved source-agnostically at execute time (ADR-015), so they
+        // are not name-validated here.
+        const knownTools: string[] = [];
+        const unknownTools: string[] = [];
+        if (parsedTools != null) {
+          for (const tool of parsedTools) {
+            if (BUILTIN_TOOL_NAMES.has(tool)) knownTools.push(tool);
+            else unknownTools.push(tool);
+          }
+        }
+        if (unknownTools.length > 0) {
+          log.warn(
+            { skill, agent: file, tools: unknownTools },
+            `skill agent declares unknown built-in tools (${unknownTools.join(", ")}) — dropping them; valid built-in tools are ${[...BUILTIN_TOOL_NAMES].join(", ")}`,
+          );
+        }
+        const tools = knownTools.length > 0 ? knownTools : null;
+
+        const extensionTools = parseTools(frontmatter.extensionTools);
+
+        if (frontmatter.extensionTools != null && extensionTools == null) {
+          log.warn(
+            { skill, agent: file },
+            "skill agent has invalid extensionTools format — none will be auto-granted",
           );
         }
 
@@ -123,6 +161,7 @@ export const discoverSkillAgents = (skillsRoot: string, log: Logger): SkillAgent
           name: `${skill}/${name}`,
           description: frontmatter.description,
           tools,
+          extensionTools,
           model,
           systemPrompt: body,
           skill,
