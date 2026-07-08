@@ -115,7 +115,11 @@ describe("classifyShift", () => {
     const prompt = fork.prompt.mock.calls[0]?.[0] as string;
     // The set-checkpoint conditional block is present; the summarize-to-checkpoint block is not. (The
     // shared JSON-enum line lists all four values, so assert on the block's distinctive phrasing.)
-    expect(prompt).toContain("short, self-contained side topic");
+    expect(prompt).toContain("self-contained side task");
+    // The broadened recognition examples (issue-411): a side task is distinct + self-contained, with
+    // note/reminder captures and ceremonies as named cases — not gated on "clearly short (1-2 turns)".
+    expect(prompt).toContain("note or reminder");
+    expect(prompt).toContain("daily ceremony");
     expect(prompt).not.toContain("a checkpoint is currently active");
   });
 
@@ -129,7 +133,7 @@ describe("classifyShift", () => {
     expect(fork.prompt).toHaveBeenCalledOnce();
     const prompt = fork.prompt.mock.calls[0]?.[0] as string;
     expect(prompt).toContain("a checkpoint is currently active");
-    expect(prompt).not.toContain("short, self-contained side topic");
+    expect(prompt).not.toContain("self-contained side task");
   });
 
   it("recognizes a return to the main-line topic in the summarize-to-checkpoint prompt (e.g. 'going back to…')", async () => {

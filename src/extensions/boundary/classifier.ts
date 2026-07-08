@@ -37,8 +37,9 @@ export interface ShiftInput {
 /**
  * The classifier's decision. `continue`/`shift` are the original topic-boundary results; the two
  * checkpoint results (DLT-181) drive the side-task auto-flow: `set-checkpoint` parks the main line
- * when a short, unrelated side task begins (e.g. a quick expense log mid-workflow), and
- * `summarize-to-checkpoint` folds that side task back when the conversation returns to the main line.
+ * when a self-contained, unrelated side task begins (e.g. an expense logged mid-workflow, a quick
+ * note/reminder capture), and `summarize-to-checkpoint` folds that side task back when the
+ * conversation returns to the main line.
  */
 export type ShiftDecision = "continue" | "shift" | "set-checkpoint" | "summarize-to-checkpoint";
 
@@ -70,13 +71,15 @@ const buildClassifierPrompt = (message: string, checkpointActive: boolean): stri
           '  unsure whether the message returns to the main line, prefer "continue".',
         ]
       : [
-          '- "set-checkpoint": the message starts a short, self-contained side topic that is unrelated to',
-          "  the current workflow or conversation but not important enough to warrant a full topic shift",
-          "  — a quick side request made while the user is mid-task (e.g. logging an expense, a quick",
-          "  lookup, a brief question). The main line stays parked and resumes once the side task is done.",
-          "  Use it ONLY when no checkpoint is active, the current line is worth resuming, and the side",
-          '  task is clearly short (about 1-2 turns). Prefer "continue" for follow-ups to the current task',
-          '  and "shift" for a substantive new topic.',
+          '- "set-checkpoint": the message begins a self-contained side task that is distinct from and',
+          "  unrelated to the current conversation — the user is interleaving something separate while the",
+          "  main thread stays parked and resumes once the side task is done. Typical cases: capturing a",
+          "  note or reminder, logging something (an expense, a transaction), a quick lookup or brief",
+          "  self-contained question, or a background task or daily ceremony starting its own short",
+          "  exchange. Choose this when the message clearly starts a separate task rather than following on",
+          '  from the current one, regardless of how many turns the side task may take. Prefer "continue"',
+          '  for follow-ups, clarifications, or replies to the current task, and "shift" for a substantive',
+          '  new main topic. When unsure whether the message is a separate side task, prefer "continue".',
         ]),
     "",
     "Be conservative about parking a side conversation: only choose a checkpoint decision when it is",
