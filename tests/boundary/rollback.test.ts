@@ -5,6 +5,7 @@ import { getBranchEntries } from "../../src/agent/session-tree.ts";
 import type { DecisionHeader } from "../../src/domain/message.ts";
 import { textMessage } from "../../src/domain/message.ts";
 import type { TrunkInbound } from "../../src/extensions/api.ts";
+import { TANGENT_FOCUS_CUSTOM_TYPE } from "../../src/extensions/boundary/focus.ts";
 import { handleRollbackCommand } from "../../src/extensions/boundary/rollback.ts";
 import type { Logger } from "../../src/log.ts";
 import {
@@ -136,6 +137,25 @@ const makeSession = (initial: SessionEntry[] = []): FakeSession => {
       );
       return id;
     }),
+    appendCustomMessageEntry: vi.fn(
+      (customType: string, content: string, display: boolean, details?: unknown) => {
+        const id = nextId("cm");
+        appendAt(
+          {
+            type: "custom_message",
+            id,
+            parentId: null,
+            timestamp: TIMESTAMP,
+            customType,
+            content,
+            display,
+            details,
+          } as unknown as SessionEntry,
+          leafId,
+        );
+        return id;
+      },
+    ),
   };
 
   return {
@@ -421,6 +441,14 @@ describe("handleRollbackCommand — Case B (new → checkpoint)", () => {
     // A checkpoint is set at the restored tip; the base is restored to what the reversed shift extended.
     const boomerang = readBoomerangState(fake.session);
     expect(boomerang?.checkpointId).toBe("p");
+    // The tangent-focus instruction is injected at checkpoint-set (issue-411): the replayed message
+    // becomes the tangent's first turn, so focus rides it like every other checkpoint site.
+    expect(fake.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledWith(
+      TANGENT_FOCUS_CUSTOM_TYPE,
+      expect.any(String),
+      false,
+      undefined,
+    );
     expect(boomerang?.currentTopicBaseId).toBeNull(); // the auto-new's base (null — first topic)
     expect(boomerang?.lastAutoDecision).toBeNull();
     // The auto-new's topic summary is orphaned: effective kind "reversed", excluded from topic records.

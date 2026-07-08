@@ -3,10 +3,9 @@ import type { SideRunner } from "../../agent/side-run.ts";
 import type { Delivery } from "../../channels/types.ts";
 import type { InboundMessage } from "../../domain/message.ts";
 import type { Logger } from "../../log.ts";
-import { setCheckpoint } from "../../sessions/trunk.ts";
 import type { TrunkInbound } from "../api.ts";
 import { summarizeCurrentTangent } from "./collapse.ts";
-import { injectTangentFocus } from "./focus.ts";
+import { setCheckpointAndFocus } from "./focus.ts";
 
 /**
  * Manual checkpoint commands (`/checkpoint`, `/back`) for DLT-181. Each is detected at the top of the
@@ -63,8 +62,7 @@ export const handleCheckpointCommand = (
     return true;
   }
 
-  setCheckpoint(trunk.session, leafId);
-  injectTangentFocus(trunk.session, deps.log);
+  setCheckpointAndFocus(trunk.session, leafId, deps.log);
   deps.deliver({ text: "📌 Checkpoint set — main line parked here.", immediate: true });
 
   deps.log.info({ checkpointId: leafId }, "checkpoint set (/checkpoint)");

@@ -18,12 +18,12 @@ import {
   markReversed,
   nextBranchId,
   readBoomerangState,
-  setCheckpoint,
   setCurrentTopicBase,
 } from "../../sessions/trunk.ts";
 import type { TrunkInbound } from "../api.ts";
 import { collapseCurrentTopic } from "./collapse.ts";
 import { isCommand } from "./commands.ts";
+import { setCheckpointAndFocus } from "./focus.ts";
 
 /**
  * `/rollback` (DLT-181, R7) — the load-bearing flow (KD4). Reverses the most-recent *automatic*
@@ -206,7 +206,7 @@ export const handleRollbackCommand = async (
     // Case B (new → checkpoint): set a checkpoint at the restored tip, orphan the auto-new's topic
     // summary, and restore the base the reversed shift had advanced past. The replayed message becomes
     // the first tangent turn.
-    setCheckpoint(session, decision.preDecisionLeafId);
+    setCheckpointAndFocus(session, decision.preDecisionLeafId, deps.log);
     if (reversedSummaryId != null) markReversed(session, reversedSummaryId);
     // The shift left currentTopicBaseId on the now-reversed summary; reopen would otherwise re-seat the
     // leaf onto that dead branch. Restore the base the live branch actually extends.

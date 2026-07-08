@@ -2,6 +2,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { appendInContextEntry } from "../../agent/session-tree.ts";
 import type { Logger } from "../../log.ts";
+import { setCheckpoint } from "../../sessions/trunk.ts";
 
 /**
  * Tangent focus injection (issue-411). When a checkpoint is active a side task runs as a tangent off
@@ -31,12 +32,24 @@ const TANGENT_FOCUS_INSTRUCTION = [
 ].join("\n");
 
 /**
- * Inject the tangent-focus instruction as a hidden in-context entry on the live session. Called at every
- * checkpoint-set site (manual `/checkpoint`, automatic `set-checkpoint`, and the system-origin side-task
- * checkpoint) so the focus guidance is present for the entire tangent without each caller duplicating it.
+ * Inject the tangent-focus instruction as a hidden in-context entry on the live session. Called by
+ * {@link setCheckpointAndFocus} so the focus guidance is present for the entire tangent without each
+ * caller duplicating it.
  */
 export const injectTangentFocus = (session: AgentSession, log: Logger): void => {
   appendInContextEntry(session, TANGENT_FOCUS_CUSTOM_TYPE, TANGENT_FOCUS_INSTRUCTION);
 
   log.debug("injected tangent focus instruction");
+};
+
+/**
+ * Set a checkpoint and inject the tangent-focus instruction in one step. Every checkpoint-set site —
+ * manual `/checkpoint`, the classifier's auto `set-checkpoint`, the system-origin side-task checkpoint,
+ * and rollback Case B — goes through here, so the focus guidance cannot be forgotten at a new site: the
+ * pairing is structural, not remembered per caller. The decision header (which varies by site) stays the
+ * caller's concern.
+ */
+export const setCheckpointAndFocus = (session: AgentSession, leafId: string, log: Logger): void => {
+  setCheckpoint(session, leafId);
+  injectTangentFocus(session, log);
 };

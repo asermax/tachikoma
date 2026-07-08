@@ -2,15 +2,15 @@ import { Type } from "typebox";
 
 import { checkpointHasTangent, getLeafId } from "../../agent/session-tree.ts";
 import type { Delivery } from "../../channels/types.ts";
-import type { InboundMessage } from "../../domain/message.ts";
+import type { DecisionHeader, InboundMessage } from "../../domain/message.ts";
 import { SESSION_TOPIC_CHANGED_EVENT, type TopicChangedReason } from "../../events.ts";
-import { type BranchRecord, recordLastAutoDecision, setCheckpoint } from "../../sessions/trunk.ts";
+import { type BranchRecord, recordLastAutoDecision } from "../../sessions/trunk.ts";
 import { defineExtension } from "../api.ts";
 import { createAskBranchFactory } from "./ask-branch.ts";
 import { classifyShift } from "./classifier.ts";
 import { collapseCurrentTopic, summarizeCurrentTangent } from "./collapse.ts";
 import { handleBackCommand, handleCheckpointCommand } from "./commands.ts";
-import { injectTangentFocus } from "./focus.ts";
+import { setCheckpointAndFocus } from "./focus.ts";
 import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
 import { handleRollbackCommand, type RollbackDeps } from "./rollback.ts";
 
@@ -21,6 +21,18 @@ interface BoundaryConfig {
   /** Kill-switch for the automatic `summarize-to-checkpoint` classifier result (DLT-181, KD8). */
   autoSummarizeToCheckpoint: boolean;
 }
+
+/**
+ * The "📌 Checkpoint set" decision header shared by every automatic checkpoint site. The note is fixed;
+ * only `rollbackable` varies (the classifier's auto `set-checkpoint` is a `/rollback` target; the
+ * system-origin side-task checkpoint is not — system turns aren't user messages for the immediacy
+ * counter). One source of truth keeps the wording from drifting between sites.
+ */
+const checkpointSetHeader = (rollbackable: boolean): DecisionHeader => ({
+  label: "📌 Checkpoint set",
+  note: "A side task started — the main line is parked here.",
+  rollbackable,
+});
 
 /**
  * Conversation boundaries on the daily trunk. On each idle user message a shadow-fork
@@ -81,38 +93,30 @@ export default defineExtension<BoundaryConfig>({
       // Turns with no live trunk never shift topics — they append with detection skipped (R13).
       if (trunk == null) return next();
 
-      // System-origin side tasks (queue digests, fired session tasks) begin a new interactive turn but
-      // historically bypassed classification via `boundary: "skip"` (R15) and were absorbed into the
-      // main branch. When a main line is parkable, checkpoint it so the side task runs as a tangent
-      // instead of diluting the main line (issue-411). Replays are excluded — rollback already applied
-      // the correct framing (a checkpoint in Case B, a topic in Case A) — so the rule keys on the
-      // `replay` marker the coordinator stamps. Gated on `autoSetCheckpoint` (the same kill-switch as
-      // the classifier's auto set-checkpoint) and the parkable-main-line guards. Not a `/rollback`
-      // target: system turns are not user messages for the immediacy counter, so recovery is `/back` or
-      // the existing `summarize-to-checkpoint`.
-      if (
-        message.metadata.boundary === "skip" &&
-        message.metadata.origin === "system" &&
-        message.metadata.replay !== true &&
-        trunk.checkpointId == null &&
-        trunk.hasAssistantTurnSinceBase &&
-        autoSetCheckpoint
-      ) {
-        const leaf = getLeafId(trunk.session);
-        if (leaf != null) {
-          setCheckpoint(trunk.session, leaf);
-          injectTangentFocus(trunk.session, app.log);
-          message.metadata.decisionHeader = {
-            label: "📌 Checkpoint set",
-            note: "A side task started — the main line is parked here.",
-            rollbackable: false,
-          };
+      // A `boundary: "skip"` message appends with classification skipped. System-origin side tasks
+      // (queue digests, fired session tasks) are the exception: they begin a new interactive turn that
+      // historically got absorbed into the main branch. When the main line is parkable, checkpoint it so
+      // the side task runs as a tangent instead of diluting the main line (issue-411). Replays are
+      // excluded — rollback already applied the correct framing (a checkpoint in Case B, a topic in Case
+      // A) — so the rule keys on the `replay` marker the coordinator stamps. Gated on `autoSetCheckpoint`
+      // (the same kill-switch as the classifier's auto set-checkpoint) and the parkable-main-line guards.
+      if (message.metadata.boundary === "skip") {
+        if (
+          message.metadata.origin === "system" &&
+          message.metadata.replay !== true &&
+          trunk.checkpointId == null &&
+          trunk.hasAssistantTurnSinceBase &&
+          autoSetCheckpoint
+        ) {
+          const leaf = getLeafId(trunk.session);
+          if (leaf != null) {
+            setCheckpointAndFocus(trunk.session, leaf, app.log);
+            message.metadata.decisionHeader = checkpointSetHeader(false);
+          }
         }
-      }
 
-      // All other skip messages (non-system skips, replays, an already-parked or non-parkable trunk,
-      // or the kill-switch off) keep the original fast-path: append with detection skipped.
-      if (message.metadata.boundary === "skip") return next();
+        return next();
+      }
 
       // Manual checkpoint commands (DLT-181): detected before any branching logic. Each marks the
       // message handled and acks immediately (no agent turn, no stream — the decision label is baked
@@ -281,13 +285,8 @@ export default defineExtension<BoundaryConfig>({
             // Capture the leaf BEFORE setCheckpoint: its boomerang append advances the leaf past the
             // checkpoint message, and preDecisionLeafId must name the tip before the triggering exchange.
             recordLastAutoDecision(trunk.session, "set-checkpoint", leaf);
-            setCheckpoint(trunk.session, leaf);
-            injectTangentFocus(trunk.session, app.log);
-            message.metadata.decisionHeader = {
-              label: "📌 Checkpoint set",
-              note: "A side topic started — the main line is parked here.",
-              rollbackable: true,
-            };
+            setCheckpointAndFocus(trunk.session, leaf, app.log);
+            message.metadata.decisionHeader = checkpointSetHeader(true);
           }
         }
 
