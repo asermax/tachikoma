@@ -1,3 +1,11 @@
+# [3.54.0](https://github.com/asermax/tachikoma/compare/v3.53.0...v3.54.0) (2026-07-08)
+
+
+### Features
+
+* **boundary:** broaden set-checkpoint to recognize interleaved side tasks ([86af65b](https://github.com/asermax/tachikoma/commit/86af65bc8500bc4e35299d0968560d70375f307f))
+* **boundary:** park system side tasks and inject tangent focus ([1b4b6b2](https://github.com/asermax/tachikoma/commit/1b4b6b2bfdae7cb747e67296f486ebe23ac09b0b))
+
 # [3.53.0](https://github.com/asermax/tachikoma/compare/v3.52.1...v3.53.0) (2026-07-07)
 
 
