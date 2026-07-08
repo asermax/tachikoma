@@ -1,3 +1,10 @@
+# [3.55.0](https://github.com/asermax/tachikoma/compare/v3.54.0...v3.55.0) (2026-07-08)
+
+
+### Features
+
+* **skills:** auto-grant skill-agent extensionTools from frontmatter ([8c9c69b](https://github.com/asermax/tachikoma/commit/8c9c69b169086ed85d163df741e4b1a440468537))
+
 # [3.54.0](https://github.com/asermax/tachikoma/compare/v3.53.0...v3.54.0) (2026-07-08)
 
 
