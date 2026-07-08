@@ -57,16 +57,7 @@ export const resolveTools = (
 export const resolveExtensionTools = (
   declared: string[] | null,
   requested: string[] | undefined,
-): string[] => {
-  const merged: string[] = [];
-  const seen = new Set<string>();
-  for (const name of [...(declared ?? []), ...(requested ?? [])]) {
-    if (seen.has(name)) continue;
-    seen.add(name);
-    merged.push(name);
-  }
-  return merged;
-};
+): string[] => [...new Set([...(declared ?? []), ...(requested ?? [])])];
 
 const DelegateParams = Type.Object({
   agent: Type.String({
