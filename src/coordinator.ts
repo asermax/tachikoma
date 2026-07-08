@@ -355,6 +355,10 @@ export class Coordinator {
       metadata: {
         origin: "system",
         boundary: "skip",
+        // Mark replays so the boundary middleware's system-origin checkpoint rule (issue-411) excludes
+        // them: a replay's framing is already applied (a checkpoint in rollback Case B, a topic in Case
+        // A), so it must not be re-checkpointed.
+        replay: true,
         ...(header != null ? { decisionHeader: header } : {}),
       },
     });

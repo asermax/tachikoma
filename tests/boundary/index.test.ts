@@ -8,6 +8,7 @@ import type {
   InboundMiddleware,
   TrunkInbound,
 } from "../../src/extensions/api.ts";
+import { TANGENT_FOCUS_CUSTOM_TYPE } from "../../src/extensions/boundary/focus.ts";
 import boundary from "../../src/extensions/boundary/index.ts";
 import { BOOMERANG_STATE } from "../../src/sessions/trunk.ts";
 
@@ -171,7 +172,98 @@ describe("boundary middleware", () => {
     expect(setup().registeredFactory).toBe(true);
   });
 
-  it("skips detection for system-origin (boundary:skip) messages", async () => {
+  it("checkpoints a system-origin side task (boundary:skip, origin:system) when a main line is parkable", async () => {
+    const { middleware, shadowFork } = setup();
+    const trunk = makeTrunk({ checkpointId: null, hasAssistantTurnSinceBase: true });
+    const next = vi.fn();
+    const message = textMessage("test", "📋 Daily review digest");
+    message.metadata.boundary = "skip";
+    message.metadata.origin = "system";
+
+    await middleware(message, context(trunk), next);
+
+    // No classification — system-origin turns never reach the classifier.
+    expect(shadowFork).not.toHaveBeenCalled();
+    // The main line is parked: a checkpoint is set…
+    expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalledWith(
+      BOOMERANG_STATE,
+      expect.objectContaining({ checkpointId: "leaf" }),
+    );
+    // …and the tangent-focus instruction is injected for the side task.
+    expect(trunk.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledWith(
+      TANGENT_FOCUS_CUSTOM_TYPE,
+      expect.any(String),
+      false,
+      undefined,
+    );
+    // Informational header (not a /rollback target — system turns aren't user messages for the counter).
+    expect(message.metadata.decisionHeader).toMatchObject({
+      label: "📌 Checkpoint set",
+      rollbackable: false,
+    });
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not checkpoint a system-origin side task that is a replay (framing already applied)", async () => {
+    const { middleware } = setup();
+    const trunk = makeTrunk({ checkpointId: null, hasAssistantTurnSinceBase: true });
+    const next = vi.fn();
+    const message = textMessage("test", "replayed triggering message");
+    message.metadata.boundary = "skip";
+    message.metadata.origin = "system";
+    message.metadata.replay = true;
+
+    await middleware(message, context(trunk), next);
+
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+    expect(trunk.session.sessionManager.appendCustomMessageEntry).not.toHaveBeenCalled();
+    expect(message.metadata.decisionHeader).toBeUndefined();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not checkpoint a system-origin side task when autoSetCheckpoint is off (kill-switch)", async () => {
+    const { middleware } = setup({ autoSetCheckpoint: false });
+    const trunk = makeTrunk({ checkpointId: null, hasAssistantTurnSinceBase: true });
+    const next = vi.fn();
+    const message = textMessage("test", "digest");
+    message.metadata.boundary = "skip";
+    message.metadata.origin = "system";
+
+    await middleware(message, context(trunk), next);
+
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not checkpoint a system-origin side task when the main line is not parkable", async () => {
+    const { middleware } = setup();
+    const trunk = makeTrunk({ checkpointId: null, hasAssistantTurnSinceBase: false });
+    const next = vi.fn();
+    const message = textMessage("test", "digest");
+    message.metadata.boundary = "skip";
+    message.metadata.origin = "system";
+
+    await middleware(message, context(trunk), next);
+
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not checkpoint a system-origin side task when a checkpoint is already active", async () => {
+    const { middleware } = setup();
+    const trunk = makeTrunk({ checkpointId: "prior", hasAssistantTurnSinceBase: true });
+    const next = vi.fn();
+    const message = textMessage("test", "another tangent turn");
+    message.metadata.boundary = "skip";
+    message.metadata.origin = "system";
+
+    await middleware(message, context(trunk), next);
+
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips detection for a non-system skip message (appends with no checkpoint, no classify)", async () => {
     const { middleware, shadowFork } = setup();
     const trunk = makeTrunk();
     const next = vi.fn();
@@ -181,6 +273,7 @@ describe("boundary middleware", () => {
     await middleware(message, context(trunk), next);
 
     expect(shadowFork).not.toHaveBeenCalled();
+    expect(trunk.session.sessionManager.appendCustomEntry).not.toHaveBeenCalled();
     expect(next).toHaveBeenCalledTimes(1);
   });
 
@@ -423,6 +516,13 @@ describe("boundary middleware", () => {
     expect(shadowFork).not.toHaveBeenCalled();
     // A checkpoint was written and the ack carries the label.
     expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalled();
+    // The tangent-focus instruction is injected at checkpoint-set time (issue-411).
+    expect(trunk.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledWith(
+      TANGENT_FOCUS_CUSTOM_TYPE,
+      expect.any(String),
+      false,
+      undefined,
+    );
     expect(deliver).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("📌 Checkpoint set"),
@@ -496,6 +596,13 @@ describe("boundary middleware", () => {
     expect(trunk.session.sessionManager.appendCustomEntry).toHaveBeenCalledWith(
       BOOMERANG_STATE,
       expect.objectContaining({ checkpointId: "leaf" }),
+    );
+    // The tangent-focus instruction is injected so the side task gets full focus (issue-411).
+    expect(trunk.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledWith(
+      TANGENT_FOCUS_CUSTOM_TYPE,
+      expect.any(String),
+      false,
+      undefined,
     );
     // The streamed response carries the turn-scoped decision header (rollback target).
     expect(message.metadata.decisionHeader).toMatchObject({

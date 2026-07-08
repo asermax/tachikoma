@@ -6,6 +6,7 @@ import type { Logger } from "../../log.ts";
 import { setCheckpoint } from "../../sessions/trunk.ts";
 import type { TrunkInbound } from "../api.ts";
 import { summarizeCurrentTangent } from "./collapse.ts";
+import { injectTangentFocus } from "./focus.ts";
 
 /**
  * Manual checkpoint commands (`/checkpoint`, `/back`) for DLT-181. Each is detected at the top of the
@@ -63,6 +64,7 @@ export const handleCheckpointCommand = (
   }
 
   setCheckpoint(trunk.session, leafId);
+  injectTangentFocus(trunk.session, deps.log);
   deps.deliver({ text: "📌 Checkpoint set — main line parked here.", immediate: true });
 
   deps.log.info({ checkpointId: leafId }, "checkpoint set (/checkpoint)");

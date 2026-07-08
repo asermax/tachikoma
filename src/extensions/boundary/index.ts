@@ -10,6 +10,7 @@ import { createAskBranchFactory } from "./ask-branch.ts";
 import { classifyShift } from "./classifier.ts";
 import { collapseCurrentTopic, summarizeCurrentTangent } from "./collapse.ts";
 import { handleBackCommand, handleCheckpointCommand } from "./commands.ts";
+import { injectTangentFocus } from "./focus.ts";
 import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
 import { handleRollbackCommand, type RollbackDeps } from "./rollback.ts";
 
@@ -77,9 +78,41 @@ export default defineExtension<BoundaryConfig>({
     app.inbound.use(async (message, context, next) => {
       const trunk = context.trunk;
 
-      // System-origin injections (session tasks, notices) and turns with no live trunk never shift
-      // topics — they append to the current branch with detection skipped (R13).
-      if (message.metadata.boundary === "skip" || trunk == null) return next();
+      // Turns with no live trunk never shift topics — they append with detection skipped (R13).
+      if (trunk == null) return next();
+
+      // System-origin side tasks (queue digests, fired session tasks) begin a new interactive turn but
+      // historically bypassed classification via `boundary: "skip"` (R15) and were absorbed into the
+      // main branch. When a main line is parkable, checkpoint it so the side task runs as a tangent
+      // instead of diluting the main line (issue-411). Replays are excluded — rollback already applied
+      // the correct framing (a checkpoint in Case B, a topic in Case A) — so the rule keys on the
+      // `replay` marker the coordinator stamps. Gated on `autoSetCheckpoint` (the same kill-switch as
+      // the classifier's auto set-checkpoint) and the parkable-main-line guards. Not a `/rollback`
+      // target: system turns are not user messages for the immediacy counter, so recovery is `/back` or
+      // the existing `summarize-to-checkpoint`.
+      if (
+        message.metadata.boundary === "skip" &&
+        message.metadata.origin === "system" &&
+        message.metadata.replay !== true &&
+        trunk.checkpointId == null &&
+        trunk.hasAssistantTurnSinceBase &&
+        autoSetCheckpoint
+      ) {
+        const leaf = getLeafId(trunk.session);
+        if (leaf != null) {
+          setCheckpoint(trunk.session, leaf);
+          injectTangentFocus(trunk.session, app.log);
+          message.metadata.decisionHeader = {
+            label: "📌 Checkpoint set",
+            note: "A side task started — the main line is parked here.",
+            rollbackable: false,
+          };
+        }
+      }
+
+      // All other skip messages (non-system skips, replays, an already-parked or non-parkable trunk,
+      // or the kill-switch off) keep the original fast-path: append with detection skipped.
+      if (message.metadata.boundary === "skip") return next();
 
       // Manual checkpoint commands (DLT-181): detected before any branching logic. Each marks the
       // message handled and acks immediately (no agent turn, no stream — the decision label is baked
@@ -249,6 +282,7 @@ export default defineExtension<BoundaryConfig>({
             // checkpoint message, and preDecisionLeafId must name the tip before the triggering exchange.
             recordLastAutoDecision(trunk.session, "set-checkpoint", leaf);
             setCheckpoint(trunk.session, leaf);
+            injectTangentFocus(trunk.session, app.log);
             message.metadata.decisionHeader = {
               label: "📌 Checkpoint set",
               note: "A side topic started — the main line is parked here.",

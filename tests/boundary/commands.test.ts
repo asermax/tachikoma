@@ -8,6 +8,7 @@ import {
   handleBackCommand,
   handleCheckpointCommand,
 } from "../../src/extensions/boundary/commands.ts";
+import { TANGENT_FOCUS_CUSTOM_TYPE } from "../../src/extensions/boundary/focus.ts";
 import type { Logger } from "../../src/log.ts";
 import {
   getAllBranchRecords,
@@ -120,6 +121,25 @@ const makeSession = (initial: SessionEntry[] = []): FakeSession => {
       );
       return id;
     }),
+    appendCustomMessageEntry: vi.fn(
+      (customType: string, content: string, display: boolean, details?: unknown) => {
+        const id = nextId("cm");
+        appendAt(
+          {
+            type: "custom_message",
+            id,
+            parentId: null,
+            timestamp: "2026-06-15T00:00:00Z",
+            customType,
+            content,
+            display,
+            details,
+          } as unknown as SessionEntry,
+          leafId,
+        );
+        return id;
+      },
+    ),
   };
 
   return {
@@ -168,6 +188,15 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
     expect(handled).toBe(true);
     expect(message.metadata.handled).toBe(true);
     expect(readBoomerangState(fake.session)?.checkpointId).toBe("m2");
+    // The tangent-focus instruction is injected at checkpoint-set time (issue-411), as a hidden
+    // custom_message that rides the tangent. Its type is custom_message (not message), so it does not
+    // count as a tangent turn (empty-tangent guard) nor appear in the tangent summary.
+    expect(fake.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledWith(
+      TANGENT_FOCUS_CUSTOM_TYPE,
+      expect.any(String),
+      false,
+      undefined,
+    );
     expect(deliverFn).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("📌 Checkpoint set"),
