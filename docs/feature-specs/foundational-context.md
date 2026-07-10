@@ -4,7 +4,7 @@
 
 ## Overview
 
-The `context` extension (`src/extensions/context/`) supplies the agent's identity from workspace-root files: SOUL.md (personality) and USER.md (durable user knowledge) are **appended to the system prompt** through `provideContext`, layered on top of the core-owned main-session base prompt (`buildMainSystemPrompt` — identity + shared guidance + workspace root, installed by `AgentManager`, see [DES-005](../design/DES-005-base-prompt-ownership.md)). AGENTS.md is discovered natively by pi from the workspace root and needs no handling in the extension.
+The `context` extension (`src/extensions/context/`) supplies the agent's identity from workspace-root files: SOUL.md (personality) and USER.md (durable user knowledge) are **appended to the system prompt** through `provideContext`, layered on top of the core-owned main-session base prompt (`buildMainSystemPrompt` — identity + shared guidance + workspace root, installed by `AgentManager`, see [DES-005](../design/DES-005-base-prompt-ownership.md)). AGENTS.md is discovered natively by pi from the workspace root and needs no handling in the extension. Separately, the current date/time in the configured timezone is injected as a hidden, persisted message refreshed at most once per 30 minutes, giving the agent time-of-day awareness that the date-only base-prompt header and pi's per-turn date footer do not provide.
 
 A companion `core-context` post-processor (`src/extensions/context/processor.ts`, registered by the context extension's own setup) analyzes each closed conversation and conservatively updates the three files, staging ambiguous signals in a pending-signals file so recurring patterns can be promoted later. Separately, a periodic foundational-context maintenance tick owned by the [memory](./memory.md) extension (`memory-context-maintenance`) does a cleanup-only whole-file pass over the three files, pruning staleness and bloat without adding new content.
 
@@ -29,6 +29,7 @@ A companion `core-context` post-processor (`src/extensions/context/processor.ts`
 | R9 | The fork is hard-limited to file tools (`read`, `grep`, `find`, `ls`, `edit`, `write`) on the `processor` tier — the allowlist also filters out the conversation's messaging/notification/task tools — and a silent-background directive instructs it to modify only the three context files and the pending signals file, verifying workspace claims before writing them; it may read anywhere in the workspace |
 | R10 | The processor registration lives in the context extension's own setup — it is independent of the memory extension's enabled state |
 | R11 | A periodic foundational-context maintenance tick (cleanup-only) reviews the three files for staleness, redundancy, overlap, and size on a staggered cron; it adds no new content, is especially conservative for SOUL.md, and is owned by the memory extension's maintenance wiring — see [memory](./memory.md) R20a for the full contract |
+| R12 | The current date/time in `config.scheduler.timezone` is injected as foundational situational context — a hidden, persisted message (`customType: "current-time"`) refreshed at most once per 30 minutes via `provideDebouncedContext` — so the agent has time-of-day awareness in the configured zone. Neither the date-only `Current date:` header baked into the base prompt nor pi's per-turn date footer (process-local timezone, date-only) provides the time |
 
 ## Behaviors
 
@@ -42,6 +43,14 @@ The extension's bootstrap hook (`load-context-files`) reads or creates the two f
 - Given a non-ENOENT read error, when bootstrap runs, then the error propagates and startup aborts
 - Given the agent manager opens a conversational session, then the system prompt contains the core base prompt (identity, shared operational/interactive guidance including delegate-awareness, workspace root path) replacing pi's coding prompt, followed by the appended SOUL.md then USER.md content
 - Given SOUL.md or USER.md is edited while the process runs, when the next session opens, then the prompt reflects the edited file contents (each is re-read from disk per new session; the startup snapshot is only the fallback when a read fails); AGENTS.md is likewise re-read natively by pi on each session open
+
+### Current date/time injection (R12)
+
+A third `provideContext` factory injects the current date/time in `config.scheduler.timezone` as a hidden, persisted message (`customType: "current-time"`), refreshed at most once per 30 minutes via the `provideDebouncedContext` construct (see [agent-integration](./agent-integration.md)).
+
+**Acceptance Criteria**:
+- Given a conversational session, when the first agent turn starts, then a hidden `current-time` message carrying a timezone-aware timestamp (`formatTimestamp`) is injected (`display: false`)
+- Given an injection occurred within the last 30 minutes, when a subsequent turn starts within the window, then no new `current-time` message is injected; the next turn at/after the 30-minute boundary re-injects with a freshly resolved timestamp
 
 ### Core Context Update Run (R4, R5, R9, R10)
 

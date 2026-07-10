@@ -1,7 +1,12 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { provideContext } from "../../src/agent/system-prompt-section.ts";
+import {
+  DEFAULT_CONTEXT_REFRESH_MS,
+  dueForInjection,
+  provideContext,
+  provideDebouncedContext,
+} from "../../src/agent/system-prompt-section.ts";
 
 type Handler = (event?: unknown, ctx?: unknown) => unknown;
 
@@ -98,5 +103,119 @@ describe("provideContext", () => {
         message: { customType: "memories", content: "memory layout", display: false },
       });
     });
+  });
+
+  describe("debounced message mode (customType + debounceMs)", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("injects on the first turn, then suppresses within the window", async () => {
+      vi.setSystemTime(new Date("2026-07-10T12:00:00Z"));
+      const driver = drive(provideDebouncedContext(() => "v1", "my-ctx", 30 * 60 * 1000));
+
+      expect(await driver.beforeAgentStart()).toEqual({
+        message: { customType: "my-ctx", content: "v1", display: false },
+      });
+
+      // T+29 min — still within the 30-min window, suppressed.
+      vi.setSystemTime(new Date("2026-07-10T12:29:00Z"));
+      expect(await driver.beforeAgentStart()).toBeUndefined();
+    });
+
+    it("re-injects at the window boundary with content re-resolved from provide", async () => {
+      vi.setSystemTime(new Date("2026-07-10T12:00:00Z"));
+      let value = "first";
+      const driver = drive(provideDebouncedContext(() => value, "my-ctx", 30 * 60 * 1000));
+
+      expect(await driver.beforeAgentStart()).toEqual({
+        message: { customType: "my-ctx", content: "first", display: false },
+      });
+
+      // Change the live value; within the window it is NOT re-read.
+      value = "second";
+      vi.setSystemTime(new Date("2026-07-10T12:29:00Z"));
+      expect(await driver.beforeAgentStart()).toBeUndefined();
+
+      // At the boundary the provider re-resolves, carrying the new value.
+      vi.setSystemTime(new Date("2026-07-10T12:30:00Z"));
+      expect(await driver.beforeAgentStart()).toEqual({
+        message: { customType: "my-ctx", content: "second", display: false },
+      });
+    });
+
+    it("does not consume the window when content is empty", async () => {
+      vi.setSystemTime(new Date("2026-07-10T12:00:00Z"));
+      let value = "   ";
+      const driver = drive(provideDebouncedContext(() => value, "my-ctx", 30 * 60 * 1000));
+
+      // Empty → contributes nothing and stays eligible.
+      expect(await driver.beforeAgentStart()).toBeUndefined();
+
+      // One minute later (well within what would be the window) — non-empty injects now.
+      value = "real";
+      vi.setSystemTime(new Date("2026-07-10T12:01:00Z"));
+      expect(await driver.beforeAgentStart()).toEqual({
+        message: { customType: "my-ctx", content: "real", display: false },
+      });
+    });
+
+    it("works with a static-string provider", async () => {
+      vi.setSystemTime(new Date("2026-07-10T12:00:00Z"));
+      const driver = drive(provideDebouncedContext("static guidance", "my-ctx", 30 * 60 * 1000));
+
+      expect(await driver.beforeAgentStart()).toEqual({
+        message: { customType: "my-ctx", content: "static guidance", display: false },
+      });
+
+      vi.setSystemTime(new Date("2026-07-10T12:10:00Z"));
+      expect(await driver.beforeAgentStart()).toBeUndefined();
+
+      // After the window the same static content is re-injected.
+      vi.setSystemTime(new Date("2026-07-10T12:40:00Z"));
+      expect(await driver.beforeAgentStart()).toEqual({
+        message: { customType: "my-ctx", content: "static guidance", display: false },
+      });
+    });
+
+    it("defaults the window to 30 minutes (DEFAULT_CONTEXT_REFRESH_MS)", async () => {
+      vi.setSystemTime(new Date("2026-07-10T12:00:00Z"));
+      const driver = drive(provideDebouncedContext(() => "v", "my-ctx"));
+
+      expect(DEFAULT_CONTEXT_REFRESH_MS).toBe(30 * 60 * 1000);
+      expect(await driver.beforeAgentStart()).toEqual({
+        message: { customType: "my-ctx", content: "v", display: false },
+      });
+
+      // T+29 min still suppressed with the default window.
+      vi.setSystemTime(new Date("2026-07-10T12:29:00Z"));
+      expect(await driver.beforeAgentStart()).toBeUndefined();
+
+      // T+30 min (the default boundary) re-injects.
+      vi.setSystemTime(new Date("2026-07-10T12:30:00Z"));
+      expect(await driver.beforeAgentStart()).toEqual({
+        message: { customType: "my-ctx", content: "v", display: false },
+      });
+    });
+  });
+});
+
+describe("dueForInjection (pure gate)", () => {
+  const window = 30 * 60 * 1000;
+  const t = 1_000_000;
+
+  it("is due when never injected (null)", () => {
+    expect(dueForInjection(null, t, window)).toBe(true);
+  });
+
+  it("is not due within the window", () => {
+    expect(dueForInjection(t, t + 29 * 60 * 1000, window)).toBe(false);
+  });
+
+  it("is due at exactly the boundary (>=)", () => {
+    expect(dueForInjection(t, t + 30 * 60 * 1000, window)).toBe(true);
+  });
+
+  it("is due after the boundary", () => {
+    expect(dueForInjection(t, t + 45 * 60 * 1000, window)).toBe(true);
   });
 });

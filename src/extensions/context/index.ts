@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 
-import { provideContext } from "../../agent/system-prompt-section.ts";
+import { provideContext, provideDebouncedContext } from "../../agent/system-prompt-section.ts";
 import type { Logger } from "../../log.ts";
+import { formatTimestamp } from "../../util/dates.ts";
 import { defineExtension } from "../api.ts";
 import { createCoreContextProcessor } from "./processor.ts";
 
@@ -39,7 +40,9 @@ const readOrCreate = async (path: string, template: string, log: Logger): Promis
  * Foundational context: SOUL.md (personality) and USER.md (durable user knowledge) are appended to
  * the agent's system prompt — layered on top of the core base prompt (identity + hygiene + workspace
  * root, owned by AgentManager). AGENTS.md is discovered natively by pi from the workspace root, so it
- * needs no handling here.
+ * needs no handling here. The current date/time (in the configured timezone) is also injected as a
+ * hidden, persisted message refreshed at most once per 30 minutes, so the agent always knows roughly
+ * what time it is without re-injecting on every turn.
  */
 export default defineExtension({
   name: "context",
@@ -85,5 +88,14 @@ export default defineExtension({
 
     app.agent.use(provideContext(() => fresh(app.workspace.resolve("SOUL.md"), soul)));
     app.agent.use(provideContext(() => fresh(app.workspace.resolve("USER.md"), user)));
+
+    // Current date/time as foundational situational context, re-injected at most once per 30 min.
+    // The provider reads the clock at injection time, so each refresh carries a fresh timestamp.
+    app.agent.use(
+      provideDebouncedContext(
+        () => `Current date/time: ${formatTimestamp(new Date(), app.config.scheduler.timezone)}`,
+        "current-time",
+      ),
+    );
   },
 });

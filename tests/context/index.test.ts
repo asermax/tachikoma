@@ -15,11 +15,16 @@ afterEach(async () => {
   }
 });
 
-const setup = async () => {
+type AgentUseFactory = (pi: {
+  on: (event: string, handler: (event?: unknown, ctx?: unknown) => unknown) => void;
+}) => void;
+
+const setup = async (timezone?: string) => {
   const workspaceRoot = await mkdtemp(join(tmpdir(), "tachi-context-ext-"));
   tempDirs.push(workspaceRoot);
 
   const registerProcessor = vi.fn();
+  const use = vi.fn();
 
   await context.setup({
     log: { info: vi.fn(), warn: vi.fn(), debug: vi.fn() },
@@ -28,13 +33,13 @@ const setup = async () => {
       dataDir: join(workspaceRoot, ".tachikoma"),
       resolve: (...parts: string[]) => join(workspaceRoot, ...parts),
     },
-    config: { scheduler: {} },
+    config: { scheduler: timezone ? { timezone } : {} },
     bootstrap: vi.fn(),
-    agent: { use: vi.fn(), systemPrompt: vi.fn(), forkAndContinue: vi.fn() },
+    agent: { use, systemPrompt: vi.fn(), forkAndContinue: vi.fn() },
     sessions: { registerProcessor },
   } as unknown as AppContext);
 
-  return { registerProcessor };
+  return { registerProcessor, use };
 };
 
 describe("context extension setup", () => {
@@ -46,5 +51,40 @@ describe("context extension setup", () => {
     const processor = registerProcessor.mock.calls[0]?.[0];
     expect(processor.name).toBe("core-context");
     expect(processor.phase).toBe("preFinalize");
+  });
+
+  it("injects the current date/time as a debounced hidden message in the configured timezone", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-10T12:00:00Z"));
+    try {
+      const { use } = await setup("America/New_York");
+
+      // SOUL, USER, then the current-time provider.
+      expect(use).toHaveBeenCalledTimes(3);
+      const factory = use.mock.calls[2]?.[0] as AgentUseFactory;
+
+      let handler: ((event?: unknown, ctx?: unknown) => unknown) | undefined;
+      factory({
+        on: (_event, h) => {
+          handler = h;
+        },
+      });
+
+      const result = (await handler?.({ systemPrompt: "BASE" }, {})) as
+        | { message: { customType: string; content: string; display: boolean } }
+        | undefined;
+
+      expect(result).toEqual({
+        message: {
+          customType: "current-time",
+          // 2026-07-10T12:00:00Z in America/New_York (EDT, UTC-4) is 08:00; the zone abbreviation
+          // is left open since ICU may render it differently across builds.
+          content: expect.stringMatching(/^Current date\/time: 2026-07-10 08:00 \S+$/),
+          display: false,
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
