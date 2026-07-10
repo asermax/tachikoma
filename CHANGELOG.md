@@ -1,3 +1,15 @@
+# [3.56.0](https://github.com/asermax/tachikoma/compare/v3.55.0...v3.56.0) (2026-07-10)
+
+
+### Bug Fixes
+
+* **notifications:** replace NUL byte in dedup key with space ([e919993](https://github.com/asermax/tachikoma/commit/e919993b17d7dffdfe33b8826c15c96c8bd406bc))
+
+
+### Features
+
+* **dates:** render user-facing dates in configured timezone ([107b4df](https://github.com/asermax/tachikoma/commit/107b4df70aeb44a5fb64108de87960a2882ba9e8))
+
 # [3.55.0](https://github.com/asermax/tachikoma/compare/v3.54.0...v3.55.0) (2026-07-08)
 
 
