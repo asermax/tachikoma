@@ -136,7 +136,7 @@ describe("classifyShift", () => {
     expect(prompt).not.toContain("self-contained side task");
   });
 
-  it("recognizes a return to the main-line topic in the summarize-to-checkpoint prompt (e.g. 'going back to…')", async () => {
+  it("recognizes a return to the main line in the summarize-to-checkpoint prompt (explicit, topic-match, or orphan that fits the main line)", async () => {
     const fork = forkReturning('{"decision":"continue"}');
     const shadowFork = vi.fn().mockResolvedValue(fork);
     const deps = makeDeps({ shadowFork });
@@ -144,11 +144,15 @@ describe("classifyShift", () => {
     await classifyShift(deps, { ...input, checkpointActive: true });
 
     const prompt = fork.prompt.mock.calls[0]?.[0] as string;
-    // The return signal is main-line-topic alignment + explicit "going back" phrasing — the reframe
-    // that makes summarize-to-checkpoint fire for a message resuming the pre-checkpoint conversation,
-    // not only when the side task is explicitly finished.
+    // The return signal covers three cases (issue-419): an explicit "going back" reference, a clear
+    // main-line topic match, and — the common case the broadening adds — a message that does not
+    // continue the side task but fits the main line, even without naming it. The prompt leans toward
+    // summarize-to-checkpoint over continue in that case, while still preferring continue when unsure.
     expect(prompt).toContain("returns to that main line");
     expect(prompt).toContain("going back to the report");
     expect(prompt).toContain("matches the main-line topic");
+    expect(prompt).toContain("does NOT follow on from the side task's last turn");
+    expect(prompt).toContain("fits the main line");
+    expect(prompt).toContain("lean toward");
   });
 });

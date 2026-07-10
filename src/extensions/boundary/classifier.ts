@@ -39,7 +39,9 @@ export interface ShiftInput {
  * checkpoint results (DLT-181) drive the side-task auto-flow: `set-checkpoint` parks the main line
  * when a self-contained, unrelated side task begins (e.g. an expense logged mid-workflow, a quick
  * note/reminder capture), and `summarize-to-checkpoint` folds that side task back when the
- * conversation returns to the main line.
+ * conversation returns to the main line — explicitly (a "going back" reference or a clear topic
+ * match), or implicitly when the side task is done and the next message does not continue it but
+ * fits the main line (issue-419).
  */
 export type ShiftDecision = "continue" | "shift" | "set-checkpoint" | "summarize-to-checkpoint";
 
@@ -63,12 +65,17 @@ const buildClassifierPrompt = (message: string, checkpointActive: boolean): stri
       ? [
           '- "summarize-to-checkpoint": a checkpoint is currently active (a side task is in flight). The',
           "  main line is the conversation that came before this side task. Choose this when the message",
-          "  clearly returns to that main line — either it explicitly references going back to or resuming",
-          '  what was discussed before the side task (e.g. "going back to the report"), or its topic clearly',
-          "  matches the main-line topic. This is a RETURN to an existing conversation, not a new topic, so do",
-          '  not choose "shift" for it. Keep choosing "continue" for further side-task turns, and choose',
-          '  "shift" only for a genuinely new topic that is neither the side task nor the main line. When',
-          '  unsure whether the message returns to the main line, prefer "continue".',
+          "  returns to that main line — either it explicitly references going back to or resuming what was",
+          '  discussed before the side task (e.g. "going back to the report"), or its topic',
+          "  clearly matches the main-line topic. It is ALSO a return — and the most common case — when the",
+          "  message does NOT follow on from the side task's last turn (the side task looks done or set",
+          "  aside) and would read naturally as the next step of the main-line conversation, even without",
+          "  naming it. When the side task is done and the message fits the main line, lean toward",
+          '  "summarize-to-checkpoint" rather than leaving it on "continue". This is a RETURN to an existing',
+          '  conversation, not a new topic, so do not choose "shift" for it. Keep choosing "continue" for',
+          '  further side-task turns, and choose "shift" only for a genuinely new topic that is neither the',
+          "  side task nor the main line. When genuinely unsure whether the message returns to the main",
+          '  line, prefer "continue".',
         ]
       : [
           '- "set-checkpoint": the message begins a self-contained side task that is distinct from and',
