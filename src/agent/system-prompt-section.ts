@@ -47,9 +47,7 @@ export const dueForInjection = (
  *    session**; pass `options.debounceMs` (`> 0`) to instead re-inject on a refresh window — the
  *    first turn injects, further turns within the window are suppressed, and the next turn at/after
  *    the boundary re-injects with content re-resolved from `provide` (a leading-edge refresh-rate
- *    limiter, distinct from DES-007's trailing-edge coalescing debounce). The window state lives in
- *    the factory closure, which is recreated per session, so it spans a trunk's lifetime and resets
- *    on a new trunk.
+ *    limiter, distinct from DES-007's trailing-edge coalescing debounce).
  *
  * Empty content contributes nothing and stays eligible for a later turn (it does not consume the
  * debounce window). Content is never XML-wrapped.
@@ -66,31 +64,24 @@ export const provideContext =
     options?: ProvideContextOptions,
   ): ExtensionFactory =>
   (pi) => {
-    const debounceMs = options?.debounceMs;
-    const debounced = customType != null && debounceMs != null && debounceMs > 0;
+    // Resolve the refresh window once: a positive `debounceMs` re-injects after that many ms;
+    // anything else (omitted or `<= 0`) means once-per-session, expressed as an infinite window so
+    // the same `dueForInjection` gate serves both modes. State lives in this factory closure, which
+    // is recreated per session, so it spans a trunk's lifetime and resets on a new trunk.
+    const windowMs =
+      options?.debounceMs != null && options.debounceMs > 0 ? options.debounceMs : Infinity;
     let cached: string | null = null;
-    let injected = false;
     let lastInjectedAt: number | null = null;
 
     pi.on("before_agent_start", async (event, ctx) => {
       if (customType != null) {
-        if (debounced) {
-          const now = Date.now();
-          if (!dueForInjection(lastInjectedAt, now, debounceMs)) return undefined;
-
-          const content = await resolve(provide, ctx);
-          if (content === "") return undefined;
-
-          lastInjectedAt = now;
-          return { message: { customType, content, display: false } };
-        }
-
-        if (injected) return undefined;
+        const now = Date.now();
+        if (!dueForInjection(lastInjectedAt, now, windowMs)) return undefined;
 
         const content = await resolve(provide, ctx);
         if (content === "") return undefined;
 
-        injected = true;
+        lastInjectedAt = now;
         return { message: { customType, content, display: false } };
       }
 
