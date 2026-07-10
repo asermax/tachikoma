@@ -152,7 +152,6 @@ describe("classifyShift", () => {
     expect(prompt).toContain("going back to the report");
     expect(prompt).toContain("matches the main-line topic");
     expect(prompt).toContain("does NOT follow on from the side task's last turn");
-    expect(prompt).toContain("fits the main line");
     expect(prompt).toContain("lean toward");
   });
 });

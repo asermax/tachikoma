@@ -70,12 +70,11 @@ const buildClassifierPrompt = (message: string, checkpointActive: boolean): stri
           "  clearly matches the main-line topic. It is ALSO a return — and the most common case — when the",
           "  message does NOT follow on from the side task's last turn (the side task looks done or set",
           "  aside) and would read naturally as the next step of the main-line conversation, even without",
-          "  naming it. When the side task is done and the message fits the main line, lean toward",
-          '  "summarize-to-checkpoint" rather than leaving it on "continue". This is a RETURN to an existing',
-          '  conversation, not a new topic, so do not choose "shift" for it. Keep choosing "continue" for',
-          '  further side-task turns, and choose "shift" only for a genuinely new topic that is neither the',
-          "  side task nor the main line. When genuinely unsure whether the message returns to the main",
-          '  line, prefer "continue".',
+          '  naming it; in that case lean toward "summarize-to-checkpoint" rather than leaving it on',
+          '  "continue". This is a RETURN to an existing conversation, not a new topic, so do not choose',
+          '  "shift" for it. Keep choosing "continue" for further side-task turns, and choose "shift" only',
+          "  for a genuinely new topic that is neither the side task nor the main line. When genuinely",
+          '  unsure whether the message returns to the main line, prefer "continue".',
         ]
       : [
           '- "set-checkpoint": the message begins a self-contained side task that is distinct from and',
