@@ -7,9 +7,9 @@
 
 /**
  * Local calendar date (`YYYY-MM-DD`) for an instant in a given IANA timezone.
- * `en-CA` formats dates ISO-style, so it yields the day key directly — the same
- * technique the trunk logic uses (`localDay`). Date-stamped artifacts follow the
- * user's day, not UTC.
+ * `en-CA` formats dates ISO-style, so it yields the day key directly. This is the
+ * single owner of that format; the trunk logic's `localDay` delegates here.
+ * Date-stamped artifacts follow the user's day, not UTC.
  */
 export const localIsoDate = (date: Date = new Date(), timezone?: string): string =>
   new Intl.DateTimeFormat("en-CA", {
@@ -19,7 +19,13 @@ export const localIsoDate = (date: Date = new Date(), timezone?: string): string
     day: "2-digit",
   }).format(date);
 
-const timestampParts = (date: Date, timezone?: string): Map<string, string> => {
+/**
+ * Human-readable timestamp `YYYY-MM-DD HH:mm <zone>` in a given IANA timezone, for
+ * user-facing surfaces (notifications, process status). Assembled from explicit parts
+ * so field order and precision stay stable across locales (unlike `toLocaleString`,
+ * where zone placement varies), keeping output deterministic and testable.
+ */
+export const formatTimestamp = (date: Date, timezone?: string): string => {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     year: "numeric",
@@ -31,22 +37,10 @@ const timestampParts = (date: Date, timezone?: string): Map<string, string> => {
     hourCycle: "h23",
     timeZoneName: "short",
   }).formatToParts(date);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? "";
 
-  return new Map(parts.map((part) => [part.type, part.value]));
-};
-
-/**
- * Human-readable timestamp `YYYY-MM-DD HH:mm <zone>` in a given IANA timezone, for
- * user-facing surfaces (notifications, process status). Assembled from explicit parts
- * so field order and precision stay stable across locales (unlike `toLocaleString`,
- * where zone placement varies), keeping output deterministic and testable.
- */
-export const formatTimestamp = (date: Date, timezone?: string): string => {
-  const part = timestampParts(date, timezone);
-  const get = (type: string): string => part.get(type) ?? "";
-  const zone = get("timeZoneName");
-
-  return zone.length > 0
-    ? `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")} ${zone}`
-    : `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
+  // trimEnd() drops the trailing space if a future ICU build omits timeZoneName.
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")} ${get(
+    "timeZoneName",
+  )}`.trimEnd();
 };

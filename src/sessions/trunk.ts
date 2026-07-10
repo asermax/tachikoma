@@ -11,6 +11,7 @@ import {
   reseatLeaf,
 } from "../agent/session-tree.ts";
 import type { KeyValueState } from "../db/state.ts";
+import { localIsoDate } from "../util/dates.ts";
 
 /**
  * Trunk identity and the on-file conversational state model (see ADR-014). The day is the unit of
@@ -170,17 +171,12 @@ export class TrunkState {
 }
 
 /**
- * Local calendar date (`YYYY-MM-DD`) for an instant in a given IANA timezone. `en-CA` formats dates
- * ISO-style (YYYY-MM-DD), so it gives the day key directly. `now` is injected so trunk-day logic is
- * deterministic and testable across timezone/midnight boundaries.
+ * Local calendar date (`YYYY-MM-DD`) for an instant in a given IANA timezone. `now` is injected so
+ * trunk-day logic is deterministic and testable across timezone/midnight boundaries. Delegates to the
+ * shared `localIsoDate` (`src/util/dates.ts`) so the en-CA day-key format lives in one place.
  */
 export const localDay = (now: () => Date, timezone: string | undefined): string =>
-  new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now());
+  localIsoDate(now(), timezone);
 
 export interface TrunkDeps {
   agent: Pick<AgentManager, "open">;
