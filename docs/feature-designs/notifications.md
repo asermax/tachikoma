@@ -36,7 +36,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 | `src/extensions/notifications/index.ts` | Wiring: router construction, event subscription, tool registration | Router takes `deliver` as a plain function so tests run without an app |
 | `src/extensions/notifications/payload.ts` | Event name constant, severity map, `parseNotifyPayload` | Duck-typed parsing: `text` required, severity/source defaulted — never throws |
 | `src/extensions/notifications/router.ts` | Dedup guard, severity routing, flush-window batching, severity → delivery tier, shutdown drain | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty; `flushNow()` is the shutdown entry point (delegates to `flush()`); dedup state is an in-memory `Map<key, firstSeenMs>` pruned opportunistically; `SEVERITY_TIER` const map sets each delivery's `tier` (digest = highest over items) |
-| `src/extensions/notifications/format.ts` | Single-notification and digest text rendering | Source/time header block prefixes every notice; timestamps rendered in UTC |
+| `src/extensions/notifications/format.ts` | Single-notification and digest text rendering | Source/time header block prefixes every notice; `Time:` rendered in the configured `scheduler.timezone` via the shared `formatTimestamp` util (the router receives the zone from the extension setup) |
 | `src/extensions/notifications/tools.ts` | `notify_user` agent tool | Emits the same `notify` event instead of delivering directly |
 
 ## Key Decisions

@@ -27,7 +27,7 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 
 ## Design Overview
 
-Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook creates SOUL.md and USER.md from templates on first run and caches their contents as a fallback, and two `provideContext` factories (SOUL, then USER) re-read both files from disk (`readFileSync`, falling back to the cached snapshot only on a read error) and append them to the system prompt on top of the core base prompt. The core base prompt itself (identity + shared `OPERATIONAL_GUIDANCE` plus interactive guidance + workspace root) lives in `buildMainSystemPrompt` ([DES-005](../design/DES-005-base-prompt-ownership.md)) and is installed by `AgentManager`, not the extension. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it expires and snapshots the pending-signals file, builds a follow-up instruction, then forks the just-ended pi session (`forkAndContinue`) so the same assistant — full conversation live in its history — edits the three context files and the signals file directly, hard-limited to file tools.
+Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook creates SOUL.md and USER.md from templates on first run and caches their contents as a fallback, and two `provideContext` factories (SOUL, then USER) re-read both files from disk (`readFileSync`, falling back to the cached snapshot only on a read error) and append them to the system prompt on top of the core base prompt. The core base prompt itself (identity + shared `OPERATIONAL_GUIDANCE` plus interactive guidance + workspace root + a configured-zone `Current date:` header) lives in `buildMainSystemPrompt` ([DES-005](../design/DES-005-base-prompt-ownership.md)) and is installed by `AgentManager` (which threads `config.scheduler.timezone` into the header), not the extension. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it expires and snapshots the pending-signals file, builds a follow-up instruction, then forks the just-ended pi session (`forkAndContinue`) so the same assistant — full conversation live in its history — edits the three context files and the signals file directly, hard-limited to file tools.
 
 ## Components
 
@@ -102,6 +102,6 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 
 ## Notes
 
-- Date comparison for expiry is lexicographic over zero-padded `YYYY-MM-DD` strings, using the local-timezone date (`localIsoDate`).
+- Date comparison for expiry is lexicographic over zero-padded `YYYY-MM-DD` strings, using the configured-timezone date (`localIsoDate(date, timezone)` — the processor receives `config.scheduler.timezone`).
 - The prompt instructs the agent to verify workspace claims (paths, configuration values) by reading/grepping before writing them, and to omit unverifiable claims — validation by instruction, not by host code.
 - `SOUL_TEMPLATE` and `USER_TEMPLATE` seed a brand-new workspace; AGENTS.md has no template because pi treats a missing AGENTS.md as simply absent.

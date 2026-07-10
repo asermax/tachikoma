@@ -64,6 +64,9 @@ describe("core context processor", () => {
     expect(instruction).toContain(`${workspace}/AGENTS.md`);
     expect(instruction).toContain("No pending signals at this time.");
     expect(instruction).toContain("SILENT background context-maintenance step");
+    // "Today's date" is substituted as a configured-timezone YYYY-MM-DD (tz correctness
+    // is covered by tests/util/dates.test.ts).
+    expect(instruction).toMatch(/Today's date is \d{4}-\d{2}-\d{2}\./);
   });
 
   it("injects the pending signals snapshot into the instruction", async () => {

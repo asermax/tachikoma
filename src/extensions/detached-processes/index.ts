@@ -73,6 +73,7 @@ export default defineExtension<DetachedProcessesConfig>({
           app.extensionConfig.defaultMemoryLimitMb > 0
             ? app.extensionConfig.defaultMemoryLimitMb
             : null,
+        timezone: app.config.scheduler.timezone,
       }),
       { sessionScopes: ["main", "background"] },
     );

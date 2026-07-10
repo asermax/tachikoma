@@ -53,6 +53,7 @@ export default defineExtension({
         agent: app.agent,
         workspaceRoot: app.workspace.root,
         dataDir: app.workspace.dataDir,
+        timezone: app.config.scheduler.timezone,
       }),
     );
 

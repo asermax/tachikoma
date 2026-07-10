@@ -15,6 +15,7 @@ import {
 import type { Config } from "../config/schema.ts";
 import type { AgentExtensionFactory } from "../extensions/api.ts";
 import type { Logger } from "../log.ts";
+import { localIsoDate } from "../util/dates.ts";
 import type { Workspace } from "../workspace.ts";
 import { type ModelTier, ModelTiers } from "./models.ts";
 import { buildMainSystemPrompt } from "./prompts.ts";
@@ -140,6 +141,7 @@ export class AgentManager {
   private readonly workspace: Workspace;
   private readonly sources: AgentSessionSources;
   private readonly log: Logger;
+  private readonly timezone: string | undefined;
 
   // Number of forkAndContinue runs in flight. A non-bare fork binds every pi factory, so any
   // before_agent_start work would otherwise also fire inside the memory/context post-processing
@@ -150,6 +152,7 @@ export class AgentManager {
     this.workspace = workspace;
     this.sources = sources;
     this.log = log;
+    this.timezone = config.scheduler.timezone;
 
     // Credentials are machine-level: prefer a workspace-local auth.json when it has
     // actual content, otherwise share the user's existing pi login (~/.pi/agent/auth.json).
@@ -201,9 +204,14 @@ export class AgentManager {
     // The main base prompt (identity + hygiene + workspace root) is core-owned: it replaces pi's
     // coding-agent base for any non-bare session that does not bring its own system prompt. SOUL/USER
     // are layered on top by the context extension via provideContext (a before_agent_start append).
+    // A configured-zone date header gives the main session the same tz-aware dating the background
+    // executor builds into its prompt.
+    const dateHeader = `${localIsoDate(new Date(), this.timezone)}${
+      this.timezone != null ? ` (${this.timezone})` : ""
+    }`;
     const systemPromptOverride =
       options.systemPrompt ??
-      (!bare ? buildMainSystemPrompt({ workspaceRoot: workspace.root }) : undefined);
+      (!bare ? buildMainSystemPrompt({ workspaceRoot: workspace.root, dateHeader }) : undefined);
 
     const extensionFactories = selectExtensionFactories({ ...options, bare }, this.sources);
 

@@ -28,6 +28,7 @@ const setup = async () => {
       dataDir: join(workspaceRoot, ".tachikoma"),
       resolve: (...parts: string[]) => join(workspaceRoot, ...parts),
     },
+    config: { scheduler: {} },
     bootstrap: vi.fn(),
     agent: { use: vi.fn(), systemPrompt: vi.fn(), forkAndContinue: vi.fn() },
     sessions: { registerProcessor },

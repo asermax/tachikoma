@@ -32,6 +32,7 @@ export default defineExtension<NotificationsConfig>({
       deliver: (delivery) => app.channels.deliver(delivery),
       flushWindowSeconds: app.extensionConfig.flushWindowSeconds,
       dedupTtlSeconds: app.extensionConfig.dedupTtlSeconds,
+      timezone: app.config.scheduler.timezone,
       log: app.log,
     });
 

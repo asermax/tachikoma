@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { CommitAgent } from "../../git/commit-agent.ts";
 import { PUSH_SUCCESS, type RebaseResolver } from "../../git/sync.ts";
 import type { Logger } from "../../log.ts";
+import { localIsoDate } from "../../util/dates.ts";
 import type { DebouncedTask } from "../../util/debouncer.ts";
 import type { ExchangeProcessor, GitApi, PostProcessor } from "../api.ts";
 import { isAhead, isDirty, listSubmodules } from "./git.ts";
@@ -14,10 +15,12 @@ export interface ProjectsProcessorDeps {
   resolver?: RebaseResolver;
   /** Cleared and drained at trunk close so the finalize pass owns persistence exclusively. */
   debouncer?: DebouncedTask;
+  /** IANA timezone for the fallback commit date (config.scheduler.timezone). */
+  timezone?: string;
 }
 
-export const projectFallbackMessage = (name: string, now = new Date()): string =>
-  `Update ${name} files (${now.toISOString().slice(0, 10)})`;
+export const projectFallbackMessage = (name: string, now = new Date(), timezone?: string): string =>
+  `Update ${name} files (${localIsoDate(now, timezone)})`;
 
 /**
  * Push a project's commits to `origin` and log the outcome. Shared by the dirty
@@ -50,6 +53,7 @@ const commitAndPush = async (
   path: string,
   log: Logger,
   resolver?: RebaseResolver,
+  timezone?: string,
 ): Promise<void> => {
   const repoPath = join(workspaceRoot, path);
   const name = path.split("/").at(-1) ?? path;
@@ -57,7 +61,7 @@ const commitAndPush = async (
   const subjects = await git.commitAll({
     agent,
     cwd: repoPath,
-    fallbackMessage: projectFallbackMessage(name),
+    fallbackMessage: projectFallbackMessage(name, new Date(), timezone),
     log,
   });
 
@@ -101,6 +105,8 @@ export interface CommitAndPushSubmodulesDeps {
   git: GitApi;
   agent: CommitAgent;
   resolver?: RebaseResolver;
+  /** IANA timezone for fallback commit dates (config.scheduler.timezone). */
+  timezone?: string;
   log: Logger;
 }
 
@@ -116,6 +122,7 @@ export const commitAndPushSubmodules = async ({
   git,
   agent,
   resolver,
+  timezone,
   log,
 }: CommitAndPushSubmodulesDeps): Promise<void> => {
   const submodulePaths = await listSubmodules(workspaceRoot);
@@ -150,7 +157,9 @@ export const commitAndPushSubmodules = async ({
     log.info({ paths: dirtyPaths }, "processing dirty submodules");
 
     const results = await Promise.allSettled(
-      dirtyPaths.map((path) => commitAndPush(workspaceRoot, git, agent, path, log, resolver)),
+      dirtyPaths.map((path) =>
+        commitAndPush(workspaceRoot, git, agent, path, log, resolver, timezone),
+      ),
     );
 
     for (const [index, result] of results.entries()) {
@@ -213,6 +222,7 @@ export const createProjectsProcessor = ({
   git,
   resolver,
   debouncer,
+  timezone,
 }: ProjectsProcessorDeps): PostProcessor => ({
   name: "projects-commit",
   phase: "preFinalize",
@@ -220,7 +230,7 @@ export const createProjectsProcessor = ({
   async process({ log }) {
     debouncer?.clear();
     await debouncer?.whenIdle();
-    await commitAndPushSubmodules({ workspaceRoot, git, agent, resolver, log });
+    await commitAndPushSubmodules({ workspaceRoot, git, agent, resolver, timezone, log });
   },
 });
 

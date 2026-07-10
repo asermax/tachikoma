@@ -5,6 +5,7 @@ import { type ExtensionFactory, truncateTail } from "@earendil-works/pi-coding-a
 import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
+import { formatTimestamp } from "../../util/dates.ts";
 import { type ScopeInspector, scopeUnitName } from "./cgroup.ts";
 import type { ProcessLimiter } from "./limits.ts";
 import {
@@ -25,6 +26,8 @@ export interface ProcessToolDeps {
   notify: (notification: ProcessNotification) => void;
   scopeInspector: ScopeInspector;
   defaultMemoryLimitMb: number | null;
+  /** IANA timezone for rendered start/exit timestamps (config.scheduler.timezone). */
+  timezone?: string;
   log: Logger;
   now?: () => Date;
   onExit?: (id: string) => void;
@@ -104,17 +107,17 @@ export const TerminateProcessParams = Type.Object({
 
 const notFound = (processId: string): Error => new Error(`Process '${processId}' not found.`);
 
-const describeProcess = (record: DetachedProcessRecord): string[] => {
+const describeProcess = (record: DetachedProcessRecord, timezone?: string): string[] => {
   const lines = [
     `- [${record.id}] **${record.name}** (pid ${record.pid}) ${record.status}`,
     `  Command: ${record.command}`,
-    `  Started: ${record.startedAt.toISOString()}`,
+    `  Started: ${formatTimestamp(record.startedAt, timezone)}`,
   ];
 
   if (record.exitedAt != null) {
     const oomSuffix = record.stopReason === STOP_REASON_OOM_KILLED ? ", OOM-killed" : "";
     lines.push(
-      `  Exited: ${record.exitedAt.toISOString()} (code: ${record.exitCode ?? "unknown"}${oomSuffix})`,
+      `  Exited: ${formatTimestamp(record.exitedAt, timezone)} (code: ${record.exitCode ?? "unknown"}${oomSuffix})`,
     );
   }
 
@@ -192,11 +195,11 @@ export const handleQueryProcess = async (
       `- CWD: ${record.cwd}`,
       `- Stdout: ${record.stdoutPath}`,
       `- Stderr: ${record.stderrPath}`,
-      `- Started: ${record.startedAt.toISOString()}`,
+      `- Started: ${formatTimestamp(record.startedAt, deps.timezone)}`,
     ];
 
     if (record.exitedAt != null) {
-      lines.push(`- Exited: ${record.exitedAt.toISOString()}`);
+      lines.push(`- Exited: ${formatTimestamp(record.exitedAt, deps.timezone)}`);
       lines.push(`- Exit code: ${record.exitCode ?? "unknown"}`);
 
       if (record.stopReason === STOP_REASON_OOM_KILLED) lines.push("- Stopped: OOM-killed");
@@ -235,7 +238,11 @@ export const handleQueryProcess = async (
     return `No ${args.archived === true ? "exited" : "running"} processes found.`;
   }
 
-  return ["# Detached Processes", "", ...records.flatMap(describeProcess)].join("\n");
+  return [
+    "# Detached Processes",
+    "",
+    ...records.flatMap((r) => describeProcess(r, deps.timezone)),
+  ].join("\n");
 };
 
 /** Trim a raw output blob to pi's tail limits, prefixing a marker when shortened. */

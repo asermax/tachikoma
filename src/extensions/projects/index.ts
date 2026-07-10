@@ -53,6 +53,7 @@ export default defineExtension<ProjectsConfig>({
           git: app.git,
           agent: projectAgent,
           resolver,
+          timezone: app.config.scheduler.timezone,
           log: app.log,
         }),
       app.config.scheduler.commitDebounceMinutes * 60_000,
@@ -86,6 +87,7 @@ export default defineExtension<ProjectsConfig>({
         git: app.git,
         resolver,
         debouncer,
+        timezone: app.config.scheduler.timezone,
       }),
     );
 

@@ -14,7 +14,7 @@ const payload = (overrides: Partial<NotifyPayload> = {}): NotifyPayload => ({
 
 describe("formatNotification", () => {
   it("renders the source/time prefix and includes the title block when present", () => {
-    const result = formatNotification(payload({ title: "Heads up" }), NOW);
+    const result = formatNotification(payload({ title: "Heads up" }), NOW, "UTC");
 
     expect(result).toBe(
       "--- Notification ---\nSource: tasks\nTime: 2026-06-12 10:34 UTC\n\nHeads up\n\nSomething happened.",
@@ -22,11 +22,20 @@ describe("formatNotification", () => {
   });
 
   it("omits the title block when there is no title", () => {
-    const result = formatNotification(payload(), NOW);
+    const result = formatNotification(payload(), NOW, "UTC");
 
     expect(result).toBe(
       "--- Notification ---\nSource: tasks\nTime: 2026-06-12 10:34 UTC\n\nSomething happened.",
     );
+  });
+
+  it("renders the time in the configured timezone, not UTC", () => {
+    // Buenos Aires is UTC-3 (no DST): 10:34 UTC -> 07:34 local. The zone abbreviation is
+    // ICU-dependent (ART/GMT-3), so assert the local date/time portion rather than the token.
+    const result = formatNotification(payload(), NOW, "America/Argentina/Buenos_Aires");
+
+    expect(result).toMatch(/Time: 2026-06-12 07:34 /);
+    expect(result).not.toContain("10:34");
   });
 });
 
@@ -38,6 +47,7 @@ describe("formatDigest", () => {
         payload({ text: "Two.", severity: "urgent", source: "memory" }),
       ],
       NOW,
+      "UTC",
     );
 
     expect(result).toBe(
@@ -57,7 +67,7 @@ describe("formatDigest", () => {
   });
 
   it("renders an empty digest with only the header", () => {
-    expect(formatDigest([], NOW)).toBe(
+    expect(formatDigest([], NOW, "UTC")).toBe(
       "--- Notifications digest ---\nTime: 2026-06-12 10:34 UTC\n",
     );
   });

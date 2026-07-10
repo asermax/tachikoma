@@ -125,7 +125,8 @@ const makeWorkspace = () =>
     sessionsDir: "/ws/root/.tachikoma/pi/sessions",
   }) as unknown as import("../../src/workspace.ts").Workspace;
 
-const makeConfig = () => ({ agent: {} }) as unknown as import("../../src/config/schema.ts").Config;
+const makeConfig = () =>
+  ({ agent: {}, scheduler: {} }) as unknown as import("../../src/config/schema.ts").Config;
 
 const makeLog = () =>
   ({

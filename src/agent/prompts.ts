@@ -26,6 +26,13 @@ ${OPERATIONAL_GUIDANCE}
 
 export interface MainSystemPromptParts {
   workspaceRoot: string;
+  /**
+   * Pre-formatted tz-aware date (e.g. `2026-07-10 (America/Argentina/Buenos_Aires)`), composed into a
+   * `Current date:` header so the main session — like background sessions — carries a configured-zone
+   * date. Date-only (no time): the daily trunk is day-scoped, so a date baked at open never goes stale,
+   * and pi still appends its own per-turn date/time footer. Omit for no header.
+   */
+  dateHeader?: string;
 }
 
 /**
@@ -33,8 +40,16 @@ export interface MainSystemPromptParts {
  * Personality (SOUL.md) and user knowledge (USER.md) are user-editable workspace content layered on
  * top by the context extension via `provideContext`, not baked into this core base prompt.
  */
-export const buildMainSystemPrompt = ({ workspaceRoot }: MainSystemPromptParts): string =>
-  [MAIN_IDENTITY, MAIN_GUIDANCE, `Workspace root: ${workspaceRoot}`].join("\n\n");
+export const buildMainSystemPrompt = ({
+  workspaceRoot,
+  dateHeader,
+}: MainSystemPromptParts): string =>
+  [
+    ...(dateHeader != null ? [`Current date: ${dateHeader}`] : []),
+    MAIN_IDENTITY,
+    MAIN_GUIDANCE,
+    `Workspace root: ${workspaceRoot}`,
+  ].join("\n\n");
 
 const BACKGROUND_IDENTITY = `You are Tachikoma running a scheduled task on your own, with no one watching in real time.
 Complete the task described below; your work is saved automatically.`;

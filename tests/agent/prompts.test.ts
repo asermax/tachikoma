@@ -43,6 +43,19 @@ describe("role system prompts", () => {
     expect(prompt).not.toContain("# User");
   });
 
+  it("composes a tz-aware date header into the main prompt when provided", () => {
+    const prompt = buildMainSystemPrompt({
+      workspaceRoot: "/ws",
+      dateHeader: "2026-07-10 (America/Argentina/Buenos_Aires)",
+    });
+
+    expect(prompt).toContain("Current date: 2026-07-10 (America/Argentina/Buenos_Aires)");
+  });
+
+  it("omits the date header when none is provided", () => {
+    expect(buildMainSystemPrompt({ workspaceRoot: "/ws" })).not.toContain("Current date:");
+  });
+
   it("composes the passed dateHeader into the background prompt with autonomy bits (AC1)", () => {
     const prompt = buildBackgroundSystemPrompt({
       dateHeader: "Monday, June 13, 2026, 14:30:00 UTC",

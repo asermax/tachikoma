@@ -34,6 +34,7 @@ export const cleanPendingSignals = async (
   dataDir: string,
   log: Logger,
   maxAgeDays = 30,
+  timezone?: string,
 ): Promise<void> => {
   const filePath = join(dataDir, PENDING_SIGNALS_FILENAME);
 
@@ -66,7 +67,7 @@ export const cleanPendingSignals = async (
 
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - maxAgeDays);
-  const cutoffDate = localIsoDate(cutoff);
+  const cutoffDate = localIsoDate(cutoff, timezone);
 
   // Lexicographic comparison is correct for zero-padded YYYY-MM-DD dates.
   const kept = entries.filter((entry) => entry.date >= cutoffDate);
@@ -296,6 +297,8 @@ export interface CoreContextDeps {
   workspaceRoot: string;
   /** Internal data directory holding the pending signals file (never committed). */
   dataDir: string;
+  /** IANA timezone for the "today" date and signal cutoff (config.scheduler.timezone). */
+  timezone?: string;
 }
 
 /**
@@ -312,6 +315,7 @@ export const createCoreContextProcessor = ({
   agent,
   workspaceRoot,
   dataDir,
+  timezone,
 }: CoreContextDeps): PostProcessor => ({
   name: "core-context",
   phase: "preFinalize",
@@ -322,7 +326,7 @@ export const createCoreContextProcessor = ({
       return;
     }
 
-    await cleanPendingSignals(dataDir, log);
+    await cleanPendingSignals(dataDir, log, 30, timezone);
 
     const signalsFile = join(dataDir, PENDING_SIGNALS_FILENAME);
     const snapshot = await readPendingSignals(signalsFile);
@@ -331,7 +335,7 @@ export const createCoreContextProcessor = ({
       "{pending_signals_section}",
       formatPendingSignalsSection(snapshot),
     )
-      .replaceAll("{date}", localIsoDate())
+      .replaceAll("{date}", localIsoDate(new Date(), timezone))
       .replaceAll("$WORKSPACE", workspaceRoot)
       .replaceAll("$SIGNALS_FILE", signalsFile);
 

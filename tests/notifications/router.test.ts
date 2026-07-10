@@ -24,6 +24,7 @@ const createSetup = (now: () => Date = () => fixedNow) => {
     deliver,
     flushWindowSeconds: FLUSH_WINDOW_SECONDS,
     dedupTtlSeconds: DEDUP_TTL_SECONDS,
+    timezone: "UTC",
     log: fakeLog,
     now,
   });
