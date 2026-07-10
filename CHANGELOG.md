@@ -1,3 +1,10 @@
+# [3.58.0](https://github.com/asermax/tachikoma/compare/v3.57.0...v3.58.0) (2026-07-10)
+
+
+### Features
+
+* **boundary:** recognize implicit main-line returns in summarize-to-checkpoint ([70c80a2](https://github.com/asermax/tachikoma/commit/70c80a2c777dd23c4036ce02fbecaad8d4efbb35))
+
 # [3.57.0](https://github.com/asermax/tachikoma/compare/v3.56.0...v3.57.0) (2026-07-10)
 
 
