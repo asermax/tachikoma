@@ -1,3 +1,10 @@
+# [3.57.0](https://github.com/asermax/tachikoma/compare/v3.56.0...v3.57.0) (2026-07-10)
+
+
+### Features
+
+* **context:** inject current date/time as debounced hidden message ([079badc](https://github.com/asermax/tachikoma/commit/079badcf3c1e0848d6b8c27b49f38672f16014a5))
+
 # [3.56.0](https://github.com/asermax/tachikoma/compare/v3.55.0...v3.56.0) (2026-07-10)
 
 
