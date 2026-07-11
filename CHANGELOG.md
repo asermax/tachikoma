@@ -1,3 +1,10 @@
+# [3.60.0](https://github.com/asermax/tachikoma/compare/v3.59.0...v3.60.0) (2026-07-11)
+
+
+### Features
+
+* **boundary:** gate set-checkpoint on an open topic ([36cb7bf](https://github.com/asermax/tachikoma/commit/36cb7bf97aa6ec7b008a80f89aa34da44b250909))
+
 # [3.59.0](https://github.com/asermax/tachikoma/compare/v3.58.0...v3.59.0) (2026-07-11)
 
 
