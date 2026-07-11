@@ -1,3 +1,10 @@
+# [3.59.0](https://github.com/asermax/tachikoma/compare/v3.58.0...v3.59.0) (2026-07-11)
+
+
+### Features
+
+* **boundary:** stream trailing text as first turn for /checkpoint and /back ([f52edc2](https://github.com/asermax/tachikoma/commit/f52edc24d68b179409289133dcb17b0adb348bd4))
+
 # [3.58.0](https://github.com/asermax/tachikoma/compare/v3.57.0...v3.58.0) (2026-07-10)
 
 
