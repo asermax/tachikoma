@@ -134,17 +134,17 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
   // of the active context). Without these resets a skill would stay "injected" after its content left.
   const injected = new Set<string>();
 
-  deps.onTopicChanged?.(() => {
+  // Both reset triggers (below) clear the same set for the same reason — injected content may have
+  // left the active path — so they share one helper. Rationale for each trigger is in the comment
+  // on `injected` above.
+  const resetInjection = (reason: string): void => {
     if (injected.size === 0) return;
     injected.clear();
-    log.debug("topic changed — clearing proactive-skill injection state for re-evaluation");
-  });
+    log.debug(`${reason} — clearing proactive-skill injection state for re-evaluation`);
+  };
 
-  pi.on("session_compact", () => {
-    if (injected.size === 0) return;
-    injected.clear();
-    log.debug("session compacted — clearing proactive-skill injection state for re-evaluation");
-  });
+  deps.onTopicChanged?.(() => resetInjection("topic changed"));
+  pi.on("session_compact", () => resetInjection("session compacted"));
 
   pi.on("before_agent_start", async (event, ctx): Promise<SkillSuggestionResult | undefined> => {
     // A non-bare fork binds every pi factory, so this handler also fires inside the memory/context
@@ -189,19 +189,14 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
       // full and recorded. The set is cleared on compaction/topic-change, so membership reliably
       // means "still in context". A per-skill try/catch means one unreadable (or empty) file skips
       // only that skill — and skipped skills are not added to `injected`, so they retry next turn.
-      const fullSections: string[] = [];
-      const reminderSections: string[] = [];
-      const fullNames: string[] = [];
-      const reminderNames: string[] = [];
-      const seen = new Set<string>();
-      for (const name of selection.skills) {
-        if (seen.has(name)) continue;
-        seen.add(name);
+      const full: { name: string; section: string }[] = [];
+      const reminders: { name: string; section: string }[] = [];
+      // Dedupe the classifier's selection up front (it may repeat a name) before routing each name.
+      for (const name of new Set(selection.skills)) {
         const skill = invocable.find((candidate) => candidate.name === name);
         if (skill == null) continue; // classifier invented a name not in the catalog
         if (injected.has(skill.name)) {
-          reminderSections.push(renderReminder(skill));
-          reminderNames.push(skill.name);
+          reminders.push({ name: skill.name, section: renderReminder(skill) });
           continue;
         }
         try {
@@ -218,8 +213,7 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
             continue;
           }
           injected.add(skill.name);
-          fullNames.push(skill.name);
-          fullSections.push(renderFull(skill, body));
+          full.push({ name: skill.name, section: renderFull(skill, body) });
         } catch (error) {
           log.warn(
             { err: error, skill: skill.name },
@@ -232,19 +226,22 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
         {
           invocable: invocable.length,
           selected: selection.skills.length,
-          full: fullSections.length,
-          reminders: reminderSections.length,
+          full: full.length,
+          reminders: reminders.length,
         },
         "proactive skill classify completed",
       );
 
-      if (fullSections.length === 0 && reminderSections.length === 0) return undefined;
+      if (full.length === 0 && reminders.length === 0) return undefined;
 
-      log.info({ full: fullNames, reminders: reminderNames }, "injected proactive skill content");
+      log.info(
+        { full: full.map((s) => s.name), reminders: reminders.map((s) => s.name) },
+        "injected proactive skill content",
+      );
 
       const parts: string[] = [];
-      if (fullSections.length > 0) parts.push(PREFACE_FULL, ...fullSections);
-      if (reminderSections.length > 0) parts.push(PREFACE_REMINDER, ...reminderSections);
+      if (full.length > 0) parts.push(PREFACE_FULL, ...full.map((s) => s.section));
+      if (reminders.length > 0) parts.push(PREFACE_REMINDER, ...reminders.map((s) => s.section));
 
       return {
         message: {
