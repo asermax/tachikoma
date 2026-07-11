@@ -87,49 +87,76 @@ const classifyWithDeadline = async <T>(
 
 type SkillSuggestionResult = { message: { customType: string; content: string; display: false } };
 
-const PREFACE =
+// Newly loaded skills — their full content is injected up front behind this authority framing.
+const PREFACE_FULL =
   "The following skills have been proactively loaded because they match the current task — their content is already here, so no /skill load is needed. These skills define the correct process for this kind of request: follow their instructions and workflows rather than improvising an alternative approach. If a skill defines a workflow, use it.";
+
+// Skills loaded earlier that are relevant again — their content is already in context, so we only
+// re-anchor the agent to it rather than paying the tokens to re-inject the full body.
+const PREFACE_REMINDER =
+  "A skill loaded earlier in this conversation is relevant again to the current task. Its full instructions are already in context — re-apply them (and start or resume its workflow if one is defined) rather than improvising an alternative approach.";
+
+// Full body of a newly matched skill, wrapped with a per-skill adherence nudge so the instruction to
+// follow the skill's process lands directly under the content it applies to.
+const renderFull = (skill: Skill, body: string): string =>
+  `<injected-skill name="${skill.name}">\n${body}\n\n→ Follow the instructions above for this task. If a workflow is defined, start it.\n</injected-skill>`;
+
+// Lightweight re-anchor for a skill already injected this branch: no body, just a nudge to reuse the
+// instructions already in context (and start its workflow if one applies).
+const renderReminder = (skill: Skill): string =>
+  `<skill-reminder name="${skill.name}">\nRelevant to this task again. Its full instructions are already in context above — follow them rather than improvising, and start its workflow (start_workflow) if one applies.\n</skill-reminder>`;
 
 /**
  * Proactive skill loading: on each genuine top-level turn, a conversation-aware classifier picks
- * which loaded skills are relevant to the latest message and injects each matched skill's full
- * SKILL.md content directly as a hidden, persisted message — giving the model the instructions
- * with no separate /skill load round-trip, covering the gap where pi's progressive disclosure
- * leaves loading to the model, which "does not always do this". The pass is best-effort and never
- * blocks the response: it is skipped inside forks (`isForking`), when no skills are eligible, and
- * on any classify failure. A skill whose content cannot be read (or is empty) is skipped without
- * aborting the rest.
+ * which loaded skills are relevant to the latest message. A skill whose full content is not yet on
+ * the active path is injected directly as a hidden, persisted message — giving the model the
+ * instructions with no separate /skill load round-trip, covering the gap where pi's progressive
+ * disclosure leaves loading to the model, which "does not always do this". A skill already injected
+ * (its content still in context) is re-anchored with a lightweight reminder rather than re-injected
+ * in full. The pass is best-effort and never blocks the response: it is skipped inside forks
+ * (`isForking`), when no skills are eligible, and on any classify failure. A skill whose content
+ * cannot be read (or is empty) is skipped without aborting the rest.
  */
 export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionDeps): void => {
   const { classifier, isForking, status, log } = deps;
   const readSkill = deps.readSkill ?? ((filePath: string) => readFileSync(filePath, "utf-8"));
 
-  // Skills injected this branch — not re-injected while the branch is live, since the message persists
-  // on the active transcript path. Per-session closure (the factory is recreated for each agent
-  // session). The daily trunk is one session for the whole day, so without a reset a skill injected on
-  // an earlier (later-collapsed) branch would stay "injected" after its content left the active path.
-  // The boundary emits `session:topic-changed` on a genuine topic shift (auto-shift, `/new`, or jumping
-  // to an earlier branch); subscribing clears the set so the new branch re-evaluates from scratch.
+  // Skills whose full content has been injected this branch and is presumed still on the active
+  // transcript path. A selected member yields a lightweight reminder (its content is already in
+  // context); a selected non-member is injected in full and added here. Per-session closure (the
+  // factory is recreated for each agent session).
+  //
+  // The daily trunk is one pi session for the whole day, so injected content can leave the active
+  // path without the skill being re-evaluated. Two events clear the set so the skill re-evaluates
+  // from scratch: a genuine topic shift (boundary's `session:topic-changed` — auto-shift, `/new`, or
+  // an earlier-branch jump, which moves content off the active path) and mid-branch compaction (pi's
+  // `session_compact`, which summarizes older entries — including a previously injected skill's — out
+  // of the active context). Without these resets a skill would stay "injected" after its content left.
   const injected = new Set<string>();
 
-  deps.onTopicChanged?.(() => {
+  // Both reset triggers (below) clear the same set for the same reason — injected content may have
+  // left the active path — so they share one helper. Rationale for each trigger is in the comment
+  // on `injected` above.
+  const resetInjection = (reason: string): void => {
     if (injected.size === 0) return;
     injected.clear();
-    log.debug("topic changed — clearing proactive-skill injection state for re-evaluation");
-  });
+    log.debug(`${reason} — clearing proactive-skill injection state for re-evaluation`);
+  };
+
+  deps.onTopicChanged?.(() => resetInjection("topic changed"));
+  pi.on("session_compact", () => resetInjection("session compacted"));
 
   pi.on("before_agent_start", async (event, ctx): Promise<SkillSuggestionResult | undefined> => {
     // A non-bare fork binds every pi factory, so this handler also fires inside the memory/context
     // post-processing forks; skip there so the classifier runs only on genuine top-level turns.
     if (isForking()) return undefined;
 
+    const invocable = (event.systemPromptOptions.skills ?? []).filter(
+      (skill) => !skill.disableModelInvocation,
+    );
+    if (invocable.length === 0) return undefined;
+
     try {
-      const candidates = (event.systemPromptOptions.skills ?? []).filter(
-        (skill) => !skill.disableModelInvocation && !injected.has(skill.name),
-      );
-
-      if (candidates.length === 0) return undefined;
-
       status("Checking for relevant skills…");
 
       // The standalone resolver mirrors the SessionManager instance method
@@ -142,10 +169,13 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
         convertToLlm(resolved.messages.slice(-RECENT_MESSAGES)),
       );
 
+      // The classifier sees every invocable skill each turn (not just not-yet-injected ones) so an
+      // already-injected skill that's relevant again can be re-anchored with a reminder rather than
+      // silently dropped.
       const selection = await classifyWithDeadline(
         (signal) =>
           classifier.classify({
-            system: `${SYSTEM}\n\n<available-skills>\n${renderCatalog(candidates)}\n</available-skills>`,
+            system: `${SYSTEM}\n\n<available-skills>\n${renderCatalog(invocable)}\n</available-skills>`,
             user: renderInput(conversation, event.prompt),
             schema: SkillSelectionSchema,
             tier: "classifier",
@@ -154,28 +184,21 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
         SKILL_CLASSIFY_TIMEOUT_MS,
       );
 
-      const matched = selection.skills
-        .map((name) => candidates.find((candidate) => candidate.name === name))
-        .filter((skill): skill is Skill => skill != null && !injected.has(skill.name));
-
-      log.debug(
-        {
-          candidates: candidates.length,
-          selected: selection.skills.length,
-          matched: matched.length,
-        },
-        "proactive skill classify completed",
-      );
-
-      if (matched.length === 0) return undefined;
-
-      // Read each matched skill's full content and inject it directly, so the model has the
-      // instructions without a separate /skill load round-trip. A per-skill try/catch means one
-      // unreadable (or empty) file skips only that skill rather than aborting the whole injection;
-      // skipped skills are not added to `injected`, so a transient failure can retry next turn.
-      const sections: string[] = [];
-      const injectedNames: string[] = [];
-      for (const skill of matched) {
+      // Route each selected skill by whether its full content is already on the active path. A member
+      // of `injected` gets a lightweight reminder (re-anchor, no body); a non-member is injected in
+      // full and recorded. The set is cleared on compaction/topic-change, so membership reliably
+      // means "still in context". A per-skill try/catch means one unreadable (or empty) file skips
+      // only that skill — and skipped skills are not added to `injected`, so they retry next turn.
+      const full: { name: string; section: string }[] = [];
+      const reminders: { name: string; section: string }[] = [];
+      // Dedupe the classifier's selection up front (it may repeat a name) before routing each name.
+      for (const name of new Set(selection.skills)) {
+        const skill = invocable.find((candidate) => candidate.name === name);
+        if (skill == null) continue; // classifier invented a name not in the catalog
+        if (injected.has(skill.name)) {
+          reminders.push({ name: skill.name, section: renderReminder(skill) });
+          continue;
+        }
         try {
           // Strip the YAML frontmatter and trim — matching how pi renders a skill loaded via
           // `/skill` (its `_expandSkillCommand` calls `stripFrontmatter(content).trim()`): the
@@ -190,13 +213,7 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
             continue;
           }
           injected.add(skill.name);
-          injectedNames.push(skill.name);
-          // Each section ends with a per-skill adherence nudge so the instruction to follow the
-          // skill's process lands directly under the content it applies to (matters most when several
-          // skills are injected together), reinforcing the preface's authority framing.
-          sections.push(
-            `<injected-skill name="${skill.name}">\n${body}\n\n→ Follow the instructions above for this task. If a workflow is defined, start it.\n</injected-skill>`,
-          );
+          full.push({ name: skill.name, section: renderFull(skill, body) });
         } catch (error) {
           log.warn(
             { err: error, skill: skill.name },
@@ -205,14 +222,31 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
         }
       }
 
-      if (sections.length === 0) return undefined;
+      log.debug(
+        {
+          invocable: invocable.length,
+          selected: selection.skills.length,
+          full: full.length,
+          reminders: reminders.length,
+        },
+        "proactive skill classify completed",
+      );
 
-      log.info({ skills: injectedNames }, "injected proactive skill content");
+      if (full.length === 0 && reminders.length === 0) return undefined;
+
+      log.info(
+        { full: full.map((s) => s.name), reminders: reminders.map((s) => s.name) },
+        "injected proactive skill content",
+      );
+
+      const parts: string[] = [];
+      if (full.length > 0) parts.push(PREFACE_FULL, ...full.map((s) => s.section));
+      if (reminders.length > 0) parts.push(PREFACE_REMINDER, ...reminders.map((s) => s.section));
 
       return {
         message: {
           customType: "skill-content",
-          content: `${PREFACE}\n\n${sections.join("\n\n")}`,
+          content: parts.join("\n\n"),
           display: false,
         },
       };

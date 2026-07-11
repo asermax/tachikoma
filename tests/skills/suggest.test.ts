@@ -41,11 +41,14 @@ const register = (
   classify: ReturnType<typeof vi.fn>;
   status: ReturnType<typeof vi.fn>;
   triggerTopicChanged: () => void;
+  triggerCompaction: () => void;
 } => {
   let handler: Handler | undefined;
+  let compactHandler: (() => void) | undefined;
   const pi = {
-    on: (event: string, registered: Handler) => {
-      if (event === "before_agent_start") handler = registered;
+    on: (event: string, registered: unknown) => {
+      if (event === "before_agent_start") handler = registered as Handler;
+      else if (event === "session_compact") compactHandler = registered as () => void;
     },
   } as unknown as ExtensionAPI;
 
@@ -77,6 +80,7 @@ const register = (
     classify,
     status,
     triggerTopicChanged: () => topicChangedHandler?.(),
+    triggerCompaction: () => compactHandler?.(),
   };
 };
 
@@ -135,39 +139,84 @@ describe("registerSkillSuggestion", () => {
     expect(status).not.toHaveBeenCalled();
   });
 
-  it("does not re-recommend a skill already recommended this session (AC3)", async () => {
+  it("injects a lightweight reminder instead of full content for a skill already injected this branch", async () => {
     const pdf = makeSkill("pdf-tools", "Work with PDFs");
     const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
     const { handler } = register({ classifier: { classify } });
 
+    // Turn 1: full injection.
     const first = await handler(event("merge pdfs", [pdf]), emptyCtx());
-    expect(first).toBeDefined();
+    expect(first?.message.content).toContain('<injected-skill name="pdf-tools">');
 
-    // Second turn: still in the catalog, but already recommended → filtered out as a candidate.
-    const second = await handler(event("merge more pdfs", [pdf]), emptyCtx());
-    expect(second).toBeUndefined();
-    expect(classify).toHaveBeenCalledTimes(1);
+    // Turn 2: pdf is already injected and still relevant → a reminder, not a full re-injection.
+    const second = await handler(event("mark this as read", [pdf]), emptyCtx());
+    expect(second).toBeDefined();
+    expect(second?.message.content).toContain('<skill-reminder name="pdf-tools">');
+    expect(second?.message.content).not.toContain('<injected-skill name="pdf-tools">');
+    expect(second?.message.content).not.toContain("Injected skill body.");
+    // Classify runs every turn now (so already-injected skills can be re-anchored).
+    expect(classify).toHaveBeenCalledTimes(2);
   });
 
-  it("clears injected skills on a topic change so the new branch re-evaluates (AC1)", async () => {
+  it("clears injected skills on a topic change so the new branch re-evaluates with full content", async () => {
     const pdf = makeSkill("pdf-tools", "Work with PDFs");
     const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
     const { handler, triggerTopicChanged } = register({ classifier: { classify } });
 
-    // Turn 1: inject pdf.
-    expect(await handler(event("merge pdfs", [pdf]), emptyCtx())).toBeDefined();
+    // Turn 1: inject pdf in full.
+    const first = await handler(event("merge pdfs", [pdf]), emptyCtx());
+    expect(first?.message.content).toContain('<injected-skill name="pdf-tools">');
 
-    // Same branch: dedup — pdf not re-injected, classify not called again.
-    expect(await handler(event("more pdfs", [pdf]), emptyCtx())).toBeUndefined();
-    expect(classify).toHaveBeenCalledTimes(1);
+    // Same branch: pdf is already injected → a reminder, not a full re-injection.
+    const second = await handler(event("more pdfs", [pdf]), emptyCtx());
+    expect(second?.message.content).toContain('<skill-reminder name="pdf-tools">');
 
-    // A topic shift (session:topic-changed) clears the per-branch injection record, so the new branch
-    // re-evaluates pdf and re-injects it even though it was injected on the collapsed prior branch.
+    // A topic shift (session:topic-changed) clears the per-branch record, so the new branch
+    // re-injects pdf in full even though it was injected on the collapsed prior branch.
     triggerTopicChanged();
     const after = await handler(event("merge pdfs again", [pdf]), emptyCtx());
-    expect(after).toBeDefined();
     expect(after?.message.content).toContain('<injected-skill name="pdf-tools">');
-    expect(classify).toHaveBeenCalledTimes(2);
+    expect(after?.message.content).not.toContain('<skill-reminder name="pdf-tools">');
+  });
+
+  it("re-injects a skill in full after compaction clears the per-branch record (issue-425)", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
+    const { handler, triggerCompaction } = register({ classifier: { classify } });
+
+    // Turn 1: full injection.
+    const first = await handler(event("merge pdfs", [pdf]), emptyCtx());
+    expect(first?.message.content).toContain('<injected-skill name="pdf-tools">');
+
+    // Turn 2: already injected → reminder.
+    const second = await handler(event("more pdfs", [pdf]), emptyCtx());
+    expect(second?.message.content).toContain('<skill-reminder name="pdf-tools">');
+
+    // Mid-branch compaction summarizes the injected content out of the active context, so the
+    // record clears and a later relevant turn re-injects pdf in full rather than reminding about
+    // content that is no longer visible to the model.
+    triggerCompaction();
+    const after = await handler(event("mark this as read", [pdf]), emptyCtx());
+    expect(after?.message.content).toContain('<injected-skill name="pdf-tools">');
+    expect(after?.message.content).not.toContain('<skill-reminder name="pdf-tools">');
+  });
+
+  it("the reminder carries the skill name and a workflow nudge, never the body or paths", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const classify = vi.fn().mockResolvedValue({ skills: ["pdf-tools"] });
+    const { handler } = register({ classifier: { classify } });
+
+    await handler(event("merge pdfs", [pdf]), emptyCtx()); // full injection
+    const reminder = await handler(event("mark as read", [pdf]), emptyCtx());
+    const content = reminder?.message.content ?? "";
+
+    expect(content).toContain('<skill-reminder name="pdf-tools">');
+    expect(content).toContain("start_workflow");
+    // A reminder never re-spends the body or leaks filesystem/invocation details.
+    expect(content).not.toContain("<injected-skill");
+    expect(content).not.toContain("Injected skill body.");
+    expect(content).not.toContain("SKILL.md");
+    expect(content).not.toContain("/skill:");
   });
 
   it("drops classifier names not in the eligible catalog (AC4)", async () => {
@@ -259,7 +308,7 @@ describe("registerSkillSuggestion", () => {
     expect(content).not.toContain("/skill:");
   });
 
-  it("injects only the not-yet-injected skill when one was already injected (AC11)", async () => {
+  it("injects new skills in full and already-injected skills as reminders in one turn", async () => {
     const pdf = makeSkill("pdf-tools", "Work with PDFs");
     const csv = makeSkill("csv-tools", "Work with CSVs");
 
@@ -273,7 +322,9 @@ describe("registerSkillSuggestion", () => {
     const second = await handler(event("now the csv too", [pdf, csv]), emptyCtx());
     const content = second?.message.content ?? "";
 
+    // csv is new → full content; pdf was already injected → reminder.
     expect(content).toContain('<injected-skill name="csv-tools">');
+    expect(content).toContain('<skill-reminder name="pdf-tools">');
     expect(content).not.toContain('<injected-skill name="pdf-tools">');
   });
 
