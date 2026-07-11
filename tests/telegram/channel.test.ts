@@ -1732,6 +1732,11 @@ describe("command menu (R10)", () => {
     expect(byName.new).toMatch(/\/new </);
     expect(byName.queue).toMatch(/\/queue </);
     expect(byName.skill).toMatch(/\/skill </);
+    // /checkpoint and /back stream trailing text as the first tangent / main-line turn.
+    expect(byName.checkpoint).toMatch(/\/checkpoint </);
+    expect(byName.back).toMatch(/\/back </);
+    // /rollback discards trailing text (replays only the original triggering turn).
+    expect(byName.rollback).not.toMatch(/\/rollback </);
   });
 
   it("does not fail startup when setMyCommands rejects (best-effort)", async () => {

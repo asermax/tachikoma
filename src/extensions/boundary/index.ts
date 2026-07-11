@@ -118,18 +118,25 @@ export default defineExtension<BoundaryConfig>({
         return next();
       }
 
-      // Manual checkpoint commands (DLT-181): detected before any branching logic. Each marks the
-      // message handled and acks immediately (no agent turn, no stream — the decision label is baked
-      // into the ack text). `/checkpoint` parks the main line at the tip; `/back` folds the tangent
-      // back into the checkpoint so the main line resumes intact.
-      if (handleCheckpointCommand(commandDeps, message, trunk)) return;
-      if (await handleBackCommand(commandDeps, message, trunk)) return;
+      // Manual checkpoint commands (DLT-181): detected before any branching logic. Each performs its
+      // action and either acks immediately (no agent turn — "acked") or, when the user sent trailing
+      // text, strips it onto the message and continues ("continue") so it streams as the first turn of
+      // the tangent (`/checkpoint`) or the resumed main line (`/back`) — the same prefix-strip + next()
+      // flow `/new` uses. Either way the classifier is skipped: the user explicitly chose the transition.
+      const checkpoint = handleCheckpointCommand(commandDeps, message, trunk);
+      if (checkpoint === "acked") return;
+      if (checkpoint === "continue") return next();
+
+      const back = await handleBackCommand(commandDeps, message, trunk);
+      if (back === "acked") return;
+      if (back === "continue") return next();
 
       // `/rollback` (DLT-181): reverse the most-recent automatic checkpoint/topic decision. Detected
       // before the classifier like the other manual commands. On a no-op it acks the notice (handled);
       // on a successful reversal it marks the message handled (the command itself does not stream) and
       // replays the triggering message — whose streamed response carries the rollback header — via the
-      // coordinator replay (bypasses submit, so no re-classification of the corrected framing).
+      // coordinator replay (bypasses submit, so no re-classification of the corrected framing). Trailing
+      // text is intentionally discarded: only the original triggering turn is replayed.
       if (await handleRollbackCommand(rollbackDeps, message, trunk)) return;
 
       // Collapse the live branch into a `branch_summary`, unless it has no assistant turn yet

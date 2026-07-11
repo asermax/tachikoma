@@ -398,6 +398,29 @@ describe("handleRollbackCommand — Case A (set-checkpoint → topic)", () => {
     });
   });
 
+  it("discards trailing text — only the original triggering turn is replayed", async () => {
+    const fake = makeSession([
+      messageEntry("base", "user", "main topic start"),
+      messageEntry("base-a", "assistant", "main line"),
+      messageEntry("c", "assistant", "the checkpoint tip"),
+    ]);
+    stageAutoSetCheckpoint(fake, null, "c", "actually a whole new topic");
+
+    const replay = vi.fn();
+    // Unlike /checkpoint and /back, /rollback intentionally ignores trailing text.
+    const handled = await handleRollbackCommand(
+      deps(replay),
+      msg("/rollback that was wrong"),
+      trunkFrom(fake),
+    );
+
+    expect(handled).toBe(true);
+    // The triggering message is replayed — NOT the trailing "that was wrong".
+    expect(replay).toHaveBeenCalledTimes(1);
+    const [replayedText] = replay.mock.calls[0] ?? [];
+    expect(replayedText).toBe("actually a whole new topic");
+  });
+
   it("the wrong-framing tangent exchange goes off-path after the rewind (append-only, KD4)", async () => {
     const fake = makeSession([
       messageEntry("base", "user", "main"),
