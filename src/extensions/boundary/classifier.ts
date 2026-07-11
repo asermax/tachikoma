@@ -48,19 +48,35 @@ export type ShiftDecision = "continue" | "shift" | "set-checkpoint" | "summarize
 /**
  * Build the classifier prompt. The checkpoint section is conditional on `checkpointActive` so only the
  * valid checkpoint decision for the current state is offered (the middleware gates defensively too).
- * Posture is deliberately conservative (KD8): a checkpoint decision is emitted only when it is clearly
- * the right call; ambiguity falls back to `continue` (or `shift` for a genuinely new topic).
+ * The prompt first asks the model to judge whether the current topic is still open or has reached a
+ * natural finish (issue-423): a finished topic has no main line to park and resume, so an unrelated
+ * message shifts rather than checkpointing, and `set-checkpoint` is gated on an open topic. The model
+ * infers finish-state from the conversation history the shadow fork already reads, so — unlike
+ * `checkpointActive` — no signal is injected. Posture is deliberately conservative (KD8): a checkpoint
+ * decision is emitted only when it is clearly the right call; ambiguity falls back to `continue`
+ * (or `shift` for a genuinely new topic).
  */
 const buildClassifierPrompt = (message: string, checkpointActive: boolean): string =>
   [
     "I am deciding how this conversation should proceed with a new user message.",
     "Answer from the perspective of this current conversation and choose exactly one decision.",
     "",
+    "First, judge whether the current topic is still OPEN or has reached a natural FINISH. It is OPEN",
+    "when there is active work in progress, an unresolved question, or a task only partway through. It",
+    "has reached a natural FINISH when the last exchange wrapped the topic up — the work was completed,",
+    "a question was fully answered, the user acknowledged or accepted the result, and no open thread is",
+    "left to continue.",
+    "",
     "Decisions:",
     '- "continue": the message is a follow-up, clarification, answer to me, correction, short reply,',
-    "  reaction, or otherwise continues the current thread. This is the default when uncertain.",
-    '- "shift": the message clearly starts a new, substantive topic or task that should become the',
-    "  main line and begin fresh (the current topic is effectively done or being set aside).",
+    "  reaction, or otherwise continues the current thread — even if the last exchange looked wrapped",
+    "  up, a genuine follow-up reopens the topic. This is the default when uncertain.",
+    '- "shift": the message starts a new topic that should become the main line and begin fresh.',
+    "  Choose this in either of two cases: (a) the current topic has reached a natural FINISH and the",
+    "  message is about something unrelated to it — regardless of how small or simple the new topic is,",
+    "  because a finished topic leaves no main line to park; or (b) the current topic is still OPEN but",
+    "  the message is a substantive new task or question that should become the main line, setting the",
+    "  open topic aside.",
     ...(checkpointActive
       ? [
           '- "summarize-to-checkpoint": a checkpoint is currently active (a side task is in flight). The',
@@ -83,9 +99,12 @@ const buildClassifierPrompt = (message: string, checkpointActive: boolean): stri
           "  note or reminder, logging something (an expense, a transaction), a quick lookup or brief",
           "  self-contained question, or a background task or daily ceremony starting its own short",
           "  exchange. Choose this when the message clearly starts a separate task rather than following on",
-          '  from the current one, regardless of how many turns the side task may take. Prefer "continue"',
-          '  for follow-ups, clarifications, or replies to the current task, and "shift" for a substantive',
-          '  new main topic. When unsure whether the message is a separate side task, prefer "continue".',
+          "  from the current one, regardless of how many turns the side task may take — but ONLY when the",
+          "  current topic is still OPEN, so there is an active main line to park and resume. A checkpoint",
+          "  parks an active main line to return to, so it never applies once the topic has reached a",
+          '  natural FINISH: then choose "shift" instead, even for a small capture like logging an expense',
+          '  or a quick reminder. Prefer "continue" for follow-ups, clarifications, or replies to the',
+          '  current task. When unsure whether the message is a separate side task, prefer "continue".',
         ]),
     "",
     "Be conservative about parking a side conversation: only choose a checkpoint decision when it is",

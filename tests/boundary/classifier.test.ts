@@ -123,6 +123,32 @@ describe("classifyShift", () => {
     expect(prompt).not.toContain("a checkpoint is currently active");
   });
 
+  it("factors topic finish-state into the set-checkpoint vs shift decision (issue-423)", async () => {
+    const fork = forkReturning('{"decision":"continue"}');
+    const shadowFork = vi.fn().mockResolvedValue(fork);
+    const deps = makeDeps({ shadowFork });
+
+    await classifyShift(deps, { ...input, checkpointActive: false });
+
+    expect(fork.prompt).toHaveBeenCalledOnce();
+    const prompt = fork.prompt.mock.calls[0]?.[0] as string;
+    // The prompt first asks the model to judge whether the current topic is OPEN or has reached a
+    // natural FINISH — the new finish-state discriminator. The shadow fork reads the history itself,
+    // so (unlike checkpointActive) no finish-state signal is injected.
+    expect(prompt).toContain("natural FINISH");
+    expect(prompt).toContain("still OPEN");
+    // A finished topic has no main line to park and resume, so an unrelated message shifts. The shift
+    // bullet names that case, and the set-checkpoint bullet routes finished-topic captures to shift.
+    expect(prompt).toContain("no main line to park");
+    expect(prompt).toContain('choose "shift" instead');
+    // set-checkpoint is gated on an open topic — never chosen once the topic has finished.
+    expect(prompt).toContain("but ONLY when the");
+    // The open + substantive-new-topic case is the other shift trigger (preserved + sharpened).
+    expect(prompt).toContain("substantive new task");
+    // A follow-up reopens a wrapped-up topic, so finish-state only redirects unrelated messages.
+    expect(prompt).toContain("reopens the topic");
+  });
+
   it("offers summarize-to-checkpoint (not set-checkpoint) in the prompt when a checkpoint is active", async () => {
     const fork = forkReturning('{"decision":"continue"}');
     const shadowFork = vi.fn().mockResolvedValue(fork);
