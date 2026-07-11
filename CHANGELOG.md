@@ -1,3 +1,10 @@
+# [3.61.0](https://github.com/asermax/tachikoma/compare/v3.60.0...v3.61.0) (2026-07-11)
+
+
+### Features
+
+* **skills:** re-anchor already-injected skills instead of re-injecting ([b45984e](https://github.com/asermax/tachikoma/commit/b45984e82767d5d68159d64d4cd60dcbd729e407))
+
 # [3.60.0](https://github.com/asermax/tachikoma/compare/v3.59.0...v3.60.0) (2026-07-11)
 
 
