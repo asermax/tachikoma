@@ -56,6 +56,31 @@ export const commandArgument = (message: InboundMessage, name: string): string =
 };
 
 /**
+ * Mark the message handled and return `"acked"` — no turn streams. Routed through by both manual
+ * handlers at every guard-failure and bare-success return, so the "continue path leaves `handled`
+ * unset" invariant holds by construction rather than by remembering to set it at each site.
+ */
+const ack = (message: InboundMessage): ManualCommandOutcome => {
+  message.metadata.handled = true;
+  return "acked";
+};
+
+/**
+ * Trailing-text policy for the success tail shared by both manual handlers. If the user sent an argument,
+ * strip it onto the message and return `"continue"` so it streams as the first turn of the tangent
+ * (`/checkpoint`) or the resumed main line (`/back`), skipping the classifier — the user explicitly chose
+ * the transition. This is the same prefix-strip + `next()` flow `/new` uses (R10). A bare command has no
+ * argument, so it falls through to {@link ack} (no turn streams).
+ */
+const ackOrContinue = (message: InboundMessage, argument: string): ManualCommandOutcome => {
+  if (argument.length > 0) {
+    message.text = argument;
+    return "continue";
+  }
+  return ack(message);
+};
+
+/**
  * `/checkpoint`: set a checkpoint at the current main-line tip (R1). One is active at a time — setting
  * a new tip overrides a prior checkpoint (R2). Idempotent at the tip: setting the same tip twice is a
  * no-op with a notice (R11 — manual and auto checkpointing coincide rather than conflict). With trailing
@@ -73,17 +98,16 @@ export const handleCheckpointCommand = (
 
   const leafId = getLeafId(trunk.session);
   if (leafId == null) {
-    // No conversation to checkpoint: the trailing text does not stream (D2 — it only makes sense once a
-    // checkpoint is in effect; the user can re-send it as a plain message).
-    message.metadata.handled = true;
+    // No conversation to checkpoint: the notice stands and no turn streams (D2 — trailing text only
+    // makes sense once a checkpoint is in effect).
     deps.deliver({ text: "⚠️ No conversation to checkpoint yet.", immediate: true });
-    return "acked";
+    return ack(message);
   }
 
   // Idempotent at the tip: a checkpoint is already active here with no tangent taken since (R11 —
   // manual + auto checkpointing coincide rather than conflict). `checkpointHasTangent` is robust to the
   // boomerang entry `setCheckpoint` appends (which advances the leaf past the checkpoint message). The
-  // checkpoint is in effect, so trailing text still starts the tangent — only the ack differs.
+  // checkpoint is in effect either way, so trailing text still starts the tangent — only the ack differs.
   const activeCheckpoint = trunk.checkpointId;
   const alreadyAtTip =
     activeCheckpoint != null && !checkpointHasTangent(trunk.session, activeCheckpoint);
@@ -95,16 +119,8 @@ export const handleCheckpointCommand = (
     deps.log.info({ checkpointId: leafId }, "checkpoint set (/checkpoint)");
   }
 
-  // Trailing text starts the tangent as its first turn. The checkpoint is in effect (newly set or
-  // already active), so strip the text onto the message and let it stream — skipping the classifier,
-  // since the user explicitly parked the main line.
-  if (argument.length > 0) {
-    message.text = argument;
-    return "continue";
-  }
-
-  message.metadata.handled = true;
-  return "acked";
+  // Trailing text (if any) streams as the tangent's first turn; a bare command acks with no turn.
+  return ackOrContinue(message, argument);
 };
 
 /**
@@ -126,19 +142,17 @@ export const handleBackCommand = async (
 
   const checkpointId = trunk.checkpointId;
 
-  // No active checkpoint: nothing to summarize back to. The trailing text does not stream (D2).
+  // No active checkpoint: nothing to summarize back to. The notice stands and no turn streams (D2).
   if (checkpointId == null) {
-    message.metadata.handled = true;
     deps.deliver({ text: "ℹ️ No checkpoint to summarize to.", immediate: true });
-    return "acked";
+    return ack(message);
   }
 
   // Empty-tangent guard (KD2): the leaf is still the checkpoint, so there is no tangent to fold away —
   // short-circuit before the append-only collapse primitive would create a vacuous summary.
   if (!checkpointHasTangent(trunk.session, checkpointId)) {
-    message.metadata.handled = true;
     deps.deliver({ text: "ℹ️ No tangent to summarize.", immediate: true });
-    return "acked";
+    return ack(message);
   }
 
   const result = await summarizeCurrentTangent(
@@ -148,24 +162,15 @@ export const handleBackCommand = async (
 
   if (result == null) {
     // summarizeCurrentTangent degrades gracefully and leaves the checkpoint active.
-    message.metadata.handled = true;
     deps.deliver({
       text: "⚠️ Couldn't summarize the tangent — the checkpoint is still in place.",
       immediate: true,
     });
-    return "acked";
+    return ack(message);
   }
 
   deps.deliver({ text: "↩️ Summarized to checkpoint — back on the main line.", immediate: true });
 
-  // Trailing text starts the resumed main line's first turn. The tangent was just folded away, so strip
-  // the text onto the message and let it stream — skipping the classifier, since the user explicitly
-  // returned to the main line.
-  if (argument.length > 0) {
-    message.text = argument;
-    return "continue";
-  }
-
-  message.metadata.handled = true;
-  return "acked";
+  // Trailing text (if any) streams as the resumed main line's first turn; a bare command acks with no turn.
+  return ackOrContinue(message, argument);
 };
