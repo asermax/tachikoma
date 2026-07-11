@@ -82,8 +82,11 @@ export const BOT_COMMANDS = [
   { command: "new", description: "Start a new topic — /new <first message>" },
   { command: "queue", description: "Queue a message for the next turn — /queue <message>" },
   { command: "stop", description: "Stop the current response" },
-  { command: "checkpoint", description: "Park the main line here for a side topic" },
-  { command: "back", description: "Fold the side topic back to the checkpoint" },
+  {
+    command: "checkpoint",
+    description: "Park the main line here — /checkpoint <first tangent message>",
+  },
+  { command: "back", description: "Fold the side topic back — /back <first main-line message>" },
   { command: "rollback", description: "Undo the last automatic topic decision" },
   { command: "skill", description: "Load a skill — /skill <name>" },
   { command: "tasks", description: "Show and manage scheduled tasks" },

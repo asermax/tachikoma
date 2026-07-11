@@ -378,6 +378,49 @@ describe("boundary middleware", () => {
     expect(trunk.session.sessionManager.branchWithSummary).toHaveBeenCalledTimes(1);
   });
 
+  it("sets a checkpoint and streams trailing text after /checkpoint <text> (skipping the classifier)", async () => {
+    const { middleware, shadowFork, deliver } = setup();
+    const trunk = makeTrunk();
+    const next = vi.fn();
+    const message = textMessage("test", "/checkpoint let me look into this quickly");
+    message.metadata.command = "checkpoint";
+
+    await middleware(message, context(trunk), next);
+
+    // Checkpoint set (focus injected) and the trailing text is stripped onto the message to stream.
+    expect(trunk.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledWith(
+      TANGENT_FOCUS_CUSTOM_TYPE,
+      expect.any(String),
+      false,
+      undefined,
+    );
+    expect(message.text).toBe("let me look into this quickly");
+    expect(message.metadata.handled).toBeUndefined();
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("📌 Checkpoint set") }),
+    );
+    // The trailing turn skips the classifier (the user explicitly parked the main line).
+    expect(shadowFork).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
+
+  it("acks a bare /checkpoint without continuing (no turn)", async () => {
+    const { middleware, shadowFork, deliver } = setup();
+    const trunk = makeTrunk();
+    const next = vi.fn();
+    const message = textMessage("test", "/checkpoint");
+    message.metadata.command = "checkpoint";
+
+    await middleware(message, context(trunk), next);
+
+    expect(message.metadata.handled).toBe(true);
+    expect(deliver).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("📌 Checkpoint set") }),
+    );
+    expect(shadowFork).not.toHaveBeenCalled();
+    expect(next).not.toHaveBeenCalled();
+  });
+
   // A collapsed earlier branch (topic-1); with one record the live branch is topic-2.
   const earlierBranchTrunk = (overrides: Partial<TrunkInbound> = {}): TrunkInbound =>
     makeTrunk({

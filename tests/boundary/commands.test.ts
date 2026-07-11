@@ -185,7 +185,7 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
       trunkFrom(fake),
     );
 
-    expect(handled).toBe(true);
+    expect(handled).toBe("acked");
     expect(message.metadata.handled).toBe(true);
     expect(readBoomerangState(fake.session)?.checkpointId).toBe("m2");
     // The tangent-focus instruction is injected at checkpoint-set time (issue-411), as a hidden
@@ -225,7 +225,7 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
       trunkFrom(fake),
     );
 
-    expect(handled).toBe(true);
+    expect(handled).toBe("acked");
     expect(deliverFn).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("already at this tip") }),
     );
@@ -260,14 +260,14 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
     );
   });
 
-  it("returns false (not handled) for a non-/checkpoint message", () => {
+  it("returns unhandled for a non-/checkpoint message", () => {
     const fake = makeSession([messageEntry("m1", "user", "hi")]);
     const deliverFn = deliver();
     const message = msg("hello there");
 
     expect(
       handleCheckpointCommand({ side, log: fakeLog, deliver: deliverFn }, message, trunkFrom(fake)),
-    ).toBe(false);
+    ).toBe("unhandled");
     expect(message.metadata.handled).toBeUndefined();
     expect(deliverFn).not.toHaveBeenCalled();
   });
@@ -285,23 +285,113 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
 
     expect(
       handleCheckpointCommand({ side, log: fakeLog, deliver: deliverFn }, message, trunkFrom(fake)),
-    ).toBe(true);
+    ).toBe("acked");
     expect(message.metadata.handled).toBe(true);
     expect(readBoomerangState(fake.session)?.checkpointId).toBe("m2");
   });
 
-  it("recognizes /checkpoint with a trailing argument via the command token", () => {
+  it("sets the checkpoint and streams trailing text as the tangent's first turn", () => {
     const fake = makeSession([
       messageEntry("m1", "user", "hi"),
       messageEntry("m2", "assistant", "hello"),
     ]);
-    const message = msg("/checkpoint some message");
+    const deliverFn = deliver();
+    const message = msg("/checkpoint let me look into this quickly");
     message.metadata.command = "checkpoint";
 
-    expect(
-      handleCheckpointCommand({ side, log: fakeLog, deliver: deliver() }, message, trunkFrom(fake)),
-    ).toBe(true);
+    const outcome = handleCheckpointCommand(
+      { side, log: fakeLog, deliver: deliverFn },
+      message,
+      trunkFrom(fake),
+    );
+
+    // Checkpoint is set and the trailing text is stripped onto the message to stream as the first turn.
+    expect(outcome).toBe("continue");
+    expect(readBoomerangState(fake.session)?.checkpointId).toBe("m2");
+    expect(message.text).toBe("let me look into this quickly");
+    expect(message.metadata.handled).toBeUndefined();
+    expect(fake.session.sessionManager.appendCustomMessageEntry).toHaveBeenCalledWith(
+      TANGENT_FOCUS_CUSTOM_TYPE,
+      expect.any(String),
+      false,
+      undefined,
+    );
+    expect(deliverFn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("📌 Checkpoint set") }),
+    );
+  });
+
+  it("streams trailing text even when the checkpoint is already at the tip (idempotent + text)", () => {
+    const fake = makeSession([
+      messageEntry("m1", "user", "hi"),
+      messageEntry("m2", "assistant", "hello"),
+    ]);
+    // Park the checkpoint at m2 first.
+    handleCheckpointCommand(
+      { side, log: fakeLog, deliver: deliver() },
+      msg("/checkpoint"),
+      trunkFrom(fake),
+    );
+    expect(readBoomerangState(fake.session)?.checkpointId).toBe("m2");
+
+    const deliverFn = deliver();
+    const message = msg("/checkpoint one more thing");
+    message.metadata.command = "checkpoint";
+
+    const outcome = handleCheckpointCommand(
+      { side, log: fakeLog, deliver: deliverFn },
+      message,
+      trunkFrom(fake),
+    );
+
+    // Idempotent ack, but the checkpoint is in effect so the trailing text still starts the tangent.
+    expect(outcome).toBe("continue");
+    expect(message.text).toBe("one more thing");
+    expect(message.metadata.handled).toBeUndefined();
+    expect(deliverFn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("already at this tip") }),
+    );
+    // The checkpoint stays at m2 (no re-set, no boomerang leaf advance).
+    expect(readBoomerangState(fake.session)?.checkpointId).toBe("m2");
+  });
+
+  it("extracts only the trailing text when a reply quote lards a /checkpoint <text>", () => {
+    const fake = makeSession([
+      messageEntry("m1", "user", "hi"),
+      messageEntry("m2", "assistant", "hello"),
+    ]);
+    const message = msg("Replied to:\n> earlier /checkpoint noise\n\n/checkpoint the real tangent");
+    message.metadata.command = "checkpoint";
+
+    const outcome = handleCheckpointCommand(
+      { side, log: fakeLog, deliver: deliver() },
+      message,
+      trunkFrom(fake),
+    );
+
+    // The command token is the user's input (appended last); the quote's "/checkpoint noise" is ignored.
+    expect(outcome).toBe("continue");
+    expect(message.text).toBe("the real tangent");
+  });
+
+  it("acks and does not stream trailing text when there is no conversation (guard failure)", () => {
+    const fake = makeSession();
+    const deliverFn = deliver();
+    const message = msg("/checkpoint hello");
+    message.metadata.command = "checkpoint";
+
+    const outcome = handleCheckpointCommand(
+      { side, log: fakeLog, deliver: deliverFn },
+      message,
+      trunkFrom(fake),
+    );
+
+    expect(outcome).toBe("acked");
     expect(message.metadata.handled).toBe(true);
+    expect(message.text).toBe("/checkpoint hello"); // not stripped — no turn streams
+    expect(deliverFn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("No conversation") }),
+    );
   });
 });
 
@@ -321,7 +411,7 @@ describe("handleBackCommand (/back)", () => {
       trunkFrom(fake),
     );
 
-    expect(handled).toBe(true);
+    expect(handled).toBe("acked");
     expect(message.metadata.handled).toBe(true);
     expect(deliverFn).toHaveBeenCalledWith(
       expect.objectContaining({ text: expect.stringContaining("No checkpoint") }),
@@ -381,7 +471,7 @@ describe("handleBackCommand (/back)", () => {
       trunkFrom(fake),
     );
 
-    expect(handled).toBe(true);
+    expect(handled).toBe("acked");
     // collapseTangent rooted at the checkpoint (m2), marked kind tangent.
     expect(fake.branchCalls).toHaveLength(1);
     expect(fake.branchCalls[0]?.branchFromId).toBe("m2");
@@ -441,14 +531,14 @@ describe("handleBackCommand (/back)", () => {
     expect(readBoomerangState(fake.session)?.checkpointId).toBeNull();
   });
 
-  it("returns false (not handled) for a non-/back message", async () => {
+  it("returns unhandled for a non-/back message", async () => {
     const fake = makeSession([messageEntry("m1", "user", "hi")]);
     const deliverFn = deliver();
     const message = msg("hello there");
 
     expect(
       await handleBackCommand({ side, log: fakeLog, deliver: deliverFn }, message, trunkFrom(fake)),
-    ).toBe(false);
+    ).toBe("unhandled");
     expect(message.metadata.handled).toBeUndefined();
     expect(deliverFn).not.toHaveBeenCalled();
   });
@@ -472,8 +562,70 @@ describe("handleBackCommand (/back)", () => {
       trunkFrom(fake),
     );
 
-    expect(handled).toBe(true);
+    expect(handled).toBe("acked");
     expect(message.metadata.handled).toBe(true);
     expect(fake.branchCalls).toHaveLength(1);
+  });
+
+  it("summarizes the tangent and streams trailing text as the resumed main line's first turn", async () => {
+    const fake = makeSession([
+      messageEntry("m1", "user", "main"),
+      messageEntry("m2", "assistant", "line"),
+    ]);
+    handleCheckpointCommand(
+      { side, log: fakeLog, deliver: deliver() },
+      msg("/checkpoint"),
+      trunkFrom(fake),
+    );
+    fake.appendMessage(messageEntry("t1", "user", "quick side question"));
+    fake.appendMessage(messageEntry("t2", "assistant", "side answer"));
+
+    const deliverFn = deliver();
+    const message = msg("/back here's what I found");
+    message.metadata.command = "back";
+
+    const outcome = await handleBackCommand(
+      {
+        side: { complete: vi.fn().mockResolvedValue("tangent summary") },
+        log: fakeLog,
+        deliver: deliverFn,
+      },
+      message,
+      trunkFrom(fake),
+    );
+
+    // Tangent folded + cleared, and the trailing text is stripped onto the message to stream.
+    expect(outcome).toBe("continue");
+    expect(fake.branchCalls).toHaveLength(1);
+    expect(readBoomerangState(fake.session)?.checkpointId).toBeNull();
+    expect(message.text).toBe("here's what I found");
+    expect(message.metadata.handled).toBeUndefined();
+    expect(deliverFn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("↩️ Summarized to checkpoint") }),
+    );
+  });
+
+  it("acks and does not stream trailing text when there is no checkpoint (guard failure)", async () => {
+    const fake = makeSession([
+      messageEntry("m1", "user", "hi"),
+      messageEntry("m2", "assistant", "hello"),
+    ]);
+    const deliverFn = deliver();
+    const message = msg("/back here's what I found");
+    message.metadata.command = "back";
+
+    const outcome = await handleBackCommand(
+      { side: { complete: vi.fn() }, log: fakeLog, deliver: deliverFn },
+      message,
+      trunkFrom(fake),
+    );
+
+    expect(outcome).toBe("acked");
+    expect(message.metadata.handled).toBe(true);
+    expect(message.text).toBe("/back here's what I found"); // not stripped — no turn streams
+    expect(fake.branchCalls).toHaveLength(0);
+    expect(deliverFn).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("No checkpoint") }),
+    );
   });
 });
