@@ -1,3 +1,14 @@
+# [3.62.0](https://github.com/asermax/tachikoma/compare/v3.61.0...v3.62.0) (2026-07-19)
+
+
+### Features
+
+* **tasks:** add goal column and thread it through task creation sites ([1667ac5](https://github.com/asermax/tachikoma/commit/1667ac5defa757525a66badb1d2e9259589d37d7))
+* **tasks:** document goal meaning and structure on agent-facing surfaces ([2942281](https://github.com/asermax/tachikoma/commit/29422815741954191c28ca6bfd10d5786e065182))
+* **tasks:** drop iteration-cap note from goal guidance ([1aef1e5](https://github.com/asermax/tachikoma/commit/1aef1e553ef33b729d9d00bb8833cf69f711c66e))
+* **tasks:** extract completion goal at run start and surface it ([4c6715f](https://github.com/asermax/tachikoma/commit/4c6715f7f9947d6c84d4f5a2a712565eed953d65))
+* **tasks:** replace evaluator loop with goal self-declaration ([6575398](https://github.com/asermax/tachikoma/commit/6575398a041e7c164b34c19030fe04eec00b7edc))
+
 # [3.61.0](https://github.com/asermax/tachikoma/compare/v3.60.0...v3.61.0) (2026-07-11)
 
 
