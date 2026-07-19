@@ -1,4 +1,4 @@
-import type { LastCheckState, UpgradeMarker } from "./state.ts";
+import type { LastCheckState, RestartMarker, UpgradeMarker } from "./state.ts";
 import { isNewerVersion } from "./version.ts";
 
 /**
@@ -111,36 +111,57 @@ export const decideUpgrade = ({
 };
 
 /**
- * Decide what to do on startup given any upgrade marker left by a prior boot.
+ * Decide what to do on startup given any markers left by a prior boot.
  *
- *  - no marker                         → nothing (clean boot)
- *  - marker, now running target        → upgrade succeeded; announce + clear
- *  - marker, NOT running target        → the new version failed to take; roll
+ *  - no markers                         → nothing (clean boot)
+ *  - upgrade marker, running target     → upgrade succeeded; announce + clear
+ *  - upgrade marker, NOT running target → the new version failed to take; roll
  *                                        back to the previous version, record the
  *                                        target as failed (loop guard), clear marker
+ *  - restart marker only                → a plain restart completed; announce + clear
+ *
+ * The upgrade marker wins over a restart marker when both are present: its
+ * rollback semantics must be reconciled even if a `restart_self` followed an
+ * `upgrade_self` before the deferred re-exec (only one restart fires —
+ * first-write-wins — but both markers could be persisted).
  */
 export const STARTUP_ACTIONS = {
   none: "none",
   upgradeSucceeded: "upgradeSucceeded",
   rollback: "rollback",
+  restartCompleted: "restartCompleted",
 } as const;
 
-export type StartupAction = keyof typeof STARTUP_ACTIONS;
-
-export interface StartupDecision {
-  action: StartupAction;
-  marker: UpgradeMarker | null;
-}
+/**
+ * Discriminated on `action` so each variant carries exactly the fields its
+ * consumer reads: `upgradeSucceeded`/`rollback` carry the upgrade marker (the
+ * orchestrator reads its version fields), while `restartCompleted` and `none`
+ * carry none (the orchestrator only checks the restart marker's presence and
+ * emits a static message). This keeps the action↔marker correlation in the type
+ * instead of forcing consumers to re-narrow a wide union with a cast.
+ */
+export type StartupDecision =
+  | { action: "none" }
+  | { action: "upgradeSucceeded"; marker: UpgradeMarker }
+  | { action: "rollback"; marker: UpgradeMarker }
+  | { action: "restartCompleted" };
 
 export const decideStartup = (
-  marker: UpgradeMarker | null,
+  upgradeMarker: UpgradeMarker | null,
+  restartMarker: RestartMarker | null,
   currentVersion: string,
 ): StartupDecision => {
-  if (marker == null) return { action: STARTUP_ACTIONS.none, marker: null };
+  if (upgradeMarker != null) {
+    if (currentVersion === upgradeMarker.targetVersion) {
+      return { action: "upgradeSucceeded", marker: upgradeMarker };
+    }
 
-  if (currentVersion === marker.targetVersion) {
-    return { action: STARTUP_ACTIONS.upgradeSucceeded, marker };
+    return { action: "rollback", marker: upgradeMarker };
   }
 
-  return { action: STARTUP_ACTIONS.rollback, marker };
+  if (restartMarker != null) {
+    return { action: "restartCompleted" };
+  }
+
+  return { action: "none" };
 };

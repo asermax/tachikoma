@@ -3,6 +3,7 @@ import { Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
 import type { Restarter } from "./seams.ts";
+import type { SelfUpdateState } from "./state.ts";
 import { runUpgrade, type UpgradeDeps } from "./upgrade.ts";
 
 export const UpgradeSelfParams = Type.Object({});
@@ -63,13 +64,19 @@ export const createUpgradeToolFactory =
   };
 
 /**
- * pi Extension factory exposing the `restart_self` tool. Schedules a deferred restart via
- * the Restarter seam WITHOUT upgrading and returns a message; the process re-execs only
- * after the current exchange completes, so the agent always sees a tool result and can
- * finish its turn.
+ * pi Extension factory exposing the `restart_self` tool. Writes a restart marker, schedules
+ * a deferred restart via the Restarter seam WITHOUT upgrading, and returns a message; the
+ * process re-execs only after the current exchange completes, so the agent always sees a
+ * tool result and can finish its turn. The marker is consumed on the next boot to emit the
+ * post-restart "back online" notification.
  */
 export const createRestartToolFactory =
-  (restarter: () => Restarter, requestRestart: RequestRestart, log: Logger): ExtensionFactory =>
+  (
+    restarter: () => Restarter,
+    requestRestart: RequestRestart,
+    state: SelfUpdateState,
+    log: Logger,
+  ): ExtensionFactory =>
   (pi) => {
     pi.registerTool({
       name: "restart_self",
@@ -85,6 +92,11 @@ export const createRestartToolFactory =
       parameters: RestartSelfParams,
       async execute() {
         log.info("restart_self invoked");
+
+        // Write the restart marker BEFORE scheduling the deferred re-exec (mirrors runUpgrade):
+        // the KV write is synchronous, so the marker is on disk before the process restarts,
+        // and the next boot announces "back online".
+        state.setRestartMarker({ startedAt: new Date().toISOString() });
 
         // Schedule a deferred restart so the current exchange (this tool result + the agent's
         // turn) completes before the process re-execs.

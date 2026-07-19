@@ -18,20 +18,31 @@ const notify = (emit: NotifyEmitter, payload: Omit<NotifyPayload, "source">): vo
   emit(NOTIFY_EVENT, { ...payload, source: "self-update" });
 };
 
+/** Emit the shared "back online" info notice; callers supply the tail of the text. */
+const announceBackOnline = (emit: NotifyEmitter, text: string): void => {
+  notify(emit, { title: "Back online", text, severity: "info" });
+};
+
 /**
- * Boot-time reconciliation of any in-progress upgrade marker.
+ * Boot-time reconciliation of any markers left by a prior boot.
  *
  *  - No marker → clean boot, nothing to do.
- *  - Marker present and we're now running the target version → the upgrade
+ *  - Restart marker → a plain `restart_self` completed: announce "back online"
+ *    and clear the marker. (Same-version, so there is no success/rollback check.)
+ *  - Upgrade marker and we're now running the target version → the upgrade
  *    landed: announce "back online", clear the marker AND the loop guard (a
  *    successful run supersedes any earlier failure).
- *  - Marker present but we're NOT on the target → the new version failed to come
+ *  - Upgrade marker but we're NOT on the target → the new version failed to come
  *    up cleanly. Record the target as failed (loop guard), reinstall the previous
  *    version, clear the marker, then re-exec back onto the known-good build. The
  *    "back online" notice is surfaced by the *next* boot's success path.
  *
- * The marker is cleared before any restart so a rollback that itself fails to
- * boot does not loop forever — the next boot sees no marker and stays put.
+ * The upgrade marker takes precedence over a restart marker when both are
+ * present: the upgrade's outcome supersedes whatever the restart was going to
+ * announce, so the restart marker is consumed (cleared) alongside the upgrade
+ * reconciliation rather than surviving to fire a spurious notice next boot. The
+ * upgrade marker is cleared before any restart so a rollback that itself fails
+ * to boot does not loop forever — the next boot sees no marker and stays put.
  */
 export const reconcileStartup = async ({
   installer,
@@ -41,11 +52,30 @@ export const reconcileStartup = async ({
   emit,
   log,
 }: StartupDeps): Promise<void> => {
-  const decision = decideStartup(state.getUpgradeMarker(), currentVersion);
+  const decision = decideStartup(
+    state.getUpgradeMarker(),
+    state.getRestartMarker(),
+    currentVersion,
+  );
 
   if (decision.action === STARTUP_ACTIONS.none) return;
 
-  const marker = decision.marker as NonNullable<typeof decision.marker>;
+  if (decision.action === STARTUP_ACTIONS.restartCompleted) {
+    log.info("restart completed; clearing marker");
+
+    state.clearRestartMarker();
+
+    announceBackOnline(emit, "Tachikoma is back online after a restart.");
+
+    return;
+  }
+
+  // The upgrade marker wins over any restart marker: its outcome supersedes
+  // whatever the restart was going to announce, so consume the restart marker
+  // now rather than leaving it to fire a spurious notice on the next boot.
+  state.clearRestartMarker();
+
+  const marker = decision.marker;
 
   if (decision.action === STARTUP_ACTIONS.upgradeSucceeded) {
     log.info(
@@ -56,11 +86,10 @@ export const reconcileStartup = async ({
     state.clearUpgradeMarker();
     state.clearFailedVersion();
 
-    notify(emit, {
-      title: "Back online",
-      text: `Tachikoma is back online after upgrading from ${marker.previousVersion} to ${marker.targetVersion}.`,
-      severity: "info",
-    });
+    announceBackOnline(
+      emit,
+      `Tachikoma is back online after upgrading from ${marker.previousVersion} to ${marker.targetVersion}.`,
+    );
 
     return;
   }
