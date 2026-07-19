@@ -137,6 +137,20 @@ export const StopTaskParams = Type.Object({
   }),
 });
 
+// A goal is "present" only when non-null and non-blank — matching the executor's own
+// usability check (R26 rejects empty/trivial goals), so the display rule and the
+// storage rule agree. Declared as a type guard so callers narrow `goal` to string.
+const isGoalPresent = (goal: string | null): goal is string =>
+  goal != null && goal.trim().length > 0;
+
+// One-line summary for the compact list view: the goal's first line (up to the first
+// newline), trimmed, then capped at 100 chars with an ellipsis. Call only when present.
+const summarizeGoal = (goal: string): string => {
+  const first = (goal.split("\n")[0] ?? "").trim();
+  const max = 100;
+  return first.length > max ? `${first.slice(0, max - 1)}…` : first;
+};
+
 const describeDefinition = (
   definition: TaskDefinitionRecord,
   timezone: string | undefined,
@@ -147,11 +161,18 @@ const describeDefinition = (
       ? ` (last: ${formatInTimezone(definition.lastFiredAt, timezone)})`
       : "";
 
-  return [
+  const lines = [
     `- [${definition.id}] **${definition.name}** [${definition.taskType}] ${status}`,
     `  Schedule: ${formatSchedule(definition.schedule, timezone)}${lastFired}`,
-    "",
   ];
+
+  if (isGoalPresent(definition.goal)) {
+    lines.push(`  Goal: ${summarizeGoal(definition.goal)}`);
+  }
+
+  lines.push("");
+
+  return lines;
 };
 
 export const handleCreateTask = (
@@ -282,6 +303,7 @@ export const handleGetTask = (
     `- Schedule: ${formatSchedule(definition.schedule, timezone)}`,
     `- Last run: ${lastFired}`,
     `- Created: ${formatInTimezone(definition.createdAt, timezone)}`,
+    `- Since (schedule anchor): ${formatInTimezone(definition.since, timezone)}`,
   ];
 
   const latest = repository.getLatestInstanceForDefinition(definition.id);
@@ -295,6 +317,8 @@ export const handleGetTask = (
 
     if (latest.result != null) lines.push(`- Result: ${latest.result}`);
   }
+
+  lines.push("", "## Goal", "", isGoalPresent(definition.goal) ? definition.goal : "(not set)");
 
   lines.push("", "## Prompt", "", definition.prompt);
 
@@ -481,7 +505,7 @@ export const createTaskToolsFactory =
       name: "list_tasks",
       label: "List Tasks",
       description:
-        "List task definitions. Each entry includes the task ID (needed for update_task and query_task_instances), name, type, schedule, and status. Pass archived=true to show disabled tasks.",
+        "List task definitions. Each entry includes the task ID (needed for update_task and query_task_instances), name, type, schedule, status, and a one-line goal summary. Pass archived=true to show disabled tasks.",
       promptSnippet: "List scheduled task definitions",
       promptGuidelines: [
         "Check list_tasks before create_task to avoid scheduling duplicate tasks.",
@@ -496,7 +520,7 @@ export const createTaskToolsFactory =
       name: "get_task",
       label: "Get Task",
       description:
-        "Fetch the full details of a single task definition by ID or exact name, including its complete prompt and a summary of its most recent instance.",
+        "Fetch the full details of a single task definition by ID or exact name, including its goal, complete prompt, schedule, and a summary of its most recent instance.",
       promptSnippet: "Inspect one scheduled task definition in full",
       promptGuidelines: [
         "Use get_task to read a task's full prompt or check its latest run before editing it.",

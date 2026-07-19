@@ -32,6 +32,19 @@ const registeredToolNames = (factory: ExtensionFactory): string[] => {
   return names;
 };
 
+const registeredToolDescriptions = (factory: ExtensionFactory): Record<string, string> => {
+  const map: Record<string, string> = {};
+  const pi = {
+    registerTool: (tool: { name: string; description?: string }) => {
+      map[tool.name] = tool.description ?? "";
+    },
+  };
+
+  factory(pi as unknown as Parameters<ExtensionFactory>[0]);
+
+  return map;
+};
+
 const fakeLog = {
   error: vi.fn(),
   warn: vi.fn(),
@@ -221,6 +234,59 @@ describe("handleListTasks", () => {
     expect(handleListTasks(deps, {})).toBe("No active tasks found.");
     expect(handleListTasks(deps, { archived: true })).toBe("No archived tasks found.");
   });
+
+  it("includes a one-line goal summary only for tasks that have a goal", () => {
+    repository.createDefinition({
+      name: "with goal",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "background",
+      prompt: "prompt",
+      goal: "end state: inbox at zero\ncheck: count is zero\ninvariants: nothing deleted",
+    });
+    repository.createDefinition({
+      name: "no goal",
+      schedule: { type: "cron", expression: "0 10 * * *" },
+      taskType: "session",
+      prompt: "prompt",
+    });
+
+    const message = handleListTasks(deps, {});
+
+    const goalLines = message.split("\n").filter((line) => line.startsWith("  Goal:"));
+
+    // Exactly one summary — for the goal task — collapsed to its first line.
+    expect(goalLines).toHaveLength(1);
+    expect(goalLines[0]).toContain("end state: inbox at zero");
+    expect(goalLines[0]).not.toContain("count is zero");
+  });
+
+  it("preserves a 100-char goal line but truncates a longer one with an ellipsis", () => {
+    repository.createDefinition({
+      name: "fits",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "background",
+      prompt: "prompt",
+      goal: "a".repeat(100),
+    });
+    repository.createDefinition({
+      name: "overflows",
+      schedule: { type: "cron", expression: "0 10 * * *" },
+      taskType: "background",
+      prompt: "prompt",
+      goal: "b".repeat(101),
+    });
+
+    const message = handleListTasks(deps, {});
+    const summaries = message
+      .split("\n")
+      .filter((line) => line.startsWith("  Goal:"))
+      .map((line) => line.slice("  Goal: ".length));
+
+    // Exactly at the cap → unchanged.
+    expect(summaries).toContain("a".repeat(100));
+    // Over the cap → capped to 100 glyphs (99 chars + ellipsis).
+    expect(summaries).toContain(`${"b".repeat(99)}…`);
+  });
 });
 
 describe("handleQueryTaskInstances", () => {
@@ -295,6 +361,39 @@ describe("handleGetTask", () => {
     });
 
     expect(handleGetTask(deps, { task: "named task" })).toContain("# named task");
+  });
+
+  it("includes the full goal and the schedule anchor in the details", () => {
+    const definition = repository.createDefinition({
+      name: "goaled",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "background",
+      prompt: "do the work",
+      goal: "end state: work shipped\ncheck: tests green\ninvariants: no regressions",
+    });
+
+    const message = handleGetTask(deps, { task: definition.id });
+
+    expect(message).toContain("## Goal");
+    // The full goal text is rendered (not truncated like the list summary).
+    expect(message).toContain("end state: work shipped");
+    expect(message).toContain("invariants: no regressions");
+    expect(message).toContain("- Since (schedule anchor):");
+  });
+
+  it("marks a missing goal as not set and still shows the schedule anchor", () => {
+    const definition = repository.createDefinition({
+      name: "goalless",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "session",
+      prompt: "prompt",
+    });
+
+    const message = handleGetTask(deps, { task: definition.id });
+
+    expect(message).toContain("## Goal");
+    expect(message).toContain("(not set)");
+    expect(message).toContain("- Since (schedule anchor):");
   });
 
   it("throws for an unknown task", () => {
@@ -655,5 +754,12 @@ describe("goal param descriptions", () => {
       expect(description).toContain("stated check");
       expect(description).toContain("invariants");
     }
+  });
+
+  it("state that get_task and list_tasks expose the goal", () => {
+    const descriptions = registeredToolDescriptions(createTaskToolsFactory(deps));
+
+    expect(descriptions.get_task).toContain("goal");
+    expect(descriptions.list_tasks).toContain("goal");
   });
 });
