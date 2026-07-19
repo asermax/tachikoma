@@ -23,6 +23,15 @@ export interface ToolDeps {
 const SCHEDULE_DESCRIPTION =
   "Cron expression (e.g., '0 9 * * *' for daily at 9 AM), bare ISO datetime interpreted in the configured timezone (e.g., '2026-04-01T15:00:00'), or ISO datetime with 'Z'/offset for an explicit zone";
 
+// The recommended goal structure, in the SAME wording as the tasks usage section and the background
+// system prompt (R13): "end state + stated check + invariants". It is recommended prose, not a
+// parsed schema, so the same wording is repeated on every agent-facing surface with no structure to
+// keep in sync — this constant keeps the three tool param descriptions in lockstep.
+const GOAL_STRUCTURE =
+  "Express it as three parts: a measurable end state (the concrete outcome to reach), " +
+  "a stated check that proves it is reached (an artifact, measurement, or observable outcome — not a bare assertion), " +
+  "and invariants (constraints on what must not change)";
+
 export const CreateTaskParams = Type.Object({
   name: Type.String({ description: "Human-readable task name" }),
   schedule: Type.String({ description: SCHEDULE_DESCRIPTION }),
@@ -32,8 +41,7 @@ export const CreateTaskParams = Type.Object({
   prompt: Type.String({ description: "Instruction the agent follows when the task fires" }),
   goal: Type.Optional(
     Type.String({
-      description:
-        "Optional free-text goal the task's background runs work toward. If omitted, the first background run derives one from the prompt.",
+      description: `Optional free-text goal the task's background runs work toward. ${GOAL_STRUCTURE}. If omitted, the first background run derives one from the prompt; the run then finishes itself by calling update_goal.`,
     }),
   ),
   enabled: Type.Optional(
@@ -53,8 +61,7 @@ export const UpdateTaskParams = Type.Object({
   prompt: Type.Optional(Type.String({ description: "New agent instruction" })),
   goal: Type.Optional(
     Type.String({
-      description:
-        "Optional free-text goal the task's background runs work toward. If omitted, the first background run derives one from the prompt.",
+      description: `Optional free-text goal the task's background runs work toward. ${GOAL_STRUCTURE}. If omitted, the first background run derives one from the prompt; the run then finishes itself by calling update_goal.`,
     }),
   ),
   enabled: Type.Optional(Type.Boolean({ description: "Enable or disable the task" })),
@@ -107,8 +114,7 @@ export const RunTaskNowParams = Type.Object({
   ),
   goal: Type.Optional(
     Type.String({
-      description:
-        "Optional free-text goal for this run. By-reference (with 'task'): overrides the definition's goal for this run only. Ad-hoc (with 'prompt'): the run's goal, or null if omitted.",
+      description: `Optional free-text goal for this run. ${GOAL_STRUCTURE}. By-reference (with 'task'): overrides the definition's goal for this run only. Ad-hoc (with 'prompt'): the run's goal, or null if omitted (then derived from the prompt).`,
     }),
   ),
   type: Type.Optional(

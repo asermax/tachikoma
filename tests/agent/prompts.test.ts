@@ -66,6 +66,16 @@ describe("role system prompts", () => {
     expect(prompt).toContain("scheduled task");
   });
 
+  it("tells the background agent to work a goal and self-declare via update_goal (R13)", () => {
+    const prompt = buildBackgroundSystemPrompt({ dateHeader: "Monday UTC" });
+
+    expect(prompt).toContain("goal");
+    expect(prompt).toContain("end state");
+    expect(prompt).toContain("stated check");
+    expect(prompt).toContain("invariants");
+    expect(prompt).toContain("update_goal");
+  });
+
   it("keeps the core base prompts skill-agnostic — the skills extension owns that guidance", () => {
     // Skill-following guidance moved to the skills extension (src/extensions/skills/usage.ts) so the
     // core base prompt stays feature-agnostic and the guidance appears only when skills are enabled.

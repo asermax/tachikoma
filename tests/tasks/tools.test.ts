@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppDatabase } from "../../src/db/index.ts";
 import { TaskRepository } from "../../src/extensions/tasks/repository.ts";
 import {
+  CreateTaskParams,
   createTaskInteractiveToolsFactory,
   createTaskToolsFactory,
   handleCreateTask,
@@ -15,7 +16,9 @@ import {
   handleRunTaskNow,
   handleStopTask,
   handleUpdateTask,
+  RunTaskNowParams,
   type ToolDeps,
+  UpdateTaskParams,
 } from "../../src/extensions/tasks/tools.ts";
 import type { Logger } from "../../src/log.ts";
 import { createTasksTestDb } from "./setup.ts";
@@ -635,5 +638,22 @@ describe("tool factory split", () => {
     expect(registeredToolNames(createTaskInteractiveToolsFactory(deps))).toEqual([
       "respond_to_task",
     ]);
+  });
+});
+
+// R13: the goal's meaning and recommended "end state + stated check + invariants" structure is
+// documented on every agent-facing surface — including all three task-creation tool params.
+describe("goal param descriptions", () => {
+  it("document the goal meaning and recommended structure on create/update/run-now (R13)", () => {
+    for (const params of [CreateTaskParams, UpdateTaskParams, RunTaskNowParams]) {
+      const goal = (params as { properties: { goal?: { description?: string } } }).properties?.goal;
+      expect(goal, "each tool must define a goal param").toBeDefined();
+
+      const description = goal?.description ?? "";
+      expect(description).toContain("goal");
+      expect(description).toContain("end state");
+      expect(description).toContain("stated check");
+      expect(description).toContain("invariants");
+    }
   });
 });
