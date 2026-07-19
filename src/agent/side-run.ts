@@ -312,7 +312,7 @@ export class SideRunner {
    * under the workspace sessions dir, the curated background factories are bound, and the given
    * custom tools are active — with NO `tools` allowlist (a hard allowlist filters out
    * extension/custom tools). The caller prompts the returned session repeatedly across the
-   * evaluator loop and disposes it; `session.sessionFile` is the path to persist for resumption.
+   * run loop and disposes it; `session.sessionFile` is the path to persist for resumption.
    */
   async openBackgroundSession({
     system,

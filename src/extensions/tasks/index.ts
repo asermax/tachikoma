@@ -29,7 +29,7 @@ const CLEANUP_INTERVAL_SECONDS = 3600;
 /**
  * Scheduled tasks: cron or one-shot definitions fire as instances that are
  * either delivered into the conversation during idle time (session mode) or
- * executed autonomously through an evaluator loop (background mode). The agent
+ * executed autonomously through a goal-driven self-declaration loop (background mode). The agent
  * manages definitions through the task tools.
  */
 export default defineExtension<TasksConfig>({
