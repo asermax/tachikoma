@@ -137,9 +137,10 @@ export const StopTaskParams = Type.Object({
   }),
 });
 
-// A goal is "present" only when non-null and non-blank — matching the executor's own
-// usability check (R26 rejects empty/trivial goals), so the display rule and the
-// storage rule agree. Declared as a type guard so callers narrow `goal` to string.
+// A goal is "present" for display only when non-null and non-blank. This is a display
+// concept, distinct from the executor's extraction-quality gate (MIN_GOAL_LENGTH, R26),
+// which applies only to LLM-derived goals — the two are not the same check. Declared as
+// a type guard so callers narrow `goal` to string.
 const isGoalPresent = (goal: string | null): goal is string =>
   goal != null && goal.trim().length > 0;
 
@@ -147,8 +148,8 @@ const isGoalPresent = (goal: string | null): goal is string =>
 // newline), trimmed, then capped at 100 chars with an ellipsis. Call only when present.
 const summarizeGoal = (goal: string): string => {
   const first = (goal.split("\n")[0] ?? "").trim();
-  const max = 100;
-  return first.length > max ? `${first.slice(0, max - 1)}…` : first;
+  // Cap is 100 glyphs total: 99 chars + the ellipsis.
+  return first.length > 100 ? `${first.slice(0, 99)}…` : first;
 };
 
 const describeDefinition = (
@@ -161,18 +162,12 @@ const describeDefinition = (
       ? ` (last: ${formatInTimezone(definition.lastFiredAt, timezone)})`
       : "";
 
-  const lines = [
+  return [
     `- [${definition.id}] **${definition.name}** [${definition.taskType}] ${status}`,
     `  Schedule: ${formatSchedule(definition.schedule, timezone)}${lastFired}`,
+    ...(isGoalPresent(definition.goal) ? [`  Goal: ${summarizeGoal(definition.goal)}`] : []),
+    "",
   ];
-
-  if (isGoalPresent(definition.goal)) {
-    lines.push(`  Goal: ${summarizeGoal(definition.goal)}`);
-  }
-
-  lines.push("");
-
-  return lines;
 };
 
 export const handleCreateTask = (
