@@ -1,6 +1,7 @@
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import type { Restarter } from "../../src/extensions/self-update/seams.ts";
+import { SelfUpdateState } from "../../src/extensions/self-update/state.ts";
 import {
   createRestartToolFactory,
   createUpgradeToolFactory,
@@ -18,6 +19,20 @@ const createFakeLog = () => {
     error: vi.fn(),
   };
   return Object.assign(log, { child: () => log }) as unknown as Logger;
+};
+
+const createState = () => {
+  const store = new Map<string, unknown>();
+
+  return new SelfUpdateState({
+    get: <T>(key: string): T | null => (store.has(key) ? (store.get(key) as T) : null),
+    set: <T>(key: string, value: T): void => {
+      store.set(key, value);
+    },
+    delete: (key: string): void => {
+      store.delete(key);
+    },
+  });
 };
 
 vi.mock("../../src/extensions/self-update/upgrade.ts", () => ({
@@ -75,18 +90,24 @@ describe("createUpgradeToolFactory", () => {
 });
 
 describe("createRestartToolFactory", () => {
-  it("registers restart_self and schedules a deferred restart, returning a result", async () => {
+  it("registers restart_self, writes a restart marker, and schedules a deferred restart", async () => {
     const restart = vi.fn(() => "unreachable" as never);
     const restarter = vi.fn((): Restarter => ({ restart }));
     const requestRestart = vi.fn();
+    const state = createState();
 
     const tools = registerInto(
-      createRestartToolFactory(restarter, requestRestart, createFakeLog()),
+      createRestartToolFactory(restarter, requestRestart, state, createFakeLog()),
     );
 
     expect(tools.map((tool) => tool.name)).toEqual(["restart_self"]);
 
     const result = await tools[0]?.execute("call-1", {});
+
+    // The restart marker is written synchronously during the exchange, before the
+    // deferred re-exec, so the next boot can announce "back online".
+    expect(state.getRestartMarker()).not.toBeNull();
+    expect(state.getRestartMarker()?.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
 
     // The restarter is not invoked during the exchange — only handed to requestRestart.
     expect(restarter).not.toHaveBeenCalled();

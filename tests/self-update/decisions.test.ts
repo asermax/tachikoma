@@ -9,7 +9,7 @@ import {
   STARTUP_ACTIONS,
   UPGRADE_GATES,
 } from "../../src/extensions/self-update/decisions.ts";
-import type { UpgradeMarker } from "../../src/extensions/self-update/state.ts";
+import type { RestartMarker, UpgradeMarker } from "../../src/extensions/self-update/state.ts";
 
 const CURRENT = "2.0.1";
 
@@ -149,16 +149,27 @@ describe("decideStartup", () => {
     targetVersion: "2.1.0",
     startedAt: "2026-06-13T10:00:00Z",
   };
+  const restartMarker: RestartMarker = { startedAt: "2026-06-13T10:00:00Z" };
 
   it("does nothing on a clean boot", () => {
-    expect(decideStartup(null, CURRENT).action).toBe(STARTUP_ACTIONS.none);
+    expect(decideStartup(null, null, CURRENT).action).toBe(STARTUP_ACTIONS.none);
   });
 
   it("recognises a successful upgrade when running the target", () => {
-    expect(decideStartup(marker, "2.1.0").action).toBe(STARTUP_ACTIONS.upgradeSucceeded);
+    expect(decideStartup(marker, null, "2.1.0").action).toBe(STARTUP_ACTIONS.upgradeSucceeded);
   });
 
   it("calls for rollback when not running the target", () => {
-    expect(decideStartup(marker, "2.0.1").action).toBe(STARTUP_ACTIONS.rollback);
+    expect(decideStartup(marker, null, "2.0.1").action).toBe(STARTUP_ACTIONS.rollback);
+  });
+
+  it("announces a completed restart when only a restart marker is present", () => {
+    expect(decideStartup(null, restartMarker, CURRENT).action).toBe(
+      STARTUP_ACTIONS.restartCompleted,
+    );
+  });
+
+  it("prefers the upgrade marker over a restart marker (rollback wins)", () => {
+    expect(decideStartup(marker, restartMarker, "2.0.1").action).toBe(STARTUP_ACTIONS.rollback);
   });
 });

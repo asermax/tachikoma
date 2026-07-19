@@ -327,12 +327,13 @@ describe("createRestartToolFactory", () => {
     execute: () => Promise<{ content: { type: string; text: string }[] }>;
   }
 
-  it("registers restart_self and schedules a deferred restart, returning a result", async () => {
+  it("registers restart_self, writes a restart marker, and schedules a deferred restart", async () => {
     const restart = vi.fn(() => {
       throw new Error("__restart__");
     });
     const restarter = { restart } as unknown as Restarter;
     const requestRestart = vi.fn();
+    const state = createState();
 
     let captured: CapturedTool | null = null;
     const pi = { registerTool: (tool: CapturedTool) => (captured = tool) };
@@ -340,6 +341,7 @@ describe("createRestartToolFactory", () => {
     createRestartToolFactory(
       () => restarter,
       requestRestart,
+      state,
       fakeLog,
     )(pi as unknown as Parameters<ExtensionFactory>[0]);
 
@@ -347,6 +349,9 @@ describe("createRestartToolFactory", () => {
     expect(tool.name).toBe("restart_self");
 
     const result = await tool.execute();
+
+    // The restart marker is written synchronously during the exchange, before the deferred re-exec.
+    expect(state.getRestartMarker()).not.toBeNull();
 
     // The restarter is NOT invoked during the exchange — only handed to requestRestart for later.
     expect(restart).not.toHaveBeenCalled();
@@ -383,6 +388,26 @@ describe("reconcileStartup", () => {
     });
 
     expect(emit).not.toHaveBeenCalled();
+  });
+
+  it("announces back online and clears the restart marker after a plain restart", async () => {
+    const state = createState();
+    state.setRestartMarker({ startedAt: now().toISOString() });
+    const emit = vi.fn();
+
+    await reconcileStartup({
+      installer: noInstall,
+      restarter: createRestarter(),
+      state,
+      currentVersion: CURRENT,
+      emit,
+      log: fakeLog,
+    });
+
+    expect(emit).toHaveBeenCalledOnce();
+    const [, payload] = emit.mock.calls[0] as [string, { text: string }];
+    expect(payload.text.toLowerCase()).toContain("back online");
+    expect(state.getRestartMarker()).toBeNull();
   });
 
   it("announces success and clears markers when running the target", async () => {

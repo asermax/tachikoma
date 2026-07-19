@@ -3,7 +3,7 @@ import { NOTIFY_EVENT, type NotifyPayload } from "../notifications/payload.ts";
 import type { NotifyEmitter } from "./checker.ts";
 import { decideStartup, STARTUP_ACTIONS } from "./decisions.ts";
 import type { Installer, Restarter } from "./seams.ts";
-import type { SelfUpdateState } from "./state.ts";
+import type { SelfUpdateState, UpgradeMarker } from "./state.ts";
 
 export interface StartupDeps {
   installer: Installer;
@@ -19,19 +19,22 @@ const notify = (emit: NotifyEmitter, payload: Omit<NotifyPayload, "source">): vo
 };
 
 /**
- * Boot-time reconciliation of any in-progress upgrade marker.
+ * Boot-time reconciliation of any markers left by a prior boot.
  *
  *  - No marker → clean boot, nothing to do.
- *  - Marker present and we're now running the target version → the upgrade
+ *  - Restart marker → a plain `restart_self` completed: announce "back online"
+ *    and clear the marker. (Same-version, so there is no success/rollback check.)
+ *  - Upgrade marker and we're now running the target version → the upgrade
  *    landed: announce "back online", clear the marker AND the loop guard (a
  *    successful run supersedes any earlier failure).
- *  - Marker present but we're NOT on the target → the new version failed to come
+ *  - Upgrade marker but we're NOT on the target → the new version failed to come
  *    up cleanly. Record the target as failed (loop guard), reinstall the previous
  *    version, clear the marker, then re-exec back onto the known-good build. The
  *    "back online" notice is surfaced by the *next* boot's success path.
  *
- * The marker is cleared before any restart so a rollback that itself fails to
- * boot does not loop forever — the next boot sees no marker and stays put.
+ * The upgrade marker takes precedence over a restart marker when both are
+ * present. The marker is cleared before any restart so a rollback that itself
+ * fails to boot does not loop forever — the next boot sees no marker and stays put.
  */
 export const reconcileStartup = async ({
   installer,
@@ -41,11 +44,29 @@ export const reconcileStartup = async ({
   emit,
   log,
 }: StartupDeps): Promise<void> => {
-  const decision = decideStartup(state.getUpgradeMarker(), currentVersion);
+  const decision = decideStartup(
+    state.getUpgradeMarker(),
+    state.getRestartMarker(),
+    currentVersion,
+  );
 
   if (decision.action === STARTUP_ACTIONS.none) return;
 
-  const marker = decision.marker as NonNullable<typeof decision.marker>;
+  if (decision.action === STARTUP_ACTIONS.restartCompleted) {
+    log.info("restart completed; clearing marker");
+
+    state.clearRestartMarker();
+
+    notify(emit, {
+      title: "Back online",
+      text: "Tachikoma is back online after a restart.",
+      severity: "info",
+    });
+
+    return;
+  }
+
+  const marker = decision.marker as NonNullable<UpgradeMarker>;
 
   if (decision.action === STARTUP_ACTIONS.upgradeSucceeded) {
     log.info(

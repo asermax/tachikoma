@@ -2,12 +2,14 @@ import type { KeyValueState } from "../../db/state.ts";
 
 /**
  * Persisted self-update state, kept in the extension's namespaced KV (no table /
- * migration of its own). Three concerns share the namespace:
+ * migration of its own). Four concerns share the namespace:
  *
  *  - `lastCheck`     — checker bookkeeping (when, what latest was seen, what we
  *                      already notified about) so we neither re-notify nor spam.
  *  - `upgrade`       — the in-progress marker written *before* an upgrade restart
  *                      and consumed on the next boot to decide success/rollback.
+ *  - `restart`       — the marker written *before* a plain `restart_self` re-exec
+ *                      and consumed on the next boot to announce "back online".
  *  - `failedVersion` — the loop guard: a version that rolled back, which we must
  *                      not attempt again until something newer appears.
  */
@@ -24,8 +26,19 @@ export interface UpgradeMarker {
   startedAt: string;
 }
 
+/**
+ * Marker written before a plain `restart_self` re-exec and consumed on the next
+ * boot to announce "back online". Carries no version delta (a restart is
+ * same-version by construction), so — unlike `UpgradeMarker` — there is no
+ * success/rollback distinction to make, only "announce and clear".
+ */
+export interface RestartMarker {
+  startedAt: string;
+}
+
 const LAST_CHECK_KEY = "lastCheck";
 const UPGRADE_MARKER_KEY = "upgradeMarker";
+const RESTART_MARKER_KEY = "restartMarker";
 const FAILED_VERSION_KEY = "failedVersion";
 
 export type SelfUpdateStateStore = Pick<KeyValueState, "get" | "set" | "delete">;
@@ -56,6 +69,18 @@ export class SelfUpdateState {
 
   clearUpgradeMarker(): void {
     this.kv.delete(UPGRADE_MARKER_KEY);
+  }
+
+  getRestartMarker(): RestartMarker | null {
+    return this.kv.get<RestartMarker>(RESTART_MARKER_KEY);
+  }
+
+  setRestartMarker(value: RestartMarker): void {
+    this.kv.set(RESTART_MARKER_KEY, value);
+  }
+
+  clearRestartMarker(): void {
+    this.kv.delete(RESTART_MARKER_KEY);
   }
 
   getFailedVersion(): string | null {
