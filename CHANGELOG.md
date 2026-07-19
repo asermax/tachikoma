@@ -1,3 +1,10 @@
+## [3.62.1](https://github.com/asermax/tachikoma/compare/v3.62.0...v3.62.1) (2026-07-19)
+
+
+### Bug Fixes
+
+* trigger release for central task goal migration ([1291e1e](https://github.com/asermax/tachikoma/commit/1291e1e156434e7311e65768c78521bc799feb1a))
+
 # [3.62.0](https://github.com/asermax/tachikoma/compare/v3.61.0...v3.62.0) (2026-07-19)
 
 
