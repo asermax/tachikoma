@@ -30,6 +30,14 @@ let repository: TaskRepository;
 
 const now = () => current;
 
+// A custom tool as the test harness sees it: a name plus its execute handler. The harness
+// forwards the customTools from openBackgroundSession into each `respond` callback so a test
+// can drive update_goal / ask_user exactly as pi would invoke them during a turn.
+interface HarnessTool {
+  name: string;
+  execute: (id: string, params: unknown) => unknown;
+}
+
 interface FakeSession {
   sessionFile: string;
   messages: { role: string; content: { type: string; text: string }[] }[];
@@ -47,13 +55,10 @@ interface FakeSide extends BackgroundSide {
 /**
  * A `BackgroundSide` whose single persistent session appends an assistant turn per `prompt`.
  * `respond` returns the assistant text for each turn (or invokes a custom tool, e.g. ask_user);
- * `customTools` from the open call are forwarded so a prompt can drive the ask_user pause.
+ * `customTools` from the open call are forwarded so a prompt can drive ask_user / update_goal.
  */
 const makeSide = (
-  respond: (
-    turn: number,
-    tools: { name: string; execute: (id: string, params: unknown) => unknown }[],
-  ) => Promise<string> | string,
+  respond: (turn: number, tools: HarnessTool[]) => Promise<string> | string,
   classify: ReturnType<typeof vi.fn>,
   sessionFile = "/sessions/bg-task.jsonl",
 ): FakeSide => {
@@ -65,7 +70,7 @@ const makeSide = (
     abort: vi.fn(),
   };
 
-  let tools: { name: string; execute: (id: string, params: unknown) => unknown }[] = [];
+  let tools: HarnessTool[] = [];
   let turn = 0;
 
   session.prompt.mockImplementation(async () => {
@@ -74,7 +79,7 @@ const makeSide = (
     session.messages.push({ role: "assistant", content: [{ type: "text", text }] });
   });
 
-  const openBackgroundSession = vi.fn(async (options: { customTools?: typeof tools }) => {
+  const openBackgroundSession = vi.fn(async (options: { customTools?: HarnessTool[] }) => {
     tools = options.customTools ?? [];
     return session;
   });
@@ -106,10 +111,9 @@ const notifyPayloads = (emit: ReturnType<typeof vi.fn>): NotifyPayload[] =>
     .filter(([event]) => event === NOTIFY_EVENT)
     .map(([, payload]) => payload as NotifyPayload);
 
-// A snapshotted goal skips run-start extraction (Step 2.2), so classify is exercised by
-// the evaluator only — used by the evaluator/cancel tests that predate goal extraction and
-// must keep their original classify-call semantics. Omit the goal (default) to exercise
-// the null-goal extraction path.
+// A snapshotted goal skips run-start extraction (Step 2.2), so classify is never called — used
+// by the declaration/cancel tests that exercise the self-declaration loop, not extraction.
+// Omit the goal (default) to exercise the null-goal extraction path.
 const pendingInstance = (goal?: string): TaskInstanceRecord =>
   repository.createInstance({
     definitionId: null,
@@ -123,6 +127,22 @@ const pendingInstance = (goal?: string): TaskInstanceRecord =>
 // snapshotted goal is meant to read as a real goal rather than a marker.
 const SNAPSHOTTED_GOAL =
   "Summarize the inbox into a scannable digest of unread messages for the user.";
+
+const findTool = (tools: HarnessTool[], name: string): HarnessTool | undefined =>
+  tools.find((tool) => tool.name === name);
+
+// Drives a `completed` declaration through the customTools harness on the turn it is returned.
+const declareCompleted =
+  (summary: string, evidence = "inbox digest written, 3 unread items surfaced") =>
+  async (_turn: number, tools: HarnessTool[]): Promise<string> => {
+    await findTool(tools, "update_goal")?.execute("call-1", {
+      status: "completed",
+      goalRestated: SNAPSHOTTED_GOAL,
+      evidence,
+      summary,
+    });
+    return `done: ${summary}`;
+  };
 
 beforeEach(async () => {
   db = await createTasksTestDb();
@@ -162,44 +182,21 @@ describe("extractGoal", () => {
 });
 
 describe("executeBackgroundInstance", () => {
-  it("reuses ONE persistent session across continuation iterations", async () => {
-    const classify = vi
-      .fn()
-      .mockResolvedValueOnce({ status: "continue", reason: "announced next steps" })
-      .mockResolvedValueOnce({ status: "complete", reason: "summarized 3 messages" });
-    const side = makeSide(
-      (turn) =>
-        turn === 1 ? "working on it, next I will read the inbox" : "done: 3 messages summarized",
-      classify,
-    );
+  it("completes when the agent declares completed, sourcing result from the summary", async () => {
+    const side = makeSide(declareCompleted("3 messages summarized"), vi.fn());
     const deps = makeDeps(side);
 
     const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
-    // The session is opened exactly once and prompted twice on the SAME session.
     expect(side.openBackgroundSession).toHaveBeenCalledTimes(1);
-    expect(side.session.prompt).toHaveBeenCalledTimes(2);
-    expect(classify).toHaveBeenCalledTimes(2);
-
-    // The session is opened with the composed background system prompt and the custom tools.
-    const openArgs = side.openBackgroundSession.mock.calls[0]?.[0];
-    expect(openArgs?.system as string).toContain("Current date and time:");
-    expect(openArgs?.system as string).toContain("notify_user");
-    // notify_user comes from the notifications extension (background-scoped); only ask_user
-    // is a custom tool here.
-    expect((openArgs?.customTools as { name: string }[]).map((t) => t.name)).toEqual(["ask_user"]);
-
-    // The continuation prompt is a short nudge carrying the evaluator note — NOT an excerpt replay.
-    const continuation = side.session.prompt.mock.calls[1]?.[0] as string;
-    expect(continuation).toContain("announced next steps");
-    expect(continuation).not.toContain("working on it");
-    expect(continuation).not.toContain("summarize the inbox");
+    expect(side.session.prompt).toHaveBeenCalledTimes(1);
 
     const completed = repository.getInstance(instance.id);
     expect(completed?.status).toBe("completed");
-    expect(completed?.result).toBe("summarized 3 messages");
-    expect(completed?.startedAt).toEqual(current);
+    expect(completed?.result).toBe("3 messages summarized");
+    expect(completed?.question).toBeNull();
+    expect(completed?.resumeContext).toBeNull();
     expect(side.session.dispose).toHaveBeenCalled();
 
     // Successful completion emits no programmatic notice — the agent self-reports via
@@ -207,20 +204,13 @@ describe("executeBackgroundInstance", () => {
     expect(deps.emit).not.toHaveBeenCalled();
   });
 
-  it("opens with the task prompt and runs post-processors with the transcript", async () => {
-    const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
-    const side = makeSide(() => "report ready", classify, "/sessions/with-transcript.jsonl");
+  it("runs post-processors with the transcript after a completed declaration", async () => {
+    const side = makeSide(declareCompleted("done"), vi.fn(), "/sessions/with-transcript.jsonl");
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
-    // Workspace context now arrives via each extension's background-scoped context section
-    // (pi before_agent_start), not folded into the opening prompt — the prompt is just the task.
-    const opening = side.session.prompt.mock.calls[0]?.[0] as string;
-    expect(opening).toBe("summarize the inbox");
-
-    // The session file is persisted and fed to post-processing so memory extraction reads it.
     expect(repository.getInstance(instance.id)?.piSessionFile).toBe(
       "/sessions/with-transcript.jsonl",
     );
@@ -229,42 +219,115 @@ describe("executeBackgroundInstance", () => {
     );
   });
 
-  it("fails the instance when the evaluator reports an error", async () => {
-    const classify = vi
-      .fn()
-      .mockResolvedValue({ status: "error", reason: "unrecoverable access error" });
-    const side = makeSide(() => "I cannot access the inbox at all", classify);
+  it("fails with the agent's reason when the agent declares not_completable", async () => {
+    const side = makeSide(async (_turn, tools) => {
+      await findTool(tools, "update_goal")?.execute("call-1", {
+        status: "not_completable",
+        reason: "no inbox access credentials",
+      });
+      return "cannot proceed";
+    }, vi.fn());
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
     const failed = repository.getInstance(instance.id);
     expect(failed?.status).toBe("failed");
-    expect(failed?.result).toBe("Agent stuck: unrecoverable access error");
+    expect(failed?.result).toBe("no inbox access credentials");
     expect(side.session.dispose).toHaveBeenCalled();
 
     expect(notifyPayloads(deps.emit)).toContainEqual(
       expect.objectContaining({
-        text: expect.stringContaining("Task failed"),
+        text: expect.stringContaining("no inbox access credentials"),
         severity: "warning",
       }),
     );
   });
 
-  it("fails after exhausting the iteration cap", async () => {
-    const classify = vi
-      .fn()
-      .mockResolvedValue({ status: "continue", reason: "still mid-workflow" });
-    const side = makeSide(() => "still going", classify);
+  it("injects the completion nudge on a non-terminal turn, then completes on the next", async () => {
+    const side = makeSide(async (turn, tools) => {
+      if (turn === 1) return "still working — reading the inbox next"; // no declaration
+      await findTool(tools, "update_goal")?.execute("call-2", {
+        status: "completed",
+        goalRestated: SNAPSHOTTED_GOAL,
+        evidence: "digest written",
+        summary: "3 messages summarized",
+      });
+      return "done";
+    }, vi.fn());
+    const deps = makeDeps(side);
+
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
+    await executeBackgroundInstance(deps, instance);
+
+    // Two prompts on the SAME persistent session: the first turn ends without a declaration,
+    // so the loop injects the nudge as the second prompt; the agent then declares completed.
+    expect(side.openBackgroundSession).toHaveBeenCalledTimes(1);
+    expect(side.session.prompt).toHaveBeenCalledTimes(2);
+
+    const nudge = side.session.prompt.mock.calls[1]?.[0] as string;
+    expect(nudge).toContain("Evaluate whether your goal is complete");
+    expect(nudge).toContain("update_goal");
+
+    const completed = repository.getInstance(instance.id);
+    expect(completed?.status).toBe("completed");
+    expect(completed?.result).toBe("3 messages summarized");
+  });
+
+  it("does not terminate on an incomplete declaration — the agent retries within the run", async () => {
+    const side = makeSide(async (turn, tools) => {
+      const updateGoal = findTool(tools, "update_goal");
+      if (turn === 1) {
+        // Incomplete: evidence omitted. pi surfaces the thrown tool error to the agent, which
+        // self-corrects within the SAME run — model pi's catch by swallowing the rejection here.
+        // The flag must NOT be set, so the run continues.
+        try {
+          await updateGoal?.execute("call-1", {
+            status: "completed",
+            goalRestated: SNAPSHOTTED_GOAL,
+            // evidence intentionally omitted
+            summary: "done",
+          });
+          throw new Error("expected the incomplete declaration to be rejected");
+        } catch (error) {
+          expect((error as Error).message).toContain("evidence");
+        }
+        return "I omitted the evidence; retrying with it.";
+      }
+      await updateGoal?.execute("call-2", {
+        status: "completed",
+        goalRestated: SNAPSHOTTED_GOAL,
+        evidence: "digest file written",
+        summary: "done",
+      });
+      return "done";
+    }, vi.fn());
+    const deps = makeDeps(side);
+
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
+    await executeBackgroundInstance(deps, instance);
+
+    // The incomplete call did not terminate the run — a nudge was injected and the agent
+    // declared completed on the second turn (two prompts, then completed with the valid summary).
+    expect(side.session.prompt).toHaveBeenCalledTimes(2);
+    expect(repository.getInstance(instance.id)?.status).toBe("completed");
+    expect(repository.getInstance(instance.id)?.result).toBe("done");
+  });
+
+  it("fails after exhausting the iteration cap without a terminal declaration", async () => {
+    // The agent never declares and never asks — every turn is non-terminal, so the loop
+    // nudges until the cap, then fails at the single automatic fail-point.
+    const side = makeSide(() => "still going", vi.fn());
     const deps = makeDeps(side, 2);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
     expect(side.session.prompt).toHaveBeenCalledTimes(2);
+    expect(repository.getInstance(instance.id)?.status).toBe("failed");
     expect(repository.getInstance(instance.id)?.result).toBe(
-      "Max iterations (2) reached without completion",
+      "Max iterations (2) reached without a terminal declaration",
     );
     expect(side.session.dispose).toHaveBeenCalled();
     expect(notifyPayloads(deps.emit)).toContainEqual(
@@ -272,36 +335,20 @@ describe("executeBackgroundInstance", () => {
     );
   });
 
-  it("treats an evaluator crash as continue", async () => {
-    const classify = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("model down"))
-      .mockResolvedValueOnce({ status: "complete", reason: "finished" });
-    const side = makeSide((turn) => (turn === 1 ? "first pass" : "all done"), classify);
-    const deps = makeDeps(side);
-
-    const instance = pendingInstance(SNAPSHOTTED_GOAL);
-    await executeBackgroundInstance(deps, instance);
-
-    expect(side.session.prompt).toHaveBeenCalledTimes(2);
-    expect(repository.getInstance(instance.id)?.status).toBe("completed");
-  });
-
   it("pauses to waiting when the agent asks the user a question, persisting the session file", async () => {
-    const classify = vi.fn();
     const side = makeSide(async (_turn, tools) => {
-      const askUser = tools.find((tool) => tool.name === "ask_user");
+      const askUser = findTool(tools, "ask_user");
       await askUser?.execute("call-1", { question: "Which inbox — work or personal?" });
 
       return "I need to know which inbox before I continue.";
-    }, classify);
+    }, vi.fn());
     const deps = makeDeps(side);
 
     const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
-    // The run paused before the evaluator ran, and the session was disposed on the pause.
-    expect(classify).not.toHaveBeenCalled();
+    // The run paused before any second prompt — the nudge is NOT injected on an ask_user turn.
+    expect(side.session.prompt).toHaveBeenCalledTimes(1);
     expect(side.session.dispose).toHaveBeenCalled();
 
     const waiting = repository.getInstance(instance.id);
@@ -319,13 +366,14 @@ describe("executeBackgroundInstance", () => {
   });
 
   it("resumes a persistent session by reopening its file and prompting the user's reply", async () => {
-    const classify = vi
-      .fn()
-      .mockResolvedValue({ status: "complete", reason: "summarized the work inbox" });
-    const side = makeSide(() => "done — used the work inbox", classify, "/sessions/resumed.jsonl");
+    const side = makeSide(
+      declareCompleted("summarized the work inbox"),
+      vi.fn(),
+      "/sessions/resumed.jsonl",
+    );
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     repository.updateInstance(instance.id, {
       status: "waiting",
       startedAt: current,
@@ -356,13 +404,10 @@ describe("executeBackgroundInstance", () => {
   });
 
   it("resumes a legacy instance (no session file) by replaying the captured excerpt", async () => {
-    const classify = vi
-      .fn()
-      .mockResolvedValue({ status: "complete", reason: "summarized the work inbox" });
-    const side = makeSide(() => "done — used the work inbox", classify);
+    const side = makeSide(declareCompleted("summarized the work inbox"), vi.fn());
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     repository.updateInstance(instance.id, {
       status: "waiting",
       startedAt: current,
@@ -394,8 +439,13 @@ describe("executeBackgroundInstance", () => {
   });
 
   it("labels the source with the definition name when the instance has one", async () => {
-    const classify = vi.fn().mockResolvedValue({ status: "error", reason: "blocked" });
-    const side = makeSide(() => "cannot proceed", classify);
+    const side = makeSide(async (_turn, tools) => {
+      await findTool(tools, "update_goal")?.execute("call-1", {
+        status: "not_completable",
+        reason: "blocked",
+      });
+      return "cannot proceed";
+    }, vi.fn());
     const deps = makeDeps(side);
 
     const definition = repository.createDefinition({
@@ -403,11 +453,13 @@ describe("executeBackgroundInstance", () => {
       schedule: { type: "cron", expression: "* * * * *" },
       taskType: "background",
       prompt: "triage the inbox",
+      goal: SNAPSHOTTED_GOAL,
     });
     const instance = repository.createInstance({
       definitionId: definition.id,
       taskType: "background",
       prompt: "triage the inbox",
+      goal: SNAPSHOTTED_GOAL,
       scheduledFor: current,
     });
 
@@ -419,13 +471,12 @@ describe("executeBackgroundInstance", () => {
   });
 
   it("records the session file as null when the opened session has none", async () => {
-    const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
-    const side = makeSide(() => "all done", classify);
+    const side = makeSide(declareCompleted("done"), vi.fn());
     // A session opened without a backing file forces the null transcript branch.
     side.session.sessionFile = null as unknown as string;
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
     expect(repository.getInstance(instance.id)?.piSessionFile).toBeNull();
@@ -435,13 +486,12 @@ describe("executeBackgroundInstance", () => {
   });
 
   it("fails the instance when the run itself throws and disposes the session", async () => {
-    const classify = vi.fn();
     const side = makeSide(() => {
       throw new Error("session exploded");
-    }, classify);
+    }, vi.fn());
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
     const failed = repository.getInstance(instance.id);
@@ -457,8 +507,7 @@ describe("executeBackgroundInstance", () => {
   });
 
   it("never prompts when cancelled before the first iteration", async () => {
-    const classify = vi.fn();
-    const side = makeSide(() => "anything", classify);
+    const side = makeSide(() => "anything", vi.fn());
     const deps = makeDeps(side);
 
     const instance = pendingInstance(SNAPSHOTTED_GOAL);
@@ -472,13 +521,11 @@ describe("executeBackgroundInstance", () => {
     // The cancel initiator owns the terminal write: the executor leaves its
     // initial `running` transition in place and emits no failure notice.
     expect(repository.getInstance(instance.id)?.status).toBe("running");
-    expect(classify).not.toHaveBeenCalled();
     expect(notifyPayloads(deps.emit)).toHaveLength(0);
   });
 
   it("stops prompting and emits no failure when cancelled between iterations", async () => {
-    const classify = vi.fn().mockResolvedValue({ status: "continue", reason: "more to do" });
-    const side = makeSide(() => "still working", classify);
+    const side = makeSide(() => "still working", vi.fn());
     const deps = makeDeps(side);
 
     const instance = pendingInstance(SNAPSHOTTED_GOAL);
@@ -500,8 +547,26 @@ describe("executeBackgroundInstance", () => {
     expect(side.session.abort).toHaveBeenCalledTimes(1);
     expect(side.session.dispose).toHaveBeenCalled();
     expect(repository.getInstance(instance.id)?.status).toBe("running");
-    expect(classify).not.toHaveBeenCalled();
     expect(notifyPayloads(deps.emit)).toHaveLength(0);
+  });
+
+  describe("opening prompt", () => {
+    it("surfaces the task, the goal, and the declare instruction when a goal is present", async () => {
+      const side = makeSide(declareCompleted("done"), vi.fn());
+      const deps = makeDeps(side);
+
+      const instance = pendingInstance(SNAPSHOTTED_GOAL);
+      await executeBackgroundInstance(deps, instance);
+
+      const opening = side.session.prompt.mock.calls[0]?.[0] as string;
+      expect(opening).toContain("<task>");
+      expect(opening).toContain("summarize the inbox");
+      expect(opening).toContain("<goal>");
+      expect(opening).toContain(SNAPSHOTTED_GOAL);
+      // The declare instruction is appended in the goal-present branch too.
+      expect(opening).toContain("update_goal");
+      expect(opening).toContain('status="completed"');
+    });
   });
 
   describe("goal extraction at run start", () => {
@@ -514,35 +579,31 @@ describe("executeBackgroundInstance", () => {
       });
 
     it("extracts a goal when the instance has none and surfaces it in the opening prompt", async () => {
-      const classify = vi
-        .fn()
-        .mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL }) // run-start extraction
-        .mockResolvedValueOnce({ status: "complete", reason: "done" }); // evaluator
-      const side = makeSide(() => "done", classify);
+      // classify is extraction-only now: one call to derive the goal, then the agent declares.
+      const classify = vi.fn().mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL });
+      const side = makeSide(declareCompleted("done"), classify);
       const deps = makeDeps(side);
 
       const instance = pendingInstance(); // ad-hoc, no goal
       await executeBackgroundInstance(deps, instance);
 
-      // classify ran once for extraction and once for the evaluator.
-      expect(classify).toHaveBeenCalledTimes(2);
+      // classify ran exactly once — for extraction (the evaluator is gone).
+      expect(classify).toHaveBeenCalledTimes(1);
 
       // The extracted goal is persisted on the instance ...
       expect(repository.getInstance(instance.id)?.goal).toBe(SNAPSHOTTED_GOAL);
 
-      // ... and surfaced in the opening prompt (not the bare task).
+      // ... and surfaced in the opening prompt alongside the declare instruction.
       const opening = side.session.prompt.mock.calls[0]?.[0] as string;
       expect(opening).toContain("<goal>");
       expect(opening).toContain(SNAPSHOTTED_GOAL);
       expect(opening).toContain("summarize the inbox");
+      expect(opening).toContain("update_goal");
     });
 
     it("writes the extracted goal back to the definition when its goal is still null", async () => {
-      const classify = vi
-        .fn()
-        .mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL })
-        .mockResolvedValueOnce({ status: "complete", reason: "done" });
-      const side = makeSide(() => "done", classify);
+      const classify = vi.fn().mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL });
+      const side = makeSide(declareCompleted("done"), classify);
       const deps = makeDeps(side);
 
       const definition = triageDefinition();
@@ -561,31 +622,26 @@ describe("executeBackgroundInstance", () => {
     });
 
     it("does not extract when the instance already has a snapshotted goal", async () => {
-      const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
-      const side = makeSide(() => "done", classify);
+      const classify = vi.fn();
+      const side = makeSide(declareCompleted("done"), classify);
       const deps = makeDeps(side);
 
       const instance = pendingInstance(SNAPSHOTTED_GOAL);
       await executeBackgroundInstance(deps, instance);
 
-      // classify is the evaluator only — no extraction call.
-      expect(classify).toHaveBeenCalledTimes(1);
+      // No extraction (snapshotted goal) and no evaluator → classify is never called.
+      expect(classify).not.toHaveBeenCalled();
 
-      // The opening surfaces the snapshotted goal.
       const opening = side.session.prompt.mock.calls[0]?.[0] as string;
       expect(opening).toContain("<goal>");
       expect(opening).toContain(SNAPSHOTTED_GOAL);
 
-      // The instance goal is unchanged.
       expect(repository.getInstance(instance.id)?.goal).toBe(SNAPSHOTTED_GOAL);
     });
 
     it("skips write-back when the goal was set in the meantime, and the queued instance extracts its own goal", async () => {
-      const classify = vi
-        .fn()
-        .mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL }) // this instance extracts its own
-        .mockResolvedValueOnce({ status: "complete", reason: "done" });
-      const side = makeSide(() => "done", classify);
+      const classify = vi.fn().mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL }); // this instance extracts its own
+      const side = makeSide(declareCompleted("done"), classify);
       const deps = makeDeps(side);
 
       const definition = triageDefinition();
@@ -610,11 +666,8 @@ describe("executeBackgroundInstance", () => {
     });
 
     it("proceeds on the task-prompt basis when extraction throws, persisting nothing", async () => {
-      const classify = vi
-        .fn()
-        .mockRejectedValueOnce(new Error("extraction model down")) // extraction fails
-        .mockResolvedValueOnce({ status: "complete", reason: "done" }); // evaluator
-      const side = makeSide(() => "done", classify);
+      const classify = vi.fn().mockRejectedValueOnce(new Error("extraction model down")); // extraction fails
+      const side = makeSide(declareCompleted("done"), classify);
       const deps = makeDeps(side);
 
       const definition = triageDefinition();
@@ -630,17 +683,16 @@ describe("executeBackgroundInstance", () => {
       expect(repository.getInstance(instance.id)?.goal).toBeNull();
       expect(repository.getDefinition(definition.id)?.goal).toBeNull();
 
-      // The opening is the bare task prompt (the goal-null path).
+      // The opening carries the task and the declare instruction but NO goal block.
       const opening = side.session.prompt.mock.calls[0]?.[0] as string;
-      expect(opening).toBe("triage the inbox");
+      expect(opening).toContain("triage the inbox");
+      expect(opening).not.toContain("<goal>");
+      expect(opening).toContain("update_goal");
     });
 
     it("treats a too-short extracted goal as unusable and persists nothing", async () => {
-      const classify = vi
-        .fn()
-        .mockResolvedValueOnce({ goal: "too short to be a real goal" }) // below MIN_GOAL_LENGTH
-        .mockResolvedValueOnce({ status: "complete", reason: "done" });
-      const side = makeSide(() => "done", classify);
+      const classify = vi.fn().mockResolvedValueOnce({ goal: "too short to be a real goal" }); // below MIN_GOAL_LENGTH
+      const side = makeSide(declareCompleted("done"), classify);
       const deps = makeDeps(side);
 
       const instance = pendingInstance(); // ad-hoc, no goal
@@ -649,12 +701,13 @@ describe("executeBackgroundInstance", () => {
       expect(repository.getInstance(instance.id)?.goal).toBeNull();
 
       const opening = side.session.prompt.mock.calls[0]?.[0] as string;
-      expect(opening).toBe("summarize the inbox");
+      expect(opening).toContain("summarize the inbox");
+      expect(opening).not.toContain("<goal>");
     });
 
     it("does not extract on a resuming run (the instance already has its goal)", async () => {
-      const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
-      const side = makeSide(() => "done", classify);
+      const classify = vi.fn();
+      const side = makeSide(declareCompleted("done"), classify);
       const deps = makeDeps(side);
 
       const instance = pendingInstance(SNAPSHOTTED_GOAL);
@@ -671,21 +724,18 @@ describe("executeBackgroundInstance", () => {
         repository.getInstance(instance.id) as TaskInstanceRecord,
       );
 
-      // Resuming → no extraction; classify is the evaluator only.
-      expect(classify).toHaveBeenCalledTimes(1);
+      // Resuming → no extraction and no evaluator → classify is never called.
+      expect(classify).not.toHaveBeenCalled();
     });
   });
 });
 
 describe("BackgroundRunner", () => {
   it("dispatches pending instances once and tracks them across ticks", async () => {
-    const side = makeSide(
-      () => "done",
-      vi.fn().mockResolvedValue({ status: "complete", reason: "done" }),
-    );
+    const side = makeSide(declareCompleted("done"), vi.fn());
     const runner = new BackgroundRunner(makeDeps(side));
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
 
     runner.tick();
     runner.tick();
@@ -696,13 +746,10 @@ describe("BackgroundRunner", () => {
   });
 
   it("dispatches a resumable waiting instance to continue it", async () => {
-    const side = makeSide(
-      () => "resumed and finished",
-      vi.fn().mockResolvedValue({ status: "complete", reason: "finished after reply" }),
-    );
+    const side = makeSide(declareCompleted("finished after reply"), vi.fn());
     const runner = new BackgroundRunner(makeDeps(side));
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     repository.updateInstance(instance.id, {
       status: "waiting",
       question: "left or right?",
@@ -719,10 +766,7 @@ describe("BackgroundRunner", () => {
   });
 
   it("logs and clears in-flight when an executor rejects outside its own guard", async () => {
-    const side = makeSide(
-      () => "done",
-      vi.fn().mockResolvedValue({ status: "complete", reason: "done" }),
-    );
+    const side = makeSide(declareCompleted("done"), vi.fn());
     const deps = makeDeps(side);
 
     const instance = pendingInstance();
@@ -773,20 +817,29 @@ describe("BackgroundRunner", () => {
     let peak = 0;
     const releases: Array<() => void> = [];
 
-    // Each dispatched instance opens its own session whose single prompt blocks until released.
-    const openBackgroundSession = vi.fn(async () => {
+    // Each dispatched instance declares completed on its only turn but holds its slot until
+    // released, so the concurrency cap is genuinely saturated mid-flight. Capturing customTools
+    // and driving update_goal mirrors how a real run terminates after one prompt.
+    const openBackgroundSession = vi.fn(async (options: { customTools?: HarnessTool[] }) => {
       active += 1;
       peak = Math.max(peak, active);
 
-      const prompt = vi.fn(
-        () =>
-          new Promise<void>((resolve) => {
-            releases.push(() => {
-              active -= 1;
-              resolve();
-            });
-          }),
-      );
+      const tools = options.customTools ?? [];
+      const prompt = vi.fn(async () => {
+        const updateGoal = tools.find((tool) => tool.name === "update_goal");
+        await updateGoal?.execute("call-1", {
+          status: "completed",
+          goalRestated: SNAPSHOTTED_GOAL,
+          evidence: "done",
+          summary: "done",
+        });
+        await new Promise<void>((resolve) => {
+          releases.push(() => {
+            active -= 1;
+            resolve();
+          });
+        });
+      });
 
       return {
         sessionFile: "/sessions/concurrent.jsonl",
@@ -795,10 +848,9 @@ describe("BackgroundRunner", () => {
         dispose: vi.fn(),
       };
     });
-    const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
 
     const runner = new BackgroundRunner(
-      makeDeps({ openBackgroundSession, classify } as unknown as BackgroundSide, 10, 2),
+      makeDeps({ openBackgroundSession, classify: vi.fn() } as unknown as BackgroundSide, 10, 2),
     );
 
     // A snapshotted goal skips run-start extraction so openBackgroundSession remains the
@@ -858,7 +910,7 @@ describe("BackgroundRunner", () => {
     } as unknown as BackgroundSide);
     const runner = new BackgroundRunner(deps);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     runner.tick();
     expect(repository.getInstance(instance.id)?.status).toBe("running");
 
@@ -878,10 +930,7 @@ describe("BackgroundRunner", () => {
   });
 
   it("cancel() reports false for an instance not running in this process", async () => {
-    const side = makeSide(
-      () => "done",
-      vi.fn().mockResolvedValue({ status: "complete", reason: "done" }),
-    );
+    const side = makeSide(declareCompleted("done"), vi.fn());
     const runner = new BackgroundRunner(makeDeps(side));
 
     const cancelled = await runner.cancel("not-in-flight");

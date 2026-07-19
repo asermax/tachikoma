@@ -10,13 +10,6 @@ import { NOTIFY_EVENT, type NotifyPayload, SEVERITIES } from "../notifications/p
 import type { TaskRepository } from "./repository.ts";
 import type { TaskInstanceRecord } from "./schema.ts";
 
-export const TaskEvaluationSchema = Type.Object({
-  status: StringEnum(["complete", "continue", "error"] as const),
-  reason: Type.String(),
-});
-
-export type TaskEvaluation = Static<typeof TaskEvaluationSchema>;
-
 // Structured output of a run-start goal extraction: a single free-text goal derived
 // from the task prompt. See GOAL_EXTRACTION_SYSTEM for the recommended prose structure.
 export const ExtractedGoalSchema = Type.Object({
@@ -24,6 +17,13 @@ export const ExtractedGoalSchema = Type.Object({
 });
 
 export type ExtractedGoal = Static<typeof ExtractedGoalSchema>;
+
+// A terminal self-declaration captured by the update_goal tool's execute handler. The loop
+// reads it (snapshotted to an annotated const) after each turn: `completed` → mark complete
+// with the summary as the result; `not_completable` → fail with the reason in the notice.
+export type PendingDeclaration =
+  | { status: "completed"; summary: string }
+  | { status: "not_completable"; reason: string };
 
 export type NotifyEmitter = (event: string, payload: NotifyPayload) => void;
 
@@ -51,25 +51,11 @@ const RESPONSE_EXCERPT_CHARS = 4000;
 // goals while comfortably admitting a one-sentence end state plus its check.
 export const MIN_GOAL_LENGTH = 50;
 
-const EVALUATOR_SYSTEM = `You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
-
-You are a CLASSIFIER, not a reviewer. You MUST NOT:
-- Perform any qualitative analysis of the agent's output (correctness, thoroughness, style, usefulness, depth of investigation)
-- Offer corrective feedback, suggestions, improvements, or opinions about what the agent should have done differently
-- Apply any criteria beyond the rules listed below
-
-The "reason" field explains why you chose this classification and must describe observable facts about what the agent said or did — never advice, critique, or evaluation directed at the agent.
-
-Classification rules (evaluate in order, use the first match):
-
-1. Blocking error: Did the agent report an unrecoverable error, get stuck in a loop, or fail repeatedly without making progress?
-   -> {"status": "error", "reason": "Factual description of the blocking signal the agent reported"}
-
-2. Workflow complete: Did the agent execute the requested actions and announce completion, summarize results, or produce final output? Classify as complete even if the agent mentions optional follow-up actions it could take — completion announcements take precedence over hypothetical next steps.
-   -> {"status": "complete", "reason": "Brief factual summary of what the agent reported accomplishing"}
-
-3. Mid-workflow: Is the agent still working — it announced next steps but hasn't executed them yet, or it's partway through a multi-step process?
-   -> {"status": "continue", "reason": "What the agent said it would do next but has not yet executed"}`;
+// The instruction appended to every fresh-run opening turn telling the agent it owns its
+// own terminal outcome and how to declare it via update_goal. The goal's recommended prose
+// structure (end state + stated check + invariants) lives in GOAL_EXTRACTION_SYSTEM; this is
+// the declaration verb. The agent is the sole judge of when its goal is met (R5/R6).
+const DECLARE_INSTRUCTION = `\n\nYou are responsible for deciding when this task is done. When the goal's stated check is satisfied, finish by calling the update_goal tool with status="completed": restate the goal in your own words (goalRestated), cite concrete checkable evidence that the stated check is met (evidence — an artifact, measurement, or observable outcome, not a bare assertion), and summarize what you accomplished (summary). If the goal genuinely cannot be completed, call update_goal with status="not_completable" and a reason. update_goal cannot edit the goal text — it only records a terminal status. Work until the goal is actually met, then declare it.`;
 
 // Formats the timezone-aware header here (this extension owns the configured timezone) and hands
 // the prompt text composition to the shared prompt module.
@@ -90,11 +76,6 @@ const buildSystemPrompt = (now: Date, timezone: string | undefined): string => {
   return buildBackgroundSystemPrompt({ dateHeader: `${formatted}${zone}` });
 };
 
-// The persistent session retains its own history, so a continuation is a short nudge
-// carrying only the evaluator's observation — no excerpt replay of the previous turn.
-const buildContinuationPrompt = (reason: string) =>
-  `Continue working on the task. Evaluator note: ${reason}`;
-
 // Derives a free-text completion goal from a task prompt. The goal anchors what "done"
 // means for the run; the recommended prose structure (end state + stated check +
 // invariants) is enforced by instruction here and on the other agent-facing surfaces, not
@@ -112,12 +93,22 @@ Rules:
 - Derive ONLY from the task prompt; do not invent scope the prompt does not imply.
 - If the prompt is too vague to derive a meaningful, checkable goal, return an empty goal string.`;
 
-// Goal-only surfacing in the opening turn: wraps the task prompt with the goal when one is
-// present, and leaves it bare when there is none. The declare-via-update_goal instruction
-// is appended in a later batch (the tool does not exist yet); for now the agent simply sees
-// its goal alongside the task.
-const buildOpeningPrompt = (taskPrompt: string, goal: string | null): string =>
-  goal == null ? taskPrompt : `<task>\n${taskPrompt}\n</task>\n\n<goal>\n${goal}\n</goal>`;
+// The opening turn surfaces the task and the goal (when one is present), then appends the
+// declare-via-update_goal instruction in both branches — even on the task-prompt basis the
+// agent must know it owns its terminal outcome (S4a). Workspace context arrives via each
+// extension's background-scoped context section, not folded into this prompt.
+const buildOpeningPrompt = (taskPrompt: string, goal: string | null): string => {
+  const body =
+    goal == null ? taskPrompt : `<task>\n${taskPrompt}\n</task>\n\n<goal>\n${goal}\n</goal>`;
+  return `${body}${DECLARE_INSTRUCTION}`;
+};
+
+// The per-turn completion nudge: a USER message (not a system note) that asks the agent to
+// re-evaluate the goal and declare via update_goal if its check is met, while explicitly
+// allowing it to keep working — threading the needle between forcing a premature declaration
+// and letting a forgetful agent loop without revisiting completion (R8, S7).
+const buildGoalNudge = (): string =>
+  `Evaluate whether your goal is complete now. If its stated check is satisfied, call update_goal with status="completed" (restate the goal and cite concrete evidence). If it cannot be completed, call update_goal with status="not_completable" with a reason. Otherwise, keep working toward the goal.`;
 
 // Legacy fallback for instances created before persistent background sessions: a
 // paused-then-answered run with no session file is resumed by replaying the captured
@@ -143,25 +134,6 @@ You asked the user: ${question}
 The user replied: ${userResponse}
 
 Continue working on the task from where you left off, using the user's reply. Do not ask the same question again.`;
-
-export const evaluateCompletion = async (
-  side: Pick<SideRunner, "classify">,
-  taskPrompt: string,
-  agentResponse: string,
-  log: Logger,
-): Promise<TaskEvaluation> => {
-  try {
-    return await side.classify({
-      system: EVALUATOR_SYSTEM,
-      user: `<task-definition>\n${taskPrompt}\n</task-definition>\n\n<agent-response>\n${agentResponse.slice(0, RESPONSE_EXCERPT_CHARS)}\n</agent-response>`,
-      schema: TaskEvaluationSchema,
-    });
-  } catch (error) {
-    // The evaluator is best-effort: a failure must never abort the run.
-    log.warn({ err: error }, "evaluator failed — continuing");
-    return { status: "continue", reason: "Evaluator failed, continuing" };
-  }
-};
 
 /**
  * Derive a completion goal from a task prompt via structured extraction. Returns the goal
@@ -190,7 +162,7 @@ export const extractGoal = async (
   }
 };
 
-/** Execute one background instance through the iterative evaluator loop. */
+/** Execute one background instance through the goal-driven self-declaration loop. */
 export const executeBackgroundInstance = async (
   deps: ExecutorDeps,
   instance: TaskInstanceRecord,
@@ -271,7 +243,16 @@ export const executeBackgroundInstance = async (
     // context section via pi's before_agent_start hook — no manual fold into the opening prompt.
     // notify_user is the notifications extension's background-scoped tool (bound automatically);
     // the agent decides whether to use it per the task's own guidance.
+    //
+    // The two per-run custom tools are closure-flag tools: their execute handler captures a
+    // terminal/pause intent in a variable the loop reads after the turn (ask_user's pattern,
+    // copied by update_goal). The loop trusts a flag only after the tool's own validation passes.
     let pendingQuestion: string | null = null;
+    // pendingDeclaration is assigned inside the update_goal closure; TS's control-flow analysis
+    // therefore keeps it at its null initializer when read here (it does not widen a
+    // closure-assigned `let` back to its declared type). The post-turn dispatch casts it to the
+    // declared union so the discriminated narrowing type-checks — runtime sees whatever the tool set.
+    let pendingDeclaration: PendingDeclaration | null = null;
 
     const askUserTool = defineTool({
       name: "ask_user",
@@ -296,9 +277,80 @@ export const executeBackgroundInstance = async (
       },
     });
 
+    const updateGoalTool = defineTool({
+      name: "update_goal",
+      label: "Update Goal",
+      description:
+        "Declare the terminal outcome of this background task — the ONLY way to finish it. " +
+        "status='completed': restate the goal (goalRestated), cite concrete checkable evidence the stated " +
+        "check is met (evidence), and summarize what you accomplished (summary). " +
+        "status='not_completable': give the reason. This tool cannot edit the goal text — it only records a " +
+        "terminal status.",
+      parameters: Type.Object({
+        // StringEnum discriminator — NOT a Type.Union of literals. pi uses StringEnum for
+        // Google/Gemini API compatibility (per pi-sdk-notes), and a flat object with Optional
+        // per-variant fields avoids anyOf/oneOf entirely.
+        status: StringEnum(["completed", "not_completable"] as const),
+        goalRestated: Type.Optional(
+          Type.String({ description: "Required when status='completed'." }),
+        ),
+        evidence: Type.Optional(Type.String({ description: "Required when status='completed'." })),
+        summary: Type.Optional(Type.String({ description: "Required when status='completed'." })),
+        reason: Type.Optional(
+          Type.String({ description: "Required when status='not_completable'." }),
+        ),
+      }),
+      execute: async (_id, params) => {
+        // In-tool validation: the JSON Schema alone cannot encode "evidence required iff
+        // status=completed", so this validator closes that gap. On an incomplete declaration
+        // we THROW (the pi-agent-core convention — "Throw on failure instead of encoding errors
+        // in `content`"); the agent loop turns the thrown message into an isError tool result the
+        // agent self-corrects within the SAME run, so pendingDeclaration stays null and the loop
+        // never sees an invalid declaration. On a valid declaration we set the flag and return
+        // success text (the loop terminates after the turn).
+        if (params.status === "completed") {
+          const goalRestated = params.goalRestated?.trim();
+          const evidence = params.evidence?.trim();
+          const summary = params.summary?.trim();
+          if (goalRestated == null || goalRestated.length === 0) {
+            throw new Error(
+              "A completed declaration must restate the goal — 'goalRestated' is required and non-empty.",
+            );
+          }
+          if (evidence == null || evidence.length === 0) {
+            throw new Error(
+              "A completed declaration must cite concrete evidence — 'evidence' is required and non-empty.",
+            );
+          }
+          if (summary == null || summary.length === 0) {
+            throw new Error(
+              "A completed declaration must summarize what was accomplished — 'summary' is required and non-empty.",
+            );
+          }
+          pendingDeclaration = { status: "completed", summary };
+          return {
+            content: [{ type: "text", text: "Goal marked complete — ending the run." }],
+            details: {},
+          };
+        }
+
+        const reason = params.reason?.trim();
+        if (reason == null || reason.length === 0) {
+          throw new Error(
+            "A not_completable declaration must give a reason — 'reason' is required and non-empty.",
+          );
+        }
+        pendingDeclaration = { status: "not_completable", reason };
+        return {
+          content: [{ type: "text", text: "Goal marked not completable — ending the run." }],
+          details: {},
+        };
+      },
+    });
+
     session = await side.openBackgroundSession({
       system,
-      customTools: [askUserTool],
+      customTools: [askUserTool, updateGoalTool],
       // A legacy resume replays its excerpt into a fresh session; everything else resumes
       // the run's own persistent session file when one exists.
       sessionFile: legacyResume ? null : instance.piSessionFile,
@@ -311,7 +363,8 @@ export const executeBackgroundInstance = async (
     }
 
     // First turn: the resumed persistent session already holds its history, so it gets only the
-    // user's reply; a legacy resume replays the captured excerpt; a fresh run gets task + goal.
+    // user's reply; a legacy resume replays the captured excerpt; a fresh run gets task + goal +
+    // the declare instruction.
     let prompt =
       resuming && !legacyResume
         ? (instance.userResponse as string)
@@ -349,6 +402,10 @@ export const executeBackgroundInstance = async (
 
       const text = lastAssistantText(session.messages);
 
+      // A single dispatch over the two closure flags replaces the old evaluator switch. Order:
+      // ask_user pause → terminal declaration → neither (nudge). The ask_user pause path is
+      // unchanged; the declaration paths are new; the "neither" path injects the nudge that
+      // replaces the evaluator-note continuation (S6/S7).
       if (pendingQuestion != null) {
         repository.updateInstance(instance.id, {
           status: "waiting",
@@ -368,45 +425,48 @@ export const executeBackgroundInstance = async (
         return;
       }
 
-      const evaluation = await evaluateCompletion(side, instance.prompt, text, log);
+      if (pendingDeclaration != null) {
+        const declaration = pendingDeclaration as PendingDeclaration;
+        if (declaration.status === "completed") {
+          // result is sourced from the tool's summary; the re-stated goal + evidence audit
+          // lives in the session transcript (the agent emitted them through update_goal) (R10).
+          repository.updateInstance(instance.id, {
+            status: "completed",
+            completedAt: now(),
+            result: declaration.summary,
+            question: null,
+            resumeContext: null,
+          });
+          // Dispose before post-processing so memory extraction reads a flushed transcript.
+          session.dispose();
+          session = null;
+          await runPostProcessors({ trunk: null, transcriptPath, log });
+          // No programmatic success notice: the agent surfaces results via notify_user at
+          // its own discretion (per the task prompt).
+          log.info({ instanceId: instance.id }, "background task completed via declaration");
+          return;
+        }
 
-      log.debug(
-        { instanceId: instance.id, iteration, status: evaluation.status },
-        "evaluator result",
-      );
-
-      if (evaluation.status === "complete") {
-        repository.updateInstance(instance.id, {
-          status: "completed",
-          completedAt: now(),
-          result: evaluation.reason,
-          question: null,
-          resumeContext: null,
-        });
-        // Dispose before post-processing so memory extraction reads a flushed transcript; the
-        // session's pi JSONL feeds episodic/topics extraction (transcriptPath is now non-null).
-        session.dispose();
-        session = null;
-        await runPostProcessors({ trunk: null, transcriptPath, log });
-        // No programmatic success notice: the agent surfaces results via notify_user at
-        // its own discretion (per the task prompt).
-        log.info({ instanceId: instance.id }, "background task completed");
+        // not_completable → fail with the agent's reason in the notice. Reuses the fail()
+        // helper so it flows through the notifications router's warning → Normal-tier mapping
+        // exactly like the cap and thrown-error failures (R7).
+        fail(declaration.reason, `Task cannot be completed: ${declaration.reason}`);
         return;
       }
 
-      if (evaluation.status === "error") {
-        fail(`Agent stuck: ${evaluation.reason}`, `Task failed: ${evaluation.reason}`);
-        return;
-      }
-
-      prompt = buildContinuationPrompt(evaluation.reason);
+      // Neither flag set this turn: inject the completion nudge as the next prompt. The
+      // persistent session retains its own history, so the nudge is a short user message.
+      prompt = buildGoalNudge();
     }
 
-    // Skipped on cancel: the loop `break`s out of a cancellation, and the cancel
-    // initiator has already written the terminal `failed` row.
+    // The iteration cap is the SOLE automatic fail-point for a run that never declares a
+    // terminal outcome (R9). A single fail() call structured so the unspecced DLT-134
+    // (iteration-limit escalation) can intercept this exact point to escalate to the user
+    // instead of failing. Skipped on cancel: the loop `break`s out of a cancellation, and the
+    // cancel initiator has already written the terminal `failed` row.
     if (!signal?.aborted) {
       fail(
-        `Max iterations (${maxIterations}) reached without completion`,
+        `Max iterations (${maxIterations}) reached without a terminal declaration`,
         `Task failed: reached max iterations (${maxIterations})`,
       );
     }
@@ -482,7 +542,7 @@ export class BackgroundRunner {
   }
 
   /**
-   * Cancel an in-flight instance: signal its evaluator loop to abort and await
+   * Cancel an in-flight instance: signal its run loop to abort and await
    * the run so the caller sees it settled. Returns false when the instance is
    * not running in this process (the caller's own terminal write is then the
    * whole effect).
