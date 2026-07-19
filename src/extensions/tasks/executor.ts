@@ -1,6 +1,6 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
-import { type Static, Type } from "typebox";
+import { Type } from "typebox";
 
 import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import { lastAssistantText, type SideRunner } from "../../agent/side-run.ts";
@@ -15,8 +15,6 @@ import type { TaskInstanceRecord } from "./schema.ts";
 export const ExtractedGoalSchema = Type.Object({
   goal: Type.String(),
 });
-
-export type ExtractedGoal = Static<typeof ExtractedGoalSchema>;
 
 // A terminal self-declaration captured by the update_goal tool's execute handler. The loop
 // reads it (snapshotted to an annotated const) after each turn: `completed` → mark complete
@@ -106,9 +104,9 @@ const buildOpeningPrompt = (taskPrompt: string, goal: string | null): string => 
 // The per-turn completion nudge: a USER message (not a system note) that asks the agent to
 // re-evaluate the goal and declare via update_goal if its check is met, while explicitly
 // allowing it to keep working — threading the needle between forcing a premature declaration
-// and letting a forgetful agent loop without revisiting completion (R8, S7).
-const buildGoalNudge = (): string =>
-  `Evaluate whether your goal is complete now. If its stated check is satisfied, call update_goal with status="completed" (restate the goal and cite concrete evidence). If it cannot be completed, call update_goal with status="not_completable" with a reason. Otherwise, keep working toward the goal.`;
+// and letting a forgetful agent loop without revisiting completion (R8, S7). A fixed string:
+// hoisted to a const so the loop doesn't rebuild it every non-terminal turn.
+const GOAL_NUDGE = `Evaluate whether your goal is complete now. If its stated check is satisfied, call update_goal with status="completed" (restate the goal and cite concrete evidence). If it cannot be completed, call update_goal with status="not_completable" with a reason. Otherwise, keep working toward the goal.`;
 
 // Legacy fallback for instances created before persistent background sessions: a
 // paused-then-answered run with no session file is resumed by replaying the captured
@@ -160,6 +158,16 @@ export const extractGoal = async (
     log.warn({ err: error }, "goal extraction failed — proceeding on task-prompt basis");
     return null;
   }
+};
+
+// Throws when a required `update_goal` field is missing/blank, returning the trimmed value
+// otherwise. The JSON Schema marks these fields Optional (the conditional "required iff
+// status=X" rule can't be expressed in schema); this closes that gap at execute time, following
+// the pi convention of throwing on validation failure rather than encoding an error in `content`.
+const requireNonEmpty = (value: string | undefined, message: string): string => {
+  const trimmed = value?.trim();
+  if (trimmed == null || trimmed.length === 0) throw new Error(message);
+  return trimmed;
 };
 
 /** Execute one background instance through the goal-driven self-declaration loop. */
@@ -309,24 +317,18 @@ export const executeBackgroundInstance = async (
         // never sees an invalid declaration. On a valid declaration we set the flag and return
         // success text (the loop terminates after the turn).
         if (params.status === "completed") {
-          const goalRestated = params.goalRestated?.trim();
-          const evidence = params.evidence?.trim();
-          const summary = params.summary?.trim();
-          if (goalRestated == null || goalRestated.length === 0) {
-            throw new Error(
-              "A completed declaration must restate the goal — 'goalRestated' is required and non-empty.",
-            );
-          }
-          if (evidence == null || evidence.length === 0) {
-            throw new Error(
-              "A completed declaration must cite concrete evidence — 'evidence' is required and non-empty.",
-            );
-          }
-          if (summary == null || summary.length === 0) {
-            throw new Error(
-              "A completed declaration must summarize what was accomplished — 'summary' is required and non-empty.",
-            );
-          }
+          requireNonEmpty(
+            params.goalRestated,
+            "A completed declaration must restate the goal — 'goalRestated' is required and non-empty.",
+          );
+          requireNonEmpty(
+            params.evidence,
+            "A completed declaration must cite concrete evidence — 'evidence' is required and non-empty.",
+          );
+          const summary = requireNonEmpty(
+            params.summary,
+            "A completed declaration must summarize what was accomplished — 'summary' is required and non-empty.",
+          );
           pendingDeclaration = { status: "completed", summary };
           return {
             content: [{ type: "text", text: "Goal marked complete — ending the run." }],
@@ -334,12 +336,10 @@ export const executeBackgroundInstance = async (
           };
         }
 
-        const reason = params.reason?.trim();
-        if (reason == null || reason.length === 0) {
-          throw new Error(
-            "A not_completable declaration must give a reason — 'reason' is required and non-empty.",
-          );
-        }
+        const reason = requireNonEmpty(
+          params.reason,
+          "A not_completable declaration must give a reason — 'reason' is required and non-empty.",
+        );
         pendingDeclaration = { status: "not_completable", reason };
         return {
           content: [{ type: "text", text: "Goal marked not completable — ending the run." }],
@@ -456,7 +456,7 @@ export const executeBackgroundInstance = async (
 
       // Neither flag set this turn: inject the completion nudge as the next prompt. The
       // persistent session retains its own history, so the nudge is a short user message.
-      prompt = buildGoalNudge();
+      prompt = GOAL_NUDGE;
     }
 
     // The iteration cap is the SOLE automatic fail-point for a run that never declares a

@@ -26,11 +26,16 @@ const SCHEDULE_DESCRIPTION =
 // The recommended goal structure, in the SAME wording as the tasks usage section and the background
 // system prompt (R13): "end state + stated check + invariants". It is recommended prose, not a
 // parsed schema, so the same wording is repeated on every agent-facing surface with no structure to
-// keep in sync — this constant keeps the three tool param descriptions in lockstep.
+// keep in sync — this constant is the shared fragment each description embeds.
 const GOAL_STRUCTURE =
   "Express it as three parts: a measurable end state (the concrete outcome to reach), " +
   "a stated check that proves it is reached (an artifact, measurement, or observable outcome — not a bare assertion), " +
   "and invariants (constraints on what must not change)";
+
+// The full `goal` param description shared verbatim by create_task and update_task (run_task_now's
+// goal param intentionally differs — it has by-reference vs ad-hoc semantics). Hoisted so a wording
+// tweak lands in one place.
+const GOAL_PARAM_DESCRIPTION = `Optional free-text goal the task's background runs work toward. ${GOAL_STRUCTURE}. If omitted, the first background run derives one from the prompt; the run then finishes itself by calling update_goal.`;
 
 export const CreateTaskParams = Type.Object({
   name: Type.String({ description: "Human-readable task name" }),
@@ -39,11 +44,7 @@ export const CreateTaskParams = Type.Object({
     description: "'session' (delivered during idle) or 'background' (isolated execution)",
   }),
   prompt: Type.String({ description: "Instruction the agent follows when the task fires" }),
-  goal: Type.Optional(
-    Type.String({
-      description: `Optional free-text goal the task's background runs work toward. ${GOAL_STRUCTURE}. If omitted, the first background run derives one from the prompt; the run then finishes itself by calling update_goal.`,
-    }),
-  ),
+  goal: Type.Optional(Type.String({ description: GOAL_PARAM_DESCRIPTION })),
   enabled: Type.Optional(
     Type.Boolean({ description: "Whether the task is active (default true)" }),
   ),
@@ -59,11 +60,7 @@ export const UpdateTaskParams = Type.Object({
     }),
   ),
   prompt: Type.Optional(Type.String({ description: "New agent instruction" })),
-  goal: Type.Optional(
-    Type.String({
-      description: `Optional free-text goal the task's background runs work toward. ${GOAL_STRUCTURE}. If omitted, the first background run derives one from the prompt; the run then finishes itself by calling update_goal.`,
-    }),
-  ),
+  goal: Type.Optional(Type.String({ description: GOAL_PARAM_DESCRIPTION })),
   enabled: Type.Optional(Type.Boolean({ description: "Enable or disable the task" })),
 });
 
