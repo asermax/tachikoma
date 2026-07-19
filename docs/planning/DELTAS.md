@@ -347,7 +347,7 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Description**: All topic branches within a daily session currently share one model — the model chosen when the trunk opens is the model for every topic in the day, fixed for the life of the session. This delta adds a mechanism to override the model for a specific topic branch, letting the user escalate to a stronger model for a complex coding task within an otherwise casual conversation, or de-escalate to a cheaper model for routine topics. The override is applied once per topic (not per turn), keeping costs predictable: a topic switches model once, then stays on it for the rest of that branch. Because topic branches live on the shared trunk session whose model is bound at open time, an override means moving the conversation onto a different model mid-topic while preserving its branch state — the chief source of the delta's complexity. How the override is requested (an explicit command, a tool, or a steering message), how the chosen model reference is resolved against the existing per-role model selection system, how branch and resumption state is carried across the model change without loss, whether an override persists if the topic is resumed later or a new daily trunk is opened, and how the once-per-topic limit is tracked and enforced should be evaluated during speccing.
 
 ### DLT-185: Goal-driven completion for background tasks
-**Status**: ✓ Plan
+**Status**: ⧗ Implementation
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Hard
