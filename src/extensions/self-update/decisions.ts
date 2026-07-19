@@ -132,12 +132,19 @@ export const STARTUP_ACTIONS = {
   restartCompleted: "restartCompleted",
 } as const;
 
-export type StartupAction = keyof typeof STARTUP_ACTIONS;
-
-export interface StartupDecision {
-  action: StartupAction;
-  marker: UpgradeMarker | RestartMarker | null;
-}
+/**
+ * Discriminated on `action` so each variant carries exactly the fields its
+ * consumer reads: `upgradeSucceeded`/`rollback` carry the upgrade marker (the
+ * orchestrator reads its version fields), while `restartCompleted` and `none`
+ * carry none (the orchestrator only checks the restart marker's presence and
+ * emits a static message). This keeps the action↔marker correlation in the type
+ * instead of forcing consumers to re-narrow a wide union with a cast.
+ */
+export type StartupDecision =
+  | { action: "none" }
+  | { action: "upgradeSucceeded"; marker: UpgradeMarker }
+  | { action: "rollback"; marker: UpgradeMarker }
+  | { action: "restartCompleted" };
 
 export const decideStartup = (
   upgradeMarker: UpgradeMarker | null,
@@ -146,15 +153,15 @@ export const decideStartup = (
 ): StartupDecision => {
   if (upgradeMarker != null) {
     if (currentVersion === upgradeMarker.targetVersion) {
-      return { action: STARTUP_ACTIONS.upgradeSucceeded, marker: upgradeMarker };
+      return { action: "upgradeSucceeded", marker: upgradeMarker };
     }
 
-    return { action: STARTUP_ACTIONS.rollback, marker: upgradeMarker };
+    return { action: "rollback", marker: upgradeMarker };
   }
 
   if (restartMarker != null) {
-    return { action: STARTUP_ACTIONS.restartCompleted, marker: restartMarker };
+    return { action: "restartCompleted" };
   }
 
-  return { action: STARTUP_ACTIONS.none, marker: null };
+  return { action: "none" };
 };

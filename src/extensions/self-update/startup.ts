@@ -3,7 +3,7 @@ import { NOTIFY_EVENT, type NotifyPayload } from "../notifications/payload.ts";
 import type { NotifyEmitter } from "./checker.ts";
 import { decideStartup, STARTUP_ACTIONS } from "./decisions.ts";
 import type { Installer, Restarter } from "./seams.ts";
-import type { SelfUpdateState, UpgradeMarker } from "./state.ts";
+import type { SelfUpdateState } from "./state.ts";
 
 export interface StartupDeps {
   installer: Installer;
@@ -16,6 +16,11 @@ export interface StartupDeps {
 
 const notify = (emit: NotifyEmitter, payload: Omit<NotifyPayload, "source">): void => {
   emit(NOTIFY_EVENT, { ...payload, source: "self-update" });
+};
+
+/** Emit the shared "back online" info notice; callers supply the tail of the text. */
+const announceBackOnline = (emit: NotifyEmitter, text: string): void => {
+  notify(emit, { title: "Back online", text, severity: "info" });
 };
 
 /**
@@ -33,8 +38,11 @@ const notify = (emit: NotifyEmitter, payload: Omit<NotifyPayload, "source">): vo
  *    "back online" notice is surfaced by the *next* boot's success path.
  *
  * The upgrade marker takes precedence over a restart marker when both are
- * present. The marker is cleared before any restart so a rollback that itself
- * fails to boot does not loop forever — the next boot sees no marker and stays put.
+ * present: the upgrade's outcome supersedes whatever the restart was going to
+ * announce, so the restart marker is consumed (cleared) alongside the upgrade
+ * reconciliation rather than surviving to fire a spurious notice next boot. The
+ * upgrade marker is cleared before any restart so a rollback that itself fails
+ * to boot does not loop forever — the next boot sees no marker and stays put.
  */
 export const reconcileStartup = async ({
   installer,
@@ -57,16 +65,17 @@ export const reconcileStartup = async ({
 
     state.clearRestartMarker();
 
-    notify(emit, {
-      title: "Back online",
-      text: "Tachikoma is back online after a restart.",
-      severity: "info",
-    });
+    announceBackOnline(emit, "Tachikoma is back online after a restart.");
 
     return;
   }
 
-  const marker = decision.marker as NonNullable<UpgradeMarker>;
+  // The upgrade marker wins over any restart marker: its outcome supersedes
+  // whatever the restart was going to announce, so consume the restart marker
+  // now rather than leaving it to fire a spurious notice on the next boot.
+  state.clearRestartMarker();
+
+  const marker = decision.marker;
 
   if (decision.action === STARTUP_ACTIONS.upgradeSucceeded) {
     log.info(
@@ -77,11 +86,10 @@ export const reconcileStartup = async ({
     state.clearUpgradeMarker();
     state.clearFailedVersion();
 
-    notify(emit, {
-      title: "Back online",
-      text: `Tachikoma is back online after upgrading from ${marker.previousVersion} to ${marker.targetVersion}.`,
-      severity: "info",
-    });
+    announceBackOnline(
+      emit,
+      `Tachikoma is back online after upgrading from ${marker.previousVersion} to ${marker.targetVersion}.`,
+    );
 
     return;
   }

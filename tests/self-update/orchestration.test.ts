@@ -436,6 +436,33 @@ describe("reconcileStartup", () => {
     expect(state.getFailedVersion()).toBeNull();
   });
 
+  it("consumes a superseded restart marker when the upgrade marker wins", async () => {
+    const state = createState();
+    state.setUpgradeMarker({
+      previousVersion: "2.0.1",
+      targetVersion: "2.1.0",
+      startedAt: now().toISOString(),
+    });
+    state.setRestartMarker({ startedAt: now().toISOString() });
+    const emit = vi.fn();
+
+    await reconcileStartup({
+      installer: noInstall,
+      restarter: createRestarter(),
+      state,
+      currentVersion: "2.1.0",
+      emit,
+      log: fakeLog,
+    });
+
+    // The upgrade announcement fires once...
+    expect(emit).toHaveBeenCalledOnce();
+    // ...and BOTH markers are cleared, so the restart marker does not survive to
+    // emit a spurious "back online" on the next boot.
+    expect(state.getUpgradeMarker()).toBeNull();
+    expect(state.getRestartMarker()).toBeNull();
+  });
+
   it("rolls back, records the failed version, and restarts when target did not boot", async () => {
     const state = createState();
     state.setUpgradeMarker({
