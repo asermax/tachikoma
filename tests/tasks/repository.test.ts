@@ -104,6 +104,19 @@ describe("TaskRepository definitions", () => {
     expect(updated?.goal).toBe("a new goal");
     expect(repository.getDefinition(definition.id)?.goal).toBe("a new goal");
   });
+
+  it("setDefinitionGoalIfNull writes the goal only when it is null and reports the outcome", () => {
+    const definition = makeDefinition(); // goal null
+    expect(repository.setDefinitionGoalIfNull(definition.id, "extracted goal")).toBe(true);
+    expect(repository.getDefinition(definition.id)?.goal).toBe("extracted goal");
+
+    // Already set → never clobbered, returns false.
+    expect(repository.setDefinitionGoalIfNull(definition.id, "different goal")).toBe(false);
+    expect(repository.getDefinition(definition.id)?.goal).toBe("extracted goal");
+
+    // Missing definition → false, no throw.
+    expect(repository.setDefinitionGoalIfNull("missing", "x")).toBe(false);
+  });
 });
 
 describe("TaskRepository instances", () => {

@@ -17,6 +17,14 @@ export const TaskEvaluationSchema = Type.Object({
 
 export type TaskEvaluation = Static<typeof TaskEvaluationSchema>;
 
+// Structured output of a run-start goal extraction: a single free-text goal derived
+// from the task prompt. See GOAL_EXTRACTION_SYSTEM for the recommended prose structure.
+export const ExtractedGoalSchema = Type.Object({
+  goal: Type.String(),
+});
+
+export type ExtractedGoal = Static<typeof ExtractedGoalSchema>;
+
 export type NotifyEmitter = (event: string, payload: NotifyPayload) => void;
 
 export type BackgroundSide = Pick<SideRunner, "classify" | "openBackgroundSession">;
@@ -36,6 +44,12 @@ export interface ExecutorDeps {
 }
 
 const RESPONSE_EXCERPT_CHARS = 4000;
+
+// R15's "empty, trivial, or malformed" threshold: an extracted goal shorter than this
+// (after trim) is treated as unusable — extraction returns null, nothing is persisted, and
+// the next run retries. A tunable heuristic; 50 chars rules out bare "do the task"-style
+// goals while comfortably admitting a one-sentence end state plus its check.
+export const MIN_GOAL_LENGTH = 50;
 
 const EVALUATOR_SYSTEM = `You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
 
@@ -81,6 +95,30 @@ const buildSystemPrompt = (now: Date, timezone: string | undefined): string => {
 const buildContinuationPrompt = (reason: string) =>
   `Continue working on the task. Evaluator note: ${reason}`;
 
+// Derives a free-text completion goal from a task prompt. The goal anchors what "done"
+// means for the run; the recommended prose structure (end state + stated check +
+// invariants) is enforced by instruction here and on the other agent-facing surfaces, not
+// by a parsed schema. A vague prompt yields an empty goal, which the heuristic rejects.
+const GOAL_EXTRACTION_SYSTEM = `You derive a concise completion goal for an autonomous background task from its task prompt.
+
+The goal anchors what "done" means. Express it as:
+- A measurable END STATE: the concrete outcome the task produces.
+- A STATED CHECK: how the agent can verify that end state is reached — an artifact, a measurement, or another observable outcome (not a bare assertion).
+- INVARIANTS: constraints on what must NOT change while reaching it (for example, "do not break existing behavior" or "do not modify files outside the project").
+
+Rules:
+- State the goal as a short paragraph or a few lines in the agent's own working terms — NOT a list of steps, and NOT meta-commentary about the task.
+- Be specific and genuinely checkable; reject trivially satisfied goals like "do the task" or "work on it until finished".
+- Derive ONLY from the task prompt; do not invent scope the prompt does not imply.
+- If the prompt is too vague to derive a meaningful, checkable goal, return an empty goal string.`;
+
+// Goal-only surfacing in the opening turn: wraps the task prompt with the goal when one is
+// present, and leaves it bare when there is none. The declare-via-update_goal instruction
+// is appended in a later batch (the tool does not exist yet); for now the agent simply sees
+// its goal alongside the task.
+const buildOpeningPrompt = (taskPrompt: string, goal: string | null): string =>
+  goal == null ? taskPrompt : `<task>\n${taskPrompt}\n</task>\n\n<goal>\n${goal}\n</goal>`;
+
 // Legacy fallback for instances created before persistent background sessions: a
 // paused-then-answered run with no session file is resumed by replaying the captured
 // progress, the question it asked, and the user's reply into a fresh prompt.
@@ -122,6 +160,33 @@ export const evaluateCompletion = async (
     // The evaluator is best-effort: a failure must never abort the run.
     log.warn({ err: error }, "evaluator failed — continuing");
     return { status: "continue", reason: "Evaluator failed, continuing" };
+  }
+};
+
+/**
+ * Derive a completion goal from a task prompt via structured extraction. Returns the goal
+ * prose when extraction succeeds and it clears the trim + minimum-length heuristic, or
+ * `null` on a throw or an unusable result. A `null` result means the run proceeds on the
+ * task-prompt basis and persists nothing — every later run retries until a usable goal is
+ * extracted (R3/R14/R15). Lazy, marker-free migration per DES-006: a non-null goal is the
+ * done signal, with no backfill pass and no give-up counter.
+ */
+export const extractGoal = async (
+  side: Pick<SideRunner, "classify">,
+  taskPrompt: string,
+  log: Logger,
+): Promise<string | null> => {
+  try {
+    const result = await side.classify({
+      system: GOAL_EXTRACTION_SYSTEM,
+      user: taskPrompt,
+      schema: ExtractedGoalSchema,
+    });
+    const goal = result.goal.trim();
+    return goal.length >= MIN_GOAL_LENGTH ? goal : null;
+  } catch (error) {
+    log.warn({ err: error }, "goal extraction failed — proceeding on task-prompt basis");
+    return null;
   }
 };
 
@@ -183,6 +248,25 @@ export const executeBackgroundInstance = async (
   try {
     const system = buildSystemPrompt(now(), timezone);
 
+    // Goal extraction at run start: a fresh (non-resuming) run with no snapshotted goal
+    // derives one from the task prompt. The derived goal is stored on the instance for this
+    // run and written back to the definition ONLY when its goal is still null (never clobbering
+    // a goal set by update_task or an earlier write-back in the meantime). A resumed instance
+    // already has its goal from its first start, so it never re-extracts. On failure or an
+    // unusable result, the run proceeds on the task-prompt basis and persists nothing — every
+    // later run retries until a usable goal lands (R3/R14/R15, DES-006 lazy migration).
+    let effectiveGoal = instance.goal;
+    if (!resuming && effectiveGoal == null) {
+      const extracted = await extractGoal(side, instance.prompt, log);
+      if (extracted != null) {
+        repository.updateInstance(instance.id, { goal: extracted });
+        effectiveGoal = extracted;
+        if (definition != null) {
+          repository.setDefinitionGoalIfNull(definition.id, extracted);
+        }
+      }
+    }
+
     // Workspace context (memory, projects, …) is injected by each extension's background-scoped
     // context section via pi's before_agent_start hook — no manual fold into the opening prompt.
     // notify_user is the notifications extension's background-scoped tool (bound automatically);
@@ -227,7 +311,7 @@ export const executeBackgroundInstance = async (
     }
 
     // First turn: the resumed persistent session already holds its history, so it gets only the
-    // user's reply; a legacy resume replays the captured excerpt; a fresh run gets task + context.
+    // user's reply; a legacy resume replays the captured excerpt; a fresh run gets task + goal.
     let prompt =
       resuming && !legacyResume
         ? (instance.userResponse as string)
@@ -238,7 +322,7 @@ export const executeBackgroundInstance = async (
               instance.question,
               instance.userResponse as string,
             )
-          : instance.prompt;
+          : buildOpeningPrompt(instance.prompt, effectiveGoal);
 
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       // Covers a cancel that landed before this iteration (between turns, or

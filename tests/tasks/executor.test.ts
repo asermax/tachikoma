@@ -6,7 +6,10 @@ import {
   BackgroundRunner,
   type BackgroundSide,
   type ExecutorDeps,
+  ExtractedGoalSchema,
   executeBackgroundInstance,
+  extractGoal,
+  MIN_GOAL_LENGTH,
   type NotifyEmitter,
 } from "../../src/extensions/tasks/executor.ts";
 import { TaskRepository } from "../../src/extensions/tasks/repository.ts";
@@ -103,18 +106,59 @@ const notifyPayloads = (emit: ReturnType<typeof vi.fn>): NotifyPayload[] =>
     .filter(([event]) => event === NOTIFY_EVENT)
     .map(([, payload]) => payload as NotifyPayload);
 
-const pendingInstance = (): TaskInstanceRecord =>
+// A snapshotted goal skips run-start extraction (Step 2.2), so classify is exercised by
+// the evaluator only — used by the evaluator/cancel tests that predate goal extraction and
+// must keep their original classify-call semantics. Omit the goal (default) to exercise
+// the null-goal extraction path.
+const pendingInstance = (goal?: string): TaskInstanceRecord =>
   repository.createInstance({
     definitionId: null,
     taskType: "background",
     prompt: "summarize the inbox",
     scheduledFor: current,
+    ...(goal != null ? { goal } : {}),
   });
+
+// A goal long enough to clear extraction's MIN_GOAL_LENGTH heuristic, used wherever a
+// snapshotted goal is meant to read as a real goal rather than a marker.
+const SNAPSHOTTED_GOAL =
+  "Summarize the inbox into a scannable digest of unread messages for the user.";
 
 beforeEach(async () => {
   db = await createTasksTestDb();
   current = new Date("2026-06-12T10:00:00Z");
   repository = new TaskRepository(db, now);
+});
+
+describe("extractGoal", () => {
+  const sideWith = (classify: ReturnType<typeof vi.fn>): BackgroundSide =>
+    ({ classify }) as unknown as BackgroundSide;
+
+  it("returns the trimmed goal when classify succeeds and it clears the minimum length", async () => {
+    const goal = `   ${"x".repeat(MIN_GOAL_LENGTH)}   `;
+    const classify = vi.fn().mockResolvedValue({ goal });
+
+    expect(await extractGoal(sideWith(classify), "task prompt", fakeLog)).toBe(
+      "x".repeat(MIN_GOAL_LENGTH),
+    );
+
+    expect(classify).toHaveBeenCalledWith(
+      expect.objectContaining({ schema: ExtractedGoalSchema, user: "task prompt" }),
+    );
+  });
+
+  it("returns null when classify throws (and logs the failure)", async () => {
+    const classify = vi.fn().mockRejectedValue(new Error("model down"));
+
+    expect(await extractGoal(sideWith(classify), "task prompt", fakeLog)).toBeNull();
+    expect(fakeLog.warn).toHaveBeenCalled();
+  });
+
+  it("returns null for a goal below the minimum length", async () => {
+    const classify = vi.fn().mockResolvedValue({ goal: "x".repeat(MIN_GOAL_LENGTH - 1) });
+
+    expect(await extractGoal(sideWith(classify), "task prompt", fakeLog)).toBeNull();
+  });
 });
 
 describe("executeBackgroundInstance", () => {
@@ -130,7 +174,7 @@ describe("executeBackgroundInstance", () => {
     );
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
     // The session is opened exactly once and prompted twice on the SAME session.
@@ -236,7 +280,7 @@ describe("executeBackgroundInstance", () => {
     const side = makeSide((turn) => (turn === 1 ? "first pass" : "all done"), classify);
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
     expect(side.session.prompt).toHaveBeenCalledTimes(2);
@@ -253,7 +297,7 @@ describe("executeBackgroundInstance", () => {
     }, classify);
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     await executeBackgroundInstance(deps, instance);
 
     // The run paused before the evaluator ran, and the session was disposed on the pause.
@@ -417,7 +461,7 @@ describe("executeBackgroundInstance", () => {
     const side = makeSide(() => "anything", classify);
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     const controller = new AbortController();
     controller.abort();
 
@@ -437,7 +481,7 @@ describe("executeBackgroundInstance", () => {
     const side = makeSide(() => "still working", classify);
     const deps = makeDeps(side);
 
-    const instance = pendingInstance();
+    const instance = pendingInstance(SNAPSHOTTED_GOAL);
     const controller = new AbortController();
 
     // After the first turn completes, cancel — the abort listener interrupts
@@ -458,6 +502,178 @@ describe("executeBackgroundInstance", () => {
     expect(repository.getInstance(instance.id)?.status).toBe("running");
     expect(classify).not.toHaveBeenCalled();
     expect(notifyPayloads(deps.emit)).toHaveLength(0);
+  });
+
+  describe("goal extraction at run start", () => {
+    const triageDefinition = () =>
+      repository.createDefinition({
+        name: "Triage",
+        schedule: { type: "cron", expression: "* * * * *" },
+        taskType: "background",
+        prompt: "triage the inbox",
+      });
+
+    it("extracts a goal when the instance has none and surfaces it in the opening prompt", async () => {
+      const classify = vi
+        .fn()
+        .mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL }) // run-start extraction
+        .mockResolvedValueOnce({ status: "complete", reason: "done" }); // evaluator
+      const side = makeSide(() => "done", classify);
+      const deps = makeDeps(side);
+
+      const instance = pendingInstance(); // ad-hoc, no goal
+      await executeBackgroundInstance(deps, instance);
+
+      // classify ran once for extraction and once for the evaluator.
+      expect(classify).toHaveBeenCalledTimes(2);
+
+      // The extracted goal is persisted on the instance ...
+      expect(repository.getInstance(instance.id)?.goal).toBe(SNAPSHOTTED_GOAL);
+
+      // ... and surfaced in the opening prompt (not the bare task).
+      const opening = side.session.prompt.mock.calls[0]?.[0] as string;
+      expect(opening).toContain("<goal>");
+      expect(opening).toContain(SNAPSHOTTED_GOAL);
+      expect(opening).toContain("summarize the inbox");
+    });
+
+    it("writes the extracted goal back to the definition when its goal is still null", async () => {
+      const classify = vi
+        .fn()
+        .mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL })
+        .mockResolvedValueOnce({ status: "complete", reason: "done" });
+      const side = makeSide(() => "done", classify);
+      const deps = makeDeps(side);
+
+      const definition = triageDefinition();
+      const instance = repository.createInstance({
+        definitionId: definition.id,
+        taskType: "background",
+        prompt: "triage the inbox",
+        scheduledFor: current,
+      });
+      await executeBackgroundInstance(deps, instance);
+
+      // The definition goal was null, so the extracted goal is written back ...
+      expect(repository.getDefinition(definition.id)?.goal).toBe(SNAPSHOTTED_GOAL);
+      // ... and the instance carries it for this run.
+      expect(repository.getInstance(instance.id)?.goal).toBe(SNAPSHOTTED_GOAL);
+    });
+
+    it("does not extract when the instance already has a snapshotted goal", async () => {
+      const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
+      const side = makeSide(() => "done", classify);
+      const deps = makeDeps(side);
+
+      const instance = pendingInstance(SNAPSHOTTED_GOAL);
+      await executeBackgroundInstance(deps, instance);
+
+      // classify is the evaluator only — no extraction call.
+      expect(classify).toHaveBeenCalledTimes(1);
+
+      // The opening surfaces the snapshotted goal.
+      const opening = side.session.prompt.mock.calls[0]?.[0] as string;
+      expect(opening).toContain("<goal>");
+      expect(opening).toContain(SNAPSHOTTED_GOAL);
+
+      // The instance goal is unchanged.
+      expect(repository.getInstance(instance.id)?.goal).toBe(SNAPSHOTTED_GOAL);
+    });
+
+    it("skips write-back when the goal was set in the meantime, and the queued instance extracts its own goal", async () => {
+      const classify = vi
+        .fn()
+        .mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL }) // this instance extracts its own
+        .mockResolvedValueOnce({ status: "complete", reason: "done" });
+      const side = makeSide(() => "done", classify);
+      const deps = makeDeps(side);
+
+      const definition = triageDefinition();
+      // Instance snapshotted null — queued before the definition had a goal.
+      const instance = repository.createInstance({
+        definitionId: definition.id,
+        taskType: "background",
+        prompt: "triage the inbox",
+        scheduledFor: current,
+      });
+      // Between creation and run start the definition goal is set (by update_task or an
+      // earlier instance's write-back). This instance must neither inherit nor clobber it.
+      const setMeanwhile = "Goal set by update_task while this instance was queued.";
+      repository.updateDefinition(definition.id, { goal: setMeanwhile });
+
+      await executeBackgroundInstance(deps, instance);
+
+      // The definition goal is NOT clobbered by this run's extraction.
+      expect(repository.getDefinition(definition.id)?.goal).toBe(setMeanwhile);
+      // The instance used its OWN null snapshot and extracted its own goal for this run.
+      expect(repository.getInstance(instance.id)?.goal).toBe(SNAPSHOTTED_GOAL);
+    });
+
+    it("proceeds on the task-prompt basis when extraction throws, persisting nothing", async () => {
+      const classify = vi
+        .fn()
+        .mockRejectedValueOnce(new Error("extraction model down")) // extraction fails
+        .mockResolvedValueOnce({ status: "complete", reason: "done" }); // evaluator
+      const side = makeSide(() => "done", classify);
+      const deps = makeDeps(side);
+
+      const definition = triageDefinition();
+      const instance = repository.createInstance({
+        definitionId: definition.id,
+        taskType: "background",
+        prompt: "triage the inbox",
+        scheduledFor: current,
+      });
+      await executeBackgroundInstance(deps, instance);
+
+      // Nothing persisted: both goals stay null.
+      expect(repository.getInstance(instance.id)?.goal).toBeNull();
+      expect(repository.getDefinition(definition.id)?.goal).toBeNull();
+
+      // The opening is the bare task prompt (the goal-null path).
+      const opening = side.session.prompt.mock.calls[0]?.[0] as string;
+      expect(opening).toBe("triage the inbox");
+    });
+
+    it("treats a too-short extracted goal as unusable and persists nothing", async () => {
+      const classify = vi
+        .fn()
+        .mockResolvedValueOnce({ goal: "too short to be a real goal" }) // below MIN_GOAL_LENGTH
+        .mockResolvedValueOnce({ status: "complete", reason: "done" });
+      const side = makeSide(() => "done", classify);
+      const deps = makeDeps(side);
+
+      const instance = pendingInstance(); // ad-hoc, no goal
+      await executeBackgroundInstance(deps, instance);
+
+      expect(repository.getInstance(instance.id)?.goal).toBeNull();
+
+      const opening = side.session.prompt.mock.calls[0]?.[0] as string;
+      expect(opening).toBe("summarize the inbox");
+    });
+
+    it("does not extract on a resuming run (the instance already has its goal)", async () => {
+      const classify = vi.fn().mockResolvedValue({ status: "complete", reason: "done" });
+      const side = makeSide(() => "done", classify);
+      const deps = makeDeps(side);
+
+      const instance = pendingInstance(SNAPSHOTTED_GOAL);
+      repository.updateInstance(instance.id, {
+        status: "waiting",
+        startedAt: current,
+        question: "Which inbox?",
+        resumeContext: "paused to ask",
+        userResponse: "the work one",
+        piSessionFile: "/sessions/resumed.jsonl",
+      });
+      await executeBackgroundInstance(
+        deps,
+        repository.getInstance(instance.id) as TaskInstanceRecord,
+      );
+
+      // Resuming → no extraction; classify is the evaluator only.
+      expect(classify).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -585,7 +801,9 @@ describe("BackgroundRunner", () => {
       makeDeps({ openBackgroundSession, classify } as unknown as BackgroundSide, 10, 2),
     );
 
-    for (let i = 0; i < 5; i += 1) pendingInstance();
+    // A snapshotted goal skips run-start extraction so openBackgroundSession remains the
+    // first await (the timing this concurrency assertion is calibrated to).
+    for (let i = 0; i < 5; i += 1) pendingInstance(SNAPSHOTTED_GOAL);
 
     runner.tick();
     await Promise.resolve();
