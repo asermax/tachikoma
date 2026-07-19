@@ -14,6 +14,7 @@ const TASKS_DDL = [
     schedule text NOT NULL,
     task_type text NOT NULL,
     prompt text NOT NULL,
+    goal text,
     enabled integer DEFAULT true NOT NULL,
     last_fired_at integer,
     since integer NOT NULL,
@@ -25,6 +26,7 @@ const TASKS_DDL = [
     task_type text NOT NULL,
     status text NOT NULL,
     prompt text NOT NULL,
+    goal text,
     scheduled_for integer NOT NULL,
     started_at integer,
     completed_at integer,
@@ -38,6 +40,13 @@ const TASKS_DDL = [
   )`,
   "CREATE INDEX IF NOT EXISTS ix_task_instances_status ON task_instances (status)",
   "CREATE INDEX IF NOT EXISTS ix_task_instances_task_type ON task_instances (task_type)",
+  // `goal` bridge: migration 0001 already creates these tables, so the CREATE
+  // TABLE blocks above are inert (IF NOT EXISTS) and a `goal` column added there
+  // never lands. ALTER the migration-created tables instead — exactly how
+  // migration 0005 added `pi_session_file`. Removed at landing once the central
+  // `0009_tasks_goal` migration is generated and applied by runMigrations.
+  "ALTER TABLE task_definitions ADD goal text",
+  "ALTER TABLE task_instances ADD goal text",
 ];
 
 export const createTasksTestDb = async (): Promise<AppDatabase> => {

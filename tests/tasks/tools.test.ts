@@ -105,6 +105,18 @@ describe("handleCreateTask", () => {
       }),
     ).toThrow(/must be in the future/);
   });
+
+  it("persists an optional goal on the definition", () => {
+    handleCreateTask(deps, {
+      name: "goaled",
+      schedule: "0 9 * * *",
+      type: "background",
+      prompt: "do the work",
+      goal: "the work is done and verified",
+    });
+
+    expect(repository.listEnabledDefinitions()[0]?.goal).toBe("the work is done and verified");
+  });
 });
 
 describe("handleUpdateTask", () => {
@@ -161,6 +173,19 @@ describe("handleUpdateTask", () => {
     });
 
     expect(handleUpdateTask(deps, { task_id: definition.id })).toBe("No updates provided.");
+  });
+
+  it("updates the goal when provided", () => {
+    const definition = repository.createDefinition({
+      name: "task",
+      schedule: { type: "cron", expression: "0 9 * * *" },
+      taskType: "session",
+      prompt: "prompt",
+    });
+
+    handleUpdateTask(deps, { task_id: definition.id, goal: "a new goal" });
+
+    expect(repository.getDefinition(definition.id)?.goal).toBe("a new goal");
   });
 });
 
@@ -383,6 +408,50 @@ describe("handleRunTaskNow", () => {
 
   it("throws for an unknown referenced task", () => {
     expect(() => handleRunTaskNow(deps, { task: "missing" })).toThrow("Task 'missing' not found.");
+  });
+
+  it("snapshots the definition goal on a by-reference run", () => {
+    const definition = repository.createDefinition({
+      name: "reference task",
+      schedule: { type: "once", at: "2026-08-01T09:00:00.000Z" },
+      taskType: "background",
+      prompt: "reference prompt",
+      goal: "definition goal",
+    });
+
+    handleRunTaskNow(deps, { task: definition.id });
+
+    expect(repository.queryInstances({ definitionId: definition.id })[0]?.goal).toBe(
+      "definition goal",
+    );
+  });
+
+  it("overrides the definition goal with an explicit run-now goal", () => {
+    const definition = repository.createDefinition({
+      name: "reference task",
+      schedule: { type: "once", at: "2026-08-01T09:00:00.000Z" },
+      taskType: "background",
+      prompt: "reference prompt",
+      goal: "definition goal",
+    });
+
+    handleRunTaskNow(deps, { task: definition.id, goal: "override goal" });
+
+    expect(repository.queryInstances({ definitionId: definition.id })[0]?.goal).toBe(
+      "override goal",
+    );
+  });
+
+  it("carries an inline goal on an ad-hoc run", () => {
+    handleRunTaskNow(deps, { prompt: "ad-hoc work", goal: "ad-hoc goal" });
+
+    expect(repository.queryInstances({})[0]?.goal).toBe("ad-hoc goal");
+  });
+
+  it("creates an ad-hoc instance with goal null when no goal is given", () => {
+    handleRunTaskNow(deps, { prompt: "ad-hoc work", type: "background" });
+
+    expect(repository.queryInstances({ taskType: "background" })[0]?.goal).toBeNull();
   });
 });
 

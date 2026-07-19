@@ -87,6 +87,23 @@ describe("TaskRepository definitions", () => {
 
     expect(repository.updateDefinition("missing", { name: "x" })).toBeNull();
   });
+
+  it("persists a goal provided at creation and reads null when omitted", () => {
+    const withGoal = makeDefinition({ goal: "ship the release with all tests green" });
+    expect(withGoal.goal).toBe("ship the release with all tests green");
+
+    const withoutGoal = makeDefinition();
+    expect(withoutGoal.goal).toBeNull();
+  });
+
+  it("updates the goal via updateDefinition", () => {
+    const definition = makeDefinition();
+    expect(definition.goal).toBeNull();
+
+    const updated = repository.updateDefinition(definition.id, { goal: "a new goal" });
+    expect(updated?.goal).toBe("a new goal");
+    expect(repository.getDefinition(definition.id)?.goal).toBe("a new goal");
+  });
 });
 
 describe("TaskRepository instances", () => {
@@ -215,5 +232,13 @@ describe("TaskRepository instances", () => {
     expect(failed?.completedAt).toEqual(current);
 
     expect(repository.getInstance(pending.id)?.status).toBe("pending");
+  });
+
+  it("persists a goal snapshotted onto an instance and reads null when omitted", () => {
+    const withGoal = instance({ goal: "instance goal" });
+    expect(withGoal.goal).toBe("instance goal");
+
+    const withoutGoal = instance();
+    expect(withoutGoal.goal).toBeNull();
   });
 });

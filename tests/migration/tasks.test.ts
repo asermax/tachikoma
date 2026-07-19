@@ -2,6 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import { sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 
 import { type AppDatabase, createDatabase, runMigrations } from "../../src/db/index.ts";
@@ -10,6 +11,17 @@ import type { Logger } from "../../src/log.ts";
 import { LEGACY_BACKUP_DB } from "../../src/migration/database.ts";
 import { adaptLegacyTasks } from "../../src/migration/tasks.ts";
 import { Workspace } from "../../src/workspace.ts";
+
+// `goal` bridge: runMigrations creates the task tables WITHOUT the `goal`
+// column — the central `0009_tasks_goal` migration is generated at land-delta
+// (DES-002 forbids running drizzle-kit generate from feature work) — so drizzle
+// queries over task_definitions / task_instances fail until then. Mirrors the
+// bridge in tests/tasks/setup.ts. Removed at land-delta once 0009 lands and
+// runMigrations adds the column itself.
+const applyGoalBridge = (db: AppDatabase): void => {
+  db.run(sql.raw("ALTER TABLE task_definitions ADD goal text"));
+  db.run(sql.raw("ALTER TABLE task_instances ADD goal text"));
+};
 
 const fakeLog = {
   debug: vi.fn(),
@@ -54,6 +66,7 @@ const setup = async (
 
   const db = createDatabase(workspace.databaseFile);
   runMigrations(db);
+  applyGoalBridge(db);
 
   return { workspace, db };
 };
@@ -214,6 +227,7 @@ describe("adaptLegacyTasks", () => {
 
     const db = createDatabase(workspace.databaseFile);
     runMigrations(db);
+    applyGoalBridge(db);
 
     await adaptLegacyTasks(db, workspace, fakeLog);
 
@@ -229,6 +243,7 @@ describe("adaptLegacyTasks", () => {
 
     const db = createDatabase(workspace.databaseFile);
     runMigrations(db);
+    applyGoalBridge(db);
     const log = {
       debug: vi.fn(),
       info: vi.fn(),

@@ -167,3 +167,53 @@ describe("one-shot instance generation", () => {
     expect(repository.queryInstances({})).toHaveLength(1);
   });
 });
+
+describe("goal snapshotting", () => {
+  it("snapshots the definition goal onto a generated cron instance", () => {
+    repository.createDefinition({
+      name: "with goal",
+      schedule: { type: "cron", expression: "*/5 * * * *" },
+      taskType: "background",
+      prompt: "check things",
+      goal: "all checks pass and the report is filed",
+    });
+
+    current = new Date("2026-06-12T10:36:00Z");
+    tick();
+
+    const instances = repository.queryInstances({});
+    expect(instances).toHaveLength(1);
+    expect(instances[0]?.goal).toBe("all checks pass and the report is filed");
+  });
+
+  it("snapshots null onto a generated instance when the definition has no goal", () => {
+    repository.createDefinition({
+      name: "no goal",
+      schedule: { type: "cron", expression: "*/5 * * * *" },
+      taskType: "background",
+      prompt: "check things",
+    });
+
+    current = new Date("2026-06-12T10:36:00Z");
+    tick();
+
+    const instances = repository.queryInstances({});
+    expect(instances).toHaveLength(1);
+    expect(instances[0]?.goal).toBeNull();
+  });
+
+  it("snapshots a one-shot definition's goal onto its generated instance", () => {
+    repository.createDefinition({
+      name: "reminder",
+      schedule: { type: "once", at: "2026-06-12T10:45:00.000Z" },
+      taskType: "session",
+      prompt: "remind me",
+      goal: "the reminder is delivered",
+    });
+
+    current = new Date("2026-06-12T10:46:00Z");
+    tick();
+
+    expect(repository.queryInstances({})[0]?.goal).toBe("the reminder is delivered");
+  });
+});

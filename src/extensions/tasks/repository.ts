@@ -24,9 +24,10 @@ export type NewTaskDefinition = Omit<
 
 // `definitionId` is required here (null for ad-hoc instances) even though the
 // column is nullable, so it is picked explicitly rather than left optional.
-export type NewTaskInstance = Pick<TaskInstanceInsert, "taskType" | "prompt" | "scheduledFor"> & {
-  definitionId: string | null;
-};
+export type NewTaskInstance = Pick<
+  TaskInstanceInsert,
+  "taskType" | "prompt" | "scheduledFor" | "goal"
+> & { definitionId: string | null };
 
 export type DefinitionPatch = Partial<Omit<TaskDefinitionRecord, "id" | "createdAt">>;
 export type InstancePatch = Partial<Omit<TaskInstanceRecord, "id" | "createdAt">>;
@@ -70,6 +71,7 @@ export class TaskRepository {
         schedule: values.schedule,
         taskType: values.taskType,
         prompt: values.prompt,
+        goal: values.goal,
         enabled: values.enabled ?? true,
         since: now,
         createdAt: now,
@@ -132,6 +134,7 @@ export class TaskRepository {
         taskType: values.taskType,
         status: "pending",
         prompt: values.prompt,
+        goal: values.goal,
         scheduledFor: values.scheduledFor,
         updatedAt: now,
         createdAt: now,

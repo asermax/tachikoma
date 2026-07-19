@@ -67,6 +67,7 @@ const generateForCron = (
     definitionId: definition.id,
     taskType: definition.taskType,
     prompt: definition.prompt,
+    goal: definition.goal,
     scheduledFor: nextFire,
   });
 
@@ -103,6 +104,7 @@ const generateForOneShot = (
     definitionId: definition.id,
     taskType: definition.taskType,
     prompt: definition.prompt,
+    goal: definition.goal,
     scheduledFor: at,
   });
 

@@ -36,6 +36,9 @@ export const taskDefinitions = sqliteTable("task_definitions", {
   schedule: text("schedule", { mode: "json" }).$type<StoredSchedule>().notNull(),
   taskType: text("task_type").$type<TaskType>().notNull(),
   prompt: text("prompt").notNull(),
+  // Free-text goal the task's background runs work toward; null until provided
+  // or extracted from the prompt at run start.
+  goal: text("goal"),
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   lastFiredAt: integer("last_fired_at", { mode: "timestamp" }),
   // Stamped on every insert and update — anchors stale-cron prevention so a
@@ -55,6 +58,10 @@ export const taskInstances = sqliteTable(
     taskType: text("task_type").$type<TaskType>().notNull(),
     status: text("status").$type<TaskStatus>().notNull(),
     prompt: text("prompt").notNull(),
+    // Snapshotted from the definition (or carried inline) at creation; null →
+    // extracted from the prompt at run start. A snapshot, not a reference: a
+    // definition goal written back after creation never reaches this instance.
+    goal: text("goal"),
     scheduledFor: integer("scheduled_for", { mode: "timestamp" }).notNull(),
     startedAt: integer("started_at", { mode: "timestamp" }),
     completedAt: integer("completed_at", { mode: "timestamp" }),

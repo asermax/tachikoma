@@ -30,6 +30,12 @@ export const CreateTaskParams = Type.Object({
     description: "'session' (delivered during idle) or 'background' (isolated execution)",
   }),
   prompt: Type.String({ description: "Instruction the agent follows when the task fires" }),
+  goal: Type.Optional(
+    Type.String({
+      description:
+        "Optional free-text goal the task's background runs work toward. If omitted, the first background run derives one from the prompt.",
+    }),
+  ),
   enabled: Type.Optional(
     Type.Boolean({ description: "Whether the task is active (default true)" }),
   ),
@@ -45,6 +51,12 @@ export const UpdateTaskParams = Type.Object({
     }),
   ),
   prompt: Type.Optional(Type.String({ description: "New agent instruction" })),
+  goal: Type.Optional(
+    Type.String({
+      description:
+        "Optional free-text goal the task's background runs work toward. If omitted, the first background run derives one from the prompt.",
+    }),
+  ),
   enabled: Type.Optional(Type.Boolean({ description: "Enable or disable the task" })),
 });
 
@@ -91,6 +103,12 @@ export const RunTaskNowParams = Type.Object({
   prompt: Type.Optional(
     Type.String({
       description: "Ad-hoc instruction to run immediately without a stored definition",
+    }),
+  ),
+  goal: Type.Optional(
+    Type.String({
+      description:
+        "Optional free-text goal for this run. By-reference (with 'task'): overrides the definition's goal for this run only. Ad-hoc (with 'prompt'): the run's goal, or null if omitted.",
     }),
   ),
   type: Type.Optional(
@@ -144,6 +162,7 @@ export const handleCreateTask = (
     schedule,
     taskType: args.type,
     prompt: args.prompt,
+    goal: args.goal,
     enabled: args.enabled ?? true,
   });
 
@@ -173,6 +192,7 @@ export const handleUpdateTask = (
 
   if (args.name != null) patch.name = args.name;
   if (args.prompt != null) patch.prompt = args.prompt;
+  if (args.goal != null) patch.goal = args.goal;
   if (args.enabled != null) patch.enabled = args.enabled;
   if (args.task_type != null) patch.taskType = args.task_type;
 
@@ -325,6 +345,8 @@ export const handleRunTaskNow = (
       definitionId: definition.id,
       taskType: definition.taskType,
       prompt: definition.prompt,
+      // An explicit run-now goal override wins; otherwise snapshot the definition goal.
+      goal: args.goal ?? definition.goal,
       scheduledFor: now(),
     });
 
@@ -342,6 +364,8 @@ export const handleRunTaskNow = (
     definitionId: null,
     taskType,
     prompt: args.prompt as string,
+    // Ad-hoc runs carry the inline goal directly (no parent definition), else null.
+    goal: args.goal ?? null,
     scheduledFor: now(),
   });
 
