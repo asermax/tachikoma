@@ -1,3 +1,10 @@
+# [3.63.0](https://github.com/asermax/tachikoma/compare/v3.62.1...v3.63.0) (2026-07-19)
+
+
+### Features
+
+* **tasks:** surface goal and schedule anchor in task tools ([831a454](https://github.com/asermax/tachikoma/commit/831a4541b905805bba3209a94669bf07b4cf4eae))
+
 ## [3.62.1](https://github.com/asermax/tachikoma/compare/v3.62.0...v3.62.1) (2026-07-19)
 
 
