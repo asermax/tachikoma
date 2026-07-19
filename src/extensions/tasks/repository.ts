@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { and, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 
 import type { AppDatabase } from "../../db/index.ts";
 import {
@@ -125,14 +125,20 @@ export class TaskRepository {
    * Write the extracted goal back to the definition ONLY when its goal is still null.
    * Guards against clobbering a goal set by `update_task` or an earlier extraction's
    * write-back between an instance's creation and its run-start extraction (R3: a goal
-   * set in the meantime wins). Returns whether the write happened; `false` means the
-   * definition was missing or already had a goal, so the row is left unchanged.
+   * set in the meantime wins). A single conditional UPDATE (id matches AND goal is null)
+   * makes that guard atomic — no SELECT/UPDATE race — and skips the extra read. Re-stamps
+   * `since` to mirror `updateDefinition`. Returns whether the write happened; `false` means
+   * the definition was missing or already had a goal, so the row is left unchanged.
    */
   setDefinitionGoalIfNull(id: string, goal: string): boolean {
-    const current = this.getDefinition(id);
-    if (current == null || current.goal != null) return false;
-    this.updateDefinition(id, { goal });
-    return true;
+    return (
+      this.db
+        .update(taskDefinitions)
+        .set({ goal, since: this.now() })
+        .where(and(eq(taskDefinitions.id, id), isNull(taskDefinitions.goal)))
+        .returning()
+        .all().length > 0
+    );
   }
 
   // ---- instances ----------------------------------------------------------------
