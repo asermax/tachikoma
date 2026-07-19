@@ -25,20 +25,33 @@ const makeWorkspace = async (): Promise<Workspace> => {
   return workspace;
 };
 
+/** Numeric prefix of a migration tag/filename (e.g. `0008_dlt175…` → 8); non-migration names → NaN. */
+const migrationNumber = (name: string): number => Number.parseInt(name.slice(0, 4), 10);
+
+// 0008_dlt175_trunk_routing drops `sessions` and reshapes `channel_messages`.
+const SESSIONS_DROP_MIGRATION = 8;
+
 /** A migrations folder holding only the pre-DLT-175 migrations (everything before 0008). */
 const preRefactorMigrationsFolder = (): string => {
   const source = migrationsFolder();
   const target = mkdtempSync(join(tmpdir(), "tachi-migrations-pre175-"));
 
+  // Copy every entry except migration files at or after the sessions-drop migration
+  // (0008 onward). `meta` is a directory (parses to NaN) and is always copied.
   for (const entry of readdirSync(source)) {
-    if (entry.startsWith("0008")) continue;
+    if (migrationNumber(entry) >= SESSIONS_DROP_MIGRATION) continue;
     cpSync(join(source, entry), join(target, entry), { recursive: true });
   }
 
-  // Drop the 0008 entry from the copied journal so drizzle treats the pre-refactor schema as current.
+  // Drop every journal entry from 0008 onward so drizzle treats the pre-refactor
+  // schema as current. Drizzle's migrator only applies migrations newer than the
+  // most recently applied one, so leaving 0009+ here would lift that watermark
+  // above 0008 and skip the sessions drop on the later full run.
   const journalPath = join(target, "meta", "_journal.json");
   const journal = JSON.parse(readFileSync(journalPath, "utf8"));
-  journal.entries = journal.entries.filter((e: { tag: string }) => !e.tag.startsWith("0008"));
+  journal.entries = journal.entries.filter(
+    (e: { tag: string }) => migrationNumber(e.tag) < SESSIONS_DROP_MIGRATION,
+  );
   writeFileSync(journalPath, JSON.stringify(journal));
 
   return target;

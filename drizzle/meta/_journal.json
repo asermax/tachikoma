@@ -64,6 +64,13 @@
       "when": 1781547739054,
       "tag": "0008_dlt175_trunk_routing",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1784482319351,
+      "tag": "0009_tasks_goal",
+      "breakpoints": true
     }
   ]
 }
