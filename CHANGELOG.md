@@ -1,3 +1,10 @@
+# [3.64.0](https://github.com/asermax/tachikoma/compare/v3.63.0...v3.64.0) (2026-07-20)
+
+
+### Features
+
+* **self-update:** announce back online after a plain restart ([3e1c7ee](https://github.com/asermax/tachikoma/commit/3e1c7eee8e4374268e44586b73c65944501fddbe))
+
 # [3.63.0](https://github.com/asermax/tachikoma/compare/v3.62.1...v3.63.0) (2026-07-19)
 
 
