@@ -1,3 +1,10 @@
+# [3.65.0](https://github.com/asermax/tachikoma/compare/v3.64.0...v3.65.0) (2026-07-22)
+
+
+### Features
+
+* **tasks:** derive run-start goal via a tool-enabled extraction run ([97746e3](https://github.com/asermax/tachikoma/commit/97746e385ae37b9f22d435dda04adc3413fe8441))
+
 # [3.64.0](https://github.com/asermax/tachikoma/compare/v3.63.0...v3.64.0) (2026-07-20)
 
 
