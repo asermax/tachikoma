@@ -6,7 +6,6 @@ import {
   BackgroundRunner,
   type BackgroundSide,
   type ExecutorDeps,
-  ExtractedGoalSchema,
   executeBackgroundInstance,
   extractGoal,
   MIN_GOAL_LENGTH,
@@ -48,7 +47,7 @@ interface FakeSession {
 
 interface FakeSide extends BackgroundSide {
   openBackgroundSession: ReturnType<typeof vi.fn>;
-  classify: ReturnType<typeof vi.fn>;
+  run: ReturnType<typeof vi.fn>;
   session: FakeSession;
 }
 
@@ -59,7 +58,7 @@ interface FakeSide extends BackgroundSide {
  */
 const makeSide = (
   respond: (turn: number, tools: HarnessTool[]) => Promise<string> | string,
-  classify: ReturnType<typeof vi.fn>,
+  run: ReturnType<typeof vi.fn>,
   sessionFile = "/sessions/bg-task.jsonl",
 ): FakeSide => {
   const session: FakeSession = {
@@ -84,7 +83,7 @@ const makeSide = (
     return session;
   });
 
-  return { openBackgroundSession, classify, session } as FakeSide;
+  return { openBackgroundSession, run, session } as FakeSide;
 };
 
 const makeDeps = (side: BackgroundSide, maxIterations = 10, maxConcurrent = 3) => {
@@ -111,7 +110,7 @@ const notifyPayloads = (emit: ReturnType<typeof vi.fn>): NotifyPayload[] =>
     .filter(([event]) => event === NOTIFY_EVENT)
     .map(([, payload]) => payload as NotifyPayload);
 
-// A snapshotted goal skips run-start extraction (Step 2.2), so classify is never called — used
+// A snapshotted goal skips run-start extraction (Step 2.2), so run is never called — used
 // by the declaration/cancel tests that exercise the self-declaration loop, not extraction.
 // Omit the goal (default) to exercise the null-goal extraction path.
 const pendingInstance = (goal?: string): TaskInstanceRecord =>
@@ -151,33 +150,38 @@ beforeEach(async () => {
 });
 
 describe("extractGoal", () => {
-  const sideWith = (classify: ReturnType<typeof vi.fn>): BackgroundSide =>
-    ({ classify }) as unknown as BackgroundSide;
+  const sideWith = (run: ReturnType<typeof vi.fn>): BackgroundSide =>
+    ({ run }) as unknown as BackgroundSide;
 
-  it("returns the trimmed goal when classify succeeds and it clears the minimum length", async () => {
+  it("returns the trimmed goal when the run succeeds and it clears the minimum length", async () => {
     const goal = `   ${"x".repeat(MIN_GOAL_LENGTH)}   `;
-    const classify = vi.fn().mockResolvedValue({ goal });
+    const run = vi.fn().mockResolvedValue({ text: goal });
 
-    expect(await extractGoal(sideWith(classify), "task prompt", fakeLog)).toBe(
+    expect(await extractGoal(sideWith(run), "task prompt", fakeLog)).toBe(
       "x".repeat(MIN_GOAL_LENGTH),
     );
 
-    expect(classify).toHaveBeenCalledWith(
-      expect.objectContaining({ schema: ExtractedGoalSchema, user: "task prompt" }),
+    expect(run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "task prompt",
+        tools: ["read", "ls", "find", "grep"],
+        tier: "processor",
+        isolatePrompt: true,
+      }),
     );
   });
 
-  it("returns null when classify throws (and logs the failure)", async () => {
-    const classify = vi.fn().mockRejectedValue(new Error("model down"));
+  it("returns null when the run throws (and logs the failure)", async () => {
+    const run = vi.fn().mockRejectedValue(new Error("model down"));
 
-    expect(await extractGoal(sideWith(classify), "task prompt", fakeLog)).toBeNull();
+    expect(await extractGoal(sideWith(run), "task prompt", fakeLog)).toBeNull();
     expect(fakeLog.warn).toHaveBeenCalled();
   });
 
   it("returns null for a goal below the minimum length", async () => {
-    const classify = vi.fn().mockResolvedValue({ goal: "x".repeat(MIN_GOAL_LENGTH - 1) });
+    const run = vi.fn().mockResolvedValue({ text: "x".repeat(MIN_GOAL_LENGTH - 1) });
 
-    expect(await extractGoal(sideWith(classify), "task prompt", fakeLog)).toBeNull();
+    expect(await extractGoal(sideWith(run), "task prompt", fakeLog)).toBeNull();
   });
 });
 
@@ -579,16 +583,16 @@ describe("executeBackgroundInstance", () => {
       });
 
     it("extracts a goal when the instance has none and surfaces it in the opening prompt", async () => {
-      // classify is extraction-only now: one call to derive the goal, then the agent declares.
-      const classify = vi.fn().mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL });
-      const side = makeSide(declareCompleted("done"), classify);
+      // The extraction run derives the goal (its text output); then the agent declares.
+      const run = vi.fn().mockResolvedValueOnce({ text: SNAPSHOTTED_GOAL });
+      const side = makeSide(declareCompleted("done"), run);
       const deps = makeDeps(side);
 
       const instance = pendingInstance(); // ad-hoc, no goal
       await executeBackgroundInstance(deps, instance);
 
-      // classify ran exactly once — for extraction (the evaluator is gone).
-      expect(classify).toHaveBeenCalledTimes(1);
+      // The extraction run fired exactly once (no post-turn evaluator).
+      expect(run).toHaveBeenCalledTimes(1);
 
       // The extracted goal is persisted on the instance ...
       expect(repository.getInstance(instance.id)?.goal).toBe(SNAPSHOTTED_GOAL);
@@ -602,8 +606,8 @@ describe("executeBackgroundInstance", () => {
     });
 
     it("writes the extracted goal back to the definition when its goal is still null", async () => {
-      const classify = vi.fn().mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL });
-      const side = makeSide(declareCompleted("done"), classify);
+      const run = vi.fn().mockResolvedValueOnce({ text: SNAPSHOTTED_GOAL });
+      const side = makeSide(declareCompleted("done"), run);
       const deps = makeDeps(side);
 
       const definition = triageDefinition();
@@ -622,15 +626,15 @@ describe("executeBackgroundInstance", () => {
     });
 
     it("does not extract when the instance already has a snapshotted goal", async () => {
-      const classify = vi.fn();
-      const side = makeSide(declareCompleted("done"), classify);
+      const run = vi.fn();
+      const side = makeSide(declareCompleted("done"), run);
       const deps = makeDeps(side);
 
       const instance = pendingInstance(SNAPSHOTTED_GOAL);
       await executeBackgroundInstance(deps, instance);
 
-      // No extraction (snapshotted goal) and no evaluator → classify is never called.
-      expect(classify).not.toHaveBeenCalled();
+      // No extraction (snapshotted goal) → the extraction run is never called.
+      expect(run).not.toHaveBeenCalled();
 
       const opening = side.session.prompt.mock.calls[0]?.[0] as string;
       expect(opening).toContain("<goal>");
@@ -640,8 +644,8 @@ describe("executeBackgroundInstance", () => {
     });
 
     it("skips write-back when the goal was set in the meantime, and the queued instance extracts its own goal", async () => {
-      const classify = vi.fn().mockResolvedValueOnce({ goal: SNAPSHOTTED_GOAL }); // this instance extracts its own
-      const side = makeSide(declareCompleted("done"), classify);
+      const run = vi.fn().mockResolvedValueOnce({ text: SNAPSHOTTED_GOAL }); // this instance extracts its own
+      const side = makeSide(declareCompleted("done"), run);
       const deps = makeDeps(side);
 
       const definition = triageDefinition();
@@ -666,8 +670,8 @@ describe("executeBackgroundInstance", () => {
     });
 
     it("proceeds on the task-prompt basis when extraction throws, persisting nothing", async () => {
-      const classify = vi.fn().mockRejectedValueOnce(new Error("extraction model down")); // extraction fails
-      const side = makeSide(declareCompleted("done"), classify);
+      const run = vi.fn().mockRejectedValueOnce(new Error("extraction model down")); // extraction fails
+      const side = makeSide(declareCompleted("done"), run);
       const deps = makeDeps(side);
 
       const definition = triageDefinition();
@@ -691,8 +695,8 @@ describe("executeBackgroundInstance", () => {
     });
 
     it("treats a too-short extracted goal as unusable and persists nothing", async () => {
-      const classify = vi.fn().mockResolvedValueOnce({ goal: "too short to be a real goal" }); // below MIN_GOAL_LENGTH
-      const side = makeSide(declareCompleted("done"), classify);
+      const run = vi.fn().mockResolvedValueOnce({ text: "too short to be a real goal" }); // below MIN_GOAL_LENGTH
+      const side = makeSide(declareCompleted("done"), run);
       const deps = makeDeps(side);
 
       const instance = pendingInstance(); // ad-hoc, no goal
@@ -706,8 +710,8 @@ describe("executeBackgroundInstance", () => {
     });
 
     it("does not extract on a resuming run (the instance already has its goal)", async () => {
-      const classify = vi.fn();
-      const side = makeSide(declareCompleted("done"), classify);
+      const run = vi.fn();
+      const side = makeSide(declareCompleted("done"), run);
       const deps = makeDeps(side);
 
       const instance = pendingInstance(SNAPSHOTTED_GOAL);
@@ -724,8 +728,8 @@ describe("executeBackgroundInstance", () => {
         repository.getInstance(instance.id) as TaskInstanceRecord,
       );
 
-      // Resuming → no extraction and no evaluator → classify is never called.
-      expect(classify).not.toHaveBeenCalled();
+      // Resuming → no extraction → the extraction run is never called.
+      expect(run).not.toHaveBeenCalled();
     });
   });
 });
@@ -850,7 +854,7 @@ describe("BackgroundRunner", () => {
     });
 
     const runner = new BackgroundRunner(
-      makeDeps({ openBackgroundSession, classify: vi.fn() } as unknown as BackgroundSide, 10, 2),
+      makeDeps({ openBackgroundSession, run: vi.fn() } as unknown as BackgroundSide, 10, 2),
     );
 
     // A snapshotted goal skips run-start extraction so openBackgroundSession remains the
@@ -906,7 +910,7 @@ describe("BackgroundRunner", () => {
     }));
     const deps = makeDeps({
       openBackgroundSession,
-      classify: vi.fn(),
+      run: vi.fn(),
     } as unknown as BackgroundSide);
     const runner = new BackgroundRunner(deps);
 
