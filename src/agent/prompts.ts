@@ -8,6 +8,8 @@
  * operator's personal pi config.
  */
 
+import { FILE_READ_TOOLS } from "./file-tools.ts";
+
 /** Role-agnostic working hygiene shared by every context. The single source for these rules. */
 export const OPERATIONAL_GUIDANCE = `- Be concise and direct.
 - Prefer the dedicated file tools (read, grep, find, ls) over shelling out to inspect files; reserve bash for genuine shell operations.
@@ -73,9 +75,6 @@ export const buildBackgroundSystemPrompt = ({ dateHeader }: BackgroundSystemProm
 /** Tools that modify files or run commands — their presence moves the subagent off read-only. */
 const SUBAGENT_MUTATION_TOOLS = new Set(["bash", "edit", "write"]);
 
-/** The read-only tool set a delegated subagent runs with by default. */
-const SUBAGENT_DEFAULT_TOOLS = ["read", "grep", "find", "ls"];
-
 export interface SubagentSystemPromptParts {
   /** The granted tool names (pi built-ins), used to describe what the worker may do. */
   tools: string[];
@@ -85,7 +84,7 @@ export interface SubagentSystemPromptParts {
  * Delegated subagent base prompt parameterized by its granted tools. With no mutation/exec tool
  * (`bash`/`edit`/`write`) the worker is read-only; once one is granted it is told it may modify
  * files and run commands as the task requires. {@link SUBAGENT_SYSTEM_PROMPT} is this builder
- * applied to {@link SUBAGENT_DEFAULT_TOOLS}, so the two share one body and never drift.
+ * applied to {@link FILE_READ_TOOLS}, so the two share one body and never drift.
  */
 export const buildSubagentSystemPrompt = ({ tools }: SubagentSystemPromptParts): string => {
   const isReadOnly = !tools.some((tool) => SUBAGENT_MUTATION_TOOLS.has(tool));
@@ -108,8 +107,8 @@ ${OPERATIONAL_GUIDANCE}`;
  * Delegated general-purpose subagent: a focused, read-only worker whose final message IS the
  * result returned to the caller. Omits date/working-directory — pi appends both even under a
  * custom system prompt. This is the read-only default — {@link buildSubagentSystemPrompt} applied
- * to {@link SUBAGENT_DEFAULT_TOOLS} — used as the built-in agent's fallback `systemPrompt`. The
+ * to {@link FILE_READ_TOOLS} — used as the built-in agent's fallback `systemPrompt`. The
  * builder is called with the granted tools when the caller grants mutation/exec tools, so the
  * worker is no longer told it is read-only.
  */
-export const SUBAGENT_SYSTEM_PROMPT = buildSubagentSystemPrompt({ tools: SUBAGENT_DEFAULT_TOOLS });
+export const SUBAGENT_SYSTEM_PROMPT = buildSubagentSystemPrompt({ tools: FILE_READ_TOOLS });

@@ -1,6 +1,7 @@
 import { type ToolDefinition, truncateTail } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { FILE_READ_TOOLS } from "../../agent/file-tools.ts";
 import type { SideRunner } from "../../agent/side-run.ts";
 import type { Logger } from "../../log.ts";
 import type { SkillAgent } from "./agents.ts";
@@ -14,8 +15,6 @@ export interface DelegateToolOptions {
   runner: AgentRunner;
   log: Logger;
 }
-
-const DEFAULT_AGENT_TOOLS = ["read", "grep", "find", "ls"];
 
 /**
  * Resolve a delegated run's built-in tool set. A non-empty per-delegation `requested` list fully
@@ -41,7 +40,7 @@ export const resolveTools = (
     return requested;
   }
 
-  return declared ?? DEFAULT_AGENT_TOOLS;
+  return declared ?? FILE_READ_TOOLS;
 };
 
 /**

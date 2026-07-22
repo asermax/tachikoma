@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { FILE_READ_TOOLS } from "../../src/agent/file-tools.ts";
 import type { AppDatabase } from "../../src/db/index.ts";
 import { NOTIFY_EVENT, type NotifyPayload } from "../../src/extensions/notifications/payload.ts";
 import {
@@ -164,7 +165,7 @@ describe("extractGoal", () => {
     expect(run).toHaveBeenCalledWith(
       expect.objectContaining({
         prompt: "task prompt",
-        tools: ["read", "ls", "find", "grep"],
+        tools: FILE_READ_TOOLS,
         tier: "processor",
         isolatePrompt: true,
       }),

@@ -2,6 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { FILE_READ_TOOLS } from "../../agent/file-tools.ts";
 import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import { lastAssistantText, type SideRunner } from "../../agent/side-run.ts";
 import type { Logger } from "../../log.ts";
@@ -132,23 +133,14 @@ The user replied: ${userResponse}
 
 Continue working on the task from where you left off, using the user's reply. Do not ask the same question again.`;
 
-// Read-only filesystem surface granted to goal extraction — the non-mutating subset of
-// pi's built-in tools. Lets the run follow direct paths (read) and locate fuzzy references
-// (ls/find/grep). Passed as a hard allowlist to `side.run`, so the extraction run can never
-// mutate the workspace (no write/edit/bash). Matches the "read access to workspace files"
-// need without granting execution.
-const GOAL_EXTRACTION_TOOLS = ["read", "ls", "find", "grep"];
-
 /**
  * Derive a completion goal from a task prompt via a tool-enabled headless run. The run has
- * read-only filesystem tools so it can follow file paths the prompt references before
- * stating the goal; its final assistant text IS the goal (free-text, no JSON wrapping —
- * matching the memory extension's `side.run` idiom). Returns the goal prose when the run
- * succeeds and it clears the trim + minimum-length heuristic, or `null` on a throw or an
- * unusable result. A `null` result means the run proceeds on the task-prompt basis and
- * persists nothing — every later run retries until a usable goal is extracted
- * (R3/R14/R15). Lazy, marker-free migration per DES-006: a non-null goal is the done
- * signal, with no backfill pass and no give-up counter.
+ * read-only filesystem tools so it can follow file paths the prompt references before stating
+ * the goal; its final assistant text IS the goal (free-text, no JSON wrapping). Returns the
+ * goal prose when the run succeeds and it clears the trim + minimum-length heuristic, or
+ * `null` on a throw or an unusable result — a `null` result means the run proceeds on the
+ * task-prompt basis and persists nothing. (The run-start call site and its write-back/lazy-
+ * migration rationale live in `executeBackgroundInstance`.)
  */
 export const extractGoal = async (
   side: Pick<SideRunner, "run">,
@@ -159,7 +151,7 @@ export const extractGoal = async (
     const { text } = await side.run({
       prompt: taskPrompt,
       system: GOAL_EXTRACTION_SYSTEM,
-      tools: GOAL_EXTRACTION_TOOLS,
+      tools: FILE_READ_TOOLS,
       tier: "processor",
       isolatePrompt: true,
     });
