@@ -2,6 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+import { FILE_READ_TOOLS } from "../../agent/file-tools.ts";
 import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import { lastAssistantText, type SideRunner } from "../../agent/side-run.ts";
 import type { Logger } from "../../log.ts";
@@ -9,12 +10,6 @@ import type { PostProcessorContext } from "../api.ts";
 import { NOTIFY_EVENT, type NotifyPayload, SEVERITIES } from "../notifications/payload.ts";
 import type { TaskRepository } from "./repository.ts";
 import type { TaskInstanceRecord } from "./schema.ts";
-
-// Structured output of a run-start goal extraction: a single free-text goal derived
-// from the task prompt. See GOAL_EXTRACTION_SYSTEM for the recommended prose structure.
-export const ExtractedGoalSchema = Type.Object({
-  goal: Type.String(),
-});
 
 // A terminal self-declaration captured by the update_goal tool's execute handler. The loop
 // reads it (snapshotted to an annotated const) after each turn: `completed` → mark complete
@@ -25,7 +20,7 @@ export type PendingDeclaration =
 
 export type NotifyEmitter = (event: string, payload: NotifyPayload) => void;
 
-export type BackgroundSide = Pick<SideRunner, "classify" | "openBackgroundSession">;
+export type BackgroundSide = Pick<SideRunner, "run" | "openBackgroundSession">;
 
 export interface ExecutorDeps {
   repository: TaskRepository;
@@ -74,10 +69,12 @@ const buildSystemPrompt = (now: Date, timezone: string | undefined): string => {
   return buildBackgroundSystemPrompt({ dateHeader: `${formatted}${zone}` });
 };
 
-// Derives a free-text completion goal from a task prompt. The goal anchors what "done"
-// means for the run; the recommended prose structure (end state + stated check +
-// invariants) is enforced by instruction here and on the other agent-facing surfaces, not
-// by a parsed schema. A vague prompt yields an empty goal, which the heuristic rejects.
+// Derives a free-text completion goal from a task prompt via a tool-enabled headless run
+// (`side.run`). The goal anchors what "done" means for the run; the recommended prose
+// structure (end state + stated check + invariants) is enforced by instruction here and on
+// the other agent-facing surfaces, not by a parsed schema. The run's read-only filesystem
+// tools let it follow file paths the prompt references before stating the goal. A vague
+// prompt yields an empty goal, which the heuristic rejects.
 const GOAL_EXTRACTION_SYSTEM = `You derive a concise completion goal for an autonomous background task from its task prompt.
 
 The goal anchors what "done" means. Express it as:
@@ -85,11 +82,14 @@ The goal anchors what "done" means. Express it as:
 - A STATED CHECK: how the agent can verify that end state is reached — an artifact, a measurement, or another observable outcome (not a bare assertion).
 - INVARIANTS: constraints on what must NOT change while reaching it (for example, "do not break existing behavior" or "do not modify files outside the project").
 
+Before deriving the goal, use your read/locate tools to read any files the task prompt references — it often names paths to references, instructions, or specs whose content shapes what the task actually does. Derive the goal from the prompt AND those files, so it reflects the task's full scope rather than just the prompt text.
+
 Rules:
 - State the goal as a short paragraph or a few lines in the agent's own working terms — NOT a list of steps, and NOT meta-commentary about the task.
 - Be specific and genuinely checkable; reject trivially satisfied goals like "do the task" or "work on it until finished".
-- Derive ONLY from the task prompt; do not invent scope the prompt does not imply.
-- If the prompt is too vague to derive a meaningful, checkable goal, return an empty goal string.`;
+- Derive ONLY from the task prompt and any files it references; do not invent scope they do not imply.
+- If the prompt is too vague to derive a meaningful, checkable goal, leave the goal empty.
+- Respond with ONLY the goal text — no preamble, no labels (such as "Goal:"), and no explanation.`;
 
 // The opening turn surfaces the task and the goal (when one is present), then appends the
 // declare-via-update_goal instruction in both branches — even on the task-prompt basis the
@@ -134,25 +134,28 @@ The user replied: ${userResponse}
 Continue working on the task from where you left off, using the user's reply. Do not ask the same question again.`;
 
 /**
- * Derive a completion goal from a task prompt via structured extraction. Returns the goal
- * prose when extraction succeeds and it clears the trim + minimum-length heuristic, or
- * `null` on a throw or an unusable result. A `null` result means the run proceeds on the
- * task-prompt basis and persists nothing — every later run retries until a usable goal is
- * extracted (R3/R14/R15). Lazy, marker-free migration per DES-006: a non-null goal is the
- * done signal, with no backfill pass and no give-up counter.
+ * Derive a completion goal from a task prompt via a tool-enabled headless run. The run has
+ * read-only filesystem tools so it can follow file paths the prompt references before stating
+ * the goal; its final assistant text IS the goal (free-text, no JSON wrapping). Returns the
+ * goal prose when the run succeeds and it clears the trim + minimum-length heuristic, or
+ * `null` on a throw or an unusable result — a `null` result means the run proceeds on the
+ * task-prompt basis and persists nothing. (The run-start call site and its write-back/lazy-
+ * migration rationale live in `executeBackgroundInstance`.)
  */
 export const extractGoal = async (
-  side: Pick<SideRunner, "classify">,
+  side: Pick<SideRunner, "run">,
   taskPrompt: string,
   log: Logger,
 ): Promise<string | null> => {
   try {
-    const result = await side.classify({
+    const { text } = await side.run({
+      prompt: taskPrompt,
       system: GOAL_EXTRACTION_SYSTEM,
-      user: taskPrompt,
-      schema: ExtractedGoalSchema,
+      tools: FILE_READ_TOOLS,
+      tier: "processor",
+      isolatePrompt: true,
     });
-    const goal = result.goal.trim();
+    const goal = text.trim();
     return goal.length >= MIN_GOAL_LENGTH ? goal : null;
   } catch (error) {
     log.warn({ err: error }, "goal extraction failed — proceeding on task-prompt basis");
