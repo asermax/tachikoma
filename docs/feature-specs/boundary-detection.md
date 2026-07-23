@@ -109,12 +109,13 @@ A checkpoint is the main-line tip marker that lets a tangent run inline and late
 
 ### Decision Surfacing (R13)
 
-Every branching decision is surfaced as a turn-scoped header on its response.
+Every branching decision is surfaced as a turn-scoped **reaction emoji on the bot's own message** (new topic 🔥, checkpoint set 💔, summarized to checkpoint ❤, rolled back 👻), with the decision label/note retained as a text fallback for channels without reaction support or an empty turn. The descriptor (`{ label, note, rollbackable, reaction? }`) is channel-agnostic; the Telegram channel renders `reaction` via `setMessageReaction` and otherwise falls back to the italic header text. Telegram restricts reactions to a fixed emoji set, so only valid reaction emoji are used (the original banner glyphs 🆕 📌 ↩️ 🔄 are not valid reactions) — see `BOUNDARY_REACTIONS`.
 
 **Acceptance Criteria**:
-- Given an automatic `set-checkpoint` or `shift` decision, when its response renders, then a persistent header (e.g. "📌 Checkpoint set", "🆕 New topic") is attached that the streamed text does not overwrite, and it signals `/rollback` is available
-- Given a `summarize-to-checkpoint`, `rollback`, or manual decision, when its response renders, then the header is informational (no `/rollback` advertised)
-- Given a decision header was shown on a response, when the next turn renders with no new decision, then no header is carried forward — it is turn-scoped
+- Given an automatic `set-checkpoint` or `shift` decision, when its response renders, then a reaction (💔 checkpoint, 🔥 new topic) is placed on the response message, and it signals `/rollback` is available
+- Given a `summarize-to-checkpoint`, `rollback`, or manual decision, when its response renders, then the reaction is informational (no `/rollback` advertised) — ❤ summarize, 👻 rollback
+- Given a manual `/checkpoint` or `/back` success with no trailing turn, then a reaction (💔 / ❤) is placed on the bot's previous message instead of a text ack
+- Given a decision was surfaced on a response, when the next turn renders with no new decision, then no reaction/header is carried forward — it is turn-scoped
 
 ### ask_branch Tool (R14)
 
