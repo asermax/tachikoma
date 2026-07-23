@@ -200,6 +200,7 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
     expect(deliverFn).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("📌 Checkpoint set"),
+        reaction: "💔",
         immediate: true,
       }),
     );
@@ -256,7 +257,10 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
 
     expect(readBoomerangState(fake.session)?.checkpointId).toBe("t2");
     expect(deliverFn).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("📌 Checkpoint set") }),
+      expect.objectContaining({
+        text: expect.stringContaining("📌 Checkpoint set"),
+        reaction: "💔",
+      }),
     );
   });
 
@@ -317,7 +321,10 @@ describe("handleCheckpointCommand (/checkpoint)", () => {
       undefined,
     );
     expect(deliverFn).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("📌 Checkpoint set") }),
+      expect.objectContaining({
+        text: expect.stringContaining("📌 Checkpoint set"),
+        reaction: "💔",
+      }),
     );
   });
 
@@ -500,7 +507,10 @@ describe("handleBackCommand (/back)", () => {
     expect(path).not.toContain("t1");
     expect(path).not.toContain("t2");
     expect(deliverFn).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("↩️ Summarized to checkpoint") }),
+      expect.objectContaining({
+        text: expect.stringContaining("↩️ Summarized to checkpoint"),
+        reaction: "❤",
+      }),
     );
   });
 
@@ -601,7 +611,10 @@ describe("handleBackCommand (/back)", () => {
     expect(message.text).toBe("here's what I found");
     expect(message.metadata.handled).toBeUndefined();
     expect(deliverFn).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("↩️ Summarized to checkpoint") }),
+      expect.objectContaining({
+        text: expect.stringContaining("↩️ Summarized to checkpoint"),
+        reaction: "❤",
+      }),
     );
   });
 

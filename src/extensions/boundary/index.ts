@@ -11,6 +11,7 @@ import { classifyShift } from "./classifier.ts";
 import { collapseCurrentTopic, summarizeCurrentTangent } from "./collapse.ts";
 import { handleBackCommand, handleCheckpointCommand } from "./commands.ts";
 import { setCheckpointAndFocus } from "./focus.ts";
+import { BOUNDARY_REACTIONS } from "./reactions.ts";
 import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
 import { handleRollbackCommand, type RollbackDeps } from "./rollback.ts";
 
@@ -26,12 +27,14 @@ interface BoundaryConfig {
  * The "📌 Checkpoint set" decision header shared by every automatic checkpoint site. The note is fixed;
  * only `rollbackable` varies (the classifier's auto `set-checkpoint` is a `/rollback` target; the
  * system-origin side-task checkpoint is not — system turns aren't user messages for the immediacy
- * counter). One source of truth keeps the wording from drifting between sites.
+ * counter). One source of truth keeps the wording from drifting between sites. The decision surfaces as
+ * a 💔 reaction on the outbound message (`reaction`); the label/note are a fallback only.
  */
 const checkpointSetHeader = (rollbackable: boolean): DecisionHeader => ({
   label: "📌 Checkpoint set",
   note: "A side task started — the main line is parked here.",
   rollbackable,
+  reaction: BOUNDARY_REACTIONS.checkpointSet,
 });
 
 /**
@@ -320,6 +323,7 @@ export default defineExtension<BoundaryConfig>({
               label: "↩️ Summarized to checkpoint",
               note: "Back on the main line; the side topic was folded away.",
               rollbackable: false,
+              reaction: BOUNDARY_REACTIONS.summarizedToCheckpoint,
             };
           }
         }
@@ -348,6 +352,7 @@ export default defineExtension<BoundaryConfig>({
             label: "🆕 New topic",
             note: "Started a fresh topic — the previous one was collapsed.",
             rollbackable: true,
+            reaction: BOUNDARY_REACTIONS.newTopic,
           };
         }
       }

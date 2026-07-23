@@ -22,6 +22,17 @@ export const EDIT_THROTTLE_MS = 1500;
 export type StreamApi = Pick<SendApi, "sendMessage" | "editMessageText" | "deleteMessage">;
 
 /**
+ * Render a decision header as Telegram italics — `_label — note_`, or `_label_` when the note is empty.
+ * The single source of truth for the header's text form, shared by the streaming renderer's anchored
+ * header and the channel's empty-turn fallback (which skips the renderer because its message never
+ * materialized).
+ */
+export const composeDecisionHeaderText = (header: DecisionHeader): string => {
+  const body = header.note.length > 0 ? `${header.label} — ${header.note}` : header.label;
+  return `_${body}_`;
+};
+
+/**
  * Progressive renderer for one agent exchange. Text accumulates in a buffer and
  * is held while it streams — revealed in one go when the next tool/status line
  * settles the segment (the model moved on, so the preceding text is complete) or
@@ -442,11 +453,7 @@ export class StreamRenderer {
   /** The markdown display of the decision header (the whole label + note in italics), or "" when none. */
   private headerText(): string {
     if (this.header == null) return "";
-    const body =
-      this.header.note.length > 0
-        ? `${this.header.label} — ${this.header.note}`
-        : this.header.label;
-    return `_${body}_`;
+    return composeDecisionHeaderText(this.header);
   }
 
   /**

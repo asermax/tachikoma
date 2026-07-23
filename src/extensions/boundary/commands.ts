@@ -6,6 +6,7 @@ import type { Logger } from "../../log.ts";
 import type { TrunkInbound } from "../api.ts";
 import { summarizeCurrentTangent } from "./collapse.ts";
 import { setCheckpointAndFocus } from "./focus.ts";
+import { BOUNDARY_REACTIONS } from "./reactions.ts";
 
 /**
  * Manual checkpoint commands (`/checkpoint`, `/back`) for DLT-181. Each is detected at the top of the
@@ -115,7 +116,11 @@ export const handleCheckpointCommand = (
     deps.deliver({ text: "ℹ️ Checkpoint already at this tip.", immediate: true });
   } else {
     setCheckpointAndFocus(trunk.session, leafId, deps.log);
-    deps.deliver({ text: "📌 Checkpoint set — main line parked here.", immediate: true });
+    deps.deliver({
+      text: "📌 Checkpoint set — main line parked here.",
+      reaction: BOUNDARY_REACTIONS.checkpointSet,
+      immediate: true,
+    });
     deps.log.info({ checkpointId: leafId }, "checkpoint set (/checkpoint)");
   }
 
@@ -169,7 +174,11 @@ export const handleBackCommand = async (
     return ack(message);
   }
 
-  deps.deliver({ text: "↩️ Summarized to checkpoint — back on the main line.", immediate: true });
+  deps.deliver({
+    text: "↩️ Summarized to checkpoint — back on the main line.",
+    reaction: BOUNDARY_REACTIONS.summarizedToCheckpoint,
+    immediate: true,
+  });
 
   // Trailing text (if any) streams as the resumed main line's first turn; a bare command acks with no turn.
   return ackOrContinue(message, argument);

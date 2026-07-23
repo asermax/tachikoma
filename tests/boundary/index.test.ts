@@ -200,6 +200,7 @@ describe("boundary middleware", () => {
     expect(message.metadata.decisionHeader).toMatchObject({
       label: "📌 Checkpoint set",
       rollbackable: false,
+      reaction: "💔",
     });
     expect(next).toHaveBeenCalledTimes(1);
   });
@@ -397,7 +398,10 @@ describe("boundary middleware", () => {
     expect(message.text).toBe("let me look into this quickly");
     expect(message.metadata.handled).toBeUndefined();
     expect(deliver).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("📌 Checkpoint set") }),
+      expect.objectContaining({
+        text: expect.stringContaining("📌 Checkpoint set"),
+        reaction: "💔",
+      }),
     );
     // The trailing turn skips the classifier (the user explicitly parked the main line).
     expect(shadowFork).not.toHaveBeenCalled();
@@ -415,7 +419,10 @@ describe("boundary middleware", () => {
 
     expect(message.metadata.handled).toBe(true);
     expect(deliver).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("📌 Checkpoint set") }),
+      expect.objectContaining({
+        text: expect.stringContaining("📌 Checkpoint set"),
+        reaction: "💔",
+      }),
     );
     expect(shadowFork).not.toHaveBeenCalled();
     expect(next).not.toHaveBeenCalled();
@@ -486,6 +493,7 @@ describe("boundary middleware", () => {
     expect(autoMessage.metadata.decisionHeader).toMatchObject({
       label: "🆕 New topic",
       rollbackable: true,
+      reaction: "🔥",
     });
 
     // /new: no decision header — manual /new is intentionally not a rollback target (R7).
@@ -569,6 +577,7 @@ describe("boundary middleware", () => {
     expect(deliver).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("📌 Checkpoint set"),
+        reaction: "💔",
         immediate: true,
       }),
     );
@@ -609,6 +618,7 @@ describe("boundary middleware", () => {
     expect(deliver).toHaveBeenCalledWith(
       expect.objectContaining({
         text: expect.stringContaining("📌 Checkpoint set"),
+        reaction: "💔",
         immediate: true,
       }),
     );
@@ -651,6 +661,7 @@ describe("boundary middleware", () => {
     expect(message.metadata.decisionHeader).toMatchObject({
       label: "📌 Checkpoint set",
       rollbackable: true,
+      reaction: "💔",
     });
     expect(next).toHaveBeenCalledTimes(1);
   });
@@ -709,6 +720,7 @@ describe("boundary middleware", () => {
     expect(message.metadata.decisionHeader).toMatchObject({
       label: "↩️ Summarized to checkpoint",
       rollbackable: false,
+      reaction: "❤",
     });
     expect(next).toHaveBeenCalledTimes(1);
   });
@@ -793,6 +805,7 @@ describe("boundary middleware", () => {
     expect(message.metadata.decisionHeader).toMatchObject({
       label: "🆕 New topic",
       rollbackable: true,
+      reaction: "🔥",
     });
   });
 

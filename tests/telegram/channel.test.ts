@@ -98,6 +98,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     editMessageReplyMarkup: vi.fn(async () => true),
     pinChatMessage: vi.fn(async () => true),
     unpinChatMessage: vi.fn(async () => true),
+    setMessageReaction: vi.fn(async () => true),
   };
 
   let errorHandler: (boundary: { error: unknown }) => void = () => {};
@@ -525,6 +526,93 @@ describe("respond push notification", () => {
       routing: { treeEntryId: "entry-1", branchId: "topic-1" },
       direction: "outgoing",
     });
+  });
+});
+
+describe("boundary reactions", () => {
+  it("reacts to the finalized response when the decision header carries a reaction", async () => {
+    const { channel, runtime, api, calls } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hello." },
+        { kind: "result", stopReason: "done" },
+      ]),
+      header: { label: "🆕 New topic", note: "fresh topic", rollbackable: true, reaction: "🔥" },
+    });
+
+    // The finalized message (id 1) gets the boundary reaction.
+    expect(api.setMessageReaction).toHaveBeenCalledWith(42, 1, [{ type: "emoji", emoji: "🔥" }]);
+    // No italic header text is rendered — the body streams without the label prefix.
+    const sendTexts = calls.filter((c) => c.type === "send").map((c) => c.text);
+    expect(sendTexts).toEqual([rendered("Hello.")]);
+  });
+
+  it("falls back to the header label as text on an empty turn (no message to react to)", async () => {
+    const { channel, runtime, api, calls } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([{ kind: "result", stopReason: "done" }]),
+      header: { label: "🆕 New topic", note: "fresh topic", rollbackable: true, reaction: "🔥" },
+    });
+
+    // No outbound message was produced, so no reaction — the label surfaces as text instead.
+    expect(api.setMessageReaction).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.type === "send" && c.text?.includes("🆕 New topic"))).toBe(true);
+  });
+
+  it("swallows a reaction API rejection (best-effort — the decision still took effect)", async () => {
+    const { channel, runtime, api } = makeChannel();
+    await channel.start(runtime);
+    api.setMessageReaction.mockRejectedValueOnce(new Error("MESSAGE_REACTION_INVALID"));
+
+    await expect(
+      channel.respond({
+        message: textMessage("telegram", "hi"),
+        events: stream([
+          { kind: "text", text: "Hello." },
+          { kind: "result", stopReason: "done" },
+        ]),
+        header: { label: "🆕 New topic", note: "x", rollbackable: true, reaction: "🔥" },
+      }),
+    ).resolves.toBeUndefined();
+    expect(api.setMessageReaction).toHaveBeenCalled();
+  });
+
+  it("reacts to the previous bot message for a reaction-bearing delivery", async () => {
+    const { channel, runtime, api, calls } = makeChannel();
+    await channel.start(runtime);
+    // Produce a prior bot message so lastOutboundId is set.
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([
+        { kind: "text", text: "Hi." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+    expect(channel.lastOutboundMessageId).toBe(1);
+    api.setMessageReaction.mockClear();
+    const sentBefore = calls.length;
+
+    await channel.deliver({ text: "📌 Checkpoint set — main line parked here.", reaction: "💔" });
+
+    expect(api.setMessageReaction).toHaveBeenCalledWith(42, 1, [{ type: "emoji", emoji: "💔" }]);
+    // No text message is sent for a reaction delivery.
+    expect(calls.length).toBe(sentBefore);
+  });
+
+  it("falls back to the ack text when there is no previous bot message to react to", async () => {
+    const { channel, runtime, api, calls } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.deliver({ text: "📌 Checkpoint set — main line parked here.", reaction: "💔" });
+
+    expect(api.setMessageReaction).not.toHaveBeenCalled();
+    expect(calls.some((c) => c.type === "send" && c.text?.includes("Checkpoint set"))).toBe(true);
   });
 });
 

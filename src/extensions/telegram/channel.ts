@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { type Bot, GrammyError, HttpError } from "grammy";
-import type { Message } from "grammy/types";
+import type { Message, ReactionTypeEmoji } from "grammy/types";
 
 import type { Channel, ChannelRuntime, Delivery, Exchange } from "../../channels/types.ts";
 import type { AgentEvent } from "../../domain/agent-events.ts";
@@ -31,7 +31,7 @@ import {
   sendWithFallback,
   startTyping,
 } from "./sending.ts";
-import { StreamRenderer } from "./streaming.ts";
+import { composeDecisionHeaderText, StreamRenderer } from "./streaming.ts";
 
 /** A Telegram message's place in the daily trunk: which tree entry and which branch produced it. */
 export interface MessageRouting {
@@ -410,7 +410,11 @@ export class TelegramChannel implements Channel {
 
     // Anchor the turn-scoped decision header before any text streams so every edit recomposes it
     // (KD9). Absent ⇒ no header. The renderer is per-exchange, so the header is naturally turn-scoped.
-    if (header != null) renderer.setHeader(header);
+    // When the header carries a `reaction`, the decision surfaces as a reaction on the outbound message
+    // (set after finalize, once its id is known) instead of as italic header text — so the text header is
+    // NOT rendered for this exchange.
+    const reaction = header?.reaction;
+    if (header != null && reaction == null) renderer.setHeader(header);
 
     try {
       for await (const event of remainingEvents) {
@@ -463,6 +467,26 @@ export class TelegramChannel implements Channel {
     }
 
     const outboundId = await this.finalizeResponse(renderer, startedAt, notifyingToolUsed, log);
+
+    // A reaction-bearing decision surfaces on the outbound message rather than as header text. The id is
+    // only known after finalize (past the push-notification copy-delete), so react to it here, best-effort.
+    // An empty turn finalizes to null — fall back to the header label as a one-off italic message so the
+    // boundary still surfaces (matching the old header-only send) instead of being dropped silently.
+    if (reaction != null) {
+      if (outboundId != null) {
+        await this.reactToMessage(outboundId, reaction, log);
+      } else if (header != null && header.label.length > 0) {
+        await this.mutex.run(async () => {
+          const fallbackId = await deliverText(
+            this.bot.api,
+            this.options.chatId,
+            composeDecisionHeaderText(header),
+            this.options.pushNotifications,
+          );
+          if (fallbackId != null) this.lastOutboundId = fallbackId;
+        });
+      }
+    }
 
     // Routing has settled by now: map both the user's message and the bot's reply to the trunk leaf
     // entry + live branch so a future reply/reaction/button can resolve them to a branch.
@@ -614,6 +638,14 @@ export class TelegramChannel implements Channel {
 
   async deliver(delivery: Delivery): Promise<void> {
     await this.mutex.run(async () => {
+      // A reaction-bearing delivery (the /checkpoint, /back acks) surfaces on the bot's most recent
+      // outbound message instead of sending text. Falls back to the text send when there is no prior bot
+      // message to react to (e.g. the very first exchange) so the signal still lands.
+      if (delivery.reaction != null && this.lastOutboundId != null) {
+        await this.reactToMessage(this.lastOutboundId, delivery.reaction, this.log());
+        return;
+      }
+
       const lastId = await deliverText(
         this.bot.api,
         this.options.chatId,
@@ -844,6 +876,21 @@ export class TelegramChannel implements Channel {
     await this.bot.api
       .sendMessage(this.options.chatId, UNRESOLVED_REACTION_NOTICE)
       .catch((error) => this.log().warn({ err: error }, "unresolved reaction notice failed"));
+  }
+
+  /**
+   * Place an emoji reaction on the bot's own message `messageId`, best-effort (a boundary decision's
+   * visual marker). Telegram restricts reactions to a fixed emoji set; an invalid emoji (or a chat that
+   * disallows it) is rejected with 400 MESSAGE_REACTION_INVALID — logged and swallowed so a reaction
+   * failure never breaks the exchange (the decision already took effect structurally). Never throws.
+   */
+  private async reactToMessage(messageId: number, emoji: string, log: Logger): Promise<void> {
+    await this.bot.api
+      .setMessageReaction(this.options.chatId, messageId, [
+        { type: "emoji", emoji: emoji as ReactionTypeEmoji["emoji"] },
+      ])
+      .then(() => log.debug({ messageId, emoji }, "boundary reaction applied"))
+      .catch((error) => log.warn({ err: error, messageId, emoji }, "boundary reaction failed"));
   }
 
   private runtimeOrThrow(): ChannelRuntime {
