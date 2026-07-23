@@ -31,7 +31,7 @@ import {
   sendWithFallback,
   startTyping,
 } from "./sending.ts";
-import { StreamRenderer } from "./streaming.ts";
+import { composeDecisionHeaderText, StreamRenderer } from "./streaming.ts";
 
 /** A Telegram message's place in the daily trunk: which tree entry and which branch produced it. */
 export interface MessageRouting {
@@ -476,16 +476,15 @@ export class TelegramChannel implements Channel {
       if (outboundId != null) {
         await this.reactToMessage(outboundId, reaction, log);
       } else if (header != null && header.label.length > 0) {
-        const text = header.note.length > 0 ? `${header.label} — ${header.note}` : header.label;
-        const fallbackId = await this.mutex.run(() =>
-          deliverText(
+        await this.mutex.run(async () => {
+          const fallbackId = await deliverText(
             this.bot.api,
             this.options.chatId,
-            `_${text}_`,
+            composeDecisionHeaderText(header),
             this.options.pushNotifications,
-          ),
-        );
-        if (fallbackId != null) this.lastOutboundId = fallbackId;
+          );
+          if (fallbackId != null) this.lastOutboundId = fallbackId;
+        });
       }
     }
 

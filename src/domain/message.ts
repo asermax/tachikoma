@@ -68,7 +68,7 @@ export const decisionHeaderFrom = (metadata: Record<string, unknown>): DecisionH
     label: header.label,
     note: header.note,
     rollbackable: header.rollbackable === true,
-    ...(typeof header.reaction === "string" ? { reaction: header.reaction } : {}),
+    reaction: typeof header.reaction === "string" ? header.reaction : undefined,
   };
 };
 
