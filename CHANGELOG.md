@@ -1,3 +1,10 @@
+# [3.66.0](https://github.com/asermax/tachikoma/compare/v3.65.0...v3.66.0) (2026-07-23)
+
+
+### Features
+
+* **boundary:** surface topic-boundary decisions as Telegram reactions ([97cee80](https://github.com/asermax/tachikoma/commit/97cee800cb6bb55e2bff4e171b339fd89a60cbfb))
+
 # [3.65.0](https://github.com/asermax/tachikoma/compare/v3.64.0...v3.65.0) (2026-07-22)
 
 
