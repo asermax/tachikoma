@@ -24,6 +24,11 @@ export interface MediaAttachment {
  * the channel, which anchors it above the streamed text for that one response (the streaming renderer
  * recomposes it on every edit). `rollbackable` is true only for automatic decisions (a `/rollback`
  * target); manual decisions surface for awareness only.
+ *
+ * When `reaction` is set, channels that support emoji reactions (Telegram) place it on the outbound
+ * message instead of rendering the italic label text — the label/note then serve only as a fallback
+ * (e.g. an empty turn with no message to react to, or a text-only channel). Absent ⇒ render the text
+ * header as today.
  */
 export interface DecisionHeader {
   /** Short emoji-prefixed label, e.g. "📌 Checkpoint set". */
@@ -32,6 +37,12 @@ export interface DecisionHeader {
   note: string;
   /** True only for automatic decisions (a `/rollback` target); manual decisions are informational. */
   rollbackable: boolean;
+  /**
+   * When set, surface the decision as an emoji reaction on the outbound message (best-effort) rather
+   * than as the italic header text. Must be an emoji valid as a Telegram reaction
+   * (`setMessageReaction` rejects others with 400 MESSAGE_REACTION_INVALID).
+   */
+  reaction?: string;
 }
 
 export interface InboundMessage {
@@ -57,6 +68,7 @@ export const decisionHeaderFrom = (metadata: Record<string, unknown>): DecisionH
     label: header.label,
     note: header.note,
     rollbackable: header.rollbackable === true,
+    ...(typeof header.reaction === "string" ? { reaction: header.reaction } : {}),
   };
 };
 

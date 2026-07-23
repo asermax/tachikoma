@@ -28,6 +28,13 @@ export type DeliveryTier = keyof typeof DELIVERY_TIERS;
 
 export interface Delivery {
   text: string;
+  /**
+   * When set, channels that support emoji reactions (Telegram) place it on the bot's most recent
+   * outbound message instead of sending `text` — used to convert an immediate command ack (e.g. the
+   * `/checkpoint` notice) into a reaction. `text` is kept as a fallback for channels without reaction
+   * support or when no previous bot message exists to react to. Must be a Telegram-valid reaction emoji.
+   */
+  reaction?: string;
   /** Queue tier governing ordering and idle/max-hold timing. Default "normal". */
   tier?: DeliveryTier;
   /**

@@ -24,6 +24,7 @@ import type { TrunkInbound } from "../api.ts";
 import { collapseCurrentTopic } from "./collapse.ts";
 import { isCommand } from "./commands.ts";
 import { setCheckpointAndFocus } from "./focus.ts";
+import { BOUNDARY_REACTIONS } from "./reactions.ts";
 
 /**
  * `/rollback` (DLT-181, R7) — the load-bearing flow (KD4). Reverses the most-recent *automatic*
@@ -201,6 +202,7 @@ export const handleRollbackCommand = async (
       label: "🔄 Rolled back to topic",
       note: "The side topic is now the main thread.",
       rollbackable: false,
+      reaction: BOUNDARY_REACTIONS.rolledBack,
     };
   } else {
     // Case B (new → checkpoint): set a checkpoint at the restored tip, orphan the auto-new's topic
@@ -216,6 +218,7 @@ export const handleRollbackCommand = async (
       label: "🔄 Rolled back to checkpoint",
       note: "The new topic is parked as a side topic instead.",
       rollbackable: false,
+      reaction: BOUNDARY_REACTIONS.rolledBack,
     };
   }
 

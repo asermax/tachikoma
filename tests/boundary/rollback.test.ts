@@ -395,6 +395,7 @@ describe("handleRollbackCommand — Case A (set-checkpoint → topic)", () => {
     expect(header).toMatchObject({
       label: "🔄 Rolled back to topic",
       rollbackable: false,
+      reaction: "👻",
     });
   });
 
@@ -485,6 +486,7 @@ describe("handleRollbackCommand — Case B (new → checkpoint)", () => {
     expect(header).toMatchObject({
       label: "🔄 Rolled back to checkpoint",
       rollbackable: false,
+      reaction: "👻",
     });
   });
 
