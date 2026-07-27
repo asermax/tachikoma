@@ -1,1 +1,3 @@
-/bin/bash: line 1: ./skills/rss/rss: No such file or directory
+Warning: Failed to fetch https://earendil.com/posts/prompt-caching/: Failed to parse feed https://earendil.com/posts/prompt-caching/: <unknown>:45:110: not well-formed (invalid token)
+All sources failed. Errors:
+  https://earendil.com/posts/prompt-caching/: Failed to parse feed https://earendil.com/posts/prompt-caching/: <unknown>:45:110: not well-formed (invalid token)
