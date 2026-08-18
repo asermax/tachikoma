@@ -1,3 +1,10 @@
+# [3.67.0](https://github.com/asermax/tachikoma/compare/v3.66.0...v3.67.0) (2026-08-18)
+
+
+### Features
+
+* upgrade to pi SDK 0.84 and latest dependencies ([4c6572d](https://github.com/asermax/tachikoma/commit/4c6572de040228d59e7cc866077f6a08d4ea38bb))
+
 # [3.66.0](https://github.com/asermax/tachikoma/compare/v3.65.0...v3.66.0) (2026-07-23)
 
 
