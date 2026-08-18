@@ -3,11 +3,11 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   type AgentSession,
-  AuthStorage,
   createAgentSession,
   DefaultResourceLoader,
   type ExtensionFactory,
   ModelRegistry,
+  ModelRuntime,
   SessionManager,
   SettingsManager,
   type ToolDefinition,
@@ -133,7 +133,7 @@ export const isolatedLoaderOptions = () => ({
 });
 
 export class AgentManager {
-  readonly authStorage: AuthStorage;
+  readonly modelRuntime: ModelRuntime;
   readonly modelRegistry: ModelRegistry;
   readonly settingsManager: SettingsManager;
   readonly tiers: ModelTiers;
@@ -148,27 +148,58 @@ export class AgentManager {
   // forks; extensions consult isForking() to scope such work to genuine top-level turns.
   private forkDepth = 0;
 
-  constructor(workspace: Workspace, config: Config, sources: AgentSessionSources, log: Logger) {
+  private constructor(
+    workspace: Workspace,
+    config: Config,
+    sources: AgentSessionSources,
+    log: Logger,
+    modelRuntime: ModelRuntime,
+    modelRegistry: ModelRegistry,
+    settingsManager: SettingsManager,
+  ) {
     this.workspace = workspace;
     this.sources = sources;
     this.log = log;
     this.timezone = config.scheduler.timezone;
+    this.modelRuntime = modelRuntime;
+    this.modelRegistry = modelRegistry;
+    this.settingsManager = settingsManager;
+    this.tiers = new ModelTiers(config.agent, modelRegistry, settingsManager, log);
+  }
 
+  // ModelRuntime.create is async (it composes providers and restores the models cache), so the
+  // manager is built through an async factory rather than a plain constructor.
+  static async create(
+    workspace: Workspace,
+    config: Config,
+    sources: AgentSessionSources,
+    log: Logger,
+  ): Promise<AgentManager> {
     // Credentials are machine-level: prefer a workspace-local auth.json when it has
     // actual content, otherwise share the user's existing pi login (~/.pi/agent/auth.json).
     const localAuth = join(workspace.piDir, "auth.json");
     const hasLocalAuth = existsSync(localAuth) && statSync(localAuth).size > 2;
-    this.authStorage = hasLocalAuth ? AuthStorage.create(localAuth) : AuthStorage.create();
-    this.modelRegistry = ModelRegistry.create(
-      this.authStorage,
-      join(workspace.piDir, "models.json"),
+
+    const modelRuntime = await ModelRuntime.create({
+      ...(hasLocalAuth ? { authPath: localAuth } : {}),
+      modelsPath: join(workspace.piDir, "models.json"),
+    });
+    const modelRegistry = new ModelRegistry(modelRuntime);
+    const settingsManager = SettingsManager.create(workspace.root, workspace.piDir);
+
+    return new AgentManager(
+      workspace,
+      config,
+      sources,
+      log,
+      modelRuntime,
+      modelRegistry,
+      settingsManager,
     );
-    this.settingsManager = SettingsManager.create(workspace.root, workspace.piDir);
-    this.tiers = new ModelTiers(config.agent, this.modelRegistry, this.settingsManager, log);
   }
 
   async apiKeyFor(provider: string): Promise<string | undefined> {
-    return (await this.authStorage.getApiKey(provider)) ?? undefined;
+    return (await this.modelRegistry.getApiKeyForProvider(provider)) ?? undefined;
   }
 
   /**
@@ -255,8 +286,7 @@ export class AgentManager {
       resourceLoader: loader,
       sessionManager,
       settingsManager: this.settingsManager,
-      authStorage: this.authStorage,
-      modelRegistry: this.modelRegistry,
+      modelRuntime: this.modelRuntime,
     });
 
     if (modelFallbackMessage != null) {

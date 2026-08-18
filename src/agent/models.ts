@@ -16,7 +16,7 @@ export const MODEL_TIERS = {
 
 export type ModelTier = keyof typeof MODEL_TIERS;
 
-const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 export interface ModelRef {
   provider: string;

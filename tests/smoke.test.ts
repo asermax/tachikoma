@@ -4,7 +4,7 @@ describe("toolchain", () => {
   it("resolves the pi SDK packages", async () => {
     const ai = await import("@earendil-works/pi-ai");
 
-    expect(typeof ai.getModel).toBe("function");
+    expect(typeof ai.contentText).toBe("function");
   });
 
   it("resolves typebox", async () => {

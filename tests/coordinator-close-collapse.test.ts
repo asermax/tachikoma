@@ -25,7 +25,7 @@ import {
 // Mock it at the module boundary (the pattern `tests/agent/side-run.test.ts` uses) so the live-branch
 // summary is deterministic without a real provider call.
 const completeSimpleMock = vi.fn();
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   completeSimple: (...args: unknown[]) => completeSimpleMock(...args),
 }));
 

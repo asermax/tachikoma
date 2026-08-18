@@ -8,7 +8,7 @@ import type { Logger } from "../../src/log.ts";
 
 const completeSimpleMock = vi.fn();
 
-vi.mock("@earendil-works/pi-ai", () => ({
+vi.mock("@earendil-works/pi-ai/compat", () => ({
   completeSimple: (...args: unknown[]) => completeSimpleMock(...args),
 }));
 

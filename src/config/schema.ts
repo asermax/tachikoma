@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
 
 export const ThinkingLevelSchema = StringEnum(
-  ["off", "minimal", "low", "medium", "high", "xhigh"] as const,
+  ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,
   { default: "medium" },
 );
 

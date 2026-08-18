@@ -66,7 +66,7 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
   const scheduler = new Scheduler(componentLogger(log, "scheduler"), config.scheduler.timezone);
   const regs = createRegistrations();
 
-  const agent = new AgentManager(workspace, config, regs, componentLogger(log, "agent"));
+  const agent = await AgentManager.create(workspace, config, regs, componentLogger(log, "agent"));
   // The coordinator owns a daily trunk via a STABLE `app_state` namespace ("trunk") rather than a
   // session record — the `sessions` table and registry were dropped under the daily-trunk model.
   const trunkState = new TrunkState(new KeyValueState(db, "trunk", dbLog));

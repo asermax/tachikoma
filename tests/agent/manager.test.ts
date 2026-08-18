@@ -23,7 +23,10 @@ const h = vi.hoisted(() => {
     shadowState,
     loaderReload: vi.fn(),
     createAgentSessionMock: vi.fn(),
-    authStorageCreate: vi.fn((path?: string) => ({ kind: "auth", path })),
+    modelRuntimeCreate: vi.fn((options?: Record<string, unknown>) => ({
+      kind: "runtime",
+      options,
+    })),
     getApiKeyMock: vi.fn(),
     createBranchedSessionMock: vi.fn(),
     rmMock: vi.fn(),
@@ -38,7 +41,7 @@ const {
   shadowState,
   loaderReload,
   createAgentSessionMock,
-  authStorageCreate,
+  modelRuntimeCreate,
   getApiKeyMock,
   createBranchedSessionMock,
   rmMock,
@@ -69,14 +72,15 @@ vi.mock("@earendil-works/pi-coding-agent", () => {
     });
 
   return {
-    AuthStorage: {
-      create: (path?: string) => {
-        const instance = h.authStorageCreate(path);
-        return { ...instance, getApiKey: h.getApiKeyMock };
-      },
+    ModelRuntime: {
+      create: (options?: Record<string, unknown>) => h.modelRuntimeCreate(options),
     },
-    ModelRegistry: {
-      create: vi.fn((auth: unknown, path: string) => ({ kind: "registry", auth, path })),
+    ModelRegistry: class {
+      readonly runtime: unknown;
+      getApiKeyForProvider = h.getApiKeyMock;
+      constructor(runtime: unknown) {
+        this.runtime = runtime;
+      }
     },
     SettingsManager: {
       create: vi.fn((root: string, piDir: string) => ({ kind: "settings", root, piDir })),
@@ -167,7 +171,7 @@ beforeEach(() => {
   sessionManagerCalls.length = 0;
   tiersInstances.length = 0;
   loaderReload.mockClear();
-  authStorageCreate.mockClear();
+  modelRuntimeCreate.mockClear();
   getApiKeyMock.mockReset();
   createBranchedSessionMock.mockClear();
   rmMock.mockReset();
@@ -289,38 +293,50 @@ describe("selectExtensionFactories", () => {
   });
 });
 
-describe("AgentManager constructor", () => {
-  it("uses workspace-local auth.json when it has content", () => {
+describe("AgentManager.create", () => {
+  it("uses workspace-local auth.json when it has content", async () => {
     fsState.exists = true;
     fsState.size = 100;
 
-    new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    await AgentManager.create(makeWorkspace(), makeConfig(), makeSources(), makeLog());
 
-    expect(authStorageCreate).toHaveBeenCalledWith("/ws/root/.tachikoma/pi/auth.json");
+    expect(modelRuntimeCreate).toHaveBeenCalledWith({
+      authPath: "/ws/root/.tachikoma/pi/auth.json",
+      modelsPath: "/ws/root/.tachikoma/pi/models.json",
+    });
   });
 
-  it("falls back to the shared pi login when the local auth file is missing", () => {
+  it("falls back to the shared pi login when the local auth file is missing", async () => {
     fsState.exists = false;
 
-    new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    await AgentManager.create(makeWorkspace(), makeConfig(), makeSources(), makeLog());
 
-    expect(authStorageCreate).toHaveBeenCalledWith(undefined);
+    expect(modelRuntimeCreate).toHaveBeenCalledWith({
+      modelsPath: "/ws/root/.tachikoma/pi/models.json",
+    });
   });
 
-  it("falls back to the shared pi login when the local auth file is effectively empty", () => {
+  it("falls back to the shared pi login when the local auth file is effectively empty", async () => {
     fsState.exists = true;
     fsState.size = 2;
 
-    new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    await AgentManager.create(makeWorkspace(), makeConfig(), makeSources(), makeLog());
 
-    expect(authStorageCreate).toHaveBeenCalledWith(undefined);
+    expect(modelRuntimeCreate).toHaveBeenCalledWith({
+      modelsPath: "/ws/root/.tachikoma/pi/models.json",
+    });
   });
 });
 
 describe("AgentManager.apiKeyFor", () => {
   it("returns the stored api key for a provider", async () => {
     getApiKeyMock.mockResolvedValue("sk-123");
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await expect(manager.apiKeyFor("anthropic")).resolves.toBe("sk-123");
     expect(getApiKeyMock).toHaveBeenCalledWith("anthropic");
@@ -328,7 +344,12 @@ describe("AgentManager.apiKeyFor", () => {
 
   it("coerces a missing key to undefined", async () => {
     getApiKeyMock.mockResolvedValue(null);
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await expect(manager.apiKeyFor("anthropic")).resolves.toBeUndefined();
   });
@@ -336,7 +357,12 @@ describe("AgentManager.apiKeyFor", () => {
 
 describe("AgentManager.open", () => {
   it("applies the core main base prompt for a non-bare session (AC4)", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open();
 
@@ -349,7 +375,12 @@ describe("AgentManager.open", () => {
   });
 
   it("omits the system prompt override when bare with no explicit prompt (AC4)", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open({ bare: true });
 
@@ -357,7 +388,12 @@ describe("AgentManager.open", () => {
   });
 
   it("uses an explicit system prompt over the core base prompt (AC4)", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open({ systemPrompt: "explicit" });
 
@@ -365,7 +401,12 @@ describe("AgentManager.open", () => {
   });
 
   it("applies isolated loader options when isolatePrompt is set", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open({ isolatePrompt: true });
 
@@ -374,7 +415,12 @@ describe("AgentManager.open", () => {
   });
 
   it("does not isolate the loader by default", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open();
 
@@ -382,7 +428,12 @@ describe("AgentManager.open", () => {
   });
 
   it("creates a fresh session manager by default", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open();
 
@@ -390,7 +441,12 @@ describe("AgentManager.open", () => {
   });
 
   it("opens an in-memory session manager when inMemory is set", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open({ inMemory: true });
 
@@ -398,7 +454,12 @@ describe("AgentManager.open", () => {
   });
 
   it("forks from a source file when forkFromFile is set", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open({ forkFromFile: "/sessions/source.json" });
 
@@ -408,7 +469,12 @@ describe("AgentManager.open", () => {
   });
 
   it("opens an existing session file when sessionFile is set", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open({ sessionFile: "/sessions/existing.json" });
 
@@ -418,7 +484,12 @@ describe("AgentManager.open", () => {
   });
 
   it("pins the model from an explicit model reference", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
     const tiers = currentTiers();
     tiers.resolveRef.mockReturnValue({ model: { id: "m1" }, thinkingLevel: "high" });
 
@@ -431,7 +502,12 @@ describe("AgentManager.open", () => {
   });
 
   it("resolves the configured tier when no explicit model and a tier is configured", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
     const tiers = currentTiers();
     tiers.configuredRef.mockReturnValue({ provider: "anthropic", id: "claude" });
     tiers.resolve.mockReturnValue({ model: { id: "m2" } });
@@ -446,7 +522,12 @@ describe("AgentManager.open", () => {
   });
 
   it("omits the model entirely when nothing is configured", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
     currentTiers().configuredRef.mockReturnValue(null);
 
     await manager.open();
@@ -457,7 +538,12 @@ describe("AgentManager.open", () => {
   });
 
   it("defaults the tier to main when unspecified", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open();
 
@@ -465,7 +551,12 @@ describe("AgentManager.open", () => {
   });
 
   it("forwards tools and customTools when provided", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
     const customTools = [{ name: "t" }] as never;
 
     await manager.open({ tools: ["read"], customTools });
@@ -476,7 +567,12 @@ describe("AgentManager.open", () => {
   });
 
   it("omits tools and customTools when not provided", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.open();
 
@@ -491,7 +587,7 @@ describe("AgentManager.open", () => {
       session: makeSession(),
       modelFallbackMessage: "fell back to default",
     });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), log);
+    const manager = await AgentManager.create(makeWorkspace(), makeConfig(), makeSources(), log);
 
     await manager.open();
 
@@ -503,7 +599,7 @@ describe("AgentManager.open", () => {
 
   it("does not warn when there is no model fallback", async () => {
     const log = makeLog();
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), log);
+    const manager = await AgentManager.create(makeWorkspace(), makeConfig(), makeSources(), log);
 
     await manager.open();
 
@@ -513,7 +609,12 @@ describe("AgentManager.open", () => {
   it("returns the created session", async () => {
     const session = makeSession();
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await expect(manager.open()).resolves.toBe(session);
   });
@@ -523,7 +624,12 @@ describe("AgentManager.forkAndContinue", () => {
   it("forks, prompts, and disposes the session", async () => {
     const session = makeSession();
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await manager.forkAndContinue("/sessions/src.json", "continue", "processor", ["read"]);
 
@@ -538,7 +644,12 @@ describe("AgentManager.forkAndContinue", () => {
       prompt: vi.fn().mockRejectedValue(new Error("boom")),
     });
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await expect(
       manager.forkAndContinue("/sessions/src.json", "continue", "processor"),
@@ -554,7 +665,12 @@ describe("AgentManager.shadowFork", () => {
   it("forks the source branch into a bare, tool-free headless session (R6, S2)", async () => {
     const session = makeForkSession('{"decision":"shift"}');
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     const fork = await manager.shadowFork("/sessions/live.jsonl", { systemPrompt: "live-prompt" });
 
@@ -569,9 +685,8 @@ describe("AgentManager.shadowFork", () => {
     );
     const sessionArgs = createAgentSessionMock.mock.calls.at(-1)?.[0];
     expect(sessionArgs.tools).toEqual([]);
-    expect((capturedLoaderOptions.at(-1)?.systemPromptOverride as () => string)()).toBe(
-      "live-prompt",
-    );
+    const systemPromptOverride = capturedLoaderOptions.at(-1)?.systemPromptOverride as () => string;
+    expect(systemPromptOverride()).toBe("live-prompt");
 
     const reply = await fork.prompt("classify");
     expect(session.prompt).toHaveBeenCalledWith("classify");
@@ -581,7 +696,12 @@ describe("AgentManager.shadowFork", () => {
   it("deletes the forked file and disposes the session on dispose", async () => {
     const session = makeForkSession("ok");
     createAgentSessionMock.mockResolvedValue({ session, modelFallbackMessage: null });
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     const fork = await manager.shadowFork("/sessions/live.jsonl");
     await fork.dispose();
@@ -594,7 +714,12 @@ describe("AgentManager.shadowFork", () => {
 
   it("throws when the source session has no entries to fork", async () => {
     shadowState.leafId = null;
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     await expect(manager.shadowFork("/sessions/empty.jsonl")).rejects.toThrow(/no entries/);
     expect(createAgentSessionMock).not.toHaveBeenCalled();
@@ -602,8 +727,13 @@ describe("AgentManager.shadowFork", () => {
 });
 
 describe("AgentManager.branchFile", () => {
-  it("cuts the branch from a manager loaded fresh off disk, never a live session", () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+  it("cuts the branch from a manager loaded fresh off disk, never a live session", async () => {
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
 
     const file = manager.branchFile("/sessions/trunk.jsonl", "leaf-7");
 
@@ -619,7 +749,12 @@ describe("AgentManager.branchFile", () => {
 
 describe("AgentManager.isForking", () => {
   it("is true only while a fork run is in flight (AC15)", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
     let duringPrompt: boolean | undefined;
     const session = makeSession({
       prompt: vi.fn(async () => {
@@ -636,7 +771,12 @@ describe("AgentManager.isForking", () => {
   });
 
   it("stays true across a nested fork and nets back to false (AC15)", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
     const observed: boolean[] = [];
     let depth = 0;
     createAgentSessionMock.mockImplementation(async () => ({
@@ -656,7 +796,12 @@ describe("AgentManager.isForking", () => {
   });
 
   it("nets back to false after two parallel forks resolve (AC15)", async () => {
-    const manager = new AgentManager(makeWorkspace(), makeConfig(), makeSources(), makeLog());
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
     const gates: Array<() => void> = [];
     createAgentSessionMock.mockImplementation(async () => ({
       session: makeSession({
