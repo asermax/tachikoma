@@ -32,7 +32,7 @@ Options:
 const tolerated =
   positionals.length === 0 || (positionals.length === 1 && positionals[0] === "run");
 if (!tolerated) {
-  // Fail fast: a stray positional (e.g. \`tachikoma workflow | head\`) used to start a
+  // Fail fast: a stray positional (e.g. `tachikoma workflow | head`) used to start a
   // full daemon that could outlive the pipe and run alongside the real instance.
   console.error(
     `Unknown argument${positionals.length > 1 ? "s" : ""}: ${positionals.join(", ")}\n` +
