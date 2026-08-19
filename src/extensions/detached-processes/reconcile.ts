@@ -2,10 +2,11 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { Logger } from "../../log.ts";
+import { isAlive } from "../../util/is-alive.ts";
 import { type ScopeInspector, scopeUnitName } from "./cgroup.ts";
 import type { ProcessRepository } from "./repository.ts";
 import { STOP_REASON_AGENT_STOPPED, STOP_REASON_OOM_KILLED } from "./schema.ts";
-import { exitCodePath, isAlive } from "./spawn.ts";
+import { exitCodePath } from "./spawn.ts";
 
 export interface ProcessNotification {
   source: string;

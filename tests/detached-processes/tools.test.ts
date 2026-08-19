@@ -5,7 +5,7 @@ import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as spawnModule from "../../src/extensions/detached-processes/spawn.ts";
-import { isAlive, spawnProcess } from "../../src/extensions/detached-processes/spawn.ts";
+import { spawnProcess } from "../../src/extensions/detached-processes/spawn.ts";
 import {
   createProcessToolsFactory,
   handleDeleteProcess,
@@ -15,6 +15,7 @@ import {
   handleRenameProcess,
   handleTerminateProcess,
 } from "../../src/extensions/detached-processes/tools.ts";
+import { isAlive } from "../../src/util/is-alive.ts";
 import { createTestContext, insertRunningRecord, type TestContext, waitFor } from "./setup.ts";
 
 let ctx: TestContext;

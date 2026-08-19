@@ -1,5 +1,5 @@
+import { isAlive } from "../../util/is-alive.ts";
 import { type ReconcileDeps, reconcileExit } from "./reconcile.ts";
-import { isAlive } from "./spawn.ts";
 
 /**
  * Polling watcher tick: check every running record for liveness and reconcile

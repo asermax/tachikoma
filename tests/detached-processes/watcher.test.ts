@@ -1,13 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ReconcileDeps } from "../../src/extensions/detached-processes/reconcile.ts";
-import { isAlive } from "../../src/extensions/detached-processes/spawn.ts";
 import { createWatcherTick } from "../../src/extensions/detached-processes/watcher.ts";
+import { isAlive } from "../../src/util/is-alive.ts";
 import { createTestContext, insertRunningRecord, type TestContext } from "./setup.ts";
 
-vi.mock("../../src/extensions/detached-processes/spawn.ts", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../src/extensions/detached-processes/spawn.ts")>();
+vi.mock("../../src/util/is-alive.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../src/util/is-alive.ts")>();
   return { ...actual, isAlive: vi.fn(actual.isAlive) };
 });
 

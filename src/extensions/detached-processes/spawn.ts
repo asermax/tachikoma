@@ -7,6 +7,7 @@ import { isAbsolute, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { Logger } from "../../log.ts";
+import { isAlive } from "../../util/is-alive.ts";
 import type { ProcessLimiter } from "./limits.ts";
 import type { ProcessRepository } from "./repository.ts";
 import type { DetachedProcessRecord } from "./schema.ts";
@@ -38,20 +39,6 @@ export const processDir = (processesDir: string, id: string): string => join(pro
 
 export const exitCodePath = (processesDir: string, id: string): string =>
   join(processDir(processesDir, id), "exit-code");
-
-/**
- * Liveness via signal 0. EPERM means the pid exists but belongs to another
- * user, so it still counts as alive. No create-time check — see reconcile.ts
- * for why pid reuse is acceptable here.
- */
-export const isAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
 
 const signalExitCode = (signal: NodeJS.Signals): number | null => {
   const number = constants.signals[signal];

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { isAlive, spawnProcess, terminate } from "../../src/extensions/detached-processes/spawn.ts";
+import { spawnProcess, terminate } from "../../src/extensions/detached-processes/spawn.ts";
 import { handleTerminateProcess } from "../../src/extensions/detached-processes/tools.ts";
+import { isAlive } from "../../src/util/is-alive.ts";
 import { createTestContext, type TestContext, waitFor } from "./setup.ts";
 
 let ctx: TestContext;

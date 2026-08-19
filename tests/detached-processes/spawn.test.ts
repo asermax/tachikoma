@@ -8,12 +8,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcessLimiter } from "../../src/extensions/detached-processes/limits.ts";
 import {
   exitCodePath,
-  isAlive,
   spawnProcess,
   terminate,
   wrapWithExitCapture,
 } from "../../src/extensions/detached-processes/spawn.ts";
 import { createWatcherTick } from "../../src/extensions/detached-processes/watcher.ts";
+import { isAlive } from "../../src/util/is-alive.ts";
 import { createTestContext, type TestContext, waitFor } from "./setup.ts";
 
 let ctx: TestContext;

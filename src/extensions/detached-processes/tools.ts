@@ -6,6 +6,7 @@ import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
 import { formatTimestamp } from "../../util/dates.ts";
+import { isAlive } from "../../util/is-alive.ts";
 import { type ScopeInspector, scopeUnitName } from "./cgroup.ts";
 import type { ProcessLimiter } from "./limits.ts";
 import {
@@ -17,7 +18,7 @@ import {
 import { type ProcessNotification, type ReconcileDeps, reconcileExit } from "./reconcile.ts";
 import type { ProcessRepository } from "./repository.ts";
 import { type DetachedProcessRecord, STOP_REASON_OOM_KILLED } from "./schema.ts";
-import { isAlive, spawnProcess, terminate } from "./spawn.ts";
+import { spawnProcess, terminate } from "./spawn.ts";
 
 export interface ProcessToolDeps {
   repository: ProcessRepository;
