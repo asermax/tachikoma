@@ -29,20 +29,21 @@ Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the 
 `runApp` (`src/app.ts`) builds everything in one pass, each step depending only on earlier ones:
 
 1. `loadConfig` — parse TOML (smol-toml), generate the commented default on first run, validate with TypeBox
-2. `createRootLogger` — pino to stderr, pretty or JSON per `logging.pretty`
-3. `Workspace.ensure()` — create the `{workspace}/.tachikoma/pi/sessions` chain
-4. `adaptConfig` (legacy config translation — its result is `Object.assign`-ed into `config` in place so translated values flow through the rest of the wiring), then `applyConfigEnv` (write the `[env]` section to `process.env`, after `adaptConfig` so legacy-translated values are included and before any runtime service or pi session reads the environment), then `adaptWorkspace` (legacy workspace migration) — the migrations from `src/migration/`
-5. `createDatabase` + `runMigrations` — better-sqlite3 with WAL/foreign-keys pragmas, drizzle migrations from `drizzle/`
-6. `adaptWorkspaceData` — legacy data migration, after the schema exists (`src/migration/`)
-7. `EventBus`, `Scheduler`, `createRegistrations()` — passive services
-8. `AgentManager`, `SessionRegistry`, `Coordinator` — runtime consumers of the registrations
-9. `host.load(firstPartyExtensions)` — extension setups in list order, then `host.bootstrap()` runs all hooks
-10. `coordinator.recoverStaleTrunks()` — close and post-process trunks a previous run left without completed post-processing (left open, or closed but interrupted before state persisted)
-11. Channel resolution (`--channel` flag or `channels.default`), `channel.start`, then `coordinator.run(signal)` until a `ShutdownController` aborts on `SIGINT`/`SIGTERM`/`uncaughtException`/`unhandledRejection`
+2. `Workspace.ensure()` — create the `{workspace}/.tachikoma/pi/sessions` chain
+3. `acquireInstanceLock` — exclusive-create the workspace's instance lock (`{workspace}/.tachikoma/instance.json`); a live foreign holder aborts startup before anything else is constructed (see Key Decisions)
+4. `createRootLogger` — pino to stderr, pretty or JSON per `logging.pretty`
+5. `adaptConfig` (legacy config translation — its result is `Object.assign`-ed into `config` in place so translated values flow through the rest of the wiring), then `applyConfigEnv` (write the `[env]` section to `process.env`, after `adaptConfig` so legacy-translated values are included and before any runtime service or pi session reads the environment), then `adaptWorkspace` (legacy workspace migration) — the migrations from `src/migration/`
+6. `createDatabase` + `runMigrations` — better-sqlite3 with WAL/foreign-keys pragmas, drizzle migrations from `drizzle/`
+7. `adaptWorkspaceData` — legacy data migration, after the schema exists (`src/migration/`)
+8. `EventBus`, `Scheduler`, `createRegistrations()` — passive services
+9. `AgentManager`, `SessionRegistry`, `Coordinator` — runtime consumers of the registrations
+10. `host.load(firstPartyExtensions)` — extension setups in list order, then `host.bootstrap()` runs all hooks
+11. `coordinator.recoverStaleTrunks()` — close and post-process trunks a previous run left without completed post-processing (left open, or closed but interrupted before state persisted)
+12. Channel resolution (`--channel` flag or `channels.default`), `channel.start`, then `coordinator.run(signal)` until a `ShutdownController` aborts on `SIGINT`/`SIGTERM`/`uncaughtException`/`unhandledRejection`
 
 The three `adapt*` calls are best-effort legacy migrations (see [migration](../feature-designs/migration.md)); they sit between workspace creation and the runtime services so translated config/workspace/data is in place before anything reads it.
 
-Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an uncaught error; the coordinator loop's `finally` drains the held queue to the channel (the trunk is left open — post-processing runs at the nightly close or next-startup recovery, not during teardown); `runApp`'s `finally` then stops the channel and the scheduler, and sets `process.exitCode = 1` when the drain followed a crash (so a supervisor restarts the process). See [conversation-loop](conversation-loop.md) for the crash-drain force-exit backstop.
+Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an uncaught error; the coordinator loop's `finally` drains the held queue to the channel (the trunk is left open — post-processing runs at the nightly close or next-startup recovery, not during teardown); `runApp`'s `finally` then stops the channel and the scheduler, and sets `process.exitCode = 1` when the drain followed a crash (so a supervisor restarts the process). The same `finally` releases the instance lock; a deferred restart (`restart_self`/`upgrade_self`) releases it explicitly before the never-returning re-exec — the old process stays alive inside `spawnSync` while the replacement boots, so the lock must already be free. See [conversation-loop](conversation-loop.md) for the crash-drain force-exit backstop.
 
 ## Components
 
@@ -50,7 +51,7 @@ Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an un
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/main.ts` | CLI entry: `parseArgs` (`--channel`/`-c`, `--config`, `--help`), delegates to `runApp`, exits 1 on error | No CLI framework — `node:util` `parseArgs` covers three flags |
+| `src/main.ts` | CLI entry: `parseArgs` (`--channel`/`-c`, `--config`, `--help`), positional rejection (no subcommands — only the legacy `run` is tolerated), delegates to `runApp`, exits 1 on error | No CLI framework — `node:util` `parseArgs` covers three flags; unknown positionals fail fast rather than silently starting a daemon |
 | `src/app.ts` | `runApp`: fixed composition sequence, channel resolution, signal handling, shutdown ordering | One function owns the whole wiring; no DI container |
 | `src/config/schema.ts` | `ConfigSchema` (TypeBox) with nested-object defaults | `Type.Object(..., { default: {} })` per section so missing sections still get field defaults; model refs are `provider/model-id` strings |
 | `src/config/parse.ts` | `parseWithSchema`: `Clone` → `Default` → `Convert` → `Assert`, aggregating `Errors()` into one `ConfigError` | Shared by app config and per-extension config — one validation behavior everywhere |
@@ -63,7 +64,8 @@ Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an un
 | `src/db/state.ts` | `KeyValueState`: namespaced JSON KV over `app_state` with upsert | Synchronous API; composite primary key (namespace, key) |
 | `src/events.ts` | `EventBus`: string-named events, unsubscribe closures, fire-and-forget emit | Handlers wrapped in `Promise.resolve().then()` for isolation; failures logged with event name |
 | `src/scheduler.ts` | `Scheduler`: named `cron`/`every` jobs returning `ScheduledJob` handles | croner with `timezone`, `protect` (overlap skip), `catch`; `guarded()` logs failures; name reuse stops the previous job |
-| `src/workspace.ts` | `Workspace`: root resolution (`expandHome`), `dataDir`, `piDir`, `sessionsDir`, `databaseFile`, `ensure()` | All derived paths are getters off the root; `ensure()` creates only the deepest chain |
+| `src/workspace.ts` | `Workspace`: root resolution (`expandHome`), `dataDir`, `piDir`, `sessionsDir`, `databaseFile`, `instanceLockFile`, `ensure()` | All derived paths are getters off the root; `ensure()` creates only the deepest chain |
+| `src/instance-lock.ts` | Single-instance lock: exclusive create (`wx`) + verify of `{workspace}/.tachikoma/instance.json`; stale takeover by pid liveness, `/proc` start-time identity, zombie state, corrupt content, or own pid; ownership-checked, idempotent release | Node core only — no flock, no new dependency; `/proc` optional (liveness-only fallback without it); the signal-0 liveness helper is local rather than imported from an extension (see [DES-001](../design/DES-001-unified-extension-api.md)) |
 | `src/extensions/api.ts` | `AppContext`, pipeline contracts (`ExchangeProcessor`, `PostProcessor`, `InboundMiddleware`), `defineExtension` | `defineExtension` is identity — purely a typing aid for the `C` config parameter |
 | `src/extensions/registrations.ts` | `Registrations`: mutable arrays/maps filled during setup, read by core at runtime | Plain data object — the seam between host and coordinator/agent |
 | `src/extensions/host.ts` | `ExtensionHost`: queue-based `load()`, per-extension `buildContext()`, `bootstrap()` | Context built fresh per extension: child logger, validated config section, namespaced KV state |
@@ -133,6 +135,21 @@ Setup failures are isolated by provenance. A first-party extension's `setup()` f
 - Pro: emitters never await or try/catch; handler errors are uniformly logged with the event name
 - Con: no backpressure or completion signal — work that must complete before continuing belongs in the explicit pipelines (processors, hooks), not on the bus
 
+### Workspace-scoped single-instance lock
+
+**Choice**: A JSON identity file at `{workspace}/.tachikoma/instance.json` (pid, start time, command line) created exclusively (`wx`) and verified by re-reading, with stale-takeover decided by pid liveness (signal 0) plus `/proc` start-time identity and zombie state when available. `runApp` acquires it after `workspace.ensure()` and before anything else is constructed, and releases it on every exit path.
+**Why**: Two processes on one workspace duplicate scheduled actions, conflict over Telegram long-polling (409), and corrupt shared trunk/session state — the workspace is the unit of shared mutable state, so it is also the lock scope. The file carries the holder identity (pid, start time, command line) the refusal message needs. Exclusive create + verify makes the stale-takeover race safe without inode tricks: only the winner's content survives at the path, the loser detects the foreign content and refuses, and release unlinks only what it still owns.
+**Alternatives Considered**:
+- flock / an advisory-lock dependency (e.g. proper-lockfile): Node core has no flock, and a new dependency buys no identity information for the error message
+- SQLite `BEGIN EXCLUSIVE` held for the process lifetime: an abuse of the write transaction, interacts with WAL, and cannot name the conflicting process
+- A machine-global lock keyed by bot token: guards only the rarer same-token-different-workspace case (Telegram's own 409 already surfaces it) and cannot help cross-machine sharing
+
+**Consequences**:
+- Pro: stale locks self-heal — a SIGKILLed or power-lost instance is taken over by the next boot with no operator action
+- Pro: the refusal message identifies exactly who holds the workspace
+- Con: without `/proc` (non-Linux) pid reuse cannot be detected — liveness alone decides
+- Con: an NFS workspace cannot rely on `wx` exclusivity (acceptable: the SQLite database already assumes a local filesystem)
+
 ## System Behavior
 
 ### Scenario: First run on a clean machine
@@ -158,6 +175,12 @@ Setup failures are isolated by provenance. A first-party extension's `setup()` f
 **Given**: The app is running with an open session and scheduled jobs
 **When**: The user presses Ctrl+C
 **Then**: The signal handler aborts the coordinator loop; its `finally` force-flushes held deliveries to the channel as one digest (the trunk is left open — it is not disposed or closed, and no post-processing phases run during teardown). `runApp`'s `finally` then stops the channel and calls `scheduler.stopAll()` (the boundary extension's idle timer is `unref`'d, so it never blocks shutdown).
+
+### Scenario: Second instance against a running workspace
+
+**Given**: A tachikoma instance is running on a workspace
+**When**: A second process starts against the same workspace (e.g. a stray shell invocation)
+**Then**: The second process fails before the database is opened or the channel starts, printing the holder's PID, start time, and command line plus the lock path; the running instance is unaffected.
 
 ## Notes
 

@@ -13,6 +13,7 @@ The core shell is everything that runs before and around conversations: configur
 - As a user, I want all tunable parameters in a single commented TOML file so that I can customize behavior without touching code
 - As a developer, I want every feature to receive the same set of core services so that extensions stay uniform and testable
 - As the system, I want startup to be a fixed, fail-fast sequence so that misconfiguration is reported clearly instead of producing partial state
+- As the system, I want a single-instance guard on each workspace so that scheduled actions fire once and shared state is never corrupted by a second process
 
 ## Requirements
 
@@ -36,6 +37,8 @@ The core shell is everything that runs before and around conversations: configur
 | R15 | The channel is selected by the `--channel` flag or `channels.default`; an unknown channel name fails startup with a message listing available channels |
 | R16 | On `SIGINT`/`SIGTERM`, or an uncaught exception/unhandled rejection, the main loop drains its held queue to the channel (the trunk is left open — the memory pipeline runs at the nightly close or next-startup recovery, not during teardown), the channel stops, and the scheduler stops all jobs; a crash-initiated drain is bounded by a force-exit timeout and exits non-zero so a supervisor restarts the process |
 | R17 | The `[env]` config section (a `string → string` map) is applied to `process.env` at startup, before any runtime service or pi session is constructed, so the variables are visible app-wide and to anything that inherits the process environment (sessions, spawned tools, detached processes); config-defined values overwrite existing same-named variables |
+| R18 | Single-instance enforcement: startup acquires the workspace instance lock (`{workspace}/.tachikoma/instance.json`) after `workspace.ensure()` and before any other service is constructed; a live foreign holder fails startup with an error naming the holder's PID, start time, and command line; stale locks (dead pid, pid reuse, unreaped zombie, corrupt content, own pid after a re-exec) are taken over automatically, and the lock is released on every exit path and before a deferred re-exec |
+| R19 | The CLI takes no subcommands: zero positionals and the legacy `run` are accepted; any other positional fails with an error naming it plus a usage hint and exit code 1, before the app starts |
 
 ## Behaviors
 
@@ -110,7 +113,19 @@ The core shell is everything that runs before and around conversations: configur
 **Acceptance Criteria**:
 - Given `tachikoma --channel telegram`, when the app starts, then the `telegram` channel is used regardless of `channels.default`
 - Given an unknown channel name, when startup resolves the channel, then it fails with an error listing the available channel names
-- Given startup completes, when the order is observed, then it is: config → logging → workspace.ensure → `adaptConfig` (legacy config translation, applied in place) → apply `[env]` to `process.env` → `adaptWorkspace` (legacy workspace migration) → database + migrations → `adaptWorkspaceData` (legacy data migration) → extension host load → bootstrap hooks → dangling-session recovery → channel start → coordinator main loop. The three `adapt*` steps are best-effort legacy migrations from `src/migration/` (see [migration](migration.md))
+- Given startup completes, when the order is observed, then it is: config → workspace.ensure → instance lock → logging → `adaptConfig` (legacy config translation, applied in place) → apply `[env]` to `process.env` → `adaptWorkspace` (legacy workspace migration) → database + migrations → `adaptWorkspaceData` (legacy data migration) → extension host load → bootstrap hooks → dangling-session recovery → channel start → coordinator main loop. The three `adapt*` steps are best-effort legacy migrations from `src/migration/` (see [migration](migration.md))
 - Given a non-empty `[env]` section, when the app starts, then each entry is written to `process.env` (overwriting any existing same-named variable) before runtime services or pi sessions are built, and the applied keys are logged (values are not); an empty section applies nothing
 - Given sessions were left open by a previous run, when the app starts, then they are closed and their post-processing runs before the channel starts
-- Given SIGINT or SIGTERM, when received, then the coordinator loop exits, the held queue drains to the channel (the trunk persists — no close pipeline runs), the channel stops, and the scheduler stops all jobs
+- Given SIGINT or SIGTERM, when received, then the coordinator loop exits, the held queue drains to the channel (the trunk persists — no close pipeline runs), the channel stops, the scheduler stops all jobs, and the instance lock is released
+
+### Single-Instance Guard (R18, R19)
+
+`acquireInstanceLock` creates the lock exclusively (`wx`) and verifies its own content survived; takeover decisions use pid liveness plus `/proc` start-time identity when available (see [core-shell design](../feature-designs/core-shell.md)).
+
+**Acceptance Criteria**:
+- Given a lock file whose holder is alive and is not this process, when the app starts against the same workspace, then startup fails before the database is opened or migrations run, and the error names the holder's PID, start time, and command line and points at the lock file
+- Given a lock whose holder pid is dead, whose pid was reused by another process, whose holder is an unreaped zombie, whose content is corrupt (malformed JSON, empty, or mistyped fields), or that records this same pid (a re-exec), when the app starts, then the stale lock is replaced (logged to stderr) and startup proceeds
+- Given the app exits after acquiring the lock — a graceful signal drain or any later startup failure — when the process ends, then the lock file is removed (a force-exited crash leaves a stale file, taken over by the next boot)
+- Given a deferred restart (`restart_self`/`upgrade_self`), when the restarter runs, then the lock is released before the re-exec so the replacement process acquires it cleanly
+- Given two processes racing to take over the same stale lock, when both attempt acquisition, then at most one wins (exclusive create plus verify); the loser refuses, and release never removes a lock file owned by another process
+- Given an invocation with an unknown positional (e.g. `tachikoma workflow`), when the CLI parses arguments, then it prints an error naming the argument plus a usage hint, exits 1, and starts nothing
