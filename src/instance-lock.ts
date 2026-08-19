@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import { type FileHandle, open, readFile, unlink, writeFile } from "node:fs/promises";
 
+import { isAlive } from "./util/is-alive.ts";
+
 /** Records who holds the workspace's single-instance lock. */
 export interface InstanceInfo {
   pid: number;
@@ -27,21 +29,6 @@ export interface InstanceLockDeps {
 }
 
 /**
- * Liveness via signal 0. EPERM means the pid exists but belongs to another user, so it
- * still counts as alive. Same semantics as the twin helper in
- * `src/extensions/detached-processes/spawn.ts` — duplicated rather than imported because
- * core must not depend on an extension (DES-001).
- */
-const isAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-};
-
-/**
  * Reads `/proc/<pid>/stat` for holder identity: `state` (field 3 — `Z` marks an exited
  * but unreaped zombie) and `startTimeTicks` (field 22 — unique per process lifetime, so
  * a mismatch means the pid was reused). Returns null when `/proc` is unavailable
@@ -66,8 +53,6 @@ const readProcStat = (pid: number): ProcStat | null => {
 
 /** Strict parse of lock-file content; anything else is corruption (null). */
 export const parseInstanceInfo = (raw: string): InstanceInfo | null => {
-  if (raw.trim() === "") return null;
-
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -109,22 +94,22 @@ Stop that process first, or (if it is long gone) remove the lock file.`,
 
 type LockState = { kind: "missing" } | { kind: "corrupt" } | { kind: "held"; info: InstanceInfo };
 
+const errno = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
+
 const readLockState = async (lockPath: string): Promise<LockState> => {
   let raw: string;
   try {
     raw = await readFile(lockPath, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
-    throw error;
+    if (errno(error) !== "ENOENT") throw error;
+    return { kind: "missing" };
   }
   const info = parseInstanceInfo(raw);
   return info == null ? { kind: "corrupt" } : { kind: "held", info };
 };
 
-const errno = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
-
-const ownInfo = (deps: InstanceLockDeps): InstanceInfo => {
-  const stat = (deps.readProcStat ?? readProcStat)(process.pid);
+const ownInfo = (readProcStatDep: (pid: number) => ProcStat | null): InstanceInfo => {
+  const stat = readProcStatDep(process.pid);
   const info: InstanceInfo = {
     pid: process.pid,
     startedAt: new Date().toISOString(),
@@ -159,6 +144,36 @@ const removeIfStill = async (lockPath: string, decided: "corrupt" | number): Pro
   return true;
 };
 
+/**
+ * Exclusive create + verify: write our identity, then only claim the lock when the path
+ * still records our pid — a racing writer that replaced the content, or a torn write,
+ * loses this attempt (the full re-parse, not a substring match, decides).
+ */
+const tryCreate = async (
+  lockPath: string,
+  own: InstanceInfo,
+  afterCreate?: (lockPath: string) => Promise<void> | void,
+): Promise<boolean> => {
+  let handle: FileHandle;
+  try {
+    handle = await open(lockPath, "wx");
+  } catch (error) {
+    if (errno(error) === "EEXIST") return false;
+    throw error;
+  }
+
+  try {
+    await writeFile(handle, `${JSON.stringify(own, null, 2)}\n`, "utf8");
+  } finally {
+    await handle.close();
+  }
+
+  if (afterCreate != null) await afterCreate(lockPath);
+
+  const state = await readLockState(lockPath);
+  return state.kind === "held" && state.info.pid === process.pid;
+};
+
 const MAX_ATTEMPTS = 5;
 
 /**
@@ -176,56 +191,57 @@ export const acquireInstanceLock = async (
   const isAliveDep = deps.isAlive ?? isAlive;
   const readProcStatDep = deps.readProcStat ?? readProcStat;
   const notify = deps.notify ?? console.error;
+  // Identity is constant for this process's lifetime — compute once, not per attempt.
+  const own = ownInfo(readProcStatDep);
+
+  /** Remove the lock only while it still shows what we decided to remove; report takeovers. */
+  const takeOver = async (decided: "corrupt" | number, message: string): Promise<void> => {
+    if (await removeIfStill(lockPath, decided)) notify(message);
+  };
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     // 1) Exclusive create + verify: only proceed when the path still records our pid —
     //    a racing writer that replaced the content loses us the acquisition.
-    const created = await tryCreate(lockPath, deps);
-    if (created) return new InstanceLock(lockPath, process.pid, notify);
+    if (await tryCreate(lockPath, own, deps.afterCreate)) return new InstanceLock(lockPath, notify);
 
     // 2) Something occupies the path — inspect and decide.
     const state = await readLockState(lockPath);
     if (state.kind === "missing") continue; // raced away — try to create again
 
     if (state.kind === "corrupt") {
-      if (await removeIfStill(lockPath, "corrupt")) {
-        notify(`replacing corrupt instance lock at ${lockPath}`);
-      }
+      await takeOver("corrupt", `replacing corrupt instance lock at ${lockPath}`);
       continue;
     }
 
     const { info } = state;
     if (info.pid === process.pid) {
       // A re-exec kept this pid — reclaim it.
-      if (await removeIfStill(lockPath, process.pid)) {
-        notify(`reclaiming instance lock at ${lockPath} from own pid ${info.pid}`);
-      }
+      await takeOver(info.pid, `reclaiming instance lock at ${lockPath} from own pid ${info.pid}`);
       continue;
     }
 
     if (!isAliveDep(info.pid)) {
-      if (await removeIfStill(lockPath, info.pid)) {
-        notify(`removing stale instance lock at ${lockPath} — pid ${info.pid} is dead`);
-      }
+      await takeOver(
+        info.pid,
+        `removing stale instance lock at ${lockPath} — pid ${info.pid} is dead`,
+      );
       continue;
     }
 
     const stat = readProcStatDep(info.pid);
     if (stat == null) throw new InstanceConflictError(info, lockPath); // no /proc: liveness alone decides
     if (stat.state === "Z") {
-      if (await removeIfStill(lockPath, info.pid)) {
-        notify(
-          `removing stale instance lock at ${lockPath} — pid ${info.pid} is an unreaped zombie`,
-        );
-      }
+      await takeOver(
+        info.pid,
+        `removing stale instance lock at ${lockPath} — pid ${info.pid} is an unreaped zombie`,
+      );
       continue;
     }
     if (info.startTimeTicks != null && stat.startTimeTicks !== info.startTimeTicks) {
-      if (await removeIfStill(lockPath, info.pid)) {
-        notify(
-          `removing stale instance lock at ${lockPath} — pid ${info.pid} was reused by another process`,
-        );
-      }
+      await takeOver(
+        info.pid,
+        `removing stale instance lock at ${lockPath} — pid ${info.pid} was reused by another process`,
+      );
       continue;
     }
 
@@ -235,29 +251,6 @@ export const acquireInstanceLock = async (
   throw new Error(`failed to acquire instance lock at ${lockPath} after ${MAX_ATTEMPTS} attempts`);
 };
 
-const tryCreate = async (lockPath: string, deps: InstanceLockDeps): Promise<boolean> => {
-  let handle: FileHandle;
-  try {
-    handle = await open(lockPath, "wx");
-  } catch (error) {
-    if (errno(error) === "EEXIST") return false;
-    throw error;
-  }
-
-  try {
-    await writeFile(handle, `${JSON.stringify(ownInfo(deps), null, 2)}\n`, "utf8");
-  } finally {
-    await handle.close();
-  }
-
-  if (deps.afterCreate != null) await deps.afterCreate(lockPath);
-
-  // Verify with a full parse (not a substring match): a racing writer replaced the
-  // content, or the write was torn — either way this attempt loses.
-  const state = await readLockState(lockPath);
-  return state.kind === "held" && state.info.pid === process.pid;
-};
-
 /**
  * The acquired single-instance lock. `release()` is idempotent and ownership-checked: it
  * removes the lock file only while it still records our pid, never a successor's.
@@ -265,12 +258,10 @@ const tryCreate = async (lockPath: string, deps: InstanceLockDeps): Promise<bool
 export class InstanceLock {
   private released = false;
   private readonly lockPath: string;
-  private readonly pid: number;
   private readonly notify: (message: string) => void;
 
-  constructor(lockPath: string, pid: number, notify: (message: string) => void) {
+  constructor(lockPath: string, notify: (message: string) => void) {
     this.lockPath = lockPath;
-    this.pid = pid;
     this.notify = notify;
   }
 
@@ -279,9 +270,9 @@ export class InstanceLock {
     this.released = true;
 
     const state = await readLockState(this.lockPath);
-    if (state.kind !== "held" || state.info.pid !== this.pid) {
+    if (state.kind !== "held" || state.info.pid !== process.pid) {
       this.notify(
-        `instance lock at ${this.lockPath} no longer records pid ${this.pid} — leaving it in place`,
+        `instance lock at ${this.lockPath} no longer records pid ${process.pid} — leaving it in place`,
       );
       return;
     }
