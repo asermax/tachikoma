@@ -35,6 +35,11 @@ export class Workspace {
     return join(this.dataDir, "tachikoma.db");
   }
 
+  /** Single-instance guard: only one process may hold this file's lock (see src/instance-lock.ts). */
+  get instanceLockFile(): string {
+    return join(this.dataDir, "instance.json");
+  }
+
   /** Persisted diagnostic logs for daemon runs (rotated by pino-roll). */
   get logsDir(): string {
     return join(this.dataDir, "logs");

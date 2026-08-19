@@ -43,7 +43,7 @@ describe("Workspace", () => {
     expect(workspace.root).toBe(join(homedir(), "/tachi"));
   });
 
-  it("derives data, pi, sessions, database and logs paths from the root", () => {
+  it("derives data, pi, sessions, database, instance-lock and logs paths from the root", () => {
     const workspace = new Workspace("/srv/tachikoma");
 
     expect(workspace.resolve("a", "b")).toBe("/srv/tachikoma/a/b");
@@ -51,6 +51,7 @@ describe("Workspace", () => {
     expect(workspace.piDir).toBe("/srv/tachikoma/.tachikoma/pi");
     expect(workspace.sessionsDir).toBe("/srv/tachikoma/.tachikoma/pi/sessions");
     expect(workspace.databaseFile).toBe("/srv/tachikoma/.tachikoma/tachikoma.db");
+    expect(workspace.instanceLockFile).toBe("/srv/tachikoma/.tachikoma/instance.json");
     expect(workspace.logsDir).toBe("/srv/tachikoma/.tachikoma/logs");
   });
 
