@@ -146,13 +146,13 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
     } finally {
       await channel.stop();
       scheduler.stopAll();
+      // Teardown in reverse construction order. Releasing here (not only in the outer
+      // finally) also covers the never-returning re-exec below: the restarter spawnSyncs
+      // the replacement while this process stays alive watching it boot, so the
+      // replacement must find a free lock — process.exit inside restart() would skip
+      // the outer finally.
+      await lock.release();
     }
-
-    // Release before the never-returning re-exec: the restarter spawnSyncs the replacement
-    // while this process stays alive watching it boot, so the replacement must find a free
-    // lock — otherwise its own parent reads as a live foreign holder. The outer finally
-    // cannot cover this path: process.exit inside restart() skips finally blocks.
-    await lock.release();
 
     // A deferred restart (restart_self / upgrade_self) was requested mid-exchange: the
     // coordinator's run loop exited after the exchange completed and the graceful drain ran
