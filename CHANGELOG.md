@@ -1,3 +1,17 @@
+# [3.68.0](https://github.com/asermax/tachikoma/compare/v3.67.0...v3.68.0) (2026-08-19)
+
+
+### Bug Fixes
+
+* **app:** release instance lock inside the inner finally ([f218241](https://github.com/asermax/tachikoma/commit/f218241772bc7dabbe0797c4e5033457f68a2836))
+* **cli:** reject stray positional arguments ([42e01f1](https://github.com/asermax/tachikoma/commit/42e01f1ec02dc05654b440263ae5687f66a49bdb))
+
+
+### Features
+
+* **app:** acquire instance lock at startup ([3ef14e1](https://github.com/asermax/tachikoma/commit/3ef14e14fc83cb33202ad6cf350073f5d349aa0b))
+* **core:** add single-instance workspace lock module ([16d9bb9](https://github.com/asermax/tachikoma/commit/16d9bb9a901becbef1555187996340f674d645e0))
+
 # [3.67.0](https://github.com/asermax/tachikoma/compare/v3.66.0...v3.67.0) (2026-08-18)
 
 
