@@ -9,7 +9,7 @@ import { type BranchRecord, isBranchAnalyzed, markBranchAnalyzed } from "../../s
 import { sweepEmptyMarkdown } from "../../util/markdown-store.ts";
 import { skillEvolutionDir } from "./layout.ts";
 import { branchAnalysisInstruction, maintenanceSystemPrompt } from "./prompts.ts";
-import { IMPACT_LOG_FILENAME } from "./store.ts";
+import { IMPACT_LOG_FILENAME, listPatternPages } from "./store.ts";
 
 /** Used by the maintenance pass, which runs a bare headless side-run (memory's `Runner` idiom). */
 export type Runner = Pick<SideRunner, "run">;
@@ -93,6 +93,16 @@ export interface MaintenanceDeps {
  * pass (writes converge at the finalize commit; only commit grouping splits).
  */
 export const runMaintenance = async (deps: MaintenanceDeps): Promise<void> => {
+  const storeDir = skillEvolutionDir(deps.workspaceRoot);
+
+  // An empty store has nothing to maintain — the pass's own first instruction is "stop
+  // immediately". Gating here keeps a fresh install or a friction-free day from paying a
+  // processor-tier LLM round-trip to read a directory and stop.
+  if ((await listPatternPages(storeDir)).length === 0) {
+    deps.log.debug("skill-evolution maintenance skipped — the store has no pattern pages");
+    return;
+  }
+
   deps.log.info("skill-evolution maintenance pass started");
 
   const start = Date.now();
@@ -104,7 +114,7 @@ export const runMaintenance = async (deps: MaintenanceDeps): Promise<void> => {
     tier: "processor",
   });
 
-  await sweepEmptyMarkdown(skillEvolutionDir(deps.workspaceRoot), deps.log, [IMPACT_LOG_FILENAME]);
+  await sweepEmptyMarkdown(storeDir, deps.log, [IMPACT_LOG_FILENAME]);
 
   deps.log.info(
     { producedOutput: result.text.length > 0, durationMs: Date.now() - start },

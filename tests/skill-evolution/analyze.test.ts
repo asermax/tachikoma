@@ -242,6 +242,15 @@ describe("analyzeBranches", () => {
 });
 
 describe("runMaintenance", () => {
+  it("skips the LLM pass entirely when the store has no pattern pages", async () => {
+    const run = vi.fn().mockResolvedValue({ text: "done" });
+    await mkdir(skillEvolutionDir(workspace), { recursive: true });
+
+    await runMaintenance({ side: { run }, workspaceRoot: workspace, log: fakeLog });
+
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("runs the headless maintenance agent with the composed system prompt, then sweeps the store", async () => {
     const run = vi.fn().mockResolvedValue({ text: "done" });
 

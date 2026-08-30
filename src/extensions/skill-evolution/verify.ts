@@ -1,16 +1,11 @@
 import type { GitResult } from "../../git/git.ts";
-import { runGitCapture } from "../../git/git.ts";
+import { runGit, runGitCapture } from "../../git/git.ts";
 import { listRemoteBranchTips } from "../../git/remote.ts";
 import type { Logger } from "../../log.ts";
+import { localIsoDate } from "../../util/dates.ts";
 import { impactLogPath } from "./layout.ts";
+import { REMOTE_BRANCH_PATTERN, type ReportedProposal, resolveUnderRoot } from "./propose.ts";
 import {
-  BRANCH_NAMESPACE,
-  REMOTE_BRANCH_PATTERN,
-  type ReportedProposal,
-  resolveUnderRoot,
-} from "./propose.ts";
-import {
-  appendProposedEntry,
   IMPACT_LOG_STATUSES,
   type ImpactLogEntry,
   readImpactLog,
@@ -46,55 +41,26 @@ export interface VerifyDeps {
 
 const linesOf = (stdout: string): string[] => stdout.split("\n").filter((line) => line !== "");
 
-/** The production dependency set over `runGitCapture` (never shell strings). */
+/** The production dependency set over the shared git runners (never shell strings). */
 export const gitVerifyDeps: VerifyDeps = {
   listRemoteBranchTips,
 
-  changedPaths: async (cwd, base, tip) => {
-    const result = await runGitCapture(cwd, ["diff", "--name-only", `${base}...${tip}`]);
+  changedPaths: async (cwd, base, tip) =>
+    linesOf(await runGit(cwd, ["diff", "--name-only", `${base}...${tip}`])),
 
-    if (result.code !== 0) {
-      throw new Error(
-        `git diff --name-only ${base}...${tip} failed: ${result.stderr || `exit code ${result.code}`}`,
-      );
-    }
-
-    return linesOf(result.stdout);
-  },
-
-  listWorktrees: async (cwd) => {
-    const result = await runGitCapture(cwd, ["worktree", "list", "--porcelain"]);
-
-    if (result.code !== 0) {
-      throw new Error(
-        `git worktree list --porcelain failed: ${result.stderr || `exit code ${result.code}`}`,
-      );
-    }
-
+  listWorktrees: async (cwd) =>
     // Porcelain shape: a `worktree <path>` line opens each entry.
-    return linesOf(result.stdout)
+    linesOf(await runGit(cwd, ["worktree", "list", "--porcelain"]))
       .filter((line) => line.startsWith("worktree "))
-      .map((line) => line.slice("worktree ".length).trim());
-  },
+      .map((line) => line.slice("worktree ".length).trim()),
 
   removeWorktree: (cwd, path) => runGitCapture(cwd, ["worktree", "remove", "--force", path]),
 
-  listLocalProposalBranches: async (cwd) => {
-    const result = await runGitCapture(cwd, [
-      "branch",
-      "--list",
-      `${BRANCH_NAMESPACE}*`,
-      "--format=%(refname:short)",
-    ]);
-
-    if (result.code !== 0) {
-      throw new Error(
-        `git branch --list ${BRANCH_NAMESPACE}* failed: ${result.stderr || `exit code ${result.code}`}`,
-      );
-    }
-
-    return linesOf(result.stdout);
-  },
+  // The same namespace glob the remote listing scans — local branches carry it too.
+  listLocalProposalBranches: async (cwd) =>
+    linesOf(
+      await runGit(cwd, ["branch", "--list", REMOTE_BRANCH_PATTERN, "--format=%(refname:short)"]),
+    ),
 
   deleteLocalBranch: (cwd, name) => runGitCapture(cwd, ["branch", "-D", name]),
 
@@ -180,7 +146,8 @@ export interface VerifyDepsInput {
   /** Injects the ledger row's date — the trunk-close clock, not wall-clock. */
   now: () => Date;
   log: Logger;
-  deps: VerifyDeps;
+  /** Defaults to the production git dependency set. */
+  deps?: VerifyDeps;
 }
 
 export interface SweepInput {
@@ -208,10 +175,15 @@ export const sweepProposalArtifacts = async (input: SweepInput): Promise<void> =
  * `finally` sweep has removed every worktree and local branch.
  */
 export const verifyAndRecord = async (input: VerifyDepsInput): Promise<ImpactLogEntry[]> => {
-  const { workspaceRoot, tmpDir, reported, defaultBranch, now, log, deps } = input;
-  const day = now().toISOString().slice(0, 10);
+  const { workspaceRoot, tmpDir, reported, defaultBranch, now, log } = input;
+  const deps = input.deps ?? gitVerifyDeps;
+  const day = localIsoDate(now());
 
   try {
+    // Nothing reported is the common clean decline — skip the remote listing (a network
+    // round-trip) entirely; the `finally` sweep below still runs.
+    if (reported.length === 0) return [];
+
     // One namespace scan is the authoritative remote view; everything below reads it.
     const remoteTips = await deps.listRemoteBranchTips(workspaceRoot, REMOTE_BRANCH_PATTERN);
     const ledgerPath = impactLogPath(workspaceRoot);
@@ -262,17 +234,20 @@ export const verifyAndRecord = async (input: VerifyDepsInput): Promise<ImpactLog
         continue;
       }
 
-      const entry = {
+      // A fresh row is always `proposed` — built once, appended to the ledger and the
+      // verified list as the same object.
+      const row: ImpactLogEntry = {
         date: day,
         skill: proposal.skill,
         pattern: proposal.pattern,
         branch: proposal.branch,
         tip,
         description: proposal.description,
+        status: IMPACT_LOG_STATUSES.proposed,
       };
 
-      rows = appendProposedEntry(rows, entry);
-      verified.push({ ...entry, status: IMPACT_LOG_STATUSES.proposed });
+      rows = [...rows, row];
+      verified.push(row);
       log.info({ branch: proposal.branch, tip }, "skill-evolution proposal verified and logged");
     }
 

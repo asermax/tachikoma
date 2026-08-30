@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  appendProposedEntry,
   filterEligible,
   IMPACT_LOG_FILENAME,
   IMPACT_LOG_STATUSES,
@@ -142,30 +141,6 @@ describe("lenient parsing", () => {
 });
 
 describe("row mutations", () => {
-  it("appendProposedEntry appends with status proposed, preserving existing rows", () => {
-    const existing = entry({ status: IMPACT_LOG_STATUSES.accepted });
-    const rows = appendProposedEntry([existing], {
-      date: "2026-08-30",
-      skill: "review",
-      pattern: "review-checklist.md",
-      branch: "skill-evolution/review-checklist",
-      tip: "tip1",
-      description: "checklist gap",
-    });
-
-    expect(rows).toHaveLength(2);
-    expect(rows[0]).toBe(existing);
-    expect(rows[1]).toEqual(
-      entry({
-        skill: "review",
-        pattern: "review-checklist.md",
-        branch: "skill-evolution/review-checklist",
-        tip: "tip1",
-        description: "checklist gap",
-      }),
-    );
-  });
-
   it("updateEntryStatus rewrites only the row keyed by branch + tip", () => {
     const first = entry({ branch: "skill-evolution/a", tip: "tip-a" });
     const second = entry({ branch: "skill-evolution/b", tip: "tip-b" });
@@ -232,9 +207,5 @@ describe("filterEligible", () => {
       expect.objectContaining({ pattern: "deleted-by-user.md" }),
       "impact-log row references a missing pattern page — skipped",
     );
-  });
-
-  it("works without a logger (no warn surface, same filtering)", () => {
-    expect(filterEligible(["pattern-a.md"], [entry({ pattern: "pattern-a.md" })])).toEqual([]);
   });
 });

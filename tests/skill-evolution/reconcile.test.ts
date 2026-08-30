@@ -73,15 +73,13 @@ describe("classify (fake deps)", () => {
       ancestorExit: 0,
       trackingExists: false,
       outcome: CLASSIFY_OUTCOMES.accepted,
-      status: IMPACT_LOG_STATUSES.accepted,
       probesTracking: false,
     },
     {
-      name: "exit 1 + tracking ref present → pending, status stays proposed",
+      name: "exit 1 + tracking ref present → pending, the row stays proposed",
       ancestorExit: 1,
       trackingExists: true,
       outcome: CLASSIFY_OUTCOMES.pending,
-      status: IMPACT_LOG_STATUSES.proposed,
       probesTracking: true,
     },
     {
@@ -89,7 +87,6 @@ describe("classify (fake deps)", () => {
       ancestorExit: 1,
       trackingExists: false,
       outcome: CLASSIFY_OUTCOMES.rejected,
-      status: IMPACT_LOG_STATUSES.rejected,
       probesTracking: true,
     },
     {
@@ -97,7 +94,6 @@ describe("classify (fake deps)", () => {
       ancestorExit: 128,
       trackingExists: true,
       outcome: CLASSIFY_OUTCOMES.rejected,
-      status: IMPACT_LOG_STATUSES.rejected,
       probesTracking: false,
     },
     {
@@ -105,10 +101,9 @@ describe("classify (fake deps)", () => {
       ancestorExit: 2,
       trackingExists: true,
       outcome: CLASSIFY_OUTCOMES.rejected,
-      status: IMPACT_LOG_STATUSES.rejected,
       probesTracking: false,
     },
-  ])("$name", async ({ ancestorExit, trackingExists, outcome, status, probesTracking }) => {
+  ])("$name", async ({ ancestorExit, trackingExists, outcome, probesTracking }) => {
     const { deps, isAncestor, trackingRefExists } = probes(ancestorExit, trackingExists);
     const entry = proposedRow("skill-evolution/commit-flag-missing", "abc123");
 
@@ -117,7 +112,6 @@ describe("classify (fake deps)", () => {
     expect(record.branch).toBe(entry.branch);
     expect(record.tip).toBe(entry.tip);
     expect(record.outcome).toBe(outcome);
-    expect(record.status).toBe(status);
     expect(record.reason).not.toBe("");
     expect(isAncestor).toHaveBeenCalledWith("abc123", DEFAULT_REMOTE_REF);
     if (probesTracking) {
@@ -182,7 +176,6 @@ describe("reconcileProposals (fake deps)", () => {
     expect(result.classifications[0]).toMatchObject({
       branch: "skill-evolution/open",
       outcome: CLASSIFY_OUTCOMES.pending,
-      status: IMPACT_LOG_STATUSES.proposed,
     });
     expect(result.updated).toBe(0);
     expect(deps.writeImpactLog).not.toHaveBeenCalled();
@@ -269,7 +262,6 @@ describe("reconcileProposals (integration: real git, bare origin)", () => {
     expect(result.classifications[0]).toMatchObject({
       branch: BRANCH,
       outcome: CLASSIFY_OUTCOMES.accepted,
-      status: IMPACT_LOG_STATUSES.accepted,
     });
     await expect(readImpactLog(impactLogPath(ws), log)).resolves.toEqual([
       { ...proposedRow(BRANCH, tip), status: IMPACT_LOG_STATUSES.accepted },
@@ -295,7 +287,6 @@ describe("reconcileProposals (integration: real git, bare origin)", () => {
     expect(result.classifications[0]).toMatchObject({
       branch: BRANCH,
       outcome: CLASSIFY_OUTCOMES.rejected,
-      status: IMPACT_LOG_STATUSES.rejected,
     });
     await expect(readImpactLog(impactLogPath(ws), log)).resolves.toEqual([
       { ...proposedRow(BRANCH, tip), status: IMPACT_LOG_STATUSES.rejected },
@@ -321,7 +312,6 @@ describe("reconcileProposals (integration: real git, bare origin)", () => {
     expect(result.classifications[0]).toMatchObject({
       branch: BRANCH,
       outcome: CLASSIFY_OUTCOMES.pending,
-      status: IMPACT_LOG_STATUSES.proposed,
     });
     expect(await readFile(impactLogPath(ws), "utf8")).toBe(before);
   });
@@ -341,7 +331,6 @@ describe("reconcileProposals (integration: real git, bare origin)", () => {
     expect(result.classifications[0]).toMatchObject({
       branch: BRANCH,
       outcome: CLASSIFY_OUTCOMES.rejected,
-      status: IMPACT_LOG_STATUSES.rejected,
     });
   });
 
@@ -357,7 +346,6 @@ describe("reconcileProposals (integration: real git, bare origin)", () => {
     expect(result.classifications[0]).toMatchObject({
       branch: BRANCH,
       outcome: CLASSIFY_OUTCOMES.rejected,
-      status: IMPACT_LOG_STATUSES.rejected,
     });
     expect(result.classifications[0]?.reason).toMatch(/exited 128/);
   });

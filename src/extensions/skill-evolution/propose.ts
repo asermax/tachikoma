@@ -3,14 +3,14 @@ import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 
-import { type ToolDefinition, truncateTail } from "@earendil-works/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import type { SideRunner } from "../../agent/side-run.ts";
-import { runGitCapture } from "../../git/git.ts";
+import { ALLOWED_GIT_SUBCOMMANDS, refusal, runGitTool, textResult } from "../../git/agent-tools.ts";
 import { listRemoteBranchTips } from "../../git/remote.ts";
 import type { Logger } from "../../log.ts";
 import { fileExists } from "../../util/markdown-store.ts";
+import type { Runner } from "./analyze.ts";
 import { skillEvolutionDir } from "./layout.ts";
 import { proposalSystemPrompt } from "./prompts.ts";
 import { formatImpactLog, type ImpactLogEntry } from "./store.ts";
@@ -26,9 +26,6 @@ import { formatImpactLog, type ImpactLogEntry } from "./store.ts";
  * branch-collision suffix rule (R9) executes itself: push refuses an existing name, the agent
  * retries with `-2`.
  */
-
-/** Used by the proposal run, which drives a bare headless side-run (the maintenance `Runner` idiom). */
-export type Runner = Pick<SideRunner, "run">;
 
 /**
  * The proposal-branch namespace and shape (R9): `skill-evolution/<skill>-<slug>`, the slug segment
@@ -53,7 +50,7 @@ export const proposalTmpDir = (workspaceRoot: string): string =>
     createHash("sha256").update(resolve(workspaceRoot)).digest("hex").slice(0, 16),
   );
 
-/** The `ls-remote` ref pattern listing the whole proposal namespace on the remote. */
+/** The proposal-namespace glob: the `ls-remote` pattern for the remote view, the `branch --list` glob for the local sweep. */
 export const REMOTE_BRANCH_PATTERN = `${BRANCH_NAMESPACE}*`;
 
 /** One entry of the agent's `report_proposals` call — its self-report, pre-verification. */
@@ -107,17 +104,6 @@ export const resolveUnderRoot = (root: string, path: string): string | null => {
 /** What a tool's execute returns — `details` stays open for the pi host to fill. */
 type ToolResult = ReturnType<typeof textResult>;
 
-const textResult = (text: string) => {
-  const { content, truncated } = truncateTail(text);
-
-  return {
-    content: [{ type: "text" as const, text: truncated ? `${content}\n\n[truncated]` : content }],
-    details: undefined,
-  };
-};
-
-const refusal = (reason: string, guidance: string) => textResult(`Refused: ${reason} ${guidance}`);
-
 // Everything the file tools may touch lives under the tmp dir; this is what confines edits to
 // the worktrees (R8's "the live working tree is never touched").
 const ReadFileParams = Type.Object({
@@ -166,9 +152,6 @@ const ReportParams = Type.Object({
     { description: "Every proposal authored this run, in push order" },
   ),
 });
-
-/** Read-only inspection plus staging/committing — the commit-agent allowlist verbatim. */
-const SIMPLE_GIT_SUBCOMMANDS = new Set(["status", "diff", "log", "show", "add", "commit"]);
 
 /**
  * The working-tree-mutating pair — the only subcommands whose `path` is checked. `add`/`commit`
@@ -465,7 +448,7 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
         } else if (subcommand === "push") {
           const verdict = await validatePushArgs(defaultBranch, remoteBranchNames, params.args);
           if (!verdict.ok) return verdict.result;
-        } else if (!SIMPLE_GIT_SUBCOMMANDS.has(subcommand)) {
+        } else if (!ALLOWED_GIT_SUBCOMMANDS.has(subcommand)) {
           return refusal(
             `git ${subcommand} is not allowed.`,
             "Use only worktree, status, diff, log, show, add, commit, or push origin <branch>.",
@@ -496,17 +479,7 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
           cwd = bound;
         }
 
-        const result = await runGitCapture(cwd, [
-          "-c",
-          "core.editor=true",
-          "-c",
-          "commit.gpgsign=false",
-          ...params.args,
-        ]);
-
-        return textResult(
-          `exit ${result.code}\n${[result.stdout, result.stderr].filter(Boolean).join("\n")}`.trim(),
-        );
+        return textResult(await runGitTool(cwd, params.args, ["commit.gpgsign=false"]));
       },
     } satisfies ToolDefinition<typeof GitParams>,
 
@@ -579,20 +552,20 @@ const skillsInventorySection = async (workspaceRoot: string, log: Logger): Promi
 
   if (!(await fileExists(skillsDir))) return "(no skills/ directory in this workspace)";
 
-  const blocks: string[] = [];
+  const entries = (await readdir(skillsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-  for (const entry of (await readdir(skillsDir, { withFileTypes: true })).sort((a, b) =>
-    a.name.localeCompare(b.name),
-  )) {
-    if (!entry.isDirectory()) continue;
+  const blocks = await Promise.all(
+    entries.map(async (entry) => {
+      const skillPath = join(skillsDir, entry.name, "SKILL.md");
+      const body = (await fileExists(skillPath))
+        ? await readFile(skillPath, "utf8")
+        : "(no SKILL.md — a skill directory without guidance)";
 
-    const skillPath = join(skillsDir, entry.name, "SKILL.md");
-    const body = (await fileExists(skillPath))
-      ? await readFile(skillPath, "utf8")
-      : "(no SKILL.md — a skill directory without guidance)";
-
-    blocks.push(`### skills/${entry.name}\n\n${body}`);
-  }
+      return `### skills/${entry.name}\n\n${body}`;
+    }),
+  );
 
   if (blocks.length === 0) {
     log.debug({ skillsDir }, "workspace has no skill directories");
@@ -614,11 +587,10 @@ export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<Reporte
   const { side, workspaceRoot, tmpDir, defaultBranch, eligible, impactLog, log } = deps;
   const capture: ProposalCapture = { proposals: [] };
 
-  const pages = await Promise.all(
-    eligible.map(
-      async (name) => await patternPageSection(skillEvolutionDir(workspaceRoot), name, log),
-    ),
-  );
+  // The two prompt sections read disjoint directories — build them concurrently.
+  const storeDir = skillEvolutionDir(workspaceRoot);
+  const inventory = skillsInventorySection(workspaceRoot, log);
+  const pages = await Promise.all(eligible.map((name) => patternPageSection(storeDir, name, log)));
   const pageBlocks = pages.filter((page): page is string => page != null);
 
   const prompt = [
@@ -636,7 +608,7 @@ export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<Reporte
     "",
     "## Workspace skills inventory",
     "",
-    await skillsInventorySection(workspaceRoot, log),
+    await inventory,
     "",
     "## Task",
     "",

@@ -40,9 +40,6 @@ export interface ImpactLogEntry {
   status: ImpactLogStatus;
 }
 
-/** The fields the verifier supplies when appending — a fresh row is always `proposed` (R8). */
-export type NewImpactEntry = Omit<ImpactLogEntry, "status">;
-
 const COLUMN_COUNT = 7;
 
 const TABLE_HEADER = "| Date | Skill | Pattern | Branch | Tip | Description | Status |";
@@ -157,12 +154,6 @@ export const readImpactLog = async (path: string, log: Logger): Promise<ImpactLo
   return rows;
 };
 
-/** Append a verified proposal as a new `proposed` row (the only status a fresh row can have). */
-export const appendProposedEntry = (
-  rows: readonly ImpactLogEntry[],
-  entry: NewImpactEntry,
-): ImpactLogEntry[] => [...rows, { ...entry, status: IMPACT_LOG_STATUSES.proposed }];
-
 /**
  * Rewrite the status of the row keyed by `branch` + `tip` — the pair identifies exactly one
  * proposal, so reconciliation updates one row and never touches its neighbors. A key matching
@@ -197,14 +188,14 @@ export const listPatternPages = async (dir: string): Promise<string[]> =>
 export const filterEligible = (
   patterns: readonly string[],
   logRows: readonly ImpactLogEntry[],
-  log?: Logger,
+  log: Logger,
 ): string[] => {
   const pages = new Set(patterns);
   const blocked = new Set<string>();
 
   for (const row of logRows) {
     if (!pages.has(row.pattern)) {
-      log?.warn(
+      log.warn(
         { pattern: row.pattern, branch: row.branch },
         "impact-log row references a missing pattern page — skipped",
       );

@@ -15,9 +15,9 @@ import {
   runProposalAgent,
 } from "./propose.ts";
 import { gitReconcileDeps, type ReconcileResult, reconcileProposals } from "./reconcile.ts";
-import { reportRun } from "./report.ts";
+import { REPORT_SOURCE, reportRun } from "./report.ts";
 import { filterEligible, listPatternPages, readImpactLog } from "./store.ts";
-import { gitVerifyDeps, sweepProposalArtifacts, verifyAndRecord } from "./verify.ts";
+import { sweepProposalArtifacts, verifyAndRecord } from "./verify.ts";
 
 // Flat config; enabled by default (R13), post-work prompt optional (R10).
 export const SkillEvolutionConfigSchema = Type.Object({
@@ -127,7 +127,7 @@ export const createSkillEvolutionProcessor = (
         emit(NOTIFY_EVENT, {
           text: `Skill evolution skipped: ${reconciled.reason}`,
           severity: SEVERITIES.warning,
-          source: "skill-evolution",
+          source: REPORT_SOURCE,
         });
         return;
       }
@@ -213,7 +213,6 @@ export const createSkillEvolutionProcessor = (
         defaultBranch: reconciled.defaultBranch,
         now,
         log,
-        deps: gitVerifyDeps,
       });
 
       // The reporter fires only on at least one verified proposal (R10) — zero verified (a clean
@@ -232,7 +231,7 @@ export const createSkillEvolutionProcessor = (
     } catch (error) {
       const text = `Skill evolution failed: ${messageOf(error)}`;
       log.warn({ err: error }, "skill-evolution run failed — trunk close continues (fail-soft)");
-      emit(NOTIFY_EVENT, { text, severity: SEVERITIES.warning, source: "skill-evolution" });
+      emit(NOTIFY_EVENT, { text, severity: SEVERITIES.warning, source: REPORT_SOURCE });
     }
   },
 });

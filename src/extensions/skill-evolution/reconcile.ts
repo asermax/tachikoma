@@ -35,8 +35,6 @@ export interface ClassificationRecord {
   branch: string;
   tip: string;
   outcome: ClassifyOutcome;
-  /** The status to write back: pending keeps `proposed` (no change). */
-  status: ImpactLogStatus;
   /** One-line why, for the run log. */
   reason: string;
 }
@@ -71,7 +69,6 @@ export const classify = async (
       branch: entry.branch,
       tip: entry.tip,
       outcome: CLASSIFY_OUTCOMES.accepted,
-      status: IMPACT_LOG_STATUSES.accepted,
       reason: `tip is reachable from ${deps.defaultRemoteRef} — merged`,
     };
   }
@@ -84,14 +81,12 @@ export const classify = async (
           branch: entry.branch,
           tip: entry.tip,
           outcome: CLASSIFY_OUTCOMES.pending,
-          status: IMPACT_LOG_STATUSES.proposed,
           reason: "tip not merged yet and the branch is still on the remote — stays proposed",
         }
       : {
           branch: entry.branch,
           tip: entry.tip,
           outcome: CLASSIFY_OUTCOMES.rejected,
-          status: IMPACT_LOG_STATUSES.rejected,
           reason: "tip never landed and the branch is gone from the remote",
         };
   }
@@ -100,10 +95,17 @@ export const classify = async (
     branch: entry.branch,
     tip: entry.tip,
     outcome: CLASSIFY_OUTCOMES.rejected,
-    status: IMPACT_LOG_STATUSES.rejected,
     reason: `merge-base --is-ancestor exited ${exit} (unresolvable object, e.g. post-squash-merge GC)`,
   };
 };
+
+/**
+ * The ledger status an outcome writes back: `pending` keeps the row `proposed` (no change);
+ * the terminal outcomes carry their own names. Derived here — the one place outcomes become
+ * statuses — so a record states its outcome once.
+ */
+const statusOfOutcome = (outcome: ClassifyOutcome): ImpactLogStatus =>
+  outcome === CLASSIFY_OUTCOMES.pending ? IMPACT_LOG_STATUSES.proposed : outcome;
 
 /** A soft abort (R1): the caller skips the whole run — nothing was classified or written. */
 export interface ReconcileAborted {
@@ -217,8 +219,10 @@ export const reconcileProposals = async (input: {
       "skill-evolution proposal classified",
     );
 
-    if (record.status !== row.status) {
-      updatedRows = updateEntryStatus(updatedRows, row.branch, row.tip, record.status);
+    const status = statusOfOutcome(record.outcome);
+
+    if (status !== row.status) {
+      updatedRows = updateEntryStatus(updatedRows, row.branch, row.tip, status);
       updated += 1;
     }
   }
