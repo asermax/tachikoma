@@ -5,9 +5,9 @@ import { Type } from "typebox";
 import { FILE_READ_TOOLS } from "../../agent/file-tools.ts";
 import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import { lastAssistantText, type SideRunner } from "../../agent/side-run.ts";
+import { NOTIFY_EVENT, type NotifyPayload, SEVERITIES } from "../../events.ts";
 import type { Logger } from "../../log.ts";
 import type { PostProcessorContext } from "../api.ts";
-import { NOTIFY_EVENT, type NotifyPayload, SEVERITIES } from "../notifications/payload.ts";
 import type { TaskRepository } from "./repository.ts";
 import type { TaskInstanceRecord } from "./schema.ts";
 

@@ -1,5 +1,5 @@
+import { NOTIFY_EVENT, type NotifyPayload } from "../../events.ts";
 import type { Logger } from "../../log.ts";
-import { NOTIFY_EVENT, type NotifyPayload } from "../notifications/payload.ts";
 import type { NotifyEmitter } from "./checker.ts";
 import { decideStartup, STARTUP_ACTIONS } from "./decisions.ts";
 import type { Installer, Restarter } from "./seams.ts";

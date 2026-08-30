@@ -1,5 +1,5 @@
+import { NOTIFY_EVENT, type NotifyPayload } from "../../events.ts";
 import type { Logger } from "../../log.ts";
-import { NOTIFY_EVENT, type NotifyPayload } from "../notifications/payload.ts";
 import { CHECK_OUTCOMES, decideCheck, nextLastCheck } from "./decisions.ts";
 import type { RegistryClient } from "./seams.ts";
 import type { SelfUpdateState } from "./state.ts";
