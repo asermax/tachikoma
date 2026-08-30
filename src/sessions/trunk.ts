@@ -36,10 +36,11 @@ export const COMPLETION_MARKER = "tachikoma-completion-marker";
  */
 export const REVERSAL = "tachikoma-reversal";
 
-/** Marker `kind`s distinguishing the two idempotency markers stored under {@link COMPLETION_MARKER}. */
+/** Marker `kind`s distinguishing the idempotency markers stored under {@link COMPLETION_MARKER}. */
 const MARKER_KIND = {
   branchExtracted: "extracted-marker",
   stepDone: "step-marker",
+  skillEvolutionAnalyzed: "skill-evolution-analyzed",
 } as const;
 
 type MarkerKind = (typeof MARKER_KIND)[keyof typeof MARKER_KIND];
@@ -53,6 +54,13 @@ interface StepDoneMarker {
   kind: typeof MARKER_KIND.stepDone;
   step: string;
 }
+
+interface SkillEvolutionAnalyzedMarker {
+  kind: typeof MARKER_KIND.skillEvolutionAnalyzed;
+  summaryEntryId: string;
+}
+
+type CompletionMarker = BranchExtractedMarker | StepDoneMarker | SkillEvolutionAnalyzedMarker;
 
 /** Payload of a {@link REVERSAL} marker naming the orphaned `branch_summary` entry. */
 interface ReversalMarker {
@@ -462,16 +470,16 @@ export const recordLastAutoDecision = (
 export const clearLastAutoDecision = (session: AgentSession): void =>
   patchBoomerangState(session, { lastAutoDecision: null });
 
-const completionMarkers = (session: AgentSession): Array<BranchExtractedMarker | StepDoneMarker> =>
+const completionMarkers = (session: AgentSession): CompletionMarker[] =>
   enumerateEntries(session)
     .filter((entry) => entry.type === "custom" && entry.customType === COMPLETION_MARKER)
-    .map((entry) => (entry as { data?: BranchExtractedMarker | StepDoneMarker }).data)
-    .filter((data): data is BranchExtractedMarker | StepDoneMarker => data != null);
+    .map((entry) => (entry as { data?: CompletionMarker }).data)
+    .filter((data): data is CompletionMarker => data != null);
 
 const hasMarker = (
   session: AgentSession,
   kind: MarkerKind,
-  predicate: (marker: BranchExtractedMarker | StepDoneMarker) => boolean,
+  predicate: (marker: CompletionMarker) => boolean,
 ): boolean =>
   completionMarkers(session).some((marker) => marker.kind === kind && predicate(marker));
 
@@ -486,6 +494,26 @@ export const isBranchExtracted = (session: AgentSession, branchId: string): bool
     session,
     MARKER_KIND.branchExtracted,
     (marker) => marker.kind === MARKER_KIND.branchExtracted && marker.branchId === branchId,
+  );
+
+/**
+ * Skill-evolution's per-branch analysis marker (DLT-080). Keyed by the branch summary's entry id,
+ * NOT the positional `topic-N` branch id — a reversal renumbers the topic set, and the
+ * crash-recovery re-close is exactly when that would bite (DES-008's entry-ids-not-positions rule).
+ */
+export const markBranchAnalyzed = (session: AgentSession, summaryEntryId: string): string =>
+  appendState(session, COMPLETION_MARKER, {
+    kind: MARKER_KIND.skillEvolutionAnalyzed,
+    summaryEntryId,
+  } satisfies SkillEvolutionAnalyzedMarker);
+
+export const isBranchAnalyzed = (session: AgentSession, summaryEntryId: string): boolean =>
+  hasMarker(
+    session,
+    MARKER_KIND.skillEvolutionAnalyzed,
+    (marker) =>
+      marker.kind === MARKER_KIND.skillEvolutionAnalyzed &&
+      marker.summaryEntryId === summaryEntryId,
   );
 
 export const markStepDone = (session: AgentSession, step: string): string =>

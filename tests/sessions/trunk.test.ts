@@ -11,9 +11,11 @@ import {
   effectiveKind,
   getAllBranchRecords,
   getBranchRecords,
+  isBranchAnalyzed,
   isBranchExtracted,
   isStepDone,
   localDay,
+  markBranchAnalyzed,
   markBranchExtracted,
   markReversed,
   markStepDone,
@@ -459,6 +461,32 @@ describe("completion markers", () => {
     expect(isStepDone(session, "prune")).toBe(false);
     // a branch marker named like a step must not satisfy the step query
     expect(isStepDone(session, "topic-9")).toBe(false);
+  });
+
+  it("round-trips skill-evolution analyzed markers keyed by summaryEntryId (DLT-080)", () => {
+    const session = makeSession("/s/today.jsonl");
+
+    expect(isBranchAnalyzed(session, "sum-1")).toBe(false);
+
+    markBranchAnalyzed(session, "sum-1");
+
+    expect(isBranchAnalyzed(session, "sum-1")).toBe(true);
+    expect(isBranchAnalyzed(session, "sum-2")).toBe(false);
+  });
+
+  it("isolates analyzed markers from extracted and step markers (cross-kind)", () => {
+    const session = makeSession("/s/today.jsonl");
+
+    // An `extracted` marker carrying the same string must not satisfy the analyzed query…
+    markBranchExtracted(session, "sum-1");
+    expect(isBranchAnalyzed(session, "sum-1")).toBe(false);
+
+    // …and vice versa, even when the strings look like the other kind's key.
+    markBranchAnalyzed(session, "topic-1");
+    markBranchAnalyzed(session, "memory-prune");
+
+    expect(isBranchExtracted(session, "topic-1")).toBe(false);
+    expect(isStepDone(session, "memory-prune")).toBe(false);
   });
 });
 
