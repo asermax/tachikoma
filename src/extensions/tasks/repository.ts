@@ -143,6 +143,16 @@ export class TaskRepository {
 
   // ---- instances ----------------------------------------------------------------
 
+  /**
+   * An instance with no parent definition — the run-now tool's ad-hoc path and the
+   * dispatch-event handler share it, so `definitionId: null` is written in exactly one place.
+   */
+  createAdHocInstance(
+    values: Pick<NewTaskInstance, "taskType" | "prompt" | "scheduledFor" | "goal">,
+  ): TaskInstanceRecord {
+    return this.createInstance({ definitionId: null, ...values });
+  }
+
   createInstance(values: NewTaskInstance): TaskInstanceRecord {
     const now = this.now();
 

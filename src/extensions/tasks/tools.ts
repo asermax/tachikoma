@@ -382,8 +382,7 @@ export const handleRunTaskNow = (
 
   const taskType = args.type ?? "background";
 
-  const instance = repository.createInstance({
-    definitionId: null,
+  const instance = repository.createAdHocInstance({
     taskType,
     prompt: args.prompt as string,
     // Ad-hoc runs carry the inline goal directly (no parent definition), else null.

@@ -1,13 +1,9 @@
 import { Type } from "typebox";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
-import {
-  DISPATCH_BACKGROUND_TASK_EVENT,
-  type DispatchBackgroundTaskPayload,
-  NOTIFY_EVENT,
-  SEVERITIES,
-} from "../../events.ts";
+import { DISPATCH_BACKGROUND_TASK_EVENT, NOTIFY_EVENT, SEVERITIES } from "../../events.ts";
 import { defineExtension } from "../api.ts";
+import { handleDispatchEvent } from "./dispatch.ts";
 import { BackgroundRunner } from "./executor.ts";
 import { expireWaitingInstances } from "./expiration.ts";
 import { generateDueInstances } from "./generation.ts";
@@ -60,34 +56,11 @@ export default defineExtension<TasksConfig>({
     const timezone = app.extensionConfig.timezone ?? app.config.scheduler.timezone;
     const now = () => new Date();
 
-    // Ad-hoc background instances gain a programmatic creator (DLT-080's skill-evolution reporter
-    // is the first emitter): validate the payload, queue a pending instance, and let the existing
-    // 60 s tick dispatch it. An invalid payload is logged and dropped — never thrown into the
-    // emitter (task-creation logic stays here, inside tasks — DES-002).
-    app.events.on(DISPATCH_BACKGROUND_TASK_EVENT, (payload) => {
-      const request = payload as Partial<DispatchBackgroundTaskPayload>;
-
-      if (typeof request?.prompt !== "string" || request.prompt.trim() === "") {
-        app.log.warn({ payload }, "dispatch-background-task payload has no prompt — dropped");
-        return;
-      }
-
-      const goal =
-        typeof request.goal === "string" && request.goal.trim() !== "" ? request.goal : null;
-
-      const instance = repository.createInstance({
-        definitionId: null,
-        taskType: "background",
-        prompt: request.prompt,
-        goal,
-        scheduledFor: now(),
-      });
-
-      app.log.info(
-        { instanceId: instance.id, source: request.source ?? "(unknown)" },
-        "background task instance created from dispatch event",
-      );
-    });
+    // Ad-hoc background instances gain a programmatic creator (DLT-080's skill-evolution
+    // reporter is the first emitter) — the subscriber lives in dispatch.ts.
+    app.events.on(DISPATCH_BACKGROUND_TASK_EVENT, (payload) =>
+      handleDispatchEvent({ repository, now, log: app.log }, payload),
+    );
 
     app.bootstrap("crash-recovery", () => {
       const count = repository.markRunningAsFailed("system restart");
