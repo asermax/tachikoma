@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseWithSchema } from "../../src/config/parse.ts";
-import type { AppContext } from "../../src/extensions/api.ts";
+import type { AppContext, PostProcessor } from "../../src/extensions/api.ts";
 import skillEvolution, {
   type SkillEvolutionConfig,
   SkillEvolutionConfigSchema,
@@ -25,6 +25,7 @@ interface BootstrapCall {
 
 interface SetupResult {
   bootstrapCalls: BootstrapCall[];
+  processors: PostProcessor[];
   log: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
 }
 
@@ -41,16 +42,28 @@ const setupWith = (extensionConfig: SkillEvolutionConfig, workspaceDir: string):
   const bootstrap = vi.fn((name: string, hook: () => void | Promise<void>) => {
     bootstrapCalls.push({ name, hook });
   });
+  const processors: PostProcessor[] = [];
   const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 
   skillEvolution.setup({
     extensionConfig,
     log,
-    workspace: { root: workspaceDir, dataDir: join(workspaceDir, ".tachikoma") },
+    workspace: {
+      root: workspaceDir,
+      dataDir: join(workspaceDir, ".tachikoma"),
+      resolve: (...parts: string[]) => join(workspaceDir, ...parts),
+    },
     bootstrap,
+    sessions: {
+      registerProcessor: vi.fn((processor: PostProcessor) => {
+        processors.push(processor);
+      }),
+    },
+    agent: { forkAndContinue: vi.fn(), branchFile: vi.fn(), side: { run: vi.fn() } },
+    events: { emit: vi.fn() },
   } as unknown as AppContext<SkillEvolutionConfig>);
 
-  return { bootstrapCalls, log };
+  return { bootstrapCalls, processors, log };
 };
 
 const setup = async (extensionConfig: SkillEvolutionConfig): Promise<SetupResult> => {
@@ -67,10 +80,18 @@ describe("skill-evolution extension setup", () => {
     expect(config({ postWorkPrompt: "Open PRs" }).postWorkPrompt).toBe("Open PRs");
   });
 
-  it("registers the layout bootstrap hook when enabled", async () => {
-    const { bootstrapCalls } = await setup(config());
+  it("registers the layout bootstrap and the main-phase trunk-close processor when enabled", async () => {
+    const { bootstrapCalls, processors } = await setup(config());
 
     expect(bootstrapCalls.map((call) => call.name)).toEqual(["init-skill-evolution-layout"]);
+
+    // main phase = alongside memory's trunk close under the phased runner's allSettled.
+    expect(processors).toHaveLength(1);
+    expect(processors[0]).toMatchObject({
+      name: "skill-evolution-trunk-close",
+      phase: "main",
+      statusLabel: "Evolving skills",
+    });
   });
 
   it("seeds the store from the bootstrap hook (workspace root captured in closure)", async () => {
@@ -87,10 +108,11 @@ describe("skill-evolution extension setup", () => {
     );
   });
 
-  it("registers nothing when the extension is disabled", async () => {
-    const { bootstrapCalls, log } = await setup(config({ enabled: false }));
+  it("registers nothing — no bootstrap, no processor — when the extension is disabled (R13)", async () => {
+    const { bootstrapCalls, processors, log } = await setup(config({ enabled: false }));
 
     expect(bootstrapCalls).toEqual([]);
+    expect(processors).toEqual([]);
     expect(log.info).toHaveBeenCalledWith("skill-evolution extension disabled by configuration");
   });
 });

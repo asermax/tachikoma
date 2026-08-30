@@ -10,6 +10,7 @@ import { proposalSystemPrompt } from "../../src/extensions/skill-evolution/promp
 import {
   buildProposalTools,
   type ProposalCapture,
+  ProposalRunError,
   REMOTE_BRANCH_PATTERN,
   type ReportedProposal,
   runProposalAgent,
@@ -558,5 +559,47 @@ describe("runProposalAgent (faked SideRunner)", () => {
 
     expect(log.warn).toHaveBeenCalled();
     expect(options?.prompt).toContain("(none — report an empty proposal list and stop)");
+  });
+
+  it("a dying run throws ProposalRunError carrying whatever was reported before the death", async () => {
+    const { workspaceRoot, tmpDir } = await agentWorkspace();
+    const run = vi.fn(async (options: HeadlessRunOptions): Promise<{ text: string }> => {
+      const report = options.customTools?.find((tool) => tool.name === "report_proposals");
+
+      if (report != null) {
+        await report.execute(
+          "test",
+          { proposals: [proposal("skill-evolution/deploy-env-flag")] } as never,
+          undefined,
+          undefined,
+          undefined as never,
+        );
+      }
+
+      // The run dies AFTER reporting — e.g. the next proposal's model call failed.
+      throw new Error("model call failed mid-run");
+    });
+
+    let thrown: unknown;
+    try {
+      await runProposalAgent({
+        side: { run },
+        workspaceRoot,
+        tmpDir,
+        defaultBranch: "main",
+        eligible: ["deploy-env-flag.md"],
+        impactLog,
+        log,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ProposalRunError);
+    expect((thrown as ProposalRunError).proposals).toEqual([
+      proposal("skill-evolution/deploy-env-flag"),
+    ]);
+    expect((thrown as ProposalRunError).cause).toBeInstanceOf(Error);
+    expect((thrown as ProposalRunError).message).toContain("model call failed mid-run");
   });
 });

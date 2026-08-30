@@ -114,6 +114,13 @@ export interface ReconcileAborted {
 
 export interface ReconcileCompleted {
   aborted: false;
+  /**
+   * The resolved remote default branch — the one value the downstream proposal/verify stages also
+   * need (their worktree base and diff base). Threading it out keeps the resolution to once per
+   * run, inside the stage whose failure semantics already cover it: a second resolution at the
+   * proposal stage could throw mid-run and skip verification, breaking the always-verify guarantee.
+   */
+  defaultBranch: string;
   /** One record per classified `proposed` row, in ledger order. */
   classifications: ClassificationRecord[];
   /** Rows whose status actually changed (pending rows stay `proposed` and don't count). */
@@ -222,5 +229,5 @@ export const reconcileProposals = async (input: {
     await deps.writeImpactLog(path, updatedRows);
   }
 
-  return { aborted: false, classifications, updated };
+  return { aborted: false, defaultBranch, classifications, updated };
 };

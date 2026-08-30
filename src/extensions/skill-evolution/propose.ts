@@ -61,6 +61,23 @@ export interface ProposalCapture {
 }
 
 /**
+ * A proposal run that died partway. Carries whatever `report_proposals` captured before the death:
+ * the processor still hands those entries to verification, so a branch the agent pushed AND
+ * reported before dying is verified, logged, swept, and reported even though the run failed
+ * (R8/R10 partial-failure guarantees). The run's failure surfaces separately — the processor
+ * rethrows this error after verification settles.
+ */
+export class ProposalRunError extends Error {
+  /** The capture at the moment the run died — possibly empty. */
+  readonly proposals: ReportedProposal[];
+
+  constructor(message: string, options: { cause: unknown; proposals: ReportedProposal[] }) {
+    super(message, { cause: options.cause });
+    this.proposals = options.proposals;
+  }
+}
+
+/**
  * Resolve `path` against `root` and return it only when it lands inside `root` (inclusive).
  * The `resolve.ts` `resolvePath` shape with a bound root: absolute paths pass through, relative
  * paths resolve against the root — and anything escaping the root is a refusal, not an error.
@@ -525,9 +542,9 @@ const skillsInventorySection = async (workspaceRoot: string, log: Logger): Promi
  * Run the proposal agent (S7): one context-free headless run over the eligible pattern pages, the
  * impact log, and the workspace skills inventory. `isolatePrompt: true` over `run`'s default empty
  * built-in allowlist makes the five custom tools the entire surface — no grafted context files or
- * skills catalog. Returns the captured `report_proposals` list (possibly empty); a thrown run
- * propagates to the caller, whose verify-and-sweep `finally` still runs — whatever pushed before
- * the death is verified and logged from git state.
+ * skills catalog. Returns the captured `report_proposals` list (possibly empty). A dying run
+ * throws a {@link ProposalRunError} carrying the partial capture — the caller still verifies
+ * whatever pushed-and-reported before the death, and its verify-and-sweep `finally` runs.
  */
 export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<ReportedProposal[]> => {
   const { side, workspaceRoot, tmpDir, defaultBranch, eligible, impactLog, log } = deps;
@@ -565,20 +582,27 @@ export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<Reporte
       "`pattern` is the page filename exactly as listed above. If nothing justifies a change, report an empty list.",
   ].join("\n");
 
-  await side.run({
-    system: proposalSystemPrompt(workspaceRoot, tmpDir, defaultBranch),
-    prompt,
-    customTools: buildProposalTools({
-      workspaceRoot,
-      tmpDir,
-      defaultBranch,
-      remoteBranchNames: async () =>
-        new Set((await listRemoteBranchTips(workspaceRoot, REMOTE_BRANCH_PATTERN)).keys()),
-      capture,
-    }),
-    tier: "processor",
-    isolatePrompt: true,
-  });
+  try {
+    await side.run({
+      system: proposalSystemPrompt(workspaceRoot, tmpDir, defaultBranch),
+      prompt,
+      customTools: buildProposalTools({
+        workspaceRoot,
+        tmpDir,
+        defaultBranch,
+        remoteBranchNames: async () =>
+          new Set((await listRemoteBranchTips(workspaceRoot, REMOTE_BRANCH_PATTERN)).keys()),
+        capture,
+      }),
+      tier: "processor",
+      isolatePrompt: true,
+    });
+  } catch (error) {
+    throw new ProposalRunError(
+      `proposal agent run failed: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error, proposals: capture.proposals },
+    );
+  }
 
   return capture.proposals;
 };
