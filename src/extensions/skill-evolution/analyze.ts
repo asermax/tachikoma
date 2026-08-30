@@ -9,6 +9,7 @@ import { type BranchRecord, isBranchAnalyzed, markBranchAnalyzed } from "../../s
 import { sweepEmptyMarkdown } from "../../util/markdown-store.ts";
 import { skillEvolutionDir } from "./layout.ts";
 import { branchAnalysisInstruction, maintenanceSystemPrompt } from "./prompts.ts";
+import { IMPACT_LOG_FILENAME } from "./store.ts";
 
 /** Used by the maintenance pass, which runs a bare headless side-run (memory's `Runner` idiom). */
 export type Runner = Pick<SideRunner, "run">;
@@ -57,7 +58,9 @@ export const analyzeBranches = async (
       FILE_EDIT_TOOLS,
     );
 
-    await sweepEmptyMarkdown(skillEvolutionDir(workspaceRoot), log);
+    // The ledger is host-written bookkeeping — a blanked one must survive the sweep (the index
+    // always does; the sweep's own structural rule).
+    await sweepEmptyMarkdown(skillEvolutionDir(workspaceRoot), log, [IMPACT_LOG_FILENAME]);
   };
 
   return walkBranches(session, sessionFile, records, day, {
@@ -101,7 +104,7 @@ export const runMaintenance = async (deps: MaintenanceDeps): Promise<void> => {
     tier: "processor",
   });
 
-  await sweepEmptyMarkdown(skillEvolutionDir(deps.workspaceRoot), deps.log);
+  await sweepEmptyMarkdown(skillEvolutionDir(deps.workspaceRoot), deps.log, [IMPACT_LOG_FILENAME]);
 
   deps.log.info(
     { producedOutput: result.text.length > 0, durationMs: Date.now() - start },

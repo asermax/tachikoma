@@ -99,10 +99,11 @@ describe("sweepEmptyMarkdown", () => {
     await writeFile(join(dir, "blank.md"), "  \n\n", "utf8");
     await writeFile(join(dir, "keep.md"), "real content", "utf8");
     await writeFile(join(dir, "notes.txt"), "", "utf8");
+    await writeFile(join(dir, "MEMORY.md"), "", "utf8");
 
     await sweepEmptyMarkdown(dir, fakeLog);
 
-    expect((await readdir(dir)).sort()).toEqual(["keep.md", "notes.txt"]);
+    expect((await readdir(dir)).sort()).toEqual(["MEMORY.md", "keep.md", "notes.txt"]);
   });
 
   it("ignores missing directories", async () => {

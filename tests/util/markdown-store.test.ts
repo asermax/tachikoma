@@ -78,6 +78,24 @@ describe("sweepEmptyMarkdown", () => {
     expect((await readdir(dir)).sort()).toEqual(["keep.md", "notes.txt"]);
   });
 
+  it("never sweeps the index, even when blank", async () => {
+    await writeFile(join(dir, MEMORY_INDEX_FILENAME), "", "utf8");
+    await writeFile(join(dir, "emptied.md"), "", "utf8");
+
+    await sweepEmptyMarkdown(dir, fakeLog);
+
+    expect(await readdir(dir)).toEqual([MEMORY_INDEX_FILENAME]);
+  });
+
+  it("preserves additional structural files passed by the caller", async () => {
+    await writeFile(join(dir, "ledger.md"), "", "utf8");
+    await writeFile(join(dir, "emptied.md"), "", "utf8");
+
+    await sweepEmptyMarkdown(dir, fakeLog, ["ledger.md"]);
+
+    expect(await readdir(dir)).toEqual(["ledger.md"]);
+  });
+
   it("ignores missing directories", async () => {
     await expect(sweepEmptyMarkdown(join(dir, "nope"), fakeLog)).resolves.toBeUndefined();
   });

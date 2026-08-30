@@ -56,8 +56,16 @@ export const isBlankMarkdown = async (path: string, info: { size: number }): Pro
 /**
  * The store-maintaining agents have no delete tool — they empty files
  * instead, and the host removes those leftovers here after each run.
+ * Structural files survive even when blank: the index is always preserved
+ * (an emptied index is still the store's front door), and callers with more
+ * structural files (e.g. a host-written ledger) pass their names to keep
+ * those too.
  */
-export const sweepEmptyMarkdown = async (dir: string, log: Logger): Promise<void> => {
+export const sweepEmptyMarkdown = async (
+  dir: string,
+  log: Logger,
+  preserve: readonly string[] = [],
+): Promise<void> => {
   let names: string[];
 
   try {
@@ -67,7 +75,9 @@ export const sweepEmptyMarkdown = async (dir: string, log: Logger): Promise<void
   }
 
   for (const name of names) {
-    if (!name.endsWith(".md")) continue;
+    if (!name.endsWith(".md") || name === MEMORY_INDEX_FILENAME || preserve.includes(name)) {
+      continue;
+    }
 
     const path = join(dir, name);
 
