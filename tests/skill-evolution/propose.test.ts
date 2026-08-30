@@ -238,6 +238,29 @@ describe("buildProposalTools — surface and refusal matrix", () => {
     expect(text).toContain("Refused");
   });
 
+  it.each([
+    { name: "add", args: ["add", "skills/deploy/SKILL.md"] },
+    { name: "commit", args: ["commit", "-m", "live-tree edit"] },
+  ])(
+    "git $name without the path parameter is refused — the live tree is never staged or committed",
+    async ({ args }) => {
+      const text = await invoke(toolNamed(tools(), "git"), { args });
+
+      expect(text).toContain("Refused");
+      expect(text).toContain("path");
+    },
+  );
+
+  it.each([
+    { name: "add", args: ["add", "skills/deploy/SKILL.md"] },
+    { name: "commit", args: ["commit", "-m", "live-tree edit"] },
+  ])("git $name at a tmp-dir path that is not a worktree is refused", async ({ args }) => {
+    const text = await invoke(toolNamed(tools(), "git"), { args, path: "." });
+
+    expect(text).toContain("Refused");
+    expect(text).toContain("worktree");
+  });
+
   it("a name already on the remote is refused with the collision-suffix guidance", async () => {
     remoteNames = vi.fn(async () => new Set(["skill-evolution/taken"]));
 
@@ -367,6 +390,31 @@ describe("buildProposalTools — happy paths (real git, bare origin)", () => {
     await expect(
       invoke(toolNamed(tools(), "git"), { args: ["log", "-1", "--format=%s"], path }),
     ).resolves.toContain("deploy: add --env flag");
+  });
+
+  it("add and commit accept a path inside the worktree, not only its root", async () => {
+    const path = await cutWorktree("deploy-env-flag");
+
+    await expect(
+      invoke(toolNamed(tools(), "write_file"), {
+        path: join(path, "skills", "deploy", "SKILL.md"),
+        content: "# Deploy\n\nAdd the --env flag.\n",
+      }),
+    ).resolves.toContain("Wrote");
+
+    await expect(
+      invoke(toolNamed(tools(), "git"), {
+        args: ["add", "SKILL.md"],
+        path: join(path, "skills", "deploy"),
+      }),
+    ).resolves.toMatch(/^exit 0/);
+
+    await expect(
+      invoke(toolNamed(tools(), "git"), {
+        args: ["commit", "-m", "deploy: add --env flag"],
+        path: join(path, "skills", "deploy"),
+      }),
+    ).resolves.toMatch(/^exit 0/);
   });
 
   it("push origin <name> creates the branch on the remote", async () => {

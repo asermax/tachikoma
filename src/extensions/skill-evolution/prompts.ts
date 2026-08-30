@@ -180,8 +180,9 @@ const PROPOSAL_BASE_PROMPT = `You are the skill-evolution proposal agent. You tu
 2. Read the skill files in the worktree (\`read_file\`/\`list_dir\` with that worktree's paths) and make
    the edit (\`write_file\`). Read before you write: the proposal should read as a considered change
    to the skill's actual guidance.
-3. Commit, targeting the worktree via git's \`path\` parameter: \`git\` with args \`["add", "<paths>"]\`
-   and \`path\` set to the worktree directory, then \`["commit", "-m", "<imperative message under 72 chars>"]\`
+3. Stage and commit inside the worktree — \`add\`/\`commit\` are refused unless git's \`path\` parameter
+   names the worktree (or a directory inside it): \`git\` with args \`["add", "<paths>"]\` and \`path\`
+   set to the worktree directory, then \`["commit", "-m", "<imperative message under 72 chars>"]\`
    the same way. Stage only the files you changed.
 4. Publish: \`git\` with args \`["push", "origin", "<branch>"]\` (again with \`path\` set to the worktree).
    A refused push carries the reason in its text — fix the name or the state and retry.

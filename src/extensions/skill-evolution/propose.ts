@@ -131,7 +131,7 @@ const GitParams = Type.Object({
   path: Type.Optional(
     Type.String({
       description:
-        "Directory to run git in — a worktree under the tmp dir (that is how you target a specific worktree). Defaults to the workspace root.",
+        "Directory to run git in — a worktree under the tmp dir (that is how you target a specific worktree). Defaults to the workspace root; add and commit must set it to a worktree.",
     }),
   ),
 });
@@ -154,6 +154,27 @@ const ReportParams = Type.Object({
 
 /** Read-only inspection plus staging/committing — the commit-agent allowlist verbatim. */
 const SIMPLE_GIT_SUBCOMMANDS = new Set(["status", "diff", "log", "show", "add", "commit"]);
+
+/**
+ * The working-tree-mutating pair. `add`/`commit` stage and commit whatever tree their cwd
+ * resolves to, so they refuse to run anywhere but inside a proposal worktree — R8's "the live
+ * working tree is never touched" is tool-enforced, not prompt-enforced. (A missing `path`
+ * defaults the cwd to the workspace root, and the tmp dir itself is a plain directory of the
+ * main repo — git run there walks up and would commit the live tree.)
+ */
+const WORKTREE_REQUIRED_SUBCOMMANDS = new Set(["add", "commit"]);
+
+/**
+ * Whether a directory already known to sit under the tmp dir is inside a proposal worktree: a
+ * worktree carries its own `.git` marker, while the tmp dir itself has none. The walk stops at
+ * the tmp dir boundary so the main repo's `.git` can never satisfy the check.
+ */
+const isInsideWorktree = async (tmpDir: string, path: string): Promise<boolean> => {
+  for (let dir = resolve(path); ; dir = dirname(dir)) {
+    if (await fileExists(join(dir, ".git"))) return true;
+    if (dir === resolve(tmpDir) || dir === dirname(dir)) return false;
+  }
+};
 
 /**
  * Validate a `worktree` invocation: `add` must carry `-b <branch>` matching the naming pattern and
@@ -396,7 +417,7 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
       name: "git",
       label: "Run git",
       description:
-        "Run a git command in the workspace repository. Allowed: worktree add (path under the tmp dir, -b skill-evolution/<name>), worktree remove, status, diff, log, show, add, commit, and push origin <branch> — new skill-evolution/* branches only, no force. Set `path` to a worktree directory under the tmp dir to target that worktree; commands otherwise run at the workspace root.",
+        "Run a git command in the workspace repository. Allowed: worktree add (path under the tmp dir, -b skill-evolution/<name>), worktree remove, status, diff, log, show, add, commit, and push origin <branch> — new skill-evolution/* branches only, no force. Set `path` to a worktree directory under the tmp dir to target that worktree; commands otherwise run at the workspace root, except add and commit, which are refused outside a worktree.",
       parameters: GitParams,
       async execute(_id, params) {
         const [subcommand, ...rest] = params.args;
@@ -430,6 +451,24 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
             `git ${subcommand} is not allowed.`,
             "Use only worktree, status, diff, log, show, add, commit, or push origin <branch>.",
           );
+        }
+
+        // The staging/committing pair is confined to a worktree: the live tree must stay
+        // untouched no matter what the agent tries (R8, enforced here rather than by prompt).
+        if (WORKTREE_REQUIRED_SUBCOMMANDS.has(subcommand)) {
+          if (params.path == null) {
+            return refusal(
+              `git ${subcommand} requires the path parameter.`,
+              `Staging and committing only run inside a proposal worktree — set path to the worktree directory under ${tmpDir}.`,
+            );
+          }
+
+          if (!(await isInsideWorktree(tmpDir, cwd))) {
+            return refusal(
+              `\`${params.path}\` is not inside a proposal worktree.`,
+              `Set path to the worktree directory (or a subdirectory of it) under ${tmpDir}.`,
+            );
+          }
         }
 
         const result = await runGitCapture(cwd, [

@@ -36,7 +36,7 @@ export interface VerifyDeps {
   /** Absolute paths of every registered worktree, the main tree included. */
   listWorktrees: (cwd: string) => Promise<string[]>;
   removeWorktree: (cwd: string, path: string) => Promise<GitResult>;
-  /** Local branch names in the proposal namespace (`skill-evolution/*`). */
+  /** Local branch names in the proposal namespace (`skill-evolution/*`); throws on failure. */
   listLocalProposalBranches: (cwd: string) => Promise<string[]>;
   deleteLocalBranch: (cwd: string, name: string) => Promise<GitResult>;
   pruneWorktrees: (cwd: string) => Promise<GitResult>;
@@ -87,7 +87,13 @@ export const gitVerifyDeps: VerifyDeps = {
       "--format=%(refname:short)",
     ]);
 
-    return result.code === 0 ? linesOf(result.stdout) : [];
+    if (result.code !== 0) {
+      throw new Error(
+        `git branch --list ${BRANCH_NAMESPACE}* failed: ${result.stderr || `exit code ${result.code}`}`,
+      );
+    }
+
+    return linesOf(result.stdout);
   },
 
   deleteLocalBranch: (cwd, name) => runGitCapture(cwd, ["branch", "-D", name]),
