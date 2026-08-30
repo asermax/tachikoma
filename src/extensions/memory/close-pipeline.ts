@@ -1,10 +1,9 @@
-import { rm } from "node:fs/promises";
-
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 
 import { FILE_EDIT_TOOLS } from "../../agent/file-tools.ts";
 import type { AgentManager } from "../../agent/manager.ts";
 import type { Logger } from "../../log.ts";
+import { walkBranches } from "../../sessions/branch-walk.ts";
 import {
   type BranchRecord,
   isBranchExtracted,
@@ -87,23 +86,24 @@ export interface ClosePhaseDeps {
 }
 
 /**
- * Phase 1 — per-branch extraction. For every branch lacking an `extracted` marker, fork ONLY that
- * branch's conversation (root → its original leaf, sliced conceptually from its base forward) and run
- * the extraction forks over it (episodic + topics — learnings is folded into the topics fork, never
- * its own), then write the per-branch marker. Idempotent: a re-run skips
- * branches that already carry a marker. The temp branch file is deleted after the fork.
+ * Phase 1 — per-branch extraction, on the shared branch walk (`walkBranches`). For every branch
+ * lacking an `extracted` marker, the walk forks ONLY that branch's conversation (root → its
+ * original leaf, sliced conceptually from its base forward) and hands it to this phase's body: the
+ * extraction forks (episodic + topics — learnings is folded into the topics fork, never its own)
+ * plus their post-run sweeps. Idempotent: a re-run skips branches that already carry a marker. The
+ * temp branch file is deleted after the body settles (the walk's settle-then-delete guarantee).
  *
- * Branches are extracted one at a time, but a single branch's stores (episodic, topics) run
- * concurrently by default — they write disjoint directories, so there is no contention. Each store's
- * fork is awaited to settlement (all-settled) before the shared branch file is deleted, so a sibling
- * fork is never left reading a file the `finally` is tearing down. Set `parallelize: false` to fall
- * back to one store at a time. Cross-branch concurrency is intentionally NOT done here: same-store
- * forks across branches share the canonical store files, so that needs the separate fan-out/synthesis
- * extraction mode (single synthesis writer) rather than this flag.
+ * A single branch's stores (episodic, topics) run concurrently by default — they write disjoint
+ * directories, so there is no contention. The body awaits every store to settlement (all-settled)
+ * before returning, so the walk's cleanup never deletes the branch file while a sibling fork is
+ * still copying it. Set `parallelize: false` to fall back to one store at a time. Cross-branch
+ * concurrency is intentionally NOT done here: same-store forks across branches share the canonical
+ * store files, so that needs the separate fan-out/synthesis extraction mode (single synthesis
+ * writer) rather than this flag.
  *
- * A single branch's failure is isolated — it is logged and skipped (no marker, so it retries on the
- * next close) rather than aborting the whole day. If ANY branch failed, the function throws after the
- * loop so the pipeline does not advance to the downstream phases and the trunk stays unclosed for a
+ * A single branch's failure is isolated — the walk logs it and skips the marker (so it retries on
+ * the next close) rather than aborting the whole day. If ANY branch failed, this function throws
+ * so the pipeline does not advance to the downstream phases and the trunk stays unclosed for a
  * retry (markers keep the already-extracted branches from being redone).
  */
 export const extractBranches = async (
@@ -121,34 +121,10 @@ export const extractBranches = async (
     return;
   }
 
-  const failed: string[] = [];
-  const n = records.length;
-
-  for (const [i0, record] of records.entries()) {
-    // 1-based array position over ALL records (advances even for skipped branches, so a recovery
-    // re-run still shows each branch's true position in the day's set).
-    const i = i0 + 1;
-
-    if (isBranchExtracted(session, record.branchId)) {
-      log.debug({ branchId: record.branchId }, "branch already extracted — skipping");
-      continue;
-    }
-
-    // Cut the branch from a manager loaded fresh off disk — NOT the live trunk session — so this
-    // never mutates the session whose other branches we still need to walk (see AgentManager.branchFile).
-    const branchFile = agent.branchFile(sessionFile, record.originalLeafId);
-
-    if (branchFile == null) {
-      log.warn({ branchId: record.branchId }, "could not fork branch for extraction — skipping");
-      continue;
-    }
-
-    status?.(`Extracting branch ${i}/${n}…`);
-
-    const start = Date.now();
-
-    // Each store's fork copies this throwaway branchFile into its own session (the source is
-    // read-only), hard-limited to file tools so it reuses the persona without messaging or tasks.
+  // The per-branch body: each store's fork copies the walk's throwaway branchFile into its own
+  // session (the source is read-only), hard-limited to file tools so it reuses the persona without
+  // messaging or tasks.
+  const body = async (record: BranchRecord, branchFile: string): Promise<void> => {
     const runStore = async (store: ExtractionStore): Promise<void> => {
       await agent.forkAndContinue(
         branchFile,
@@ -163,38 +139,38 @@ export const extractBranches = async (
       }
     };
 
-    try {
-      try {
-        // allSettled (not Promise.all) so the `finally` never deletes branchFile while a sibling fork
-        // is still copying it — a first-rejection short-circuit could tear the shared file down mid-read.
-        if (parallelize) {
-          const outcomes = await Promise.allSettled(EXTRACTION_STORES.map(runStore));
-          const rejection = outcomes.find(
-            (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
-          );
-          if (rejection) throw rejection.reason;
-        } else {
-          for (const store of EXTRACTION_STORES) await runStore(store);
-        }
-      } finally {
-        await rm(branchFile, { force: true });
-      }
-
-      markBranchExtracted(session, record.branchId);
-
-      status?.(`Extracted branch ${i}/${n}`);
-
-      log.info({ branchId: record.branchId, durationMs: Date.now() - start }, "branch extracted");
-    } catch (error) {
-      failed.push(record.branchId);
-      status?.(`Branch ${i}/${n} failed — will retry`);
-      log.error({ err: error, branchId: record.branchId }, "branch extraction failed — skipping");
+    // allSettled (not Promise.all) so the walk never deletes branchFile while a sibling fork is
+    // still copying it — a first-rejection short-circuit could tear the shared file down mid-read.
+    if (parallelize) {
+      const outcomes = await Promise.allSettled(EXTRACTION_STORES.map(runStore));
+      const rejection = outcomes.find(
+        (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
+      );
+      if (rejection) throw rejection.reason;
+    } else {
+      for (const store of EXTRACTION_STORES) await runStore(store);
     }
-  }
+  };
+
+  const { failed } = await walkBranches(session, sessionFile, records, day, {
+    agent,
+    body,
+    isDone: (trunkSession, record) => isBranchExtracted(trunkSession, record.branchId),
+    markDone: (trunkSession, record) => markBranchExtracted(trunkSession, record.branchId),
+    log,
+    status,
+    progress: {
+      start: (i, n) => `Extracting branch ${i}/${n}…`,
+      done: (i, n) => `Extracted branch ${i}/${n}`,
+      failed: (i, n) => `Branch ${i}/${n} failed — will retry`,
+    },
+  });
 
   if (failed.length > 0) {
     throw new Error(
-      `branch extraction failed for ${failed.length} branch(es): ${failed.join(", ")}`,
+      `branch extraction failed for ${failed.length} branch(es): ${failed
+        .map((record) => record.branchId)
+        .join(", ")}`,
     );
   }
 };
