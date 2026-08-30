@@ -183,6 +183,23 @@ export interface VerifyDepsInput {
   deps: VerifyDeps;
 }
 
+export interface SweepInput {
+  workspaceRoot: string;
+  tmpDir: string;
+  log: Logger;
+  /** Defaults to the production git dependency set. */
+  deps?: VerifyDeps;
+}
+
+/**
+ * The namespace sweep on its own (S8): the processor calls it on every no-proposal path, so a
+ * hard crash's orphaned worktrees and local branches are cleaned by the next run whether or not
+ * it proposes anything (the proposing path sweeps in `verifyAndRecord`'s `finally`). Never
+ * throws — each stage logs its failures and the sweep continues.
+ */
+export const sweepProposalArtifacts = async (input: SweepInput): Promise<void> =>
+  sweepNamespaces(input.workspaceRoot, input.tmpDir, input.log, input.deps ?? gitVerifyDeps);
+
 /**
  * Verify each reported proposal from git state, append `proposed` rows for what holds, and sweep
  * the feature's namespaces no matter how the run ended. Returns the appended rows (possibly

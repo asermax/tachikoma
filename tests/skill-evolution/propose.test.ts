@@ -11,6 +11,7 @@ import {
   buildProposalTools,
   type ProposalCapture,
   ProposalRunError,
+  proposalTmpDir,
   REMOTE_BRANCH_PATTERN,
   type ReportedProposal,
   runProposalAgent,
@@ -255,7 +256,10 @@ describe("buildProposalTools — surface and refusal matrix", () => {
     { name: "add", args: ["add", "skills/deploy/SKILL.md"] },
     { name: "commit", args: ["commit", "-m", "live-tree edit"] },
   ])("git $name at a tmp-dir path that is not a worktree is refused", async ({ args }) => {
-    const text = await invoke(toolNamed(tools(), "git"), { args, path: "." });
+    const text = await invoke(toolNamed(tools(), "git"), {
+      args,
+      path: join(tmpDir, "plain"),
+    });
 
     expect(text).toContain("Refused");
     expect(text).toContain("worktree");
@@ -273,11 +277,22 @@ describe("buildProposalTools — surface and refusal matrix", () => {
     expect(text).toContain("-2");
   });
 
-  it("git with a path parameter outside the tmp dir is refused", async () => {
+  it("git inspection commands accept any path — the check is scoped to add and commit", async () => {
     const text = await invoke(toolNamed(tools(), "git"), {
       args: ["status"],
       path: join(base, "workspace"),
     });
+
+    // No refusal: `path` is a plain cwd for read-only subcommands (git itself fails here — the
+    // directory is not a repository — which is the agent's problem, not a guard's).
+    expect(text).not.toContain("Refused");
+  });
+
+  it.each([
+    { name: "add", args: ["add", "skills/deploy/SKILL.md"] },
+    { name: "commit", args: ["commit", "-m", "live-tree edit"] },
+  ])("git $name with a path outside the tmp dir is refused", async ({ args }) => {
+    const text = await invoke(toolNamed(tools(), "git"), { args, path: join(base, "elsewhere") });
 
     expect(text).toContain("Refused");
     expect(text).toContain(tmpDir);
@@ -317,13 +332,15 @@ describe("buildProposalTools — happy paths (real git, bare origin)", () => {
     base = await makeTempDir();
     const { cloneA } = await setupRemotePair(base);
     ws = cloneA;
-    tmpDir = join(ws, ".tachikoma", "tmp", "skill-evolution");
+    // Production shape: the worktrees live outside the repo, under the OS temp dir.
+    tmpDir = proposalTmpDir(ws);
     await mkdir(tmpDir, { recursive: true });
     capture = emptyCapture();
   });
 
   afterEach(async () => {
     await runGit(ws, ["worktree", "prune"]);
+    await rm(tmpDir, { recursive: true, force: true });
     await rm(base, { recursive: true, force: true });
   });
 
@@ -417,6 +434,71 @@ describe("buildProposalTools — happy paths (real git, bare origin)", () => {
     ).resolves.toMatch(/^exit 0/);
   });
 
+  it("a relative path runs the mutating pair where the guard bound it — never against the workspace", async () => {
+    const path = await cutWorktree("deploy-env-flag");
+
+    await expect(
+      invoke(toolNamed(tools(), "write_file"), {
+        path: join(path, "skills", "deploy", "SKILL.md"),
+        content: "# Deploy\n\nRelative edit.\n",
+      }),
+    ).resolves.toContain("Wrote");
+
+    // `path` resolves against the tmp dir for add/commit (the validated base) — the same
+    // relative string must never execute against a same-named workspace directory.
+    await expect(
+      invoke(toolNamed(tools(), "git"), { args: ["add", "-A"], path: "deploy-env-flag" }),
+    ).resolves.toMatch(/^exit 0/);
+    await expect(
+      invoke(toolNamed(tools(), "git"), {
+        args: ["commit", "-m", "relative-path edit"],
+        path: "deploy-env-flag",
+      }),
+    ).resolves.toMatch(/^exit 0/);
+
+    // The commit landed on the proposal branch, not on the live tree.
+    await expect(
+      runGit(ws, ["log", "-1", "--format=%s", "skill-evolution/deploy-env-flag"]),
+    ).resolves.toContain("relative-path edit");
+    await expect(runGit(ws, ["log", "-1", "--format=%s"])).resolves.not.toContain(
+      "relative-path edit",
+    );
+    expect(await runGit(ws, ["status", "--porcelain"])).toBe("");
+  });
+
+  it("a planted .git marker under the tmp dir cannot redirect add into the live tree", async () => {
+    // The attack: write_file happily creates tmpDir/skills/.git/HEAD, making tmpDir/skills
+    // look like a worktree to the guard; a relative path "skills" then executes against the
+    // workspace's same-named directory if validation and execution ever use different bases.
+    await expect(
+      invoke(toolNamed(tools(), "write_file"), {
+        path: join(tmpDir, "skills", ".git", "HEAD"),
+        content: "ref: refs/heads/main\n",
+      }),
+    ).resolves.toContain("Wrote");
+    await mkdir(join(ws, "skills"), { recursive: true });
+    await writeFile(join(ws, "skills", "SKILL.md"), "live-tree content\n", "utf8");
+
+    // Not refused (the marker satisfies the worktree check) — but it runs at the validated
+    // tmp-dir binding, where the fake repository makes git fail harmlessly.
+    const text = await invoke(toolNamed(tools(), "git"), { args: ["add", "-A"], path: "skills" });
+
+    expect(text).not.toContain("Refused");
+    // The live tree staged nothing: the workspace file is still untracked, the index empty.
+    expect(await runGit(ws, ["diff", "--cached", "--name-only"])).toBe("");
+    expect(await runGit(ws, ["status", "--porcelain"])).toBe("?? skills/");
+  });
+
+  it("worktree add with a relative positional is refused — it would land inside the live tree", async () => {
+    const text = await invoke(toolNamed(tools(), "git"), {
+      args: ["worktree", "add", "-b", "skill-evolution/in-live", "in-live"],
+    });
+
+    expect(text).toContain("Refused");
+    expect(text).toContain(tmpDir);
+    await expect(fileExists(join(ws, "in-live"))).resolves.toBe(false);
+  });
+
   it("push origin <name> creates the branch on the remote", async () => {
     const path = await cutWorktree("deploy-env-flag");
     await mkdir(join(path, "skills", "deploy"), { recursive: true });
@@ -463,7 +545,7 @@ describe("runProposalAgent (faked SideRunner)", () => {
   /** A workspace-shaped fixture: one pattern page, one skill, an open ledger row. */
   const agentWorkspace = async (): Promise<{ workspaceRoot: string; tmpDir: string }> => {
     const workspaceRoot = join(base, "workspace");
-    const tmpDir = join(workspaceRoot, ".tachikoma", "tmp", "skill-evolution");
+    const tmpDir = proposalTmpDir(workspaceRoot);
     await ensureSkillEvolutionLayout(workspaceRoot, log);
     await writeFile(
       join(workspaceRoot, "memories", "skill-evolution", "deploy-env-flag.md"),

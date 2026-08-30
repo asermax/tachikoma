@@ -8,7 +8,10 @@ import {
   impactLogPath,
   skillEvolutionDir,
 } from "../../src/extensions/skill-evolution/layout.ts";
-import type { ReportedProposal } from "../../src/extensions/skill-evolution/propose.ts";
+import {
+  proposalTmpDir,
+  type ReportedProposal,
+} from "../../src/extensions/skill-evolution/propose.ts";
 import {
   IMPACT_LOG_STATUSES,
   readImpactLog,
@@ -16,6 +19,7 @@ import {
 } from "../../src/extensions/skill-evolution/store.ts";
 import {
   gitVerifyDeps,
+  sweepProposalArtifacts,
   type VerifyDeps,
   verifyAndRecord,
 } from "../../src/extensions/skill-evolution/verify.ts";
@@ -41,10 +45,9 @@ describe("verifyAndRecord (real git, bare origin)", () => {
   beforeEach(async () => {
     base = await makeTempDir();
     ws = (await setupRemotePair(base)).cloneA;
-    tmpDir = join(ws, ".tachikoma", "tmp", "skill-evolution");
-    // Production workspaces ignore `.tachikoma/` (GITIGNORE_ENTRIES) — the tmp
-    // worktrees must never surface in the main tree's status.
-    await writeFile(join(ws, ".gitignore"), ".tachikoma/\n", "utf8");
+    // Production shape: the worktrees live outside the repo, under the OS temp dir — nothing
+    // proposal-side can dirty the main tree, so no gitignore scaffolding is needed.
+    tmpDir = proposalTmpDir(ws);
     await mkdir(tmpDir, { recursive: true });
 
     // A committed store (what the finalize phase leaves behind) plus one workspace skill, so the
@@ -59,6 +62,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
 
   afterEach(async () => {
     await runGit(ws, ["worktree", "prune"]);
+    await rm(tmpDir, { recursive: true, force: true });
     await rm(base, { recursive: true, force: true });
   });
 
@@ -261,6 +265,24 @@ describe("verifyAndRecord (real git, bare origin)", () => {
     await expect(worktreesUnderTmp()).resolves.toEqual([]);
     await expect(localProposalBranches()).resolves.toEqual([]);
     expect(await runGit(ws, ["status", "--porcelain"])).toBe("");
+  });
+
+  it("sweepProposalArtifacts runs standalone with the default git deps (the no-proposal path)", async () => {
+    const worktree = join(tmpDir, "orphan");
+    await runGit(ws, [
+      "worktree",
+      "add",
+      "-b",
+      "skill-evolution/orphan",
+      worktree,
+      "refs/remotes/origin/main",
+    ]);
+
+    // No deps injected — the wrapper's default branch (gitVerifyDeps) must do the work.
+    await sweepProposalArtifacts({ workspaceRoot: ws, tmpDir, log: fakeLogger() });
+
+    await expect(worktreesUnderTmp()).resolves.toEqual([]);
+    await expect(localProposalBranches()).resolves.toEqual([]);
   });
 
   it("the sweep also clears a worktree whose directory was deleted out from under git", async () => {

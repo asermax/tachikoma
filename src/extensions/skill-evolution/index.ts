@@ -8,11 +8,16 @@ import type { Logger } from "../../log.ts";
 import { defineExtension, type PostProcessor } from "../api.ts";
 import { analyzeBranches, type BranchForker, type Runner, runMaintenance } from "./analyze.ts";
 import { ensureSkillEvolutionLayout, impactLogPath, skillEvolutionDir } from "./layout.ts";
-import { ProposalRunError, type ReportedProposal, runProposalAgent } from "./propose.ts";
+import {
+  ProposalRunError,
+  proposalTmpDir,
+  type ReportedProposal,
+  runProposalAgent,
+} from "./propose.ts";
 import { gitReconcileDeps, type ReconcileResult, reconcileProposals } from "./reconcile.ts";
 import { reportRun } from "./report.ts";
 import { filterEligible, listPatternPages, readImpactLog } from "./store.ts";
-import { gitVerifyDeps, verifyAndRecord } from "./verify.ts";
+import { gitVerifyDeps, sweepProposalArtifacts, verifyAndRecord } from "./verify.ts";
 
 // Flat config; enabled by default (R13), post-work prompt optional (R10).
 export const SkillEvolutionConfigSchema = Type.Object({
@@ -36,6 +41,8 @@ export interface SkillEvolutionStages {
   maintenance: typeof runMaintenance;
   proposal: typeof runProposalAgent;
   verify: typeof verifyAndRecord;
+  /** The namespace sweep on its own — the no-proposal path's self-healing pass (S8). */
+  sweep: typeof sweepProposalArtifacts;
   report: typeof reportRun;
 }
 
@@ -48,6 +55,7 @@ const gitStages = (): SkillEvolutionStages => ({
   maintenance: runMaintenance,
   proposal: runProposalAgent,
   verify: verifyAndRecord,
+  sweep: sweepProposalArtifacts,
   report: reportRun,
 });
 
@@ -56,7 +64,7 @@ export interface SkillEvolutionProcessorDeps {
   agent: BranchForker;
   side: Runner;
   workspaceRoot: string;
-  /** Feature-owned worktree namespace (`{workspace}/.tachikoma/tmp/skill-evolution`). */
+  /** Feature-owned worktree namespace (a stable per-workspace dir under the OS temp dir). */
   tmpDir: string;
   /** The app event bus emit — the dispatch and the fail-soft warning both ride it. */
   emit: (event: string, payload: unknown) => void;
@@ -158,6 +166,10 @@ export const createSkillEvolutionProcessor = (
       );
 
       if (eligible.length === 0) {
+        // The sweep is exactly-once-per-run: the proposing path sweeps in `verifyAndRecord`'s
+        // `finally`, so this is the one place a no-proposal run still heals a hard crash's
+        // orphaned worktrees and local branches (S8).
+        await stages.sweep({ workspaceRoot, tmpDir, log });
         log.info("no eligible patterns — proposal stage skipped");
         return;
       }
@@ -257,7 +269,7 @@ export default defineExtension<SkillEvolutionConfig>({
         },
         side: app.agent.side,
         workspaceRoot,
-        tmpDir: app.workspace.resolve(".tachikoma", "tmp", "skill-evolution"),
+        tmpDir: proposalTmpDir(workspaceRoot),
         // An arrow, not the method: `EventBus.emit` reads `this.handlers` (memory's emit idiom).
         emit: (event, payload) => app.events.emit(event, payload),
         postWorkPrompt: app.extensionConfig.postWorkPrompt,

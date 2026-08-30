@@ -20,6 +20,7 @@ import {
 } from "../../src/extensions/skill-evolution/layout.ts";
 import {
   ProposalRunError,
+  proposalTmpDir,
   type ReportedProposal,
 } from "../../src/extensions/skill-evolution/propose.ts";
 import type { ReconcileCompleted } from "../../src/extensions/skill-evolution/reconcile.ts";
@@ -74,6 +75,7 @@ const fakeStages = (over: Partial<SkillEvolutionStages> = {}) => ({
   maintenance: vi.fn(async () => {}),
   proposal: vi.fn(async () => []),
   verify: vi.fn(async () => [] as ImpactLogEntry[]),
+  sweep: vi.fn(async () => {}),
   report: vi.fn(),
   ...over,
 });
@@ -131,7 +133,7 @@ const runProcessor = async (
     // runMaintenance reads `result.text` — the default fake keeps the real maintenance stage alive.
     side: { run: vi.fn(async () => ({ text: "" })) },
     workspaceRoot: workspace,
-    tmpDir: join(workspace, ".tachikoma", "tmp", "skill-evolution"),
+    tmpDir: proposalTmpDir(workspace),
     emit,
     ...deps,
   } as SkillEvolutionProcessorDeps);
@@ -258,12 +260,18 @@ describe("skill-evolution-trunk-close (structural stage fakes)", () => {
     ]);
   });
 
-  it("no eligible patterns → the run ends after maintenance — no proposal LLM call, no dispatch", async () => {
+  it("no eligible patterns → the run ends after maintenance with one namespace sweep — no proposal LLM call, no dispatch", async () => {
     const stages = fakeStages();
 
     await runProcessor({ stages }, stubTrunk());
 
     expect(stages.maintenance).toHaveBeenCalledTimes(1);
+    // The no-proposal path still heals a hard crash's orphans (S8): exactly one sweep, after
+    // maintenance, and the proposing stages never fire.
+    expect(stages.sweep).toHaveBeenCalledTimes(1);
+    expect(stages.sweep).toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceRoot: workspace }),
+    );
     expect(stages.proposal).not.toHaveBeenCalled();
     expect(stages.verify).not.toHaveBeenCalled();
     expect(stages.report).not.toHaveBeenCalled();
@@ -293,6 +301,9 @@ describe("skill-evolution-trunk-close (structural stage fakes)", () => {
 
     expect(stages.proposal).toHaveBeenCalledTimes(1);
     expect(stages.proposal.mock.calls[0]?.[0]).toMatchObject({ eligible: ["deploy-env-flag.md"] });
+    // The sweep is exactly-once-per-run: on the proposing path it belongs to verification's
+    // `finally` (faked away here), so the processor itself must not have swept too.
+    expect(stages.sweep).not.toHaveBeenCalled();
   });
 
   it("at least one verified proposal dispatches exactly once; the status lines bracket the run", async () => {
@@ -524,9 +535,9 @@ describe("skill-evolution-trunk-close (real git, bare origin)", () => {
   beforeEach(async () => {
     base = await makeTempDir();
     ws = (await setupRemotePair(base)).cloneA;
-    tmpDir = join(ws, ".tachikoma", "tmp", "skill-evolution");
-    // Production workspaces ignore `.tachikoma/` — the tmp worktrees never surface in status.
-    await writeFile(join(ws, ".gitignore"), ".tachikoma/\n", "utf8");
+    // Production shape: the worktrees live outside the repo, under the OS temp dir — nothing
+    // proposal-side can dirty the main tree, so no gitignore scaffolding is needed.
+    tmpDir = proposalTmpDir(ws);
     await mkdir(join(ws, "skills", "deploy"), { recursive: true });
     await writeFile(join(ws, "skills", "deploy", "SKILL.md"), "# Deploy\n\nGuidance.\n", "utf8");
 
@@ -544,6 +555,7 @@ describe("skill-evolution-trunk-close (real git, bare origin)", () => {
 
   afterEach(async () => {
     await runGit(ws, ["worktree", "prune"]);
+    await rm(tmpDir, { recursive: true, force: true });
     await rm(base, { recursive: true, force: true });
   });
 

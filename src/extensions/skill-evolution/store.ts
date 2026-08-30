@@ -74,9 +74,10 @@ const isSeparatorRow = (cells: string[]): boolean =>
   cells.length > 0 && cells.every((cellValue) => /^:?-+:?$/.test(cellValue));
 
 /**
- * Render the ledger deterministically from rows: title, fixed table header, one line per row.
- * The bootstrap seed and every write-back share this shape, so a rewrite never reorders or
- * reformats untouched rows.
+ * Render the ledger deterministically from rows: title, fixed table header, one line per row in
+ * insertion order. The bootstrap seed and every write-back share this shape; the one
+ * cell-level normalization on a write-back is the Pattern column — a user-edited bare filename
+ * comes back as a store-relative link (parsing accepts both forms).
  */
 export const formatImpactLog = (rows: readonly ImpactLogEntry[]): string =>
   `${[

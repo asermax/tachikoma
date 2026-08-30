@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 
 import { type ToolDefinition, truncateTail } from "@earendil-works/pi-coding-agent";
@@ -37,6 +39,19 @@ export const BRANCH_NAME_PATTERN = /^skill-evolution\/[a-z0-9][a-z0-9-]*$/;
 
 /** Prefix every proposal branch carries — also the `ls-remote` pattern the stages scan with. */
 export const BRANCH_NAMESPACE = "skill-evolution/";
+
+/**
+ * The feature's stable worktree area under the OS temp dir — worktrees are scratch space that
+ * lives outside the workspace repo entirely, so nothing proposal-side can dirty the live tree.
+ * The path is stable per workspace (a hash of the root): the sweep must find one run's orphans
+ * from the next run, which a fresh `mkdtemp` per run would break.
+ */
+export const proposalTmpDir = (workspaceRoot: string): string =>
+  join(
+    tmpdir(),
+    "tachikoma-skill-evolution",
+    createHash("sha256").update(resolve(workspaceRoot)).digest("hex").slice(0, 16),
+  );
 
 /** The `ls-remote` ref pattern listing the whole proposal namespace on the remote. */
 export const REMOTE_BRANCH_PATTERN = `${BRANCH_NAMESPACE}*`;
@@ -131,7 +146,7 @@ const GitParams = Type.Object({
   path: Type.Optional(
     Type.String({
       description:
-        "Directory to run git in — a worktree under the tmp dir (that is how you target a specific worktree). Defaults to the workspace root; add and commit must set it to a worktree.",
+        "Working directory for the git command (defaults to the workspace root). To target a proposal worktree, set it to that worktree's directory under the tmp dir — absolute, since a relative path resolves against different bases for different subcommands. add and commit accept only a worktree path under the tmp dir.",
     }),
   ),
 });
@@ -156,11 +171,12 @@ const ReportParams = Type.Object({
 const SIMPLE_GIT_SUBCOMMANDS = new Set(["status", "diff", "log", "show", "add", "commit"]);
 
 /**
- * The working-tree-mutating pair. `add`/`commit` stage and commit whatever tree their cwd
- * resolves to, so they refuse to run anywhere but inside a proposal worktree — R8's "the live
- * working tree is never touched" is tool-enforced, not prompt-enforced. (A missing `path`
- * defaults the cwd to the workspace root, and the tmp dir itself is a plain directory of the
- * main repo — git run there walks up and would commit the live tree.)
+ * The working-tree-mutating pair — the only subcommands whose `path` is checked. `add`/`commit`
+ * stage and commit whatever tree their cwd resolves to, so they refuse to run anywhere but
+ * inside a proposal worktree — and they execute at exactly the validated path, so a relative
+ * `path` can never validate against the tmp dir while git runs against the workspace. R8's "the
+ * live working tree is never touched" is tool-enforced, not prompt-enforced. (A missing `path`
+ * defaults the cwd to the workspace root, i.e. the live tree — hence the requirement.)
  */
 const WORKTREE_REQUIRED_SUBCOMMANDS = new Set(["add", "commit"]);
 
@@ -179,10 +195,13 @@ const isInsideWorktree = async (tmpDir: string, path: string): Promise<boolean> 
 /**
  * Validate a `worktree` invocation: `add` must carry `-b <branch>` matching the naming pattern and
  * a worktree path under the tmp dir (plus an optional base commit-ish — nothing else); `remove`
- * takes exactly one path under the tmp dir.
+ * takes exactly one path under the tmp dir. Positionals are resolved against `cwd` — the base git
+ * itself uses — before the containment check, so validation and execution can never disagree
+ * about where a relative path lands.
  */
 const validateWorktreeArgs = (
   tmpDir: string,
+  cwd: string,
   args: readonly string[],
 ): { ok: true } | { ok: false; result: ToolResult } => {
   const [op, ...tail] = args;
@@ -198,7 +217,11 @@ const validateWorktreeArgs = (
   }
 
   if (op === "remove") {
-    if (tail.length !== 1 || tail[0] === undefined || resolveUnderRoot(tmpDir, tail[0]) == null) {
+    if (
+      tail.length !== 1 ||
+      tail[0] === undefined ||
+      resolveUnderRoot(tmpDir, resolve(cwd, tail[0])) == null
+    ) {
       return {
         ok: false,
         result: refusal(
@@ -254,7 +277,10 @@ const validateWorktreeArgs = (
     };
   }
 
-  if (resolveUnderRoot(tmpDir, worktreePath) == null) {
+  // Resolve the positional the way git will (against the run's cwd) before the containment
+  // check — otherwise a relative path could validate against the tmp dir while git creates the
+  // worktree inside the live tree.
+  if (resolveUnderRoot(tmpDir, resolve(cwd, worktreePath)) == null) {
     return {
       ok: false,
       result: refusal(
@@ -348,11 +374,11 @@ export interface ProposalToolDeps {
 }
 
 /**
- * Build the proposal agent's entire tool surface — exactly five tools. Bound to one workspace and
- * one tmp dir so the agent can never operate on another tree: the file tools refuse any path that
- * escapes the tmp dir, and `git` runs with the resolved `path` (or the workspace root) as cwd —
- * never `-C` string surgery. Editor/gpg are disabled exactly like the commit agent so an
- * unattended commit in a signing-configured repo cannot hang.
+ * Build the proposal agent's entire tool surface — exactly five tools, bound to one workspace and
+ * one tmp dir so the agent can never operate on another tree. The file tools refuse any path that
+ * escapes the tmp dir; `git` treats `path` as a plain cwd, validated to name a worktree under the
+ * tmp dir only for `add`/`commit` — and never via `-C` string surgery. Editor/gpg are disabled
+ * exactly like the commit agent so an unattended commit in a signing-configured repo cannot hang.
  */
 export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => {
   const { workspaceRoot, tmpDir, defaultBranch, remoteBranchNames, capture } = deps;
@@ -417,7 +443,7 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
       name: "git",
       label: "Run git",
       description:
-        "Run a git command in the workspace repository. Allowed: worktree add (path under the tmp dir, -b skill-evolution/<name>), worktree remove, status, diff, log, show, add, commit, and push origin <branch> — new skill-evolution/* branches only, no force. Set `path` to a worktree directory under the tmp dir to target that worktree; commands otherwise run at the workspace root, except add and commit, which are refused outside a worktree.",
+        "Run a git command in the workspace repository. Allowed: worktree add (path under the tmp dir, -b skill-evolution/<name>), worktree remove, status, diff, log, show, add, commit, and push origin <branch> — new skill-evolution/* branches only, no force. Commands run with `path` as their working directory (the workspace root when it is omitted); add and commit are refused unless `path` names a worktree under the tmp dir.",
       parameters: GitParams,
       async execute(_id, params) {
         const [subcommand, ...rest] = params.args;
@@ -429,19 +455,12 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
           );
         }
 
-        // The optional cwd targets a worktree — validated like the file-tool paths, never -C.
-        const cwd = (() => {
-          if (params.path == null) return workspaceRoot;
-          const guarded = guardPath(params.path);
-          return guarded ?? null;
-        })();
-
-        if (cwd == null) {
-          return refusal(`\`${params.path}\` escapes the tmp dir.`, pathsGuidance);
-        }
+        // `path` is a plain cwd for the inspection commands (never -C string surgery); the
+        // mutating pair below validates it and then runs exactly where it validated.
+        let cwd = params.path == null ? workspaceRoot : resolve(workspaceRoot, params.path);
 
         if (subcommand === "worktree") {
-          const verdict = validateWorktreeArgs(tmpDir, rest);
+          const verdict = validateWorktreeArgs(tmpDir, cwd, rest);
           if (!verdict.ok) return verdict.result;
         } else if (subcommand === "push") {
           const verdict = await validatePushArgs(defaultBranch, remoteBranchNames, params.args);
@@ -453,22 +472,28 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
           );
         }
 
-        // The staging/committing pair is confined to a worktree: the live tree must stay
-        // untouched no matter what the agent tries (R8, enforced here rather than by prompt).
+        // The staging/committing pair is confined to a worktree — the one case `path` is
+        // checked: under the tmp dir and inside a worktree, and executed AT the validated
+        // path, so the live tree stays untouched no matter what the agent tries (R8, enforced
+        // here rather than by prompt).
         if (WORKTREE_REQUIRED_SUBCOMMANDS.has(subcommand)) {
-          if (params.path == null) {
+          const bound = params.path == null ? null : resolveUnderRoot(tmpDir, params.path);
+
+          if (bound == null) {
             return refusal(
-              `git ${subcommand} requires the path parameter.`,
-              `Staging and committing only run inside a proposal worktree — set path to the worktree directory under ${tmpDir}.`,
+              `git ${subcommand} requires the path parameter set to a worktree under ${tmpDir}.`,
+              pathsGuidance,
             );
           }
 
-          if (!(await isInsideWorktree(tmpDir, cwd))) {
+          if (!(await isInsideWorktree(tmpDir, bound))) {
             return refusal(
               `\`${params.path}\` is not inside a proposal worktree.`,
               `Set path to the worktree directory (or a subdirectory of it) under ${tmpDir}.`,
             );
           }
+
+          cwd = bound;
         }
 
         const result = await runGitCapture(cwd, [

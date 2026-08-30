@@ -97,7 +97,8 @@ describe("maintenanceSystemPrompt", () => {
 });
 
 describe("proposalSystemPrompt", () => {
-  const TMP_DIR = "/tmp/tachi-workspace/.tachikoma/tmp/skill-evolution";
+  // The production shape: a stable per-workspace dir under the OS temp dir (proposalTmpDir).
+  const TMP_DIR = "/tmp/tachikoma-skill-evolution/1a2b3c4d5e6f7a8b";
   const DEFAULT_BRANCH = "main";
   const system = proposalSystemPrompt(WORKSPACE, TMP_DIR, DEFAULT_BRANCH);
 
