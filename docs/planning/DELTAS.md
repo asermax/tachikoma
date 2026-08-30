@@ -95,7 +95,7 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Description**: When a message gets routed to a resumed session via boundary detection, there is no mechanism to undo the routing if the session context does not actually match the user's intent. The conversation gets forced down the wrong path with no recovery. Add a verification step that forks the candidate session and evaluates whether the incoming message makes sense within its context before committing to the routing, catching mismatches early instead of requiring the user to manually correct the course.
 
 ### DLT-080: Self-healing skill system via nightly analysis
-**Status**: ⧗ Spec
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Hard
