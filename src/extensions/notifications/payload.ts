@@ -1,20 +1,12 @@
-/** App event channel for user-facing notifications from any extension. */
-export const NOTIFY_EVENT = "notify";
+// The notify event contract is defined in neutral `src/events.ts` so cross-extension
+// emitters never import from this extension's directory (DES-002); everything below
+// re-exports it, keeping existing importers unchanged. Only the lenient parsing of
+// the payloads this extension routes stays here.
 
-export const SEVERITIES = {
-  info: "info",
-  warning: "warning",
-  urgent: "urgent",
-} as const;
+export type { NotifyPayload, Severity } from "../../events.ts";
+export { NOTIFY_EVENT, SEVERITIES } from "../../events.ts";
 
-export type Severity = keyof typeof SEVERITIES;
-
-export interface NotifyPayload {
-  title?: string;
-  text: string;
-  severity: Severity;
-  source: string;
-}
+import { type NotifyPayload, SEVERITIES, type Severity } from "../../events.ts";
 
 const isSeverity = (value: unknown): value is Severity =>
   typeof value === "string" && value in SEVERITIES;

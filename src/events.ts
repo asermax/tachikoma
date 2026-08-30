@@ -5,8 +5,8 @@ export type EventHandler<T> = (payload: T) => void | Promise<void>;
 // ---- cross-extension event contracts -----------------------------------------
 // Namespaced event names emitted across extensions, defined here so emitters and subscribers share one
 // constant instead of a stringly-typed coupling. The coordinator owns the `session:*` lifecycle events
-// (`session:opened`, `session:closed`, `session:post-processed`); the one below is emitted by the
-// boundary extension.
+// (`session:opened`, `session:closed`, `session:post-processed`); the constants below are emitted by
+// individual extensions (each doc comment says which).
 
 /** A genuine topic change started a fresh branch on the daily trunk (not a tangent/checkpoint). */
 export const SESSION_TOPIC_CHANGED_EVENT = "session:topic-changed";
@@ -16,6 +16,42 @@ export type TopicChangedReason = "auto-shift" | "/new" | "earlier-branch";
 
 export interface TopicChangedEvent {
   reason: TopicChangedReason;
+}
+
+/**
+ * App event channel for user-facing notifications from any extension. The
+ * notifications extension subscribes and routes these to the configured
+ * channels. Payloads are validated leniently on the receiving side
+ * (`parseNotifyPayload` in `extensions/notifications/payload.ts`).
+ */
+export const NOTIFY_EVENT = "notify";
+
+export const SEVERITIES = {
+  info: "info",
+  warning: "warning",
+  urgent: "urgent",
+} as const;
+
+export type Severity = keyof typeof SEVERITIES;
+
+export interface NotifyPayload {
+  title?: string;
+  text: string;
+  severity: Severity;
+  source: string;
+}
+
+/**
+ * Fire-and-forget request to create an ad-hoc background task instance. The
+ * tasks extension subscribes, validates the payload, and creates the pending
+ * instance (`definitionId: null`); its existing tick dispatches the run.
+ */
+export const DISPATCH_BACKGROUND_TASK_EVENT = "task:dispatch-background";
+
+export interface DispatchBackgroundTaskPayload {
+  prompt: string;
+  goal?: string;
+  source: string;
 }
 
 export class EventBus {
