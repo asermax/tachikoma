@@ -1,13 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
-import { type ToolDefinition, truncateTail } from "@earendil-works/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import type { SideRunner } from "../agent/side-run.ts";
-import { runGitCapture } from "./git.ts";
+import { type AgentRunner, runGitTool, textResult } from "./agent-tools.ts";
 import type { RebaseResolver } from "./sync.ts";
-
-export type AgentRunner = Pick<SideRunner, "run">;
 
 const CONFLICT_SYSTEM_PROMPT = `You resolve git rebase conflicts for an automated workspace-versioning agent.
 
@@ -52,15 +49,6 @@ const FORBIDDEN_GIT_SUBCOMMANDS = new Set(["push", "fetch", "remote", "filter-re
 const resolvePath = (cwd: string, path: string): string =>
   isAbsolute(path) ? path : resolve(cwd, path);
 
-const textResult = (text: string) => {
-  const { content, truncated } = truncateTail(text);
-
-  return {
-    content: [{ type: "text" as const, text: truncated ? `${content}\n\n[truncated]` : content }],
-    details: undefined,
-  };
-};
-
 /**
  * Build the cwd-scoped tool set the resolver agent uses. The tools are bound to
  * one repo so the agent can never operate on the wrong tree (the side session
@@ -104,17 +92,7 @@ const buildResolverTools = (cwd: string): ToolDefinition[] => [
         return textResult(`Refused: git ${subcommand} is not allowed during conflict resolution.`);
       }
 
-      const result = await runGitCapture(cwd, [
-        "-c",
-        "core.editor=true",
-        "-c",
-        "sequence.editor=true",
-        ...params.args,
-      ]);
-
-      return textResult(
-        `exit ${result.code}\n${[result.stdout, result.stderr].filter(Boolean).join("\n")}`.trim(),
-      );
+      return textResult(await runGitTool(cwd, params.args, ["sequence.editor=true"]));
     },
   } satisfies ToolDefinition<typeof GitParams>,
 ];

@@ -1,5 +1,5 @@
 import type { GitResult } from "./git.ts";
-import { runGitCapture } from "./git.ts";
+import { runGit, runGitCapture } from "./git.ts";
 
 /** The remote these helpers talk to — the workspace's shared origin. */
 const REMOTE = "origin";
@@ -65,18 +65,11 @@ export const listRemoteBranchTips = async (
   cwd: string,
   pattern: string,
 ): Promise<Map<string, string>> => {
-  const result = await runGitCapture(cwd, ["ls-remote", "--heads", REMOTE, pattern]);
-
-  if (result.code !== 0) {
-    throw new Error(
-      `git ls-remote --heads ${REMOTE} ${pattern} failed: ${result.stderr || `exit code ${result.code}`}`,
-    );
-  }
-
+  const stdout = await runGit(cwd, ["ls-remote", "--heads", REMOTE, pattern]);
   const refPrefix = "refs/heads/";
   const tips = new Map<string, string>();
 
-  for (const line of result.stdout.split("\n")) {
+  for (const line of stdout.split("\n")) {
     const [sha, ref] = line.split("\t");
 
     if (ref == null || !ref.startsWith(refPrefix)) continue;

@@ -1,14 +1,16 @@
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 
-import { type ToolDefinition, truncateTail } from "@earendil-works/pi-coding-agent";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import type { SideRunner } from "../agent/side-run.ts";
 import type { Logger } from "../log.ts";
-import { runGitCapture } from "./git.ts";
-
-export type AgentRunner = Pick<SideRunner, "run">;
+import {
+  type AgentRunner,
+  ALLOWED_GIT_SUBCOMMANDS,
+  runGitTool,
+  textResult,
+} from "./agent-tools.ts";
 
 /**
  * Drives an agent to commit the uncommitted changes in `cwd` as one or more
@@ -18,15 +20,6 @@ export type AgentRunner = Pick<SideRunner, "run">;
  * projects extension supply an agent-backed implementation.
  */
 export type CommitAgent = (cwd: string, log: Logger) => Promise<void>;
-
-/**
- * The only git sub-commands the commit agent may run: inspect state, stage, and
- * commit. Everything else (push, fetch, reset, rebase, clean, remote,
- * filter-repo, checkout/restore) is refused so the agent can only add commits,
- * never mutate history or remote state. This is the legacy `GIT_BASH_HOOK`
- * allowlist.
- */
-const ALLOWED_GIT_SUBCOMMANDS = new Set(["status", "diff", "log", "add", "commit", "show"]);
 
 const ReadFileParams = Type.Object({
   path: Type.String({ description: "Repo-relative (or absolute) path of the file to read" }),
@@ -42,15 +35,6 @@ const GitParams = Type.Object({
 
 const resolvePath = (cwd: string, path: string): string =>
   isAbsolute(path) ? path : resolve(cwd, path);
-
-const textResult = (text: string) => {
-  const { content, truncated } = truncateTail(text);
-
-  return {
-    content: [{ type: "text" as const, text: truncated ? `${content}\n\n[truncated]` : content }],
-    details: undefined,
-  };
-};
 
 /**
  * Build the cwd-scoped tool set the commit agent uses. The tools are bound to
@@ -89,17 +73,7 @@ const buildCommitTools = (cwd: string): ToolDefinition[] => [
         );
       }
 
-      const result = await runGitCapture(cwd, [
-        "-c",
-        "core.editor=true",
-        "-c",
-        "commit.gpgsign=false",
-        ...params.args,
-      ]);
-
-      return textResult(
-        `exit ${result.code}\n${[result.stdout, result.stderr].filter(Boolean).join("\n")}`.trim(),
-      );
+      return textResult(await runGitTool(cwd, params.args, ["commit.gpgsign=false"]));
     },
   } satisfies ToolDefinition<typeof GitParams>,
 ];
