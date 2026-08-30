@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   branchAnalysisInstruction,
   maintenanceSystemPrompt,
+  proposalSystemPrompt,
 } from "../../src/extensions/skill-evolution/prompts.ts";
 import type { BranchRecord } from "../../src/sessions/trunk.ts";
 
@@ -92,5 +93,38 @@ describe("maintenanceSystemPrompt", () => {
   it("omits the silent-background section — headless runs have no persona or chat surface", () => {
     // Memory's maintenance prompts omit it too; only fork-continue instructions carry it.
     expect(system).not.toContain("## Background Maintenance Step");
+  });
+});
+
+describe("proposalSystemPrompt", () => {
+  const TMP_DIR = "/tmp/tachi-workspace/.tachikoma/tmp/skill-evolution";
+  const DEFAULT_BRANCH = "main";
+  const system = proposalSystemPrompt(WORKSPACE, TMP_DIR, DEFAULT_BRANCH);
+
+  it("substitutes every token (none survives)", () => {
+    expect(system).toContain(`${WORKSPACE}/skills/`);
+    expect(system).toContain(TMP_DIR);
+    expect(system).toContain(`refs/remotes/origin/${DEFAULT_BRANCH}`);
+    expect(system).not.toContain("$WORKSPACE");
+    expect(system).not.toContain("$TMPDIR");
+    expect(system).not.toContain("$DEFAULT_BRANCH");
+  });
+
+  it("carries the worktree protocol (R8): cut from the remote default, edit, commit, push, report", () => {
+    expect(system).toContain("## Worktree protocol");
+    expect(system).toContain('"worktree", "add", "-b"');
+    expect(system).toContain('"commit", "-m"');
+    expect(system).toContain('"push", "origin", "<branch>"');
+    expect(system).toContain("report_proposals");
+  });
+
+  it("carries the one-branch-per-pattern rule, the naming rule, and workspace-skills-only (R7/R9/R14)", () => {
+    expect(system).toContain("One branch per pattern");
+    expect(system).toContain("skill-evolution/<skill>-<slug>");
+    expect(system).toContain("Workspace skills only");
+    // Never the default branch, never force.
+    expect(system).toContain("Never the default branch, never force");
+    // An empty proposal list is a legitimate outcome.
+    expect(system).toContain("report an empty list");
   });
 });
