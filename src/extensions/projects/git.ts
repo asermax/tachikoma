@@ -2,6 +2,7 @@ import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runGit, runGitCapture } from "../../git/git.ts";
+import { resolveRemoteDefaultBranch } from "../../git/remote.ts";
 import { DIVERGENCE_STATUS, detectDivergence } from "../../git/sync.ts";
 
 // `listSubmodules` is a core git primitive (it just parses `git submodule status`),
@@ -14,26 +15,17 @@ export const initSubmodule = async (workspaceRoot: string, path: string): Promis
 };
 
 /**
- * Resolve the default branch from the remote's HEAD reference: local symbolic
- * ref first, `git remote show origin` as a fallback, "main" as a last resort.
+ * Resolve the default branch through the shared core resolver (local symbolic ref, then
+ * `ls-remote --symref`), defaulting to "main" when both fail — project tooling is
+ * best-effort and must keep working against an unreachable or empty remote, unlike
+ * skill-evolution's strict must-abort resolution.
  */
 export const resolveDefaultBranch = async (repoPath: string): Promise<string> => {
-  const symbolic = await runGitCapture(repoPath, ["symbolic-ref", "refs/remotes/origin/HEAD"]);
-  const prefix = "refs/remotes/origin/";
-
-  if (symbolic.code === 0 && symbolic.stdout.startsWith(prefix)) {
-    return symbolic.stdout.slice(prefix.length);
+  try {
+    return await resolveRemoteDefaultBranch(repoPath);
+  } catch {
+    return "main";
   }
-
-  const show = await runGitCapture(repoPath, ["remote", "show", "origin"]);
-
-  if (show.code === 0) {
-    const headLine = show.stdout.split("\n").find((line) => line.includes("HEAD branch:"));
-
-    if (headLine != null) return (headLine.split(":").at(-1) ?? "").trim() || "main";
-  }
-
-  return "main";
 };
 
 export const checkoutBranch = async (repoPath: string, branch: string): Promise<void> => {

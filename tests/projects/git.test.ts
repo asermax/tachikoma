@@ -33,16 +33,16 @@ afterEach(() => {
 
 describe("resolveDefaultBranch", () => {
   it("uses the local symbolic ref when present", async () => {
-    runGitCapture.mockResolvedValueOnce(ok("refs/remotes/origin/develop"));
+    runGitCapture.mockResolvedValueOnce(ok("origin/develop"));
 
     expect(await resolveDefaultBranch("/repo")).toBe("develop");
     expect(runGitCapture).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to `remote show origin` when the symbolic ref is missing", async () => {
+  it("falls back to `ls-remote --symref` when the symbolic ref is missing", async () => {
     runGitCapture
       .mockResolvedValueOnce(fail())
-      .mockResolvedValueOnce(ok("  HEAD branch: trunk\n  Remote branch:"));
+      .mockResolvedValueOnce(ok("ref: refs/heads/trunk\tHEAD\nabc123\tHEAD"));
 
     expect(await resolveDefaultBranch("/repo")).toBe("trunk");
   });
@@ -50,21 +50,19 @@ describe("resolveDefaultBranch", () => {
   it("falls back when the symbolic ref output lacks the expected prefix", async () => {
     runGitCapture
       .mockResolvedValueOnce(ok("(unknown)"))
-      .mockResolvedValueOnce(ok("HEAD branch: release"));
+      .mockResolvedValueOnce(ok("ref: refs/heads/release\tHEAD"));
 
     expect(await resolveDefaultBranch("/repo")).toBe("release");
   });
 
-  it("defaults to main when remote show has no HEAD branch line", async () => {
-    runGitCapture
-      .mockResolvedValueOnce(fail())
-      .mockResolvedValueOnce(ok("* remote origin\n  Fetch URL: x"));
+  it("defaults to main when ls-remote has no symref line", async () => {
+    runGitCapture.mockResolvedValueOnce(fail()).mockResolvedValueOnce(ok("abc123\tHEAD"));
 
     expect(await resolveDefaultBranch("/repo")).toBe("main");
   });
 
-  it("defaults to main when the HEAD branch line is empty", async () => {
-    runGitCapture.mockResolvedValueOnce(fail()).mockResolvedValueOnce(ok("  HEAD branch:"));
+  it("defaults to main when the symref line names no branch", async () => {
+    runGitCapture.mockResolvedValueOnce(fail()).mockResolvedValueOnce(ok("ref: refs/heads/"));
 
     expect(await resolveDefaultBranch("/repo")).toBe("main");
   });
