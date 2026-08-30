@@ -94,13 +94,6 @@ Deltas carried over from the long-term backlog; original numbering kept for trac
 **Complexity**: Medium
 **Description**: When a message gets routed to a resumed session via boundary detection, there is no mechanism to undo the routing if the session context does not actually match the user's intent. The conversation gets forced down the wrong path with no recovery. Add a verification step that forks the candidate session and evaluates whether the incoming message makes sense within its context before committing to the routing, catching mismatches early instead of requiring the user to manually correct the course.
 
-### DLT-080: Self-healing skill system via nightly analysis
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Hard
-**Description**: Skills currently only improve when the user explicitly notices a gap and requests changes. Add a nightly processor. Each run starts by reconciling the previous run's proposals: it checks the state of previously created branches (merged, deleted, still open) to determine whether each was accepted or rejected, and updates the skill-impact log accordingly before any new analysis. It then reviews the day's completed conversations branch by branch — the same walk the memory post-processing pass does — collecting data points on skill usage: which skills were invoked, which failed or were misapplied, what workarounds the agent resorted to. Data points are persisted in a dedicated folder under `memories/` (e.g. `memories/skill-evolution/`) using a wiki-style format: one-line index entries (`PROBLEM + ROOT CAUSE + FIX`), per-pattern pages that are updated with new evidence instead of duplicated, and a skill-impact log recording each proposed skill change with its outcome (proposed/accepted/rejected) so previously rejected suggestions are not re-proposed. At the end of each run, the processor creates one branch per skill modification it proposes (branch-per-edit, not applied automatically — the user reviews each). The feature is toggleable via a setting. A configurable post-work prompt, when set and when at least one branch was created, fires a background task seeded with the run's context — enabling flows like the background task opening GitHub PRs for each proposed skill change. Speccing resolves how pattern dedup and size caps are enforced, which branch types are in scope (topic branches vs trunk), and how branches are named and surfaced for review.
-
 ### DLT-082: CLI for querying internal state
 **Status**: ✗ Defined
 **Depends on**: None

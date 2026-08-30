@@ -20,7 +20,7 @@ Git authentication (SSH keys, tokens) is the user's responsibility: the system a
 | ID | Requirement |
 |----|-------------|
 | R0 | Manage external repositories as git submodules under `projects/` in the workspace; git state (`.gitmodules` plus `git submodule status`) is the registry — no database table |
-| R1 | `register_project` tool adds a submodule at `projects/<name>` and checks it out to its remote default branch (remote HEAD reference, falling back to `git remote show origin`, then `main`) — never detached HEAD |
+| R1 | `register_project` tool adds a submodule at `projects/<name>` and checks it out to its remote default branch (local `origin/HEAD` symbolic ref, falling back to `ls-remote --symref` via the shared core resolver `resolveRemoteDefaultBranch` in `src/git/remote.ts`, then `main`) — never detached HEAD |
 | R2 | Registration validates inputs (non-empty name and url, no duplicate directory) and cleans up partial state best-effort when the add fails |
 | R3 | `deregister_project` tool removes a submodule completely (deinit, `git rm`, drop the `.git/modules` clone); with uncommitted changes it refuses unless `force=true` |
 | R4 | `list_projects` tool reports each project's branch (or detached short commit) and uncommitted-change count |

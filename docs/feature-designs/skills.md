@@ -22,6 +22,7 @@ Owning the entire skill lifecycle would mean a multi-source registry, a per-mess
 - The session factory registered via `app.agent.use` is re-invoked on every agent session the coordinator creates (see [conversation-loop](conversation-loop.md))
 - Delegation executes through `app.agent.side.run` (`src/agent/side-run.ts`): an ephemeral, in-memory pi session with no Tachikoma extensions bound
 - Workflow definitions live inside skill packages (see [workflows](workflows.md)) but are loaded by the workflows extension independently
+- The [skill-evolution](skill-evolution.md) extension proposes modifications to workspace skills (never built-ins) from nightly usage evidence; each proposal is a pushed branch the user reviews — this extension contributes the skills and has no role in the loop
 
 ## Design Overview
 

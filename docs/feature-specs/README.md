@@ -24,6 +24,7 @@ Long-lived specifications describing **what** each part of Tachikoma does, kept 
 | Feature | Description |
 |---------|-------------|
 | [skills](skills.md) | Contributes workspace Agent Skills to pi's progressive disclosure, plus a `delegate_to_agent` tool for skill-bundled subagents |
+| [skill-evolution](skill-evolution.md) | Nightly self-improvement of workspace skills — usage evidence becomes pattern pages and reviewable proposal branches |
 | [workflows](workflows.md) | Multi-step processes as step-directory trees backed by a DB-persisted state machine that survives compaction and session boundaries |
 | [tasks](tasks.md) | Scheduled work — cron/one-shot definitions firing as queued session turns or autonomous background runs |
 

@@ -24,6 +24,7 @@ Design rationale describing **how** each feature is built — components, key de
 | Feature | Description |
 |---------|-------------|
 | [skills](skills.md) | Contributes workspace Agent Skills to pi's progressive disclosure, plus a `delegate_to_agent` tool for skill-bundled subagents |
+| [skill-evolution](skill-evolution.md) | Self-improving workspace skills — a trunk-close pass that accumulates skill-usage evidence and authors one reviewable proposal branch per pattern |
 | [workflows](workflows.md) | Multi-step processes as step-directory trees backed by a DB-persisted state machine that survives compaction and session boundaries |
 | [tasks](tasks.md) | Scheduled work — cron/one-shot definitions firing as queued session turns or autonomous background runs |
 

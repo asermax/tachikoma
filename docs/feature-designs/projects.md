@@ -59,15 +59,16 @@ One extension (`src/extensions/projects/index.ts`) wires four pieces onto the ap
 
 ### Default-branch resolution chain
 
-**Choice**: Resolve a project's default branch as `refs/remotes/origin/HEAD` symbolic ref → `git remote show origin` HEAD line → `"main"`, then check it out explicitly after add/init.
-**Why**: `git submodule update --init` leaves a detached HEAD; commits made there would be lost on the next sync. The local symbolic ref is cheap but only exists in cloned repos, so the network fallback covers fresh adds, and `"main"` is the last resort.
+**Choice**: Resolve a project's default branch through the shared core resolver `resolveRemoteDefaultBranch` (`src/git/remote.ts`): local `refs/remotes/origin/HEAD` symbolic ref → `ls-remote --symref` HEAD line → error; projects keep a best-effort `"main"` fallback as caller policy, and check the branch out explicitly after add/init.
+**Why**: `git submodule update --init` leaves a detached HEAD; commits made there would be lost on the next sync. The local symbolic ref is cheap but only exists in cloned repos (absent for `git init`-wired repos or clones made while origin was empty), so the network fallback covers fresh adds, and `"main"` is the last resort. One shared resolution chain also serves the [skill-evolution](skill-evolution.md) reconcile/verify stages — no per-consumer variants.
 **Alternatives Considered**:
 - Hardcoding `main`: breaks on `master` or trunk-named repos
 - Asking the user per registration: not viable unattended
+- `git remote show origin` as the fallback: a slower network round-trip than `ls-remote --symref`
 
 **Consequences**:
-- Pro: Projects always sit on a real branch the session-close push can target
-- Con: `git remote show` adds a network round-trip on first registration
+- Pro: Projects always sit on a real branch the session-close push can target; the resolution chain has exactly one implementation
+- Con: a network round-trip when the local symbolic ref is missing (fresh adds)
 
 ### Reuse the core git module via `app.git`
 

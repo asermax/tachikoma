@@ -13,6 +13,7 @@ Skills give the agent packaged expertise: Agent Skills-format directories from b
 - As the assistant, I want relevant skills' full instructions proactively injected based on the conversation so that I can apply them immediately, even when I would not have chosen to load them on my own
 - As a skill author, I want to bundle agent definitions inside a skill so that focused work can be delegated to an isolated subagent with its own prompt and tools
 - As the assistant, I want an always-available general-purpose subagent so that I can offload context-heavy exploration and searching without a skill having to ship one
+- As a user, I want recurring skill friction turned into reviewable improvement proposals automatically, so that my skills get better without me noticing and requesting every change
 
 ## Requirements
 
@@ -128,5 +129,6 @@ Machinery deliberately left out of this implementation:
 
 - **Skills hot-reload/watcher** — discovery runs per agent session, so new skills appear on the next session (the daily trunk reopens each day, or on restart) and agent definitions are re-read on every delegation; for the live session, `/reload` (and the `reload_resources` tool) re-reads resources on demand. No filesystem watcher — reload is explicit, not automatic
 - **Skill `dependencies`** — not part of the Agent Skills standard. Skills that build on other material reference it directly in their content for the agent to read
+- **Skill self-improvement** — a separate capability: the [skill-evolution](skill-evolution.md) extension turns nightly usage evidence into reviewable proposal branches against workspace skills (never built-ins); this extension contributes and serves the skills, and has no role in that loop
 
 See [../reference/pi-sdk-notes.md](../reference/pi-sdk-notes.md) (Skills section) for the pi-native behavior this extension relies on.
