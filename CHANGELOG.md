@@ -1,3 +1,20 @@
+# [3.69.0](https://github.com/asermax/tachikoma/compare/v3.68.0...v3.69.0) (2026-08-30)
+
+
+### Features
+
+* **events:** promote notify contract to events.ts and add task dispatch event ([6110313](https://github.com/asermax/tachikoma/commit/6110313cab5c2c59d389ffc27f329afa6c2ad120))
+* **git:** add remote helpers for default branch and remote tips ([043abc0](https://github.com/asermax/tachikoma/commit/043abc018b35115132f0eb2062c902e8a943c24b))
+* **memory:** let sweepEmptyMarkdown preserve structural files ([228877e](https://github.com/asermax/tachikoma/commit/228877efd1f65ec1666da8b3c7041e6a14ebfb45))
+* **sessions:** add skill-evolution analyzed marker ([33531bb](https://github.com/asermax/tachikoma/commit/33531bb44c789b51a50a28bde54fafda4f3a7540))
+* **skills:** add proposal agent with host verification and namespace sweep ([50393d8](https://github.com/asermax/tachikoma/commit/50393d83a79c84d12ebedbfa7da1f92e5e985b3f))
+* **skills:** add proposal reconciliation with classify ladder and log rewrites ([e6db6a2](https://github.com/asermax/tachikoma/commit/e6db6a2725047b373b07127ff85f986b04365cb0))
+* **skills:** add skill-evolution analysis pass with shared prompt sections ([7ed8a46](https://github.com/asermax/tachikoma/commit/7ed8a46b39f4ae82c85df4c55ab8134c2cfd148f))
+* **skills:** add skill-evolution extension skeleton, layout, and impact-log store ([2c1cd34](https://github.com/asermax/tachikoma/commit/2c1cd345a54f202e73a33e36e28ec2e10a8c4aa0))
+* **skills:** confine proposal git add/commit to a worktree ([ab8d889](https://github.com/asermax/tachikoma/commit/ab8d889f93be4ea4fa62784f9cc7a21fb1c2ffb5))
+* **skills:** harden skill-evolution proposal tooling and cleanup ([e8048f4](https://github.com/asermax/tachikoma/commit/e8048f4eafd38d9a2d70eb0471e4d8cf8cea967f))
+* **skills:** wire skill-evolution trunk-close processor with reporter and task dispatch ([c96d1d6](https://github.com/asermax/tachikoma/commit/c96d1d659f39e15164f61496fa504ca6fd898195))
+
 # [3.68.0](https://github.com/asermax/tachikoma/compare/v3.67.0...v3.68.0) (2026-08-19)
 
 
