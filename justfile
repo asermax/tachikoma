@@ -25,7 +25,7 @@ typecheck:
     pnpm tsc --noEmit
 
 build:
-    rm -rf dist && pnpm tsc -p tsconfig.build.json
+    rm -rf dist && pnpm tsc -p tsconfig.build.json && node scripts/copy-assets.mjs
 
 check: lint typecheck test
 
