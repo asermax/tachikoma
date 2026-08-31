@@ -14,14 +14,14 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Directory names treated as copy-whenever-found assets under src/. */
-export const ASSET_DIR_NAMES = new Set(["references", "builtin-skills"]);
+const ASSET_DIR_NAMES = new Set(["references", "builtin-skills"]);
 
 /**
- * Every asset directory under `srcRoot`: any directory whose name is in `names`,
+ * Every asset directory under `srcRoot`: any directory named in `ASSET_DIR_NAMES`,
  * found by recursive walk (asset dirs are not descended into). Skips dot-dirs and
  * node_modules. Sorted, so the output is deterministic.
  */
-export const collectAssetDirs = async (srcRoot, names = ASSET_DIR_NAMES) => {
+export const collectAssetDirs = async (srcRoot) => {
   const found = [];
 
   const walk = async (dir) => {
@@ -38,7 +38,7 @@ export const collectAssetDirs = async (srcRoot, names = ASSET_DIR_NAMES) => {
       const full = join(dir, entry.name);
       if (!entry.isDirectory()) continue;
 
-      if (names.has(entry.name)) found.push(full);
+      if (ASSET_DIR_NAMES.has(entry.name)) found.push(full);
       else await walk(full);
     }
   };
@@ -47,13 +47,15 @@ export const collectAssetDirs = async (srcRoot, names = ASSET_DIR_NAMES) => {
   return found.sort();
 };
 
-/** Mirror each collected dir to its same relative position under `outRoot`. */
+/** Mirror each collected dir to its same relative position under `outRoot` (independent, so in parallel). */
 export const mirrorAssetDirs = async (srcRoot, outRoot, dirs) => {
-  for (const dir of dirs) {
-    const target = join(outRoot, relative(srcRoot, dir));
-    await mkdir(dirname(target), { recursive: true });
-    await cp(dir, target, { recursive: true });
-  }
+  await Promise.all(
+    dirs.map(async (dir) => {
+      const target = join(outRoot, relative(srcRoot, dir));
+      await mkdir(dirname(target), { recursive: true });
+      await cp(dir, target, { recursive: true });
+    }),
+  );
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
