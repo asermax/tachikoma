@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-
 import {
   buildBackgroundSystemPrompt,
   buildMainSystemPrompt,
@@ -7,6 +6,7 @@ import {
   OPERATIONAL_GUIDANCE,
   SUBAGENT_SYSTEM_PROMPT,
 } from "../../src/agent/prompts.ts";
+import { EXTENSION_SECTION_RE, EXTENSION_SURFACES } from "./extension-surfaces.ts";
 
 // pi's native coding-agent base opens with this phrase; no role prompt should inherit it.
 const PI_NATIVE_BASE = "expert coding assistant operating inside pi";
@@ -31,16 +31,33 @@ describe("role system prompts", () => {
     }
   });
 
-  it("builds the main base prompt from identity, hygiene, delegate-awareness, and workspace root — not SOUL/USER (AC5)", () => {
+  it("builds the main base prompt from identity, hygiene, conversation mechanics, and workspace root — not SOUL/USER (AC5)", () => {
     const prompt = buildMainSystemPrompt({ workspaceRoot: "/home/me/workspace" });
 
     expect(prompt).toContain("personal assistant");
     expect(prompt).toContain("Workspace root: /home/me/workspace");
-    expect(prompt).toContain("delegate_to_agent");
     expect(prompt).toContain("hard to reverse");
+    // Conversation substrate the core owns: steering and system-origin turns (issue-445).
+    expect(prompt).toContain("steered into the live run");
+    expect(prompt).toContain("/queue");
+    // The lean inline tier points at the reference files for the detail.
+    expect(prompt).toContain("(read on demand)");
     // SOUL/USER are appended via provideContext, not part of the core base prompt.
     expect(prompt).not.toContain("# Soul");
     expect(prompt).not.toContain("# User");
+  });
+
+  it("keeps the main base prompt extension-agnostic — extension behavior is documented by its extension", () => {
+    // issue-445 ownership rule: the core prompt documents only the conversation substrate; naming an
+    // extension's tools or turn formats here is drift back toward a feature-coupled core prompt.
+    // (Delegation guidance, for example, lives in SKILLS_USAGE — delegate_to_agent is that extension's tool.)
+    const prompt = buildMainSystemPrompt({ workspaceRoot: "/ws" });
+
+    for (const surface of EXTENSION_SURFACES) {
+      expect(prompt, surface).not.toContain(surface);
+    }
+
+    expect(prompt).not.toMatch(EXTENSION_SECTION_RE);
   });
 
   it("composes a tz-aware date header into the main prompt when provided", () => {

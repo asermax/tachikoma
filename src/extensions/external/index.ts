@@ -2,11 +2,13 @@ import { isAbsolute, join } from "node:path";
 
 import { Type } from "typebox";
 
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { expandHome } from "../../workspace.ts";
 import { defineExtension } from "../api.ts";
 import { InstallManager } from "./installs.ts";
 import { loadExtensionModule } from "./loader.ts";
 import { createExternalToolsFactory } from "./tools.ts";
+import { EXTERNAL_USAGE } from "./usage.ts";
 
 interface ExternalConfig {
   sources: string[];
@@ -63,5 +65,8 @@ export default defineExtension<ExternalConfig>({
     );
 
     app.agent.use(createExternalToolsFactory(manager, app.log));
+
+    // Agent-facing install/update guidance — main only, matching the tools' default scope.
+    app.agent.use(provideContext(EXTERNAL_USAGE, "external-usage"));
   },
 });

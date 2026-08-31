@@ -5,6 +5,7 @@ import { Bot } from "grammy";
 import { type Static, Type } from "typebox";
 
 import { getEntry, getLeafId, messageText } from "../../agent/session-tree.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { getBranchRecords, nextBranchId } from "../../sessions/trunk.ts";
 import { expandHome } from "../../workspace.ts";
 import { defineExtension } from "../api.ts";
@@ -12,6 +13,7 @@ import { type MessageRouting, TelegramChannel } from "./channel.ts";
 import { ensureMediaDir } from "./media.ts";
 import { TelegramMessageStore } from "./store.ts";
 import { registerTelegramTools } from "./tools.ts";
+import { TELEGRAM_USAGE } from "./usage.ts";
 
 const TelegramConfigSchema = Type.Object({
   botToken: Type.String({ default: "", description: "Telegram bot token from @BotFather" }),
@@ -144,5 +146,9 @@ export default defineExtension<TelegramConfig>({
         currentRouting,
       });
     });
+
+    // Agent-facing affordance guidance, registered on the same configured path as the tools
+    // it documents (a disabled channel contributes neither the tools nor the section).
+    app.agent.use(provideContext(TELEGRAM_USAGE, "telegram-usage"));
   },
 });

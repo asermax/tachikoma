@@ -1,11 +1,14 @@
+import { referencePointer } from "../../agent/prompt-references.ts";
+
 /**
  * Usage guidance for workspace git management, injected into the agent's context.
- * Scoped to main + background.
+ * Scoped to main + background. The critical rules stay inline (auto-commit, dedicated
+ * tools); the bash deny list and recovery mechanics live in the reference file.
  */
 export const GIT_USAGE = `## Git
 
-Your workspace is a git repository, and commits are handled for you: when a session ends, all workspace changes (and any dirty project submodules) are committed with a generated message and pushed where a remote is configured. You do NOT need to commit or push by hand for normal work.
+Your workspace is a git repository and versioning is handled for you: changes (and dirty project submodules) are committed with a generated message at conversation close and pushed where a remote exists. You do not need to commit or push by hand for normal work.
 
-When the user wants changes saved or published NOW (instead of at session end), use \`commit_workspace\`: it commits the workspace and then pushes the workspace plus any project submodules to their origin remotes — including submodules that are clean but have commits ahead of their remote. Pass \`push=false\` to commit only.
+To save or publish now instead of waiting for close, use \`commit_workspace\` (pass \`push=false\` to commit only). Mutating git through bash is deliberately blocked — for state-changing git, use the dedicated tools (\`commit_workspace\`; \`scrub\` to purge paths from history).
 
-Your bash access to git is deliberately restricted — these are blocked at the tool layer and will fail: \`git push\`, \`git reset\`, \`git checkout .\`/\`git restore .\`, \`git clean\`, \`git remote\` mutations, \`git rebase\`, \`git filter-repo\`. Read-only git (\`status\`, \`log\`, \`diff\`, \`show\`, \`branch\`) and \`git clone\` stay available via bash. For the mutating operations, use the dedicated git tools instead (\`commit_workspace\` to commit and push now, \`scrub\` to purge paths from history — the workspace repo or a project under projects/).`;
+${referencePointer(import.meta.dirname, "git")}`;

@@ -10,6 +10,7 @@ import {
   memoriesRoot,
   storeDir,
 } from "./layout.ts";
+import { MEMORY_LAYOUT_USAGE } from "./usage.ts";
 
 const INDEX_ENTRY_RE = /^\[([^\]]+)\]\(\.\/([^)]+\.md)\):\s*(.+)$/gm;
 
@@ -19,17 +20,6 @@ const STORE_DESCRIPTIONS: Partial<Record<MemoryStore, string>> = {
   learnings:
     "Experience notes: recurring friction, hard constraints, and hard-won lessons — what\nbites and what worked, one theme per file (drafts are tentative, confirmed entries are\nrecurring). Browse the entries below. When a file seems relevant to the current\nconversation, read it with the read tool to get the full content.",
 };
-
-const LAYOUT_SECTION = `## Memory
-
-The workspace keeps long-term memory as markdown files under \`memories/\`:
-
-- \`memories/episodic/\` — date-stamped conversation summaries (\`YYYY-MM-DD.md\`, plus weekly \`YYYY-WNN.md\` and monthly \`YYYY-MM.md\` rollups)
-- \`memories/topics/\` — everything worth remembering about a subject (reference facts, preferences, insights, decisions, and conclusions together), one topic per file, indexed in \`MEMORY.md\`
-- \`memories/learnings/\` — recurring friction, hard constraints, and hard-won lessons (experience, not knowledge), one theme per file, indexed in \`MEMORY.md\`
-- \`memories/transcripts/\` — archived raw conversation transcripts
-
-None of these files are loaded automatically. When the conversation touches a topic that might be covered there, grep or read the relevant memory files on demand. You do not write to \`memories/\` directly — an automated post-processing pass maintains these files (creating, updating, and consolidating them) after each conversation ends.`;
 
 const capitalize = (value: string): string => value.charAt(0).toUpperCase() + value.slice(1);
 
@@ -65,7 +55,7 @@ export const formatMemoryIndex = (store: MemoryStore, rawContent: string): strin
 export const buildMemoryContext = async (workspaceRoot: string, log: Logger): Promise<string> => {
   if (!(await fileExists(memoriesRoot(workspaceRoot)))) return "";
 
-  const sections = [LAYOUT_SECTION];
+  const sections = [MEMORY_LAYOUT_USAGE];
 
   for (const store of INDEXED_STORES) {
     let raw: string;

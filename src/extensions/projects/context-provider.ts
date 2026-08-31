@@ -1,11 +1,6 @@
 import type { Logger } from "../../log.ts";
 import { describeProjectState, listSubmodules, projectState } from "./git.ts";
-
-const USAGE = `## Projects
-
-You can manage external git repositories alongside your workspace, stored as git submodules under \`projects/\`. They are synced on startup, and any project with uncommitted changes is committed and pushed at session close (before the workspace commit, so submodule pointers land together). Git auth (SSH keys, tokens) is the user's responsibility — if a clone or push fails on auth, point them to configure credentials externally.
-
-The state below is a snapshot from session start — use \`list_projects\` for the live picture.`;
+import { PROJECTS_USAGE } from "./usage.ts";
 
 /**
  * Memory/projects context: the usage guidance plus a session-start snapshot of each registered
@@ -23,7 +18,7 @@ export const buildProjectsContext = async (workspaceRoot: string, log: Logger): 
   }
 
   if (submodulePaths.length === 0) {
-    return `${USAGE}\n\nNo projects are currently registered.`;
+    return `${PROJECTS_USAGE}\n\nNo projects are currently registered.`;
   }
 
   const states = await Promise.allSettled(
@@ -40,5 +35,5 @@ export const buildProjectsContext = async (workspaceRoot: string, log: Logger): 
     }
   }
 
-  return `${USAGE}\n\n## Registered Projects\n\n${lines.join("\n")}`;
+  return `${PROJECTS_USAGE}\n\n## Registered Projects\n\n${lines.join("\n")}`;
 };

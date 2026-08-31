@@ -1,9 +1,14 @@
+import { referencePointer } from "../../agent/prompt-references.ts";
+
 /**
  * Usage guidance for the detached-process subsystem, injected into the agent's context.
- * Scoped to main + background.
+ * Scoped to main + background. The no-bash-backgrounding rule and check-before-judging stay
+ * inline; output-capture and limit details live in the reference file.
  */
 export const DETACHED_PROCESSES_USAGE = `## Detached Processes
 
-You can start and monitor long-running OS shell commands that outlive a single turn — and Tachikoma itself. Reach for these when you need a worker, a server, a build, or any command that keeps running while you do other things; do NOT background commands with the bash tool (\`&\`, \`nohup\`, etc.) — they die with the turn.
+Long-running OS shell commands can outlive your turn and Tachikoma itself via the detached process tools. Do NOT background a command with bash (\`&\`, \`nohup\`): it dies with the turn.
 
-Processes are memory-limited (per-process or a default) and you are notified when one exits. Check on a long-runner with \`query_process\`/\`read_process_output\` rather than assuming it finished. \`read_process_output\` returns **both stdout and stderr** by default — many programs (Python logging, build tools, servers) write their useful output, errors, and progress to stderr, so always read a process's output before judging it stalled or failed.`;
+Check on a runner with \`query_process\`/\`read_process_output\` rather than assuming it finished, and read its output before judging it stalled or failed. You are notified when a process exits.
+
+${referencePointer(import.meta.dirname, "processes")}`;

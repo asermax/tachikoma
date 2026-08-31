@@ -1,9 +1,11 @@
 import { Type } from "typebox";
 
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { defineExtension } from "../api.ts";
 import { NOTIFY_EVENT } from "./payload.ts";
 import { NotificationRouter } from "./router.ts";
 import { createNotifyToolFactory } from "./tools.ts";
+import { NOTIFICATIONS_USAGE } from "./usage.ts";
 
 export type { NotifyPayload, Severity } from "./payload.ts";
 
@@ -39,6 +41,13 @@ export default defineExtension<NotificationsConfig>({
     app.events.on(NOTIFY_EVENT, (payload) => router.handle(payload));
 
     app.onShutdown("flush", () => router.flushNow());
+
+    // Receiving-side guidance for the main conversation (relay/act on what arrives). Main only,
+    // mirroring the tool scoping below: background runs are producers and get their notify_user
+    // guidance from their own base prompt.
+    app.agent.use(provideContext(NOTIFICATIONS_USAGE, "notifications-usage"), {
+      sessionScopes: ["main"],
+    });
 
     app.agent.use(
       createNotifyToolFactory((event, payload) => app.events.emit(event, payload), app.log),

@@ -9,6 +9,7 @@
  */
 
 import { FILE_READ_TOOLS } from "./file-tools.ts";
+import { referencePointer } from "./prompt-references.ts";
 
 /** Role-agnostic working hygiene shared by every context. The single source for these rules. */
 export const OPERATIONAL_GUIDANCE = `- Be concise and direct.
@@ -24,7 +25,13 @@ Prefer reading and writing workspace files over guessing; keep your knowledge fi
 const MAIN_GUIDANCE = `## How you work
 ${OPERATIONAL_GUIDANCE}
 - Take care with actions that are hard to reverse or that reach beyond this workspace (sending messages, deleting data, anything other people can see): confirm with the person first unless they have durably authorized it.
-- For focused, context-heavy sub-tasks — exploring or searching files, gathering scattered details — you can hand the work to a subagent with the delegate_to_agent tool (see its description for the available agents). The subagent runs in its own context and reports back, which keeps your own context clear.`;
+
+## Conversation mechanics
+- Messages from the person can arrive while you are still responding: they are steered into the live run, so fold them in and adjust course rather than finishing a now-stale answer. A message prefixed with \`/queue\` deliberately waits for your next exchange instead.
+- Not every turn is written by the person — the harness itself starts turns (background updates, scheduled work). Treat such a turn's content as its own instruction or update and act on it directly.
+
+${referencePointer(import.meta.dirname, "conversation")}
+${referencePointer(import.meta.dirname, "config")}`;
 
 export interface MainSystemPromptParts {
   workspaceRoot: string;

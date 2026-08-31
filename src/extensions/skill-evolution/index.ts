@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 
 import { type Static, Type } from "typebox";
-
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import { NOTIFY_EVENT, SEVERITIES } from "../../events.ts";
 import { hasRemote } from "../../git/git.ts";
 import type { Logger } from "../../log.ts";
@@ -17,6 +17,7 @@ import {
 import { gitReconcileDeps, type ReconcileResult, reconcileProposals } from "./reconcile.ts";
 import { REPORT_SOURCE, reportRun } from "./report.ts";
 import { filterEligible, listPatternPages, readImpactLog } from "./store.ts";
+import { SKILL_EVOLUTION_USAGE } from "./usage.ts";
 import { sweepProposalArtifacts, verifyAndRecord } from "./verify.ts";
 
 // Flat config; enabled by default (R13), post-work prompt optional (R10).
@@ -259,6 +260,13 @@ export default defineExtension<SkillEvolutionConfig>({
     app.bootstrap("init-skill-evolution-layout", () =>
       ensureSkillEvolutionLayout(workspaceRoot, app.log),
     );
+
+    // Agent-facing guidance for the pass: what pattern pages are, that proposals are reviewable
+    // branches, and that the pass never edits live skills silently. Main only — background runs
+    // have no branches to analyze and no say in review.
+    app.agent.use(provideContext(SKILL_EVOLUTION_USAGE, "skill-evolution-usage"), {
+      sessionScopes: ["main"],
+    });
 
     app.sessions.registerProcessor(
       createSkillEvolutionProcessor({

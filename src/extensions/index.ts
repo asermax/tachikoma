@@ -10,6 +10,7 @@ import memory from "./memory/index.ts";
 import notifications from "./notifications/index.ts";
 import projects from "./projects/index.ts";
 import selfUpdate from "./self-update/index.ts";
+import skillEvolution from "./skill-evolution/index.ts";
 import skills from "./skills/index.ts";
 import tasks from "./tasks/index.ts";
 import telegram from "./telegram/index.ts";
@@ -25,6 +26,7 @@ export const firstPartyExtensions = [
   git,
   boundary,
   skills,
+  skillEvolution,
   workflows,
   tasks,
   detachedProcesses,

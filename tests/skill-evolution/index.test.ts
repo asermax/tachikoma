@@ -13,8 +13,9 @@ import skillEvolution, {
 import { skillEvolutionDir } from "../../src/extensions/skill-evolution/layout.ts";
 import { IMPACT_LOG_FILENAME } from "../../src/extensions/skill-evolution/store.ts";
 
-// [extensions.skill-evolution] only reaches extensionConfig once the extension joins
-// firstPartyExtensions at land time — these tests drive setup with an explicit config object.
+// [extensions.skill-evolution] reaches extensionConfig through firstPartyExtensions (wired by
+// issue-445; asserted in tests/usage-sections.test.ts) — these tests drive setup directly with an
+// explicit config object.
 const config = (overrides: unknown = {}): SkillEvolutionConfig =>
   parseWithSchema(SkillEvolutionConfigSchema, overrides, "skill-evolution config");
 
@@ -26,6 +27,7 @@ interface BootstrapCall {
 interface SetupResult {
   bootstrapCalls: BootstrapCall[];
   processors: PostProcessor[];
+  agentUse: ReturnType<typeof vi.fn>;
   log: { info: ReturnType<typeof vi.fn>; warn: ReturnType<typeof vi.fn> };
 }
 
@@ -43,6 +45,7 @@ const setupWith = (extensionConfig: SkillEvolutionConfig, workspaceDir: string):
     bootstrapCalls.push({ name, hook });
   });
   const processors: PostProcessor[] = [];
+  const agentUse = vi.fn();
   const log = { info: vi.fn(), warn: vi.fn(), debug: vi.fn() };
 
   skillEvolution.setup({
@@ -59,11 +62,16 @@ const setupWith = (extensionConfig: SkillEvolutionConfig, workspaceDir: string):
         processors.push(processor);
       }),
     },
-    agent: { forkAndContinue: vi.fn(), branchFile: vi.fn(), side: { run: vi.fn() } },
+    agent: {
+      use: agentUse,
+      forkAndContinue: vi.fn(),
+      branchFile: vi.fn(),
+      side: { run: vi.fn() },
+    },
     events: { emit: vi.fn() },
   } as unknown as AppContext<SkillEvolutionConfig>);
 
-  return { bootstrapCalls, processors, log };
+  return { bootstrapCalls, processors, agentUse, log };
 };
 
 const setup = async (extensionConfig: SkillEvolutionConfig): Promise<SetupResult> => {
@@ -92,6 +100,13 @@ describe("skill-evolution extension setup", () => {
       phase: "main",
       statusLabel: "Evolving skills",
     });
+  });
+
+  it("contributes its usage section to the main session only (issue-445)", async () => {
+    const { agentUse } = await setup(config());
+
+    expect(agentUse).toHaveBeenCalledTimes(1);
+    expect(agentUse).toHaveBeenCalledWith(expect.any(Function), { sessionScopes: ["main"] });
   });
 
   it("seeds the store from the bootstrap hook (workspace root captured in closure)", async () => {

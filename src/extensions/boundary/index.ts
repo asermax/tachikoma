@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 
 import { checkpointHasTangent, getLeafId } from "../../agent/session-tree.ts";
+import { provideContext } from "../../agent/system-prompt-section.ts";
 import type { Delivery } from "../../channels/types.ts";
 import type { DecisionHeader, InboundMessage } from "../../domain/message.ts";
 import { SESSION_TOPIC_CHANGED_EVENT, type TopicChangedReason } from "../../events.ts";
@@ -14,6 +15,7 @@ import { setCheckpointAndFocus } from "./focus.ts";
 import { BOUNDARY_REACTIONS } from "./reactions.ts";
 import { findRelatedBranch, injectRelatedBranchContext } from "./related.ts";
 import { handleRollbackCommand, type RollbackDeps } from "./rollback.ts";
+import { BOUNDARY_USAGE } from "./usage.ts";
 
 interface BoundaryConfig {
   enabled: boolean;
@@ -77,6 +79,13 @@ export default defineExtension<BoundaryConfig>({
       }),
       { sessionScopes: ["main"] },
     );
+
+    // Agent-facing branch-model guidance — registered regardless of `enabled` so the manual
+    // commands and `ask_branch` are documented even with detection off. Main only: background
+    // task sessions are single-purpose runs with no trunk.
+    app.agent.use(provideContext(BOUNDARY_USAGE, "boundary-usage"), {
+      sessionScopes: ["main"],
+    });
 
     // Stateless command deps, shared across the manual command handlers and built once in setup scope
     // rather than rebuilt per message. `/rollback` adds the coordinator `replay` seam to the same set.
