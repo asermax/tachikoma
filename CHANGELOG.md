@@ -1,3 +1,15 @@
+# [3.70.0](https://github.com/asermax/tachikoma/compare/v3.69.0...v3.70.0) (2026-08-31)
+
+
+### Bug Fixes
+
+* **tests:** measure size budget on canonicalized content ([8058520](https://github.com/asermax/tachikoma/commit/8058520a4e6badb5d9dbfa8945fd468da6b99cef))
+
+
+### Features
+
+* **agent:** add two-tier prompt reference mechanism ([b1edeec](https://github.com/asermax/tachikoma/commit/b1edeec9035acbe4a54a8264db362b4afdb387be))
+
 # [3.69.0](https://github.com/asermax/tachikoma/compare/v3.68.0...v3.69.0) (2026-08-30)
 
 
