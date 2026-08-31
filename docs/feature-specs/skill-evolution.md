@@ -34,6 +34,7 @@ The `skill-evolution` extension (`src/extensions/skill-evolution/`) makes worksp
 | R13 | The feature is enabled by default and toggleable via `[extensions.skill-evolution] enabled`; an optional `postWorkPrompt` configures the post-proposal background prompt (R10) |
 | R14 | Proposals target workspace skills only; built-in bundled skills are out of scope |
 | R15 | The feature requires a workspace `origin` remote — when none is configured, the run is skipped entirely (logged; no analysis, no run-time store writes; the bootstrap layout seeding is unaffected) |
+| R16 | The extension owns its agent-facing guidance rather than baking it into the core base prompt: a `skill-evolution-usage` context section (`src/extensions/skill-evolution/usage.ts`, contributed via `provideContext(..., "skill-evolution-usage")`, scoped to `["main"]` — background runs have no branches to analyze and no say in review) tells the agent what the pass does (accumulates friction as pattern pages under `memories/skill-evolution/`, turns recurring patterns into pushed proposal branches) and the one rule that matters conversationally: proposals are reviewable branches the user merges — the pass never edits live skills silently. A `references/skill-evolution.md` file carries the stage-by-stage detail ([DES-014](../design/DES-014-two-tier-agent-facing-documentation.md)) |
 
 ## Behaviors
 

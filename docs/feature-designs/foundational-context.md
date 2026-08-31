@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Explains how the assistant's identity files (SOUL.md, USER.md, AGENTS.md) reach the pi system prompt and how the post-session updater that evolves them is structured.
+Explains how the assistant's identity files (SOUL.md, USER.md, AGENTS.md) reach the pi system prompt, how the post-session updater that evolves them is structured, and how the harness's features are documented to the agent across the composed context (the two-tier inline/reference convention and its placement matrix, below).
 
 ## Problem Context
 
@@ -28,6 +28,43 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 ## Design Overview
 
 Two halves with different lifetimes. The extension (`src/extensions/context/index.ts`) is process-scoped: a bootstrap hook creates SOUL.md and USER.md from templates on first run and caches their contents as a fallback, and two `provideContext` factories (SOUL, then USER) re-read both files from disk (`readFileSync`, falling back to the cached snapshot only on a read error) and append them to the system prompt on top of the core base prompt. A third factory injects the current date/time (configured timezone) as a hidden, persisted message refreshed at most once per 30 minutes via `provideDebouncedContext` (see [agent-integration](./agent-integration.md)) — the sole source of time-of-day awareness, since the core base prompt's `Current date:` header is date-only (baked per session) and pi's per-turn footer is date-only in the process timezone. The core base prompt itself (identity + shared `OPERATIONAL_GUIDANCE` plus interactive guidance + workspace root + a configured-zone `Current date:` header) lives in `buildMainSystemPrompt` ([DES-005](../design/DES-005-base-prompt-ownership.md)) and is installed by `AgentManager` (which threads `config.scheduler.timezone` into the header), not the extension. The updater (`src/extensions/context/processor.ts`) is a `preFinalize` post-processor: it expires and snapshots the pending-signals file, builds a follow-up instruction, then forks the just-ended pi session (`forkAndContinue`) so the same assistant — full conversation live in its history — edits the three context files and the signals file directly, hard-limited to file tools.
+
+## System-Prompt Feature Documentation (Two-Tier)
+
+The composed context documents the harness to the agent in two tiers ([DES-014](../design/DES-014-two-tier-agent-facing-documentation.md); landed in issue-445). **Inline sections** — the core base prompt plus each extension's `usage.ts` constant, delivered once per session as hidden messages via `provideContext` — carry only what the feature is, when to reach for it, and critical safety rules. Everything else (lists, edge cases, config knobs, mechanics the agent needs only occasionally) lives in **reference files** next to the owning module (`src/extensions/<name>/references/<topic>.md`, `src/agent/references/<topic>.md`), pointed to by a single canonical line from `referencePointer` (`src/agent/prompt-references.ts`) that the agent reads on demand — the same progressive-disclosure pattern skills use. Reference files ship with the package via `scripts/copy-assets.mjs` (tsc only emits JS).
+
+Two structural rules govern placement. First, **ownership**: the core base prompt (`buildMainSystemPrompt` + `src/agent/references/`) documents only the conversation substrate the coordinator/channel core owns (steering, command routing, system-origin turns, delivery timing); extension-specific behavior is documented exclusively by its owning extension's section or reference — the core prompt never names an extension's tools or turn formats. Second, **scope matching**: a section describes only what its `sessionScopes` can call (main-only features are never described to background sessions, and vice versa).
+
+The drift guards live in `tests/agent/prompt-references.test.ts`: a size budget over the complete static inline set, bidirectional pointer/reference integrity (every static usage constant either contains guidance or a resolvable pointer; every reference file is pointed to), and the extension-ownership deny-list on the core prompt.
+
+### Placement Matrix
+
+Each row records the coverage-pass decision (issue-445) for one agent-facing surface — annotations like "NEW" or "trimmed" describe that pass relative to the prior state, not a standing property. "Inline" sections are main-session delivered unless scoped otherwise; every inline section also carries its reference pointer.
+
+| Surface | Tier | Scope | Rationale |
+|---------|------|-------|-----------|
+| Working hygiene (`OPERATIONAL_GUIDANCE`) | Inline (core) | all contexts | Frames every turn; already minimal; untouched by this pass |
+| Conversation substrate: mid-exchange steering, `/queue`, command routing, bare-command pending prompts, system-origin turns, delivery timing | Inline (core, compact) + `src/agent/references/conversation.md` | main | Substrate the agent experiences every exchange — core-owned, so it belongs in the core prompt; detail (tier table, wrapper shape) demoted to the reference |
+| Configuration surface | `src/agent/references/config.md` only (core) | main | Rarely needed; the agent can point the user at the file and read it itself — no standing inline cost |
+| boundary — branch model, `/new` `/checkpoint` `/back` `/rollback`, `ask_branch`, related-branch injection, checkpoints | Inline (`## Branches`, NEW) + `references/branches.md` | main | Biggest prior gap: the agent saw branch summaries and the tool with no framing. Mechanics detail (boomerang, forced references, kill-switches) demoted |
+| memory — `memories/` layout, read-on-demand, no direct writes | Inline (trimmed) + `references/memory.md` | main + background | What/when/critical-rule stays; per-store annotations and maintenance detail demoted |
+| projects — submodule management, close-time persistence | Inline (hoisted + trimmed) + `references/projects.md` | main + background | Hoisted from a private constant so the sweep/budget enumerate it; auth detail demoted |
+| git — auto-commit, `commit_workspace`, dedicated-tools rule | Inline (trimmed) + `references/git.md` | main + background | The dedicated-tools and no-manual-commit rules are critical and stay; the bash deny list demoted |
+| skills — injected-skill authority, catalog habit, delegation | Inline (adjusted) + `references/skills.md` | main + background | Core's former `delegate_to_agent` bullet absorbed here (ownership rule); catalog/delegation mechanics demoted |
+| skill-evolution — nightly self-improvement, pattern pages, proposal branches | Inline (`## Skill Evolution`, NEW) + `references/skill-evolution.md` | main | Was implemented but never loaded — wired into `firstPartyExtensions` by this change; the agent must know proposals are reviewable branches, not silent edits |
+| workflows — step-directory processes | Inline (kept short) + `references/workflows.md` | main | What/when fits in three sentences; state-machine detail demoted |
+| tasks — session vs background, scheduling, goal authoring | Inline (trimmed) + `references/tasks.md` | main + background | Goal authoring stays inline per R13 (goal meaning documented on every agent-facing surface) even though `BACKGROUND_GUIDANCE` restates it for the run itself; run limits/timeouts/retention and the `📋 Scheduled task:` turn shape demoted |
+| detached-processes — long-running commands, no bash backgrounding | Inline (trimmed) + `references/processes.md` | main + background | The no-bash-backgrounding rule and check-before-judging stay; stderr detail demoted |
+| notifications — background updates arriving as digests | Inline (`## Notifications`, NEW, small) + `references/notifications.md` | main | Main sessions only see the receiving side (digest as a system turn); `notify_user` is background-only and documented there |
+| self-update — dedicated tools only, deferred re-exec | Inline (kept) + `references/updates.md` | main | The never-npm-directly rule is critical and short; rollback/check cadence demoted |
+| telegram — file delivery, reactions, pins, inline buttons | Short inline section + `references/telegram.md` | main (registered only when the channel is configured) | Channel-dependent affordances; tools already carry `promptGuidelines`, so only the affordance overview needs saying |
+| external — third-party extension install/update/list/uninstall | Inline (`## Extensions`, NEW, tiny) + `references/extensions.md` | main | The agent must know it can manage extensions and that installs apply on restart |
+| bash-description — required `description` on bash | Omitted | — | Self-evident from the tool's parameter schema; no behavioral guidance adds anything |
+| commands — channel-agnostic command pass-through | Omitted | — | No agent-facing surface; all command handling happens before/around the agent |
+| context — SOUL/USER/AGENTS.md identity files | Omitted | — | The files *are* the prompt; the agent needs no guidance to be framed by them |
+| Dynamic providers (memory indexes, projects snapshot) | Matrix-only (not static) | main + background | Content depends on session/workspace state — covered by this matrix, not the static sweep |
+
+**Size budget**: the complete static inline set (core base prompt + every static usage constant) measures ≤ 10,500 characters (~8,930 before this pass); the budget binds — if coverage pushes past it, inline sections slim further and this matrix records the cut.
 
 ## Components
 

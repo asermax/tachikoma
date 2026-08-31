@@ -34,7 +34,7 @@ The delivery mechanism for a proposed improvement is constrained by the workspac
 
 ## Design Overview
 
-One extension, `src/extensions/skill-evolution/` (registered in `firstPartyExtensions`, `src/extensions/index.ts`), registering a single `main`-phase trunk-close processor (`skill-evolution-trunk-close`) plus a layout bootstrap. The processor runs the nightly loop:
+One extension, `src/extensions/skill-evolution/` (registered in `firstPartyExtensions`, `src/extensions/index.ts`), registering a single `main`-phase trunk-close processor (`skill-evolution-trunk-close`), a layout bootstrap, and a main-scoped agent-facing usage section (`usage.ts`, R16 — what the pass is and that proposals are reviewable branches, with a `references/skill-evolution.md` pointer per issue-445's two-tier convention). The processor runs the nightly loop:
 
 ```
 trunk close (main phase, ∥ memory-trunk-close)
@@ -61,7 +61,7 @@ Everything agent-driven uses the two established pi shapes (see [../reference/pi
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/extensions/skill-evolution/index.ts` | Wiring: config schema (`enabled` default true, `postWorkPrompt` optional), layout bootstrap, processor registration | `defineExtension` per [DES-002](../design/DES-002-extension-authoring.md); early-return when `enabled` is false; workspace root captured in closure (processors don't receive it); the processor's stage seams (`hasRemote`/`reconcile`/`analyze`/`maintenance`/`proposal`/`verify`/`sweep`/`report`) each default to the real implementation and are individually overridable in tests |
+| `src/extensions/skill-evolution/index.ts` | Wiring: config schema (`enabled` default true, `postWorkPrompt` optional), layout bootstrap, main-scoped usage-section registration, processor registration | `defineExtension` per [DES-002](../design/DES-002-extension-authoring.md); early-return when `enabled` is false; workspace root captured in closure (processors don't receive it); the processor's stage seams (`hasRemote`/`reconcile`/`analyze`/`maintenance`/`proposal`/`verify`/`sweep`/`report`) each default to the real implementation and are individually overridable in tests |
 | `src/extensions/skill-evolution/layout.ts` | `skillEvolutionDir(root)`, `ensureSkillEvolutionLayout` (seed `MEMORY.md` + `skill-impact-log.md` only when absent) | Own path helper ([DES-002](../design/DES-002-extension-authoring.md) — no importing memory's); seeding follows the `ensureMemoryLayout` idiom: mkdir recursive, skip-if-exists so user edits survive |
 | `src/extensions/skill-evolution/store.ts` | Impact-log read/parse/write (row CRUD by branch+tip), pattern-page inventory for prompt assembly, `filterEligible` | Lenient markdown-table parsing — malformed rows logged and skipped, never fatal; the inventory excludes `MEMORY.md` and `skill-impact-log.md`; the eligible-pattern filter (exclude patterns with any impact-log entry — `proposed`, `accepted`, or `rejected`) lives here, enforcing never-re-proposed input-side |
 | `src/extensions/skill-evolution/reconcile.ts` | Fetch + classification + log status updates | `runGitCapture` (branch on exit codes); reachability-first classification; every outcome a logged branch; the status write-back fires only when at least one row changed, so a fully-pending or empty ledger run is a byte-level no-op on the log file |

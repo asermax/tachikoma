@@ -2,7 +2,7 @@
 
 **Scope**: Project-wide
 **Date**: 2026-06-13
-**Last Updated**: 2026-06-14
+**Last Updated**: 2026-08-31
 
 ## Pattern
 
@@ -13,8 +13,10 @@ subagent) — lives in the core module `src/agent/prompts.ts` and shares the sin
 extension: `AgentManager` applies `buildMainSystemPrompt({ workspaceRoot })` as the
 `systemPromptOverride` for any non-bare session that brings no explicit prompt (the main session and
 forks); headless/background runs pass their own via `side.run({ system })`. The main base prompt holds
-only the identity, the shared guidance, and the workspace root — it does **not** include the
-user-editable SOUL.md/USER.md content.
+the identity, the shared `OPERATIONAL_GUIDANCE` hygiene, and the workspace root, plus — main context
+only — the conversation-substrate mechanics the coordinator owns (mid-exchange steering, `/queue`,
+system-origin turns, delivery timing) and pointers to the core reference files in
+`src/agent/references/`. It does **not** include the user-editable SOUL.md/USER.md content.
 
 A prompt that is **a discrete task handed to a side-run** (a classifier, extractor, summarizer, or
 one-shot writer) is *not* a base prompt and stays co-located with the feature that owns it.
@@ -34,7 +36,11 @@ feature**. Scope each section to the sessions where it belongs (`["main", "backg
 
 The deciding predicate: *does this prompt stand in for pi's coding-agent identity for a whole
 execution context?* If yes → core `prompts.ts` + shared `OPERATIONAL_GUIDANCE`. If it is a
-feature's own task instruction → inline in the feature.
+feature's own task instruction → inline in the feature. That predicate decides **where a prompt
+lives**. A second, content-level predicate governs **what the main base prompt may say**: it
+documents only the conversation substrate the core owns and never names an extension's tool or turn
+format — feature guidance belongs to the owning extension's usage section
+([DES-014](DES-014-two-tier-agent-facing-documentation.md)).
 
 ## Rationale
 
@@ -56,7 +62,7 @@ frame a whole conversation, and would only add noise to the core module.
 ```ts
 // src/agent/prompts.ts — base prompts + shared hygiene live here
 export const OPERATIONAL_GUIDANCE = `- Be concise and direct.\n- ...`;
-export const buildMainSystemPrompt = ({ workspaceRoot }) => [...].join("\n\n"); // identity + hygiene + root
+export const buildMainSystemPrompt = ({ workspaceRoot }) => [...].join("\n\n"); // date + identity + hygiene + substrate mechanics + core reference pointers + root
 export const SUBAGENT_SYSTEM_PROMPT = `You are a focused worker ...\n${OPERATIONAL_GUIDANCE}`;
 
 // src/agent/manager.ts — the CORE installs the base prompt
@@ -98,5 +104,6 @@ operator config."
 
 - See also: [DES-001](DES-001-unified-extension-api.md) — the `app.agent.use(provideContext(...))` / `side.run` registration seams this pattern flows through (the core installs the base prompt directly via `AgentManager`)
 - See also: [ADR-001](../architecture/ADR-001-agent-sdk.md) — the always-replace-pi-base / don't-inherit-operator-append stance
-- Related feature: [../feature-designs/foundational-context.md](../feature-designs/foundational-context.md) — the main-session identity
+- See also: [DES-014](DES-014-two-tier-agent-facing-documentation.md) — the two-tier convention for everything that supplements a base prompt (usage sections, reference pages), including what the core prompt may say
+- Related feature: [../feature-designs/foundational-context.md](../feature-designs/foundational-context.md) — the main-session identity and the two-tier placement matrix (DES-014)
 - Related feature: [../feature-designs/agent-integration.md](../feature-designs/agent-integration.md) — `isolatePrompt` and the side-run seam

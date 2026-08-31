@@ -14,6 +14,8 @@ Every Tachikoma feature is an extension (DES-001). This document fixes the mecha
 src/extensions/<name>/
   index.ts        # default export: defineExtension({ name, configSchema?, setup })
   schema.ts       # drizzle tables (only if the extension owns tables)
+  usage.ts        # lean agent-facing usage section (DES-014), registered in index.ts via provideContext
+  references/     # read-on-demand reference pages (DES-014), one <topic>.md per pointer line
   <topic>.ts      # one concern per module (loader, processor, tools, …)
 tests/<name>/
   <topic>.test.ts # vitest, colocated fakes; no live LLM/network calls
@@ -30,7 +32,7 @@ tests/<name>/
 |---|---|
 | feature config | `configSchema` (TypeBox) + `app.extensionConfig` — section `[extensions.<name>]` |
 | startup init | `app.bootstrap("hook-name", fn)` — idempotent, fail = abort startup |
-| inject a context section as a hidden message | `app.agent.use(provideContext(provide, "custom-type"), { sessionScopes })` — `provide` is a string or `(ctx) => string \| Promise<string>` (empty → no injection) |
+| inject a context section as a hidden message | `app.agent.use(provideContext(provide, "custom-type"), { sessionScopes })` — `provide` is a string or `(ctx) => string \| Promise<string>` (empty → no injection); an extension's usage section (DES-014) goes through this mode |
 | append a context section to the system prompt | `app.agent.use(provideContext(provide), { sessionScopes })` — same `provide`, no `customType` → appended to the turn's system prompt |
 | add agent tools / pi hooks | `app.agent.use((pi) => { pi.registerTool({...}); pi.on(...); })` |
 | cheap LLM side-calls | `app.agent.side.complete/classify` (typed via TypeBox schema) |
@@ -54,7 +56,7 @@ tests/<name>/
 - Named exports; arrow functions assigned to consts; airy grouping with blank lines around control structures.
 - Comments only for non-obvious WHY; never narrate the next line.
 - Tool registration: tools the LLM calls go through `pi.registerTool` with TypeBox `parameters`, `promptSnippet` for the system-prompt line, guidelines naming the tool explicitly. Throw from `execute` to signal errors. Truncate large outputs with pi's `truncateHead/truncateTail`.
-- Long-form prompts live as module-level template constants near their use.
+- Long-form prompts live as module-level template constants near their use — except agent-facing usage guidance, which follows [DES-014](DES-014-two-tier-agent-facing-documentation.md): a lean `usage.ts` constant plus a `references/<topic>.md` page, never a long inline constant.
 - Workspace paths via `app.workspace.resolve(...)`; internal state under `app.workspace.dataDir`.
 - External processes: `node:child_process` (`execFile` promisified) — no shell strings unless unavoidable.
 
