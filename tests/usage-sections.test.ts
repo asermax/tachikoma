@@ -1,28 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
 import type { AppContext } from "../src/extensions/api.ts";
 import boundary from "../src/extensions/boundary/index.ts";
-import { BOUNDARY_USAGE } from "../src/extensions/boundary/usage.ts";
-import { DETACHED_PROCESSES_USAGE } from "../src/extensions/detached-processes/usage.ts";
 import external from "../src/extensions/external/index.ts";
-import { EXTERNAL_USAGE } from "../src/extensions/external/usage.ts";
-import { GIT_USAGE } from "../src/extensions/git/usage.ts";
 import { firstPartyExtensions } from "../src/extensions/index.ts";
-import { MEMORY_LAYOUT_USAGE } from "../src/extensions/memory/usage.ts";
 import notifications from "../src/extensions/notifications/index.ts";
-import { NOTIFICATIONS_USAGE } from "../src/extensions/notifications/usage.ts";
-import { PROJECTS_USAGE } from "../src/extensions/projects/usage.ts";
-import { SELF_UPDATE_USAGE } from "../src/extensions/self-update/usage.ts";
-import { SKILL_EVOLUTION_USAGE } from "../src/extensions/skill-evolution/usage.ts";
 import skills from "../src/extensions/skills/index.ts";
-import { SKILLS_USAGE } from "../src/extensions/skills/usage.ts";
-import { buildTasksUsage } from "../src/extensions/tasks/usage.ts";
 import telegram from "../src/extensions/telegram/index.ts";
-import { TELEGRAM_USAGE } from "../src/extensions/telegram/usage.ts";
-import { WORKFLOWS_USAGE } from "../src/extensions/workflows/usage.ts";
+import { pointersOf, USAGE_SECTIONS } from "./agent/extension-surfaces.ts";
 
 /**
  * issue-445 section-content and scoping guards. For every slimmed section: the critical rule
@@ -31,107 +18,115 @@ import { WORKFLOWS_USAGE } from "../src/extensions/workflows/usage.ts";
  * documents (main-only features are never described to background sessions).
  */
 
-const SRC = join(import.meta.dirname, "..", "src");
-
-const REFERENCE = (extension: string, topic: string): Promise<string> =>
-  readFile(join(SRC, "extensions", extension, "references", `${topic}.md`), "utf8");
-
 // ---- content: inline keeps the critical rule, reference keeps the detail ----------------------
 
+interface SectionCase {
+  /** What the section must keep inline, as the it-title phrases it. */
+  rule: string;
+  /** Critical rules that stay in the usage section itself. */
+  inline: string[];
+  /** Detail that must exist only in the reference file. */
+  notInline?: string[];
+  /** Asserted against the reference file the section's own pointer names. */
+  reference?: string[];
+}
+
+/**
+ * Per-section content claims, keyed by usage module (USAGE_SECTIONS). The reference side
+ * resolves through the section's pointer line, so this table never re-encodes the
+ * `references/<topic>.md` layout.
+ */
+const CASES: { [K in keyof typeof USAGE_SECTIONS]?: SectionCase } = {
+  "git/usage.ts": {
+    rule: "dedicated-tools rule inline; the bash deny list only in the reference",
+    inline: ["commit_workspace", "You do not need to commit or push by hand"],
+    notInline: ["git push", "git rebase"],
+    reference: ["git push", "git filter-repo", "scrub"],
+  },
+  "tasks/usage.ts": {
+    rule: "type choice and goal structure inline; run mechanics only in the reference",
+    inline: ["**session**", "**background**", "end state"],
+    notInline: ["respond_to_task", "backgroundMaxIterations"],
+    reference: ["respond_to_task", "📋 Scheduled task", "backgroundMaxIterations"],
+  },
+  "memory/usage.ts": {
+    rule: "layout and the no-direct-writes rule inline; store detail in the reference",
+    inline: ["memories/episodic/", "do not write to"],
+    notInline: ["rollup", "transcriptRetentionDays"],
+    reference: ["YYYY-WNN.md", "transcriptRetentionDays"],
+  },
+  "detached-processes/usage.ts": {
+    rule: "the no-bash-backgrounding rule inline; capture detail in the reference",
+    inline: ["nohup", "query_process"],
+    notInline: ["stderr"],
+    reference: ["stderr", "defaultMemoryLimitMb"],
+  },
+  "skills/usage.ts": {
+    // Delegation guidance was absorbed from the core prompt — the tool is the skills
+    // extension's own (tests/agent/prompts.test.ts guards the core side).
+    rule: "carries the delegation guidance absorbed from the core prompt",
+    inline: ["delegate_to_agent", "extensionTools"],
+  },
+  "projects/usage.ts": {
+    rule: "registration and auto-persistence inline; auth guidance in the reference",
+    inline: ["register_project", "snapshot from session start"],
+    notInline: ["SSH"],
+    reference: ["SSH", "commitDebounceMinutes"],
+  },
+  "self-update/usage.ts": {
+    rule: "the dedicated-tools-only rule stays inline",
+    inline: ["upgrade_self", "never run"],
+  },
+  "workflows/usage.ts": {
+    rule: "the top-level-id routing rule stays inline",
+    inline: ["top-level"],
+  },
+  "boundary/usage.ts": {
+    rule: "names its feature's key surfaces",
+    inline: ["branch_summary", "ask_branch", "/checkpoint", "/rollback"],
+  },
+  "notifications/usage.ts": {
+    rule: "names its feature's key surfaces",
+    inline: ["digest"],
+  },
+  "telegram/usage.ts": {
+    rule: "names its feature's key surfaces",
+    inline: ["buttons"],
+  },
+  "external/usage.ts": {
+    rule: "names its feature's key surfaces",
+    inline: ["restart"],
+  },
+  "skill-evolution/usage.ts": {
+    rule: "names its feature's key surfaces",
+    inline: ["proposal", "memories/skill-evolution/"],
+  },
+};
+
 describe("slimmed sections keep critical rules inline and demote detail to references", () => {
-  it("git: dedicated-tools rule inline; the bash deny list only in the reference", async () => {
-    const reference = await REFERENCE("git", "git");
+  for (const [name, testCase] of Object.entries(CASES as Record<string, SectionCase>)) {
+    it(`${name}: ${testCase.rule}`, async () => {
+      const usage = USAGE_SECTIONS[name];
+      expect(usage, `${name} is missing from the shared usage enumeration`).toBeDefined();
 
-    expect(GIT_USAGE).toContain("commit_workspace");
-    expect(GIT_USAGE).toContain("You do not need to commit or push by hand");
-    expect(GIT_USAGE).not.toContain("git push");
-    expect(GIT_USAGE).not.toContain("git rebase");
+      for (const inline of testCase.inline) {
+        expect(usage, `${name} lost its critical rule`).toContain(inline);
+      }
+      for (const demoted of testCase.notInline ?? []) {
+        expect(usage, `${name} still carries reference detail inline`).not.toContain(demoted);
+      }
 
-    expect(reference).toContain("git push");
-    expect(reference).toContain("git filter-repo");
-    expect(reference).toContain("scrub");
-  });
+      if (testCase.reference) {
+        const [pointer] = pointersOf(usage);
+        expect(pointer, `${name} points at no reference file`).toBeDefined();
+        const reference = await readFile(pointer, "utf8");
 
-  it("tasks: type choice and goal structure inline; run mechanics only in the reference", async () => {
-    const usage = buildTasksUsage("UTC");
-    const reference = await REFERENCE("tasks", "tasks");
-
-    expect(usage).toContain("**session**");
-    expect(usage).toContain("**background**");
-    expect(usage).toContain("end state");
-    expect(usage).not.toContain("respond_to_task");
-    expect(usage).not.toContain("backgroundMaxIterations");
-
-    expect(reference).toContain("respond_to_task");
-    expect(reference).toContain("📋 Scheduled task");
-    expect(reference).toContain("backgroundMaxIterations");
-  });
-
-  it("memory: layout and the no-direct-writes rule inline; store detail in the reference", async () => {
-    const reference = await REFERENCE("memory", "memory");
-
-    expect(MEMORY_LAYOUT_USAGE).toContain("memories/episodic/");
-    expect(MEMORY_LAYOUT_USAGE).toContain("do not write to");
-    expect(MEMORY_LAYOUT_USAGE).not.toContain("rollup");
-    expect(MEMORY_LAYOUT_USAGE).not.toContain("transcriptRetentionDays");
-
-    expect(reference).toContain("YYYY-WNN.md");
-    expect(reference).toContain("transcriptRetentionDays");
-  });
-
-  it("detached-processes: the no-bash-backgrounding rule inline; capture detail in the reference", async () => {
-    const reference = await REFERENCE("detached-processes", "processes");
-
-    expect(DETACHED_PROCESSES_USAGE).toContain("nohup");
-    expect(DETACHED_PROCESSES_USAGE).toContain("query_process");
-    expect(DETACHED_PROCESSES_USAGE).not.toContain("stderr");
-
-    expect(reference).toContain("stderr");
-    expect(reference).toContain("defaultMemoryLimitMb");
-  });
-
-  it("skills: delegation guidance lives here (absorbed from the core prompt)", () => {
-    // The core base prompt's former delegate_to_agent bullet moved into this section — the
-    // tool is the skills extension's own (tests/agent/prompts.test.ts guards the core side).
-    expect(SKILLS_USAGE).toContain("delegate_to_agent");
-    expect(SKILLS_USAGE).toContain("extensionTools");
-  });
-
-  it("projects: registration and auto-persistence inline; auth guidance in the reference", async () => {
-    const reference = await REFERENCE("projects", "projects");
-
-    expect(PROJECTS_USAGE).toContain("register_project");
-    expect(PROJECTS_USAGE).toContain("snapshot from session start");
-    expect(PROJECTS_USAGE).not.toContain("SSH");
-
-    expect(reference).toContain("SSH");
-    expect(reference).toContain("commitDebounceMinutes");
-  });
-
-  it("self-update: the dedicated-tools-only rule stays inline", () => {
-    expect(SELF_UPDATE_USAGE).toContain("upgrade_self");
-    expect(SELF_UPDATE_USAGE).toContain("never run");
-  });
-
-  it("workflows: the top-level-id routing rule stays inline", () => {
-    expect(WORKFLOWS_USAGE).toContain("top-level");
-  });
-
-  it("new sections name their feature's key surfaces", () => {
-    expect(BOUNDARY_USAGE).toContain("branch_summary");
-    expect(BOUNDARY_USAGE).toContain("ask_branch");
-    expect(BOUNDARY_USAGE).toContain("/checkpoint");
-    expect(BOUNDARY_USAGE).toContain("/rollback");
-
-    expect(NOTIFICATIONS_USAGE).toContain("digest");
-
-    expect(TELEGRAM_USAGE).toContain("buttons");
-
-    expect(EXTERNAL_USAGE).toContain("restart");
-
-    expect(SKILL_EVOLUTION_USAGE).toContain("proposal");
-    expect(SKILL_EVOLUTION_USAGE).toContain("memories/skill-evolution/");
-  });
+        for (const detail of testCase.reference) {
+          expect(reference, `${name}'s reference lost detail`).toContain(detail);
+        }
+      }
+    });
+  }
 });
 
 // ---- scoping: a section reaches exactly the agents that can use it ---------------------------

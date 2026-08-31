@@ -1,10 +1,11 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { collectAssetDirs, mirrorAssetDirs } from "../../scripts/copy-assets.mjs";
+import { listUsageModules } from "../agent/extension-surfaces.ts";
 
 /**
  * The asset-copy parity guards (issue-445): the script is what makes `referencePointer`'s
@@ -105,7 +106,7 @@ describe("mirrorAssetDirs", () => {
 });
 
 describe("the real source tree", () => {
-  it("ships every asset dir the built tree needs — references for every section pointer plus the built-in skills", async () => {
+  it("ships every asset dir the built tree needs — a references dir per usage module plus the built-in skills", async () => {
     const srcRoot = join(import.meta.dirname, "..", "..", "src");
     const dirs = await collectAssetDirs(srcRoot);
     const relativeDirs = dirs.map((dir) => relative(srcRoot, dir));
@@ -114,23 +115,13 @@ describe("the real source tree", () => {
     expect(relativeDirs).toContain(join("agent", "references"));
     // The built-in skills the skills extension registers as a pi skill source.
     expect(relativeDirs).toContain(join("extensions", "skills", "builtin-skills"));
-    // Every first-party section's reference dir (kept in lockstep with the usage modules).
-    for (const extension of [
-      "boundary",
-      "detached-processes",
-      "external",
-      "git",
-      "memory",
-      "notifications",
-      "projects",
-      "self-update",
-      "skill-evolution",
-      "skills",
-      "tasks",
-      "telegram",
-      "workflows",
-    ]) {
-      expect(relativeDirs).toContain(join("extensions", extension, "references"));
+    // Every usage section ships a reference dir — derived from the usage modules on disk
+    // (same source as the drift sweep), so a new section cannot silently skip this check.
+    for (const module of await listUsageModules()) {
+      const extension = dirname(module);
+      expect(relativeDirs, `${extension} has a usage section but no references dir`).toContain(
+        join("extensions", extension, "references"),
+      );
     }
   });
 });

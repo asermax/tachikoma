@@ -1,24 +1,20 @@
-import { type Dirent, readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
+import { collectAssetDirs } from "../../scripts/copy-assets.mjs";
 import { referencePointer } from "../../src/agent/prompt-references.ts";
 import { buildMainSystemPrompt } from "../../src/agent/prompts.ts";
 import { ConfigSchema } from "../../src/config/schema.ts";
-import { BOUNDARY_USAGE } from "../../src/extensions/boundary/usage.ts";
-import { DETACHED_PROCESSES_USAGE } from "../../src/extensions/detached-processes/usage.ts";
-import { EXTERNAL_USAGE } from "../../src/extensions/external/usage.ts";
-import { GIT_USAGE } from "../../src/extensions/git/usage.ts";
-import { MEMORY_LAYOUT_USAGE } from "../../src/extensions/memory/usage.ts";
-import { NOTIFICATIONS_USAGE } from "../../src/extensions/notifications/usage.ts";
-import { PROJECTS_USAGE } from "../../src/extensions/projects/usage.ts";
-import { SELF_UPDATE_USAGE } from "../../src/extensions/self-update/usage.ts";
-import { SKILL_EVOLUTION_USAGE } from "../../src/extensions/skill-evolution/usage.ts";
-import { SKILLS_USAGE } from "../../src/extensions/skills/usage.ts";
-import { buildTasksUsage } from "../../src/extensions/tasks/usage.ts";
-import { TELEGRAM_USAGE } from "../../src/extensions/telegram/usage.ts";
-import { WORKFLOWS_USAGE } from "../../src/extensions/workflows/usage.ts";
-import { EXTENSION_SECTION_RE, EXTENSION_SURFACES } from "./extension-surfaces.ts";
+import { fileExists } from "../../src/util/markdown-store.ts";
+import {
+  EXTENSION_SECTION_RE,
+  EXTENSION_SURFACES,
+  LONG_TZ,
+  listUsageModules,
+  pointersOf,
+  USAGE_SECTIONS,
+} from "./extension-surfaces.ts";
 
 /**
  * The two-tier documentation drift guards (issue-445): the static inline set stays small
@@ -32,82 +28,28 @@ import { EXTENSION_SECTION_RE, EXTENSION_SURFACES } from "./extension-surfaces.t
 const REPO_ROOT = join(import.meta.dirname, "..", "..");
 const SRC_ROOT = join(REPO_ROOT, "src");
 
-/** The pointer line's exact shape — one source of truth, `referencePointer`. */
-const POINTER_RE = /^Details: (.+) \(read on demand\)$/gm;
-
-const pointersOf = (text: string): string[] => [...text.matchAll(POINTER_RE)].map((m) => m[1]);
-
-// The complete static inline set: the core base prompt plus one entry per static usage
-// constant. The completeness test below fails when a usage.ts exists outside this list.
-// Measured with a deliberately long configured timezone: the date header and the tasks section
-// both embed it, so a short "UTC" undercounts what real deployments ship.
-const LONG_TZ = "America/Argentina/Buenos_Aires";
-
+// The complete static inline set: the core base prompt plus every static usage constant
+// (USAGE_SECTIONS). The completeness test below fails when a usage.ts exists outside it.
 const STATIC_SECTIONS: Record<string, string> = {
   "core base prompt": buildMainSystemPrompt({
     workspaceRoot: "/workspace",
     dateHeader: `2026-08-31 (${LONG_TZ})`,
   }),
-  "boundary/usage.ts": BOUNDARY_USAGE,
-  "detached-processes/usage.ts": DETACHED_PROCESSES_USAGE,
-  "external/usage.ts": EXTERNAL_USAGE,
-  "git/usage.ts": GIT_USAGE,
-  "memory/usage.ts": MEMORY_LAYOUT_USAGE,
-  "notifications/usage.ts": NOTIFICATIONS_USAGE,
-  "projects/usage.ts": PROJECTS_USAGE,
-  "self-update/usage.ts": SELF_UPDATE_USAGE,
-  "skill-evolution/usage.ts": SKILL_EVOLUTION_USAGE,
-  "skills/usage.ts": SKILLS_USAGE,
-  "tasks/usage.ts": buildTasksUsage(LONG_TZ),
-  "telegram/usage.ts": TELEGRAM_USAGE,
-  "workflows/usage.ts": WORKFLOWS_USAGE,
-};
-
-/** Every usage.ts module under src/extensions — the sweep must enumerate all of them. */
-const listUsageModules = async (): Promise<string[]> => {
-  const entries = await readdir(join(SRC_ROOT, "extensions"), { withFileTypes: true });
-  const modules: string[] = [];
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-
-    try {
-      await stat(join(SRC_ROOT, "extensions", entry.name, "usage.ts"));
-      modules.push(`${entry.name}/usage.ts`);
-    } catch {
-      // no usage module — fine, the matrix records the placement decision
-    }
-  }
-
-  return modules.sort();
+  ...USAGE_SECTIONS,
 };
 
 /** Every *.md file inside a references/ directory under `dir` (extensions + core). */
 const listReferenceFiles = async (dir: string): Promise<string[]> => {
+  const referenceDirs = (await collectAssetDirs(dir)).filter((d) => basename(d) === "references");
   const out: string[] = [];
-  let entries: Dirent[];
 
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    return out;
-  }
-
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...(await listReferenceFiles(full)));
-    else if (dir.endsWith("references") && entry.name.endsWith(".md")) out.push(full);
+  for (const referenceDir of referenceDirs) {
+    for (const entry of await readdir(referenceDir)) {
+      if (entry.endsWith(".md")) out.push(join(referenceDir, entry));
+    }
   }
 
   return out.sort();
-};
-
-const fileExists = async (path: string): Promise<boolean> => {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
 };
 
 describe("referencePointer", () => {
@@ -126,7 +68,10 @@ describe("static inline set", () => {
   });
 
   it("enumerates every usage.ts module under src/extensions", async () => {
-    expect(Object.keys(STATIC_SECTIONS).slice(1).sort()).toEqual(await listUsageModules());
+    const usageSectionKeys = Object.keys(STATIC_SECTIONS).filter(
+      (key) => key !== "core base prompt",
+    );
+    expect(usageSectionKeys.sort()).toEqual(await listUsageModules());
   });
 
   it("is headed guidance carrying at least one resolvable pointer", async () => {
