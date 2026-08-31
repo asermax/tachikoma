@@ -35,7 +35,7 @@ The composed context documents the harness to the agent in two tiers ([DES-014](
 
 Two structural rules govern placement. First, **ownership**: the core base prompt (`buildMainSystemPrompt` + `src/agent/references/`) documents only the conversation substrate the coordinator/channel core owns (steering, command routing, system-origin turns, delivery timing); extension-specific behavior is documented exclusively by its owning extension's section or reference — the core prompt never names an extension's tools or turn formats. Second, **scope matching**: a section describes only what its `sessionScopes` can call (main-only features are never described to background sessions, and vice versa).
 
-The drift guards live in `tests/agent/prompt-references.test.ts`: a size budget over the complete static inline set, bidirectional pointer/reference integrity (every static usage constant either contains guidance or a resolvable pointer; every reference file is pointed to), and the extension-ownership deny-list on the core prompt.
+The drift guards live in `tests/agent/prompt-references.test.ts`: a size budget over the complete static inline set (measured with pointer-path checkout-root prefixes canonicalized — see **Size budget** below), bidirectional pointer/reference integrity (every static usage constant either contains guidance or a resolvable pointer; every reference file is pointed to), and the extension-ownership deny-list on the core prompt.
 
 ### Placement Matrix
 
@@ -64,7 +64,7 @@ Each row records the coverage-pass decision (issue-445) for one agent-facing sur
 | context — SOUL/USER/AGENTS.md identity files | Omitted | — | The files *are* the prompt; the agent needs no guidance to be framed by them |
 | Dynamic providers (memory indexes, projects snapshot) | Matrix-only (not static) | main + background | Content depends on session/workspace state — covered by this matrix, not the static sweep |
 
-**Size budget**: the complete static inline set (core base prompt + every static usage constant) measures ≤ 10,500 characters (~8,930 before this pass); the budget binds — if coverage pushes past it, inline sections slim further and this matrix records the cut.
+**Size budget**: the complete static inline set (core base prompt + every static usage constant) measures ≤ 10,500 characters of content — each pointer line's checkout-root prefix is canonicalized before measuring, so the gate bounds what is written, not where the repo is cloned; the budget binds — if coverage pushes past it, inline sections slim further and this matrix records the cut.
 
 ## Components
 

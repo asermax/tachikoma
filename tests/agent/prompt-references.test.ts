@@ -38,6 +38,23 @@ const STATIC_SECTIONS: Record<string, string> = {
   ...USAGE_SECTIONS,
 };
 
+/**
+ * The budget bounds inline CONTENT, so pointer lines are canonicalized before measuring: each
+ * `Details: <abs path>` line embeds `import.meta.dirname`, whose length varies with where the
+ * repo is checked out (CI's 37-char /home/runner/work/tachikoma/tachikoma root vs a 30-char
+ * local clone — 7 chars × 15 pointers = the 105 chars that pushed CI past the cap with
+ * byte-identical content). POSIX paths only, like the rest of this suite.
+ */
+const canonicalizeRoot = (text: string, root: string = REPO_ROOT): string =>
+  text.replaceAll(`${root}/`, "/repo/");
+
+/**
+ * The budget's measuring step: canonicalized content length. Shared with the root-invariance
+ * test below so the property the CI incident broke is pinned at one seam.
+ */
+const measure = (text: string, root: string = REPO_ROOT): number =>
+  canonicalizeRoot(text, root).length;
+
 /** Every *.md file inside a references/ directory under `dir` (extensions + core). */
 const listReferenceFiles = async (dir: string): Promise<string[]> => {
   const referenceDirs = (await collectAssetDirs(dir)).filter((d) => basename(d) === "references");
@@ -62,9 +79,26 @@ describe("referencePointer", () => {
 
 describe("static inline set", () => {
   it("stays within the size budget — detail belongs in references, not inline", () => {
-    const total = Object.values(STATIC_SECTIONS).reduce((sum, text) => sum + text.length, 0);
+    const total = Object.values(STATIC_SECTIONS).reduce((sum, text) => sum + measure(text), 0);
 
-    expect(total).toBeLessThanOrEqual(10_500);
+    expect(
+      total,
+      "static inline set exceeds the 10,500-char budget — move detail into reference files (see DES-014)",
+    ).toBeLessThanOrEqual(10_500);
+  });
+
+  it("measures content, not the checkout path — totals are root-invariant", () => {
+    const deepRoot = "/very/deep/synthetic/checkout/root";
+
+    for (const [name, text] of Object.entries(STATIC_SECTIONS)) {
+      const reRooted = text.replaceAll(`${REPO_ROOT}/`, `${deepRoot}/`); // as if cloned deeper
+
+      expect(reRooted, name).not.toBe(text); // the re-root really changed paths
+      expect(measure(reRooted, deepRoot), name).toBe(measure(text));
+      // Nothing environment-shaped may survive canonicalization (a bare root with no trailing
+      // path component would slip past the prefix replace and re-couple the gate to the clone).
+      expect(canonicalizeRoot(text), name).not.toContain(REPO_ROOT);
+    }
   });
 
   it("enumerates every usage.ts module under src/extensions", async () => {
