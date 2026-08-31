@@ -58,7 +58,8 @@
     "lint": "biome check .",
     "fmt": "biome check --write .",
     "typecheck": "tsc --noEmit",
-    "prepack": "rm -rf dist && pnpm tsc -p tsconfig.build.json && node scripts/copy-assets.mjs"
+    "build": "rm -rf dist && pnpm tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "prepack": "pnpm run build"
   },
   "engines": {
     "node": ">=22.19.0"
