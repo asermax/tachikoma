@@ -48,10 +48,7 @@ const STATIC_SECTIONS: Record<string, string> = {
 const canonicalizeRoot = (text: string, root: string = REPO_ROOT): string =>
   text.replaceAll(`${root}/`, "/repo/");
 
-/**
- * The budget's measuring step: canonicalized content length. Shared with the root-invariance
- * test below so the property the CI incident broke is pinned at one seam.
- */
+/** The budget's unit: canonicalized content length. */
 const measure = (text: string, root: string = REPO_ROOT): number =>
   canonicalizeRoot(text, root).length;
 
@@ -83,7 +80,7 @@ describe("static inline set", () => {
 
     expect(
       total,
-      "static inline set exceeds the 10,500-char budget — move detail into reference files (see DES-014)",
+      "static inline set exceeds the size budget — move detail into reference files (see DES-014)",
     ).toBeLessThanOrEqual(10_500);
   });
 
@@ -92,12 +89,13 @@ describe("static inline set", () => {
 
     for (const [name, text] of Object.entries(STATIC_SECTIONS)) {
       const reRooted = text.replaceAll(`${REPO_ROOT}/`, `${deepRoot}/`); // as if cloned deeper
+      const canonical = canonicalizeRoot(text);
 
       expect(reRooted, name).not.toBe(text); // the re-root really changed paths
-      expect(measure(reRooted, deepRoot), name).toBe(measure(text));
+      expect(measure(reRooted, deepRoot), name).toBe(canonical.length);
       // Nothing environment-shaped may survive canonicalization (a bare root with no trailing
       // path component would slip past the prefix replace and re-couple the gate to the clone).
-      expect(canonicalizeRoot(text), name).not.toContain(REPO_ROOT);
+      expect(canonical, name).not.toContain(REPO_ROOT);
     }
   });
 
