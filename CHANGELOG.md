@@ -1,3 +1,11 @@
+# [3.71.0](https://github.com/asermax/tachikoma/compare/v3.70.1...v3.71.0) (2026-09-01)
+
+
+### Features
+
+* **issue-453:** wip patch ([ce34a9e](https://github.com/asermax/tachikoma/commit/ce34a9e0fb078918b8b59d11063744f620444dd7))
+* **skill-evolution:** ground proposal agent in the authoring guides ([cd8ff3d](https://github.com/asermax/tachikoma/commit/cd8ff3da98313ad8ecf4063e32ca2bc15ac79b1e))
+
 ## [3.70.1](https://github.com/asermax/tachikoma/compare/v3.70.0...v3.70.1) (2026-09-01)
 
 
