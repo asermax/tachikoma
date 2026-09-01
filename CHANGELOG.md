@@ -1,3 +1,10 @@
+# [3.72.0](https://github.com/asermax/tachikoma/compare/v3.71.0...v3.72.0) (2026-09-01)
+
+
+### Features
+
+* **skill-evolution:** support removal and retirement proposals ([4a87af3](https://github.com/asermax/tachikoma/commit/4a87af3fbd7318c86d12dfa38e60f4288baf4438))
+
 # [3.71.0](https://github.com/asermax/tachikoma/compare/v3.70.1...v3.71.0) (2026-09-01)
 
 
