@@ -18,11 +18,7 @@ import {
   impactLogPath,
   skillEvolutionDir,
 } from "../../src/extensions/skill-evolution/layout.ts";
-import {
-  ProposalRunError,
-  proposalTmpDir,
-  type ReportedProposal,
-} from "../../src/extensions/skill-evolution/propose.ts";
+import { ProposalRunError, proposalTmpDir } from "../../src/extensions/skill-evolution/propose.ts";
 import type { ReconcileCompleted } from "../../src/extensions/skill-evolution/reconcile.ts";
 import {
   DEFAULT_POST_WORK_PROMPT,
@@ -45,6 +41,7 @@ import {
 } from "../../src/sessions/trunk.ts";
 import { fileExists } from "../../src/util/markdown-store.ts";
 import { fakeLogger, makeTempDir, setupRemotePair } from "../git/helpers.ts";
+import { proposalFixture } from "./helpers.ts";
 
 let workspace: string;
 
@@ -80,15 +77,7 @@ const fakeStages = (over: Partial<SkillEvolutionStages> = {}) => ({
   ...over,
 });
 
-const reportedProposal: ReportedProposal = {
-  branch: "skill-evolution/deploy-env-flag",
-  skill: "deploy",
-  pattern: "deploy-env-flag.md",
-  description: "Add the --env flag to the deploy guidance",
-  problem: "Deploys fail on the --env flag the skill omits",
-  rootCause: "The deploy guidance predates the --env requirement",
-  evidence: "- 2027-03-01 (topic-2): deploy failed with unknown flag --env",
-};
+const reportedProposal = proposalFixture("skill-evolution/deploy-env-flag");
 
 const verifiedEntry: ImpactLogEntry = {
   date: "2027-03-04",

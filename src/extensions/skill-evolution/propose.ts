@@ -188,6 +188,16 @@ const ReportParams = Type.Object({
   ),
 });
 
+/** The report fields the blank check tests — `branch` has its own pattern check instead. */
+const REPORT_REQUIRED_FIELDS = [
+  "skill",
+  "pattern",
+  "description",
+  "problem",
+  "rootCause",
+  "evidence",
+] as const;
+
 /**
  * The working-tree-mutating pair — the only subcommands whose `path` is checked. `add`/`commit`
  * stage and commit whatever tree their cwd resolves to, so they refuse to run anywhere but
@@ -567,21 +577,11 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
           }
 
           // Whitespace-only is as blank as absent (the tasks `update_goal` trim rule): every
-          // field carries meaning downstream, so the refusal names them all.
-          const blank = (value: string): boolean => value.trim() === "";
-
-          if (
-            [
-              proposal.skill,
-              proposal.pattern,
-              proposal.description,
-              proposal.problem,
-              proposal.rootCause,
-              proposal.evidence,
-            ].some(blank)
-          ) {
+          // field carries meaning downstream, so the refusal names the offenders.
+          const empty = REPORT_REQUIRED_FIELDS.filter((field) => proposal[field].trim() === "");
+          if (empty.length > 0) {
             return refusal(
-              "a proposal entry has an empty skill, pattern, description, problem, rootCause, or evidence.",
+              `a proposal entry has an empty ${empty.join(", ")}.`,
               "Fill every field and report again.",
             );
           }

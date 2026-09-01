@@ -16,7 +16,6 @@ import {
   ProposalRunError,
   proposalTmpDir,
   REMOTE_BRANCH_PATTERN,
-  type ReportedProposal,
   runProposalAgent,
 } from "../../src/extensions/skill-evolution/propose.ts";
 import {
@@ -28,6 +27,7 @@ import { listRemoteBranchTips } from "../../src/git/remote.ts";
 import { builtinSkillsDir } from "../../src/util/builtin-skills.ts";
 import { fileExists } from "../../src/util/markdown-store.ts";
 import { commitFile, fakeLogger, makeTempDir, setupRemotePair } from "../git/helpers.ts";
+import { proposalFixture } from "./helpers.ts";
 
 const log = fakeLogger();
 
@@ -56,17 +56,6 @@ const toolNamed = (tools: ToolDefinition[], name: string): ToolDefinition => {
 };
 
 const emptyCapture = (): ProposalCapture => ({ proposals: [] });
-
-const proposal = (branch: string, over: Partial<ReportedProposal> = {}): ReportedProposal => ({
-  branch,
-  skill: "deploy",
-  pattern: "deploy-env-flag.md",
-  description: "Add the --env flag to the deploy guidance",
-  problem: "Deploys fail on the --env flag the skill omits",
-  rootCause: "The deploy guidance predates the --env requirement",
-  evidence: "- 2027-03-01 (topic-2): deploy failed with unknown flag --env",
-  ...over,
-});
 
 describe("buildProposalTools — surface and refusal matrix", () => {
   let base: string;
@@ -353,10 +342,10 @@ describe("buildProposalTools — surface and refusal matrix", () => {
 
     await expect(
       invoke(toolNamed(surface, "report_proposals"), {
-        proposals: [proposal("skill-evolution/deploy-env-flag")],
+        proposals: [proposalFixture("skill-evolution/deploy-env-flag")],
       }),
     ).resolves.toContain("Recorded 1");
-    expect(capture.proposals).toEqual([proposal("skill-evolution/deploy-env-flag")]);
+    expect(capture.proposals).toEqual([proposalFixture("skill-evolution/deploy-env-flag")]);
 
     await invoke(toolNamed(surface, "report_proposals"), { proposals: [] });
     expect(capture.proposals).toEqual([]);
@@ -364,31 +353,25 @@ describe("buildProposalTools — surface and refusal matrix", () => {
 
   it("report_proposals refuses malformed entries and captures nothing", async () => {
     const text = await invoke(toolNamed(tools(), "report_proposals"), {
-      proposals: [proposal("feature/not-a-proposal")],
+      proposals: [proposalFixture("feature/not-a-proposal")],
     });
 
     expect(text).toContain("Refused");
     expect(capture.proposals).toEqual([]);
   });
 
-  it.each([
-    { field: "skill" as const, value: "" },
-    { field: "skill" as const, value: "   " },
-    { field: "pattern" as const, value: "" },
-    { field: "pattern" as const, value: " \t " },
-    { field: "description" as const, value: "" },
-    { field: "description" as const, value: "  " },
-    { field: "problem" as const, value: "" },
-    { field: "problem" as const, value: "  " },
-    { field: "rootCause" as const, value: "" },
-    { field: "rootCause" as const, value: " " },
-    { field: "evidence" as const, value: "" },
-    { field: "evidence" as const, value: " " },
-  ])(
+  it.each(
+    (["skill", "pattern", "description", "problem", "rootCause", "evidence"] as const).flatMap(
+      (field) => [
+        { field, value: "" },
+        { field, value: " \t " },
+      ],
+    ),
+  )(
     "report_proposals refuses an empty or whitespace-only $field and captures nothing",
     async ({ field, value }) => {
       const text = await invoke(toolNamed(tools(), "report_proposals"), {
-        proposals: [proposal("skill-evolution/deploy-env-flag", { [field]: value })],
+        proposals: [proposalFixture("skill-evolution/deploy-env-flag", { [field]: value })],
       });
 
       // Whitespace-only is as blank as absent (the tasks `update_goal` trim rule).
@@ -788,7 +771,7 @@ describe("runProposalAgent (faked SideRunner)", () => {
       if (report != null) {
         await report.execute(
           "test",
-          { proposals: [proposal("skill-evolution/deploy-env-flag")] } as never,
+          { proposals: [proposalFixture("skill-evolution/deploy-env-flag")] } as never,
           undefined,
           undefined,
           undefined as never,
@@ -808,7 +791,7 @@ describe("runProposalAgent (faked SideRunner)", () => {
       log,
     });
 
-    expect(reported).toEqual([proposal("skill-evolution/deploy-env-flag")]);
+    expect(reported).toEqual([proposalFixture("skill-evolution/deploy-env-flag")]);
   });
 
   it("returns an empty list when the run never reports (a clean no-proposal outcome)", async () => {
@@ -861,7 +844,7 @@ describe("runProposalAgent (faked SideRunner)", () => {
       if (report != null) {
         await report.execute(
           "test",
-          { proposals: [proposal("skill-evolution/deploy-env-flag")] } as never,
+          { proposals: [proposalFixture("skill-evolution/deploy-env-flag")] } as never,
           undefined,
           undefined,
           undefined as never,
@@ -889,7 +872,7 @@ describe("runProposalAgent (faked SideRunner)", () => {
 
     expect(thrown).toBeInstanceOf(ProposalRunError);
     expect((thrown as ProposalRunError).proposals).toEqual([
-      proposal("skill-evolution/deploy-env-flag"),
+      proposalFixture("skill-evolution/deploy-env-flag"),
     ]);
     expect((thrown as ProposalRunError).cause).toBeInstanceOf(Error);
     expect((thrown as ProposalRunError).message).toContain("model call failed mid-run");

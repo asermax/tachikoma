@@ -26,19 +26,10 @@ import {
 import { runGit } from "../../src/git/git.ts";
 import { listRemoteBranchTips } from "../../src/git/remote.ts";
 import { fakeLogger, makeTempDir, setupRemotePair } from "../git/helpers.ts";
+import { proposalFixture } from "./helpers.ts";
 
 const NOW = () => new Date("2027-03-04T05:00:00Z");
 const DAY = "2027-03-04";
-
-const reported = (branch: string): ReportedProposal => ({
-  branch,
-  skill: "deploy",
-  pattern: "deploy-env-flag.md",
-  description: "Add the --env flag to the deploy guidance",
-  problem: "Deploys fail on the --env flag the skill omits",
-  rootCause: "The deploy guidance predates the --env requirement",
-  evidence: "- 2027-03-01 (topic-2): deploy failed with unknown flag --env",
-});
 
 describe("verifyAndRecord (real git, bare origin)", () => {
   let base: string;
@@ -118,7 +109,9 @@ describe("verifyAndRecord (real git, bare origin)", () => {
       );
     });
 
-    const verified = await runVerify({ reported: [reported("skill-evolution/deploy-env-flag")] });
+    const verified = await runVerify({
+      reported: [proposalFixture("skill-evolution/deploy-env-flag")],
+    });
 
     const remoteTip = (await listRemoteBranchTips(ws, "skill-evolution/*")).get(
       "skill-evolution/deploy-env-flag",
@@ -160,8 +153,8 @@ describe("verifyAndRecord (real git, bare origin)", () => {
 
     const verified = await runVerify({
       reported: [
-        reported("skill-evolution/deploy-env-flag"),
-        reported("skill-evolution/deploy-env-flag"),
+        proposalFixture("skill-evolution/deploy-env-flag"),
+        proposalFixture("skill-evolution/deploy-env-flag"),
       ],
     });
 
@@ -178,7 +171,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
     const verified = await runVerify({
       reported: [
         {
-          ...reported("skill-evolution/deploy-retire-skill"),
+          ...proposalFixture("skill-evolution/deploy-retire-skill"),
           pattern: "deploy-retired.md",
           description: "Remove the deploy skill — the workflow no longer exists",
         },
@@ -218,7 +211,9 @@ describe("verifyAndRecord (real git, bare origin)", () => {
     ]);
     await runGit(worktree, ["push", "origin", "skill-evolution/deploy-noop"]);
 
-    const verified = await runVerify({ reported: [reported("skill-evolution/deploy-noop")] });
+    const verified = await runVerify({
+      reported: [proposalFixture("skill-evolution/deploy-noop")],
+    });
 
     expect(verified).toHaveLength(1);
     expect(verified[0]).toMatchObject({
@@ -237,7 +232,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
       workspaceRoot: ws,
       tmpDir,
       defaultBranch: "main",
-      reported: [reported("skill-evolution/deploy-env-flag")],
+      reported: [proposalFixture("skill-evolution/deploy-env-flag")],
       now: NOW,
       log,
       deps: gitVerifyDeps,
@@ -259,7 +254,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
       workspaceRoot: ws,
       tmpDir,
       defaultBranch: "main",
-      reported: [reported("skill-evolution/ghost")],
+      reported: [proposalFixture("skill-evolution/ghost")],
       now: NOW,
       log,
       deps: gitVerifyDeps,
@@ -297,7 +292,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
         workspaceRoot: ws,
         tmpDir,
         defaultBranch: "main",
-        reported: [reported("skill-evolution/dead-branch")],
+        reported: [proposalFixture("skill-evolution/dead-branch")],
         now: NOW,
         log: fakeLogger(),
         deps: boom,
@@ -371,7 +366,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
   it("the impact-log write never happens when nothing verified — the file stays byte-identical", async () => {
     const before = await readFile(impactLogPath(ws), "utf8");
 
-    await runVerify({ reported: [reported("skill-evolution/ghost")] });
+    await runVerify({ reported: [proposalFixture("skill-evolution/ghost")] });
 
     expect(await readFile(impactLogPath(ws), "utf8")).toBe(before);
   });
@@ -395,7 +390,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
         "utf8",
       );
     });
-    await runVerify({ reported: [reported("skill-evolution/deploy-env-flag")] });
+    await runVerify({ reported: [proposalFixture("skill-evolution/deploy-env-flag")] });
 
     const rows = await readImpactLog(impactLogPath(ws), fakeLogger());
 
@@ -420,7 +415,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
         "utf8",
       );
     });
-    await runVerify({ reported: [reported("skill-evolution/deploy-env-flag")] });
+    await runVerify({ reported: [proposalFixture("skill-evolution/deploy-env-flag")] });
 
     expect(await readFile(page, "utf8")).toBe(
       "# deploy-env-flag\n\n## Problem\n--env flag missing.\n",
