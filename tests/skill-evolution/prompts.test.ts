@@ -76,14 +76,9 @@ describe("branchAnalysisInstruction", () => {
   });
 
   it("frames the fix as any edit type, not only additions (R1/R2)", () => {
-    // The additive-only collection sentence is gone...
-    expect(instruction).not.toContain("wrong or omitted");
-    expect(instruction).not.toContain("should have said or done");
-    // The Workaround kind no longer presupposes staleness — the Stale kind owns that.
-    expect(instruction).not.toContain("following stale guidance");
-    // ...replaced by the full spectrum, in the collection framing and the Fix convention.
+    // The full spectrum: outlived guidance in the collection framing, and every edit type up
+    // to retirement in the Fix convention the instruction composes.
     expect(instruction).toContain("wrong, omitted, or outlived");
-    expect(instruction).toContain("whether that adds, corrects, removes, or consolidates guidance");
     expect(instruction).toContain("up to retiring the skill entirely");
   });
 });

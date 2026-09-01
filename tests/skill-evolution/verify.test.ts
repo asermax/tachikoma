@@ -175,8 +175,7 @@ describe("verifyAndRecord (real git, bare origin)", () => {
     const verified = await runVerify({
       reported: [
         {
-          branch: "skill-evolution/deploy-retire-skill",
-          skill: "deploy",
+          ...reported("skill-evolution/deploy-retire-skill"),
           pattern: "deploy-retired.md",
           description: "Remove the deploy skill — the workflow no longer exists",
         },

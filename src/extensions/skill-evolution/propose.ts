@@ -377,6 +377,7 @@ export interface ProposalToolDeps {
 export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => {
   const { workspaceRoot, tmpDir, defaultBranch, remoteBranchNames, capture } = deps;
   const pathsGuidance = `Only paths inside ${tmpDir} are allowed.`;
+  const tmpRoot = resolve(tmpDir);
 
   const guardPath = (path: string): string | null => resolveUnderRoot(tmpDir, path);
 
@@ -426,10 +427,10 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
 
         // The guard is root-inclusive; the tmp dir itself holds every worktree, so deleting it
         // is always a mistake, never a proposal.
-        if (path === resolve(tmpDir)) {
+        if (path === tmpRoot) {
           return refusal(
             "`delete_path` cannot remove the tmp dir itself.",
-            `Only paths inside ${tmpDir} are allowed — delete paths inside a proposal worktree, not the worktree area root.`,
+            `${pathsGuidance} Delete paths inside a proposal worktree, not the worktree area root.`,
           );
         }
 

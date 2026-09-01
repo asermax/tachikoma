@@ -27,7 +27,7 @@ import { runGit } from "../../src/git/git.ts";
 import { listRemoteBranchTips } from "../../src/git/remote.ts";
 import { builtinSkillsDir } from "../../src/util/builtin-skills.ts";
 import { fileExists } from "../../src/util/markdown-store.ts";
-import { fakeLogger, makeTempDir, setupRemotePair } from "../git/helpers.ts";
+import { commitFile, fakeLogger, makeTempDir, setupRemotePair } from "../git/helpers.ts";
 
 const log = fakeLogger();
 
@@ -568,9 +568,7 @@ describe("buildProposalTools — happy paths (real git, bare origin)", () => {
   it("delete_path + add + commit + push author a whole-skill removal on the branch", async () => {
     // The base branch must carry the skill the removal retires — the worktree is cut from it.
     await mkdir(join(ws, "skills", "deploy"), { recursive: true });
-    await writeFile(join(ws, "skills", "deploy", "SKILL.md"), "# Deploy\n\nGuidance.\n", "utf8");
-    await runGit(ws, ["add", "-A"]);
-    await runGit(ws, ["-c", "core.editor=true", "commit", "-m", "seed deploy skill"]);
+    await commitFile(ws, "skills/deploy/SKILL.md", "# Deploy\n\nGuidance.\n", "seed deploy skill");
     await runGit(ws, ["push", "origin", "main"]);
 
     const path = await cutWorktree("deploy-retire-skill");
