@@ -54,6 +54,15 @@ const isSupportedLinkUrl = (href: string): boolean => {
 };
 
 /**
+ * What to append after a link's already-written label when Telegram forbids the
+ * target — the reference stays visible: bare target when there is no label text
+ * (image links write nothing), parenthesized target otherwise, and nothing when
+ * the label already is the target.
+ */
+const downgradedLinkSuffix = (label: string, href: string): string =>
+  label.length === 0 ? href : label === href ? "" : ` (${href})`;
+
+/**
  * Accumulates literal display text and `MessageEntity` spans while walking the
  * token stream. Text outside entities needs no escaping — Telegram treats it as
  * literal when sent with `parse_mode` omitted, so `.`, `-`, `!`, `(` etc. are
@@ -92,25 +101,23 @@ class Renderer {
     this.suppressGap = true;
   }
 
-  /** Append literal text, flushing any pending separator first; returns its start offset. */
-  write(s: string): number {
-    if (s.length === 0) return this.text.length;
-    this.flushSep();
-    const start = this.text.length;
-    this.text += s;
-    return start;
-  }
-
-  /** The current write position, flushing any pending separator — for tracking a span's start without opening an entity. */
+  /** The current write position, flushing any pending separator first. */
   position(): number {
     this.flushSep();
     return this.text.length;
   }
 
+  /** Append literal text, flushing any pending separator first; returns its start offset. */
+  write(s: string): number {
+    if (s.length === 0) return this.text.length;
+    const start = this.position();
+    this.text += s;
+    return start;
+  }
+
   /** Open a formatting span at the current position. */
   beginSpan(type: MessageEntity["type"], extra?: Record<string, unknown>): void {
-    this.flushSep();
-    this.open.push({ start: this.text.length, type, extra });
+    this.open.push({ start: this.position(), type, extra });
   }
 
   /** Close the most recent span, recording an entity over the text written since it opened. */
@@ -139,11 +146,11 @@ class Renderer {
 /** Walk inline tokens (the `children` of an `inline` block), emitting text + spans. */
 const renderInline = (tokens: MdToken[] | null, r: Renderer): void => {
   if (!tokens) return;
-  // One open link at a time — links cannot nest in CommonMark. A non-null `downgraded`
-  // means the link's target is unsupported, so no span was opened and `link_close`
-  // renders the target as plain text instead.
-  let downgraded: { start: number; href: string } | null = null;
-  let inTextLink = false;
+  // The one open link — links cannot nest in CommonMark. `"span"` when a `text_link`
+  // entity was opened; `{ start, href }` when the target is unsupported, so no span
+  // was opened and `link_close` splices the target in as plain text instead; null
+  // when this link opened nothing (no href).
+  let link: "span" | { start: number; href: string } | null = null;
   for (const t of tokens) {
     switch (t.type) {
       case "text":
@@ -178,35 +185,23 @@ const renderInline = (tokens: MdToken[] | null, r: Renderer): void => {
       }
       case "link_open": {
         const href = attr(t, "href");
-        // Links always carry an href; if one is ever missing, render the text plain
-        // rather than emit an invalid `text_link` (handled by not opening a span).
+        // Supported target → `text_link` span; unsupported → track the label start
+        // for a plain-text splice at close; missing/empty href (markdown-it emits
+        // href="" for `[x]()`) → plain label, no span to pop.
         if (href && isSupportedLinkUrl(href)) {
           r.beginSpan("text_link", { url: href });
-          inTextLink = true;
+          link = "span";
         } else if (href) {
-          // Telegram would reject a `text_link` with this target, so remember where
-          // the label starts and splice the target in as plain text at close.
-          downgraded = { start: r.position(), href };
+          link = { start: r.position(), href };
         }
         break;
       }
       case "link_close": {
-        // Only pop a span this link opened — a stray close must not eat an
+        // Only finish what this link opened — a stray close must not eat an
         // unrelated enclosing span (e.g. the bold around `**[x]()**`).
-        if (inTextLink) {
-          r.endSpan();
-          inTextLink = false;
-          break;
-        }
-        if (downgraded) {
-          const label = r.text.slice(downgraded.start);
-          // Keep the reference visible: bare target when there is no label text
-          // (image links write nothing), parenthesized target otherwise — unless
-          // the label already is the target.
-          if (label.length === 0) r.write(downgraded.href);
-          else if (label !== downgraded.href) r.write(` (${downgraded.href})`);
-          downgraded = null;
-        }
+        if (link === "span") r.endSpan();
+        else if (link) r.write(downgradedLinkSuffix(r.text.slice(link.start), link.href));
+        link = null;
         break;
       }
       case "image": {

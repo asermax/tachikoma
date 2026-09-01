@@ -50,6 +50,11 @@ const entityUrlInvalidError = () =>
     description: "Bad Request: entity URL 'x' is invalid: Wrong HTTP URL",
   });
 
+const unsupportedProtocolError = () =>
+  Object.assign(new Error("400: Bad Request: unsupported URL protocol"), {
+    description: "Bad Request: unsupported URL protocol",
+  });
+
 /** A sendMessage/editMessageText mock that rejects the formatted (entity-bearing) call. */
 const rejectFormatted =
   (error: Error) =>
@@ -115,11 +120,7 @@ describe("isEntityUrlInvalidError", () => {
   });
 
   it("recognizes the unsupported-URL-protocol wording", () => {
-    const error = Object.assign(new Error("400: Bad Request: unsupported URL protocol"), {
-      description: "Bad Request: unsupported URL protocol",
-    });
-
-    expect(isEntityUrlInvalidError(error)).toBe(true);
+    expect(isEntityUrlInvalidError(unsupportedProtocolError())).toBe(true);
   });
 
   it("rejects unrelated errors", () => {

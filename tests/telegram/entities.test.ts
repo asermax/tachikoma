@@ -93,22 +93,17 @@ describe("toTelegramEntities", () => {
     expect(urls).toEqual(["http://x.dev/a", "tg://user?id=7", "HTTPS://x.dev/c"]);
   });
 
-  it("downgrades a relative-path link to plain text with the target visible", () => {
+  it("downgrades unsupported targets (relative path, mailto, obsidian) to plain text", () => {
     const payload = toTelegramEntities(
-      "[00:06](projects/shin-sekai/02_Areas/Daily_Notes/2026-09-01.md)",
+      "[00:06](projects/shin-sekai/02_Areas/Daily_Notes/2026-09-01.md) " +
+        "[write](mailto:a@b.dev) [open](obsidian://open?vault=x)",
     );
 
-    expect(payload.text).toBe("00:06 (projects/shin-sekai/02_Areas/Daily_Notes/2026-09-01.md)");
+    expect(payload.text).toBe(
+      "00:06 (projects/shin-sekai/02_Areas/Daily_Notes/2026-09-01.md) " +
+        "write (mailto:a@b.dev) open (obsidian://open?vault=x)",
+    );
     expect(payload.entities).toEqual([]);
-  });
-
-  it("downgrades links with non-HTTP schemes (mailto, obsidian) to plain text", () => {
-    const payload = toTelegramEntities(
-      "[write](mailto:a@b.dev) and [open](obsidian://open?vault=x)",
-    );
-
-    expect(payload.text).toBe("write (mailto:a@b.dev) and open (obsidian://open?vault=x)");
-    expect(find(payload, "text_link")).toBeUndefined();
   });
 
   it("still links a parseable-but-hostless http target (recovered by the send fallback)", () => {
