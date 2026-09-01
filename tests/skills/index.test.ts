@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
@@ -14,8 +14,7 @@ import type {
 } from "../../src/extensions/api.ts";
 import skills from "../../src/extensions/skills/index.ts";
 import { SKILLS_USAGE } from "../../src/extensions/skills/usage.ts";
-
-const repoSkillsDir = resolve(import.meta.dirname, "../../src/extensions/skills/builtin-skills");
+import { builtinSkillsDir } from "../../src/util/builtin-skills.ts";
 
 const setup = async (
   config: { enabled: boolean; proactiveLoading?: boolean } = {
@@ -135,12 +134,12 @@ describe("skills extension", () => {
     const handler = on.mock.calls.find(([event]) => event === "resources_discover")?.[1];
 
     expect(handler).toBeDefined();
-    expect(handler()).toEqual({ skillPaths: [workspaceSkillsDir, repoSkillsDir] });
+    expect(handler()).toEqual({ skillPaths: [workspaceSkillsDir, builtinSkillsDir] });
   });
 
   it("resolves the built-in directory to the repo's shipped authoring skills", () => {
-    expect(existsSync(join(repoSkillsDir, "skill-authoring", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(repoSkillsDir, "workflow-authoring", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(builtinSkillsDir, "skill-authoring", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(builtinSkillsDir, "workflow-authoring", "SKILL.md"))).toBe(true);
   });
 
   it("registers delegate_to_agent with the built-in general-purpose agent even with no skill agents", async () => {

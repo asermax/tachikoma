@@ -526,12 +526,6 @@ export interface ProposalAgentDeps {
   /** Current ledger rows — context for what is already open, never a write target. */
   impactLog: readonly ImpactLogEntry[];
   log: Logger;
-  /**
-   * Directory the authoring guides are discovered from (`skillPaths` of the run). Defaults to the
-   * bundled `builtin-skills/` constant; overridable to pin/redirect the discovered directory in
-   * tests.
-   */
-  authoringGuidesDir?: string;
 }
 
 /** One eligible pattern page, inlined for the prompt (a page that vanished mid-run is skipped). */
@@ -594,7 +588,6 @@ const skillsInventorySection = async (workspaceRoot: string, log: Logger): Promi
  */
 export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<ReportedProposal[]> => {
   const { side, workspaceRoot, tmpDir, defaultBranch, eligible, impactLog, log } = deps;
-  const authoringGuidesDir = deps.authoringGuidesDir ?? builtinSkillsDir;
   const capture: ProposalCapture = { proposals: [] };
 
   // The two prompt sections read disjoint directories — build them concurrently.
@@ -645,7 +638,7 @@ export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<Reporte
       // The authoring guides ride the run as actual skills: the loader discovers them from the
       // bundled dir (isolation-composable `skillPaths`) and their bodies are force-loaded from
       // pi's catalog on the run's single prompt — no guide content is assembled here.
-      skillPaths: [authoringGuidesDir],
+      skillPaths: [builtinSkillsDir],
       forceLoadSkills: [...AUTHORING_GUIDE_SKILLS],
     });
   } catch (error) {

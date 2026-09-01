@@ -1,15 +1,13 @@
-import { readFileSync } from "node:fs";
 import {
   buildSessionContext,
   convertToLlm,
   type ExtensionAPI,
   type Skill,
   serializeConversation,
-  stripFrontmatter,
 } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
-
 import type { SideRunner } from "../../agent/side-run.ts";
+import { readSkillBody, readSkillFile } from "../../agent/skill-body.ts";
 import type { Logger } from "../../log.ts";
 
 export type SkillClassifier = Pick<SideRunner, "classify">;
@@ -19,7 +17,10 @@ export interface SkillSuggestionDeps {
   isForking: () => boolean;
   status: (text: string) => void;
   log: Logger;
-  /** Reads a matched skill's SKILL.md content; defaults to `readFileSync` (utf-8). Injectable for tests. */
+  /**
+   * Reads a matched skill's SKILL.md content; defaults to the shared synchronous reader
+   * (`readSkillFile`). Injectable for tests.
+   */
   readSkill?: (filePath: string) => string;
   /**
    * Subscribe to a topic-change signal that resets per-branch injection state so the new branch
@@ -119,7 +120,7 @@ const renderReminder = (skill: Skill): string =>
  */
 export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionDeps): void => {
   const { classifier, isForking, status, log } = deps;
-  const readSkill = deps.readSkill ?? ((filePath: string) => readFileSync(filePath, "utf-8"));
+  const readSkill = deps.readSkill ?? readSkillFile;
 
   // Skills whose full content has been injected this branch and is presumed still on the active
   // transcript path. A selected member yields a lightweight reminder (its content is already in
@@ -187,8 +188,9 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
       // Route each selected skill by whether its full content is already on the active path. A member
       // of `injected` gets a lightweight reminder (re-anchor, no body); a non-member is injected in
       // full and recorded. The set is cleared on compaction/topic-change, so membership reliably
-      // means "still in context". A per-skill try/catch means one unreadable (or empty) file skips
-      // only that skill — and skipped skills are not added to `injected`, so they retry next turn.
+      // means "still in context". The per-skill fail-soft body read (`skill-body.ts`) means one
+      // unreadable (or empty) file skips only that skill — and skipped skills are not added to
+      // `injected`, so they retry next turn.
       const full: { name: string; section: string }[] = [];
       const reminders: { name: string; section: string }[] = [];
       // Dedupe the classifier's selection up front (it may repeat a name) before routing each name.
@@ -199,27 +201,11 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
           reminders.push({ name: skill.name, section: renderReminder(skill) });
           continue;
         }
-        try {
-          // Strip the YAML frontmatter and trim — matching how pi renders a skill loaded via
-          // `/skill` (its `_expandSkillCommand` calls `stripFrontmatter(content).trim()`): the
-          // frontmatter is metadata (name/description) already surfaced in the catalog, not
-          // instructions, so injecting it only wastes tokens.
-          const body = stripFrontmatter(readSkill(skill.filePath)).trim();
-          if (body === "") {
-            log.debug(
-              { skill: skill.name },
-              "proactive skill content is empty — skipping injection",
-            );
-            continue;
-          }
-          injected.add(skill.name);
-          full.push({ name: skill.name, section: renderFull(skill, body) });
-        } catch (error) {
-          log.warn(
-            { err: error, skill: skill.name },
-            "failed to read skill content — skipping injection",
-          );
-        }
+        const body = readSkillBody(skill, readSkill, log, "proactive");
+        if (body == null) continue;
+
+        injected.add(skill.name);
+        full.push({ name: skill.name, section: renderFull(skill, body) });
       }
 
       log.debug(

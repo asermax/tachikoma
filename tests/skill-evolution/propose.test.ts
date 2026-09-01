@@ -614,9 +614,9 @@ describe("runProposalAgent (faked SideRunner)", () => {
     ]);
     expect(options?.system).toBe(proposalSystemPrompt(workspaceRoot, tmpDir, "main"));
 
-    // The authoring guides ride the run as actual skills: the default-path seam points at the
-    // real bundled builtin-skills dir (pins the neutral-module climb from src/util/), and both
-    // guide names are force-loaded from pi's catalog — no guide content is assembled here.
+    // The authoring guides ride the run as actual skills: skillPaths points at the real bundled
+    // builtin-skills dir (pins the neutral-module constant from src/util/), and both guide names
+    // are force-loaded from pi's catalog — no guide content is assembled here.
     expect(options?.skillPaths).toEqual([builtinSkillsDir]);
     expect(options?.forceLoadSkills).toEqual([...AUTHORING_GUIDE_SKILLS]);
 
@@ -626,30 +626,6 @@ describe("runProposalAgent (faked SideRunner)", () => {
     expect(options?.prompt).toContain("skill-evolution/commit-msg");
     expect(options?.prompt).toContain("### skills/deploy");
     expect(options?.prompt).toContain("Guidance without the flag.");
-  });
-
-  it("seeds the run with the authoring-guides dir from the overridable seam", async () => {
-    const { workspaceRoot, tmpDir } = await agentWorkspace();
-    const run = vi.fn(
-      async (_options: HeadlessRunOptions): Promise<{ text: string }> => ({
-        text: "",
-      }),
-    );
-
-    await runProposalAgent({
-      side: { run },
-      workspaceRoot,
-      tmpDir,
-      defaultBranch: "main",
-      eligible: [],
-      impactLog,
-      log,
-      authoringGuidesDir: "/fixtures/guides",
-    });
-
-    const [options] = run.mock.calls[0] ?? [];
-    expect(options?.skillPaths).toEqual(["/fixtures/guides"]);
-    expect(options?.forceLoadSkills).toEqual([...AUTHORING_GUIDE_SKILLS]);
   });
 
   it("returns the payload of a run whose fake invokes the captured report_proposals tool", async () => {

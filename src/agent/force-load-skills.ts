@@ -1,19 +1,16 @@
-import { readFileSync } from "node:fs";
-
-import {
-  type ExtensionAPI,
-  type ExtensionFactory,
-  type Skill,
-  stripFrontmatter,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory, Skill } from "@earendil-works/pi-coding-agent";
 
 import type { Logger } from "../log.ts";
+import { readSkillBody, readSkillFile } from "./skill-body.ts";
 
 export interface ForceLoadSkillsDeps {
   /** Skill names to force-load; each is resolved against the session's loader-discovered catalog. */
   names: readonly string[];
   log: Logger;
-  /** Reads a skill's SKILL.md content; defaults to `readFileSync` (utf-8). Injectable for tests. */
+  /**
+   * Reads a skill's SKILL.md content; defaults to the shared synchronous reader
+   * (`readSkillFile`). Injectable for tests.
+   */
   readSkill?: (filePath: string) => string;
 }
 
@@ -26,12 +23,10 @@ type ForceLoadResult = { message: { customType: string; content: string; display
 const PREFACE =
   "The following skills have been force-loaded for this run because they define the conventions this task must follow — their content is already here, so no separate load is needed. Treat them as authoritative for their subject: follow their instructions rather than improvising an alternative approach.";
 
-// Full body of a force-loaded skill. Structural precedent: the skills extension's proactive
-// injection (`suggest.ts` renderFull) and pi's own `/skill` expansion (`_expandSkillCommand`),
-// both of which strip the frontmatter (catalog metadata, not instructions) before rendering. The
-// render tokens are deliberately NOT shared with `suggest.ts`: its framing carries workflow-start
-// nudges this path must not emit. Reconcile trigger, like `BUILTIN_TOOL_NAMES`: if pi's
-// `_expandSkillCommand` shape changes, both renderers change.
+// Full body of a force-loaded skill. The render tokens are deliberately NOT shared with
+// `suggest.ts`'s renderFull: its framing carries workflow-start nudges this path must not emit.
+// Reconcile trigger, like `BUILTIN_TOOL_NAMES`: if pi's `_expandSkillCommand` shape changes, both
+// renderers change (the shared strip/trim they rest on lives in `skill-body.ts`).
 const renderSkill = (skill: Skill, body: string): string =>
   `<injected-skill name="${skill.name}">\n${body}\n</injected-skill>`;
 
@@ -60,7 +55,7 @@ const renderSkill = (skill: Skill, body: string): string =>
 export const forceLoadSkillsFactory = ({
   names,
   log,
-  readSkill = (filePath) => readFileSync(filePath, "utf-8"),
+  readSkill = readSkillFile,
 }: ForceLoadSkillsDeps): ExtensionFactory => {
   // Names whose full content has been injected this session. A name that failed to load is NOT
   // added, so it retries on a later agent start (a single-prompt run simply never gets one).
@@ -69,7 +64,7 @@ export const forceLoadSkillsFactory = ({
   return (pi: ExtensionAPI) => {
     pi.on("before_agent_start", async (event): Promise<ForceLoadResult | undefined> => {
       const catalog = event.systemPromptOptions.skills ?? [];
-      const sections: string[] = [];
+      const sections: { name: string; section: string }[] = [];
 
       for (const name of names) {
         if (injected.has(name)) continue;
@@ -82,32 +77,25 @@ export const forceLoadSkillsFactory = ({
           continue;
         }
 
-        try {
-          // Strip the frontmatter and trim, matching pi's `/skill` expansion: the frontmatter is
-          // catalog metadata (name/description), not instructions.
-          const body = stripFrontmatter(readSkill(skill.filePath)).trim();
-          if (body === "") {
-            log.debug({ skill: name }, "force-loaded skill content is empty — skipping injection");
-            continue;
-          }
+        // Fail-soft per skill: an unreadable file or empty body skips only this name
+        // (`skill-body.ts` owns the strip/trim and the skip logging).
+        const body = readSkillBody(skill, readSkill, log, "force-loaded");
+        if (body == null) continue;
 
-          injected.add(name);
-          sections.push(renderSkill(skill, body));
-        } catch (error) {
-          log.warn(
-            { err: error, skill: name },
-            "failed to read force-loaded skill content — skipping injection",
-          );
-        }
+        injected.add(name);
+        sections.push({ name, section: renderSkill(skill, body) });
       }
 
       if (sections.length === 0) return undefined;
 
-      log.debug({ skills: [...injected] }, "injected force-loaded skill content");
+      log.debug(
+        { skills: sections.map((section) => section.name) },
+        "injected force-loaded skill content",
+      );
       return {
         message: {
           customType: "skill-content",
-          content: [PREFACE, ...sections].join("\n\n"),
+          content: [PREFACE, ...sections.map((section) => section.section)].join("\n\n"),
           display: false,
         },
       };
