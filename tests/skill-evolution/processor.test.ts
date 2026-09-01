@@ -85,6 +85,9 @@ const reportedProposal: ReportedProposal = {
   skill: "deploy",
   pattern: "deploy-env-flag.md",
   description: "Add the --env flag to the deploy guidance",
+  problem: "Deploys fail on the --env flag the skill omits",
+  rootCause: "The deploy guidance predates the --env requirement",
+  evidence: "- 2027-03-01 (topic-2): deploy failed with unknown flag --env",
 };
 
 const verifiedEntry: ImpactLogEntry = {
@@ -319,6 +322,13 @@ describe("skill-evolution-trunk-close (structural stage fakes)", () => {
 
     expect(dispatchPayloads(emit)).toHaveLength(1);
     expect(dispatchPayloads(emit)[0]?.prompt).toContain(DEFAULT_POST_WORK_PROMPT);
+    // The reported reasoning rides the dispatch alongside the verified git facts.
+    expect(dispatchPayloads(emit)[0]?.prompt).toContain(
+      "- Problem: Deploys fail on the --env flag the skill omits",
+    );
+    expect(dispatchPayloads(emit)[0]?.prompt).toContain(
+      "- 2027-03-01 (topic-2): deploy failed with unknown flag --env",
+    );
     expect(dispatchPayloads(emit)[0]?.goal).toContain("skill-evolution/deploy-env-flag");
 
     expect(status.mock.calls.map((call) => call[0])).toEqual([
@@ -381,8 +391,12 @@ describe("skill-evolution-trunk-close (structural stage fakes)", () => {
     // The capture flowed into verification despite the throw…
     expect(stages.verify).toHaveBeenCalledTimes(1);
     expect(stages.verify.mock.calls[0]?.[0]).toMatchObject({ reported: [reportedProposal] });
-    // …the dispatch still fired (≥1 verified, partial failure), and the failure warned.
+    // …the dispatch still fired (≥1 verified, partial failure) carrying the captured reasoning,
+    // and the failure warned.
     expect(dispatchPayloads(emit)).toHaveLength(1);
+    expect(dispatchPayloads(emit)[0]?.prompt).toContain(
+      "- Root cause: The deploy guidance predates the --env requirement",
+    );
     expect(notifyPayloads(emit).map((payload) => payload.text)).toEqual([
       "Skill evolution failed: proposal agent run failed: model call died",
     ]);
@@ -651,6 +665,10 @@ describe("skill-evolution-trunk-close (real git, bare origin)", () => {
 
     const dispatchPayload = dispatches[0]?.[1];
     expect((dispatchPayload as { prompt: string }).prompt).toContain(DEFAULT_POST_WORK_PROMPT);
+    // The report's reasoning survived verification and the death into the dispatch.
+    expect((dispatchPayload as { prompt: string }).prompt).toContain(
+      "- Problem: Deploys fail on the --env flag the skill omits",
+    );
 
     // And the run still surfaced its failure: warn + one warning notification.
     expect(log.warn).toHaveBeenCalled();

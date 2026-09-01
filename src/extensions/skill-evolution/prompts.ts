@@ -209,9 +209,14 @@ const PROPOSAL_BASE_PROMPT = `You are the skill-evolution proposal agent. You tu
 ## Finishing
 
 When every proposal is pushed — or you conclude none is worth making — call \`report_proposals\`
-ONCE with every proposal: \`{branch, skill, pattern, description}\` (\`skill\` = the skill directory
-name, \`pattern\` = the pattern page filename exactly as given in the task prompt, \`description\` =
-one line on what the change does). That call is the required terminal step; after it, stop.
+ONCE with every proposal: \`{branch, skill, pattern, description, problem, rootCause, evidence}\`
+(\`skill\` = the skill directory name, \`pattern\` = the pattern page filename exactly as given in
+the task prompt, \`description\` = one line on what the change does). The remaining three fields
+carry the proposal's reasoning for review — restated from the acted-on pattern page and tailored
+to the change you authored: \`problem\` = the observable problem it fixes (the page's Problem
+section), \`rootCause\` = the gap in the skill's guidance that produced it, \`evidence\` = the
+dated observations backing the pattern (the page's Evidence bullets, condensed). That call is the
+required terminal step; after it, stop.
 
 Making no proposal at all is a legitimate outcome — report an empty list rather than inventing
 work. The host verifies everything from git state alone; your report by itself records nothing.`;

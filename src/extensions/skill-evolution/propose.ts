@@ -54,14 +54,26 @@ export const proposalTmpDir = (workspaceRoot: string): string =>
 /** The proposal-namespace glob: the `ls-remote` pattern for the remote view, the `branch --list` glob for the local sweep. */
 export const REMOTE_BRANCH_PATTERN = `${BRANCH_NAMESPACE}*`;
 
-/** One entry of the agent's `report_proposals` call — its self-report, pre-verification. */
+/**
+ * One entry of the agent's `report_proposals` call — its self-report, pre-verification. The
+ * `problem`/`rootCause`/`evidence` triple is the proposal's reasoning, restated from the acted-on
+ * pattern page and tailored to the authored change: it rides the reporting dispatch to the
+ * reviewer-facing surface and is never persisted to the impact log.
+ */
 export interface ReportedProposal {
   branch: string;
   /** Skill directory name under `skills/` — the skill the proposal adds to, edits, or removes. */
   skill: string;
   /** Pattern page filename within the store dir, exactly as the prompt listed it. */
   pattern: string;
+  /** What the change does — one line. */
   description: string;
+  /** The observable problem the change fixes — the pattern page's Problem section. */
+  problem: string;
+  /** The gap in the skill's guidance producing the problem — the page's Root cause section. */
+  rootCause: string;
+  /** The dated observations backing the pattern — the page's Evidence bullets, condensed. */
+  evidence: string;
 }
 
 /**
@@ -159,6 +171,18 @@ const ReportParams = Type.Object({
         description: "The pattern page filename exactly as given in the prompt",
       }),
       description: Type.String({ description: "One-line summary of the proposed change" }),
+      problem: Type.String({
+        description:
+          "The observable problem this change fixes — the pattern page's Problem section, restated for the change you authored (a few lines)",
+      }),
+      rootCause: Type.String({
+        description:
+          "The gap in the skill's guidance that produced the problem — the pattern page's Root cause section, restated for the change you authored (a few lines)",
+      }),
+      evidence: Type.String({
+        description:
+          "The dated observations backing the pattern — the pattern page's Evidence bullets, condensed to the entries that justify this change",
+      }),
     }),
     { description: "Every proposal authored this run, in push order" },
   ),
@@ -531,7 +555,7 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
       name: "report_proposals",
       label: "Report proposals",
       description:
-        "Report the proposals you authored — the required terminal step of this run. One entry per pushed branch: branch, skill (directory name), pattern (the pattern page filename from the prompt), description (one line).",
+        "Report the proposals you authored — the required terminal step of this run. One entry per pushed branch: branch, skill (directory name), pattern (the pattern page filename from the prompt), description (one line), and the proposal's reasoning restated from that pattern page — problem, rootCause, evidence — tailored to the change you authored.",
       parameters: ReportParams,
       async execute(_id, params) {
         for (const proposal of params.proposals) {
@@ -542,9 +566,22 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
             );
           }
 
-          if (proposal.skill === "" || proposal.pattern === "" || proposal.description === "") {
+          // Whitespace-only is as blank as absent (the tasks `update_goal` trim rule): every
+          // field carries meaning downstream, so the refusal names them all.
+          const blank = (value: string): boolean => value.trim() === "";
+
+          if (
+            [
+              proposal.skill,
+              proposal.pattern,
+              proposal.description,
+              proposal.problem,
+              proposal.rootCause,
+              proposal.evidence,
+            ].some(blank)
+          ) {
             return refusal(
-              "a proposal entry has an empty skill, pattern, or description.",
+              "a proposal entry has an empty skill, pattern, description, problem, rootCause, or evidence.",
               "Fill every field and report again.",
             );
           }
@@ -660,8 +697,9 @@ export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<Reporte
     "",
     "For each eligible pattern that justifies a change, author exactly one proposal: worktree add from refs/remotes/origin/" +
       `${defaultBranch} → change only under the worktree's skills/ (create, edit, or delete files) → commit → push origin skill-evolution/<skill>-<slug>. ` +
-      "Then call report_proposals once with every proposal (branch, skill, pattern, description) — " +
-      "`pattern` is the page filename exactly as listed above. If nothing justifies a change, report an empty list.",
+      "Then call report_proposals once with every proposal (branch, skill, pattern, description, problem, rootCause, evidence) — " +
+      "`pattern` is the page filename exactly as listed above, and `problem`/`rootCause`/`evidence` restate that page's analysis for the change you authored. " +
+      "If nothing justifies a change, report an empty list.",
   ].join("\n");
 
   try {

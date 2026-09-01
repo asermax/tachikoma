@@ -217,9 +217,16 @@ export const createSkillEvolutionProcessor = (
       });
 
       // The reporter fires only on at least one verified proposal (R10) — zero verified (a clean
-      // decline, or every push denied) dispatches nothing.
+      // decline, or every push denied) dispatches nothing. `reported` rides along: the reasoning
+      // is agent-reported context, paired per verified row by branch inside the reporter.
       if (verified.length >= 1) {
-        stages.report({ emit, workspaceRoot, verified, postWorkPrompt: deps.postWorkPrompt });
+        stages.report({
+          emit,
+          workspaceRoot,
+          verified,
+          reported,
+          postWorkPrompt: deps.postWorkPrompt,
+        });
       }
 
       // Surface the captured proposal failure through the boundary wrapper, AFTER verification and

@@ -16,7 +16,9 @@ The pass runs alongside memory extraction, on the same trunk session and branch 
    removing a skill that no longer serves a purpose — and pushes it to origin for review.
 5. **Verify** — host-side, from git state: only branches that actually pushed are recorded.
 6. **Report** — with ≥1 verified proposal, an ad-hoc background task is dispatched with the
-   run context. The default prompt is notification-only (summarize for the person, take no
+   run context, including each proposal's full reasoning (what it does, the problem, the root
+   cause, the evidence — restated from its pattern page): the material a pull-request body
+   should carry. The default prompt is notification-only (summarize for the person, take no
    further action — no PRs, no merges, no edits); a configured `postWorkPrompt` replaces it.
 
 A pattern with any impact-ledger entry never re-proposes, so an open proposal blocks

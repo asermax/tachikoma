@@ -57,11 +57,15 @@ const toolNamed = (tools: ToolDefinition[], name: string): ToolDefinition => {
 
 const emptyCapture = (): ProposalCapture => ({ proposals: [] });
 
-const proposal = (branch: string): ReportedProposal => ({
+const proposal = (branch: string, over: Partial<ReportedProposal> = {}): ReportedProposal => ({
   branch,
   skill: "deploy",
   pattern: "deploy-env-flag.md",
   description: "Add the --env flag to the deploy guidance",
+  problem: "Deploys fail on the --env flag the skill omits",
+  rootCause: "The deploy guidance predates the --env requirement",
+  evidence: "- 2027-03-01 (topic-2): deploy failed with unknown flag --env",
+  ...over,
 });
 
 describe("buildProposalTools — surface and refusal matrix", () => {
@@ -365,6 +369,51 @@ describe("buildProposalTools — surface and refusal matrix", () => {
 
     expect(text).toContain("Refused");
     expect(capture.proposals).toEqual([]);
+  });
+
+  it.each([
+    { field: "skill" as const, value: "" },
+    { field: "skill" as const, value: "   " },
+    { field: "pattern" as const, value: "" },
+    { field: "pattern" as const, value: " \t " },
+    { field: "description" as const, value: "" },
+    { field: "description" as const, value: "  " },
+    { field: "problem" as const, value: "" },
+    { field: "problem" as const, value: "  " },
+    { field: "rootCause" as const, value: "" },
+    { field: "rootCause" as const, value: " " },
+    { field: "evidence" as const, value: "" },
+    { field: "evidence" as const, value: " " },
+  ])(
+    "report_proposals refuses an empty or whitespace-only $field and captures nothing",
+    async ({ field, value }) => {
+      const text = await invoke(toolNamed(tools(), "report_proposals"), {
+        proposals: [proposal("skill-evolution/deploy-env-flag", { [field]: value })],
+      });
+
+      // Whitespace-only is as blank as absent (the tasks `update_goal` trim rule).
+      expect(text).toContain("Refused");
+      expect(text).toContain(field);
+      expect(capture.proposals).toEqual([]);
+    },
+  );
+
+  it("the report_proposals description names every field and its pattern-page source", () => {
+    const description = toolNamed(tools(), "report_proposals").description ?? "";
+
+    for (const field of [
+      "branch",
+      "skill",
+      "pattern",
+      "description",
+      "problem",
+      "rootCause",
+      "evidence",
+    ]) {
+      expect(description).toContain(field);
+    }
+
+    expect(description).toContain("pattern page");
   });
 });
 
@@ -723,6 +772,12 @@ describe("runProposalAgent (faked SideRunner)", () => {
     expect(options?.prompt).toContain("skill-evolution/commit-msg");
     expect(options?.prompt).toContain("### skills/deploy");
     expect(options?.prompt).toContain("Guidance without the flag.");
+
+    // The task line names the full report payload, reasoning included.
+    expect(options?.prompt).toContain(
+      "(branch, skill, pattern, description, problem, rootCause, evidence)",
+    );
+    expect(options?.prompt).toContain("problem`/`rootCause`/`evidence`");
   });
 
   it("returns the payload of a run whose fake invokes the captured report_proposals tool", async () => {

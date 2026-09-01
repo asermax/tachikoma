@@ -147,6 +147,18 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain("report an empty list");
   });
 
+  it("names the full report payload with its reasoning fields, sourced from the pattern page (R10)", () => {
+    // All seven fields in one report tuple — reasoning included, not just the one-line description.
+    expect(system).toContain("{branch, skill, pattern, description, problem, rootCause, evidence}");
+    // The reasoning fields restate the acted-on pattern page for the authored change.
+    expect(system).toContain("reasoning for review");
+    expect(system).toContain("restated from the acted-on pattern page");
+    expect(system).toContain("`problem` = the observable problem it fixes");
+    expect(system).toContain("`rootCause` = the gap in the skill's guidance that produced it");
+    // (`evidence`'s definition wraps across prompt lines — assert its unwrapped phrase.)
+    expect(system).toContain("dated observations backing the pattern");
+  });
+
   it("covers the full edit spectrum: modify, delete/consolidate, retire a whole skill (R7)", () => {
     // A proposal may change existing guidance, not only add to it.
     expect(system).toContain("adding, correcting, removing, or consolidating its guidance");

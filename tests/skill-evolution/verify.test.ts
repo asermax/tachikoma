@@ -35,6 +35,9 @@ const reported = (branch: string): ReportedProposal => ({
   skill: "deploy",
   pattern: "deploy-env-flag.md",
   description: "Add the --env flag to the deploy guidance",
+  problem: "Deploys fail on the --env flag the skill omits",
+  rootCause: "The deploy guidance predates the --env requirement",
+  evidence: "- 2027-03-01 (topic-2): deploy failed with unknown flag --env",
 });
 
 describe("verifyAndRecord (real git, bare origin)", () => {
