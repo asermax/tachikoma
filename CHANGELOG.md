@@ -1,3 +1,10 @@
+## [3.70.1](https://github.com/asermax/tachikoma/compare/v3.70.0...v3.70.1) (2026-09-01)
+
+
+### Bug Fixes
+
+* **telegram:** downgrade links with unsupported targets to plain text ([6942851](https://github.com/asermax/tachikoma/commit/694285145ebbda7934be6daa645fef0edf090171))
+
 # [3.70.0](https://github.com/asermax/tachikoma/compare/v3.69.0...v3.70.0) (2026-08-31)
 
 
