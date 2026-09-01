@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  AUTHORING_GUIDE_SKILLS,
   branchAnalysisInstruction,
   maintenanceSystemPrompt,
   proposalSystemPrompt,
@@ -127,5 +128,29 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain("Never the default branch, never force");
     // An empty proposal list is a legitimate outcome.
     expect(system).toContain("report an empty list");
+  });
+
+  it("carries the authoring-conventions rule grounded in the force-loaded guides (R17)", () => {
+    // Both guide names, asserted against the shared constant so the rule and the run wiring
+    // (forceLoadSkills) cannot drift apart on a rename.
+    for (const name of AUTHORING_GUIDE_SKILLS) {
+      expect(system).toContain(`\`${name}\``);
+    }
+    // Conditional on the guides' presence (fail-soft loading and policy never disagree).
+    expect(system).toContain("when their skill content is present in your input");
+    // New skills follow the full conventions; new workflows follow the step format and are
+    // documented in their skill's SKILL.md; edits preserve established structure.
+    expect(system).toContain("must conform to them");
+    expect(system).toContain("trigger-rich description");
+    expect(system).toContain("`title`-frontmattered `instructions.md`");
+    expect(system).toContain("documented in its skill's `SKILL.md`");
+    expect(system).toContain("preserve the skill's established structure");
+    // The guides' workspace vocabulary maps to the current proposal worktree.
+    expect(system).toContain("they mean the current proposal worktree's `skills/`");
+    // The guides' runtime tools are conventions only — never part of this run's surface.
+    expect(system).toContain("NOT part of your tool surface");
+    expect(system).toContain("authoring conventions only");
+    // Bundled reference material is never a proposal target (qualifies the R14 rule above it).
+    expect(system).toContain("never proposal targets");
   });
 });

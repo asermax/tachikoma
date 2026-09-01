@@ -414,6 +414,74 @@ describe("AgentManager.open", () => {
     expect(capturedLoaderOptions[0].noSkills).toBe(true);
   });
 
+  it("forwards skillPaths to the loader as additionalSkillPaths", async () => {
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
+
+    await manager.open({ skillPaths: ["/guides"] });
+
+    expect(capturedLoaderOptions[0].additionalSkillPaths).toEqual(["/guides"]);
+  });
+
+  it("composes skillPaths with isolation (noSkills still admits the added paths)", async () => {
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
+
+    await manager.open({ isolatePrompt: true, skillPaths: ["/guides"] });
+
+    expect(capturedLoaderOptions[0].noSkills).toBe(true);
+    expect(capturedLoaderOptions[0].additionalSkillPaths).toEqual(["/guides"]);
+  });
+
+  it("binds the force-load injection factory alongside the bare-path selection", async () => {
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
+
+    await manager.open({ bare: true, forceLoadSkills: ["skill-authoring"] });
+
+    // Bare binds nothing; the injection factory is the run's grounding, so exactly one factory.
+    const factories = capturedLoaderOptions[0].extensionFactories as ExtensionFactory[];
+    expect(factories).toHaveLength(1);
+
+    // Registration shape only (this file namespace-mocks the SDK, so the handler's body must not
+    // run here — behavior lives in tests/agent/force-load-skills.test.ts): one before_agent_start
+    // handler, no session_compact re-evaluation (the single-prompt contract).
+    const registered: string[] = [];
+    const fakePi = {
+      on: (event: string) => {
+        registered.push(event);
+      },
+    };
+    factories[0]?.(fakePi as never);
+    expect(registered).toEqual(["before_agent_start"]);
+  });
+
+  it("adds no skill loading when neither option is set (negative path)", async () => {
+    const manager = await AgentManager.create(
+      makeWorkspace(),
+      makeConfig(),
+      makeSources(),
+      makeLog(),
+    );
+
+    await manager.open({ bare: true });
+
+    expect(capturedLoaderOptions[0]).not.toHaveProperty("additionalSkillPaths");
+    expect(capturedLoaderOptions[0].extensionFactories).toHaveLength(0);
+  });
+
   it("does not isolate the loader by default", async () => {
     const manager = await AgentManager.create(
       makeWorkspace(),

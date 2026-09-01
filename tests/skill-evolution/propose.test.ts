@@ -6,7 +6,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { HeadlessRunOptions } from "../../src/agent/side-run.ts";
 import { ensureSkillEvolutionLayout } from "../../src/extensions/skill-evolution/layout.ts";
-import { proposalSystemPrompt } from "../../src/extensions/skill-evolution/prompts.ts";
+import {
+  AUTHORING_GUIDE_SKILLS,
+  proposalSystemPrompt,
+} from "../../src/extensions/skill-evolution/prompts.ts";
 import {
   buildProposalTools,
   type ProposalCapture,
@@ -22,6 +25,7 @@ import {
 } from "../../src/extensions/skill-evolution/store.ts";
 import { runGit } from "../../src/git/git.ts";
 import { listRemoteBranchTips } from "../../src/git/remote.ts";
+import { builtinSkillsDir } from "../../src/util/builtin-skills.ts";
 import { fileExists } from "../../src/util/markdown-store.ts";
 import { fakeLogger, makeTempDir, setupRemotePair } from "../git/helpers.ts";
 
@@ -610,12 +614,42 @@ describe("runProposalAgent (faked SideRunner)", () => {
     ]);
     expect(options?.system).toBe(proposalSystemPrompt(workspaceRoot, tmpDir, "main"));
 
+    // The authoring guides ride the run as actual skills: the default-path seam points at the
+    // real bundled builtin-skills dir (pins the neutral-module climb from src/util/), and both
+    // guide names are force-loaded from pi's catalog — no guide content is assembled here.
+    expect(options?.skillPaths).toEqual([builtinSkillsDir]);
+    expect(options?.forceLoadSkills).toEqual([...AUTHORING_GUIDE_SKILLS]);
+
     // The prompt carries the three inputs: pattern pages, the ledger, the skills inventory.
     expect(options?.prompt).toContain("### deploy-env-flag.md");
     expect(options?.prompt).toContain("--env flag missing");
     expect(options?.prompt).toContain("skill-evolution/commit-msg");
     expect(options?.prompt).toContain("### skills/deploy");
     expect(options?.prompt).toContain("Guidance without the flag.");
+  });
+
+  it("seeds the run with the authoring-guides dir from the overridable seam", async () => {
+    const { workspaceRoot, tmpDir } = await agentWorkspace();
+    const run = vi.fn(
+      async (_options: HeadlessRunOptions): Promise<{ text: string }> => ({
+        text: "",
+      }),
+    );
+
+    await runProposalAgent({
+      side: { run },
+      workspaceRoot,
+      tmpDir,
+      defaultBranch: "main",
+      eligible: [],
+      impactLog,
+      log,
+      authoringGuidesDir: "/fixtures/guides",
+    });
+
+    const [options] = run.mock.calls[0] ?? [];
+    expect(options?.skillPaths).toEqual(["/fixtures/guides"]);
+    expect(options?.forceLoadSkills).toEqual([...AUTHORING_GUIDE_SKILLS]);
   });
 
   it("returns the payload of a run whose fake invokes the captured report_proposals tool", async () => {

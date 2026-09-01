@@ -1,10 +1,10 @@
 import { mkdir } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import { Type } from "typebox";
 
 import { provideContext } from "../../agent/system-prompt-section.ts";
 import { SESSION_TOPIC_CHANGED_EVENT } from "../../events.ts";
+import { builtinSkillsDir } from "../../util/builtin-skills.ts";
 import { defineExtension, SESSION_SCOPES } from "../api.ts";
 import { discoverSkillAgents } from "./agents.ts";
 import { BUILTIN_AGENTS } from "./builtins.ts";
@@ -17,9 +17,6 @@ interface SkillsConfig {
   enabled: boolean;
   proactiveLoading: boolean;
 }
-
-// Built-in authoring skills ship alongside this extension, in its builtin-skills/ directory.
-const builtinSkillsDir = resolve(import.meta.dirname, "builtin-skills");
 
 /**
  * Workspace skills: contributes the workspace skills directory as a pi skill source.

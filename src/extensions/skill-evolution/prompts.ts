@@ -156,6 +156,16 @@ export const maintenanceSystemPrompt = (workspaceRoot: string): string =>
     .replaceAll("$WORKSPACE", workspaceRoot);
 
 /**
+ * The two built-in authoring guides, force-loaded into the proposal run as actual skills (the
+ * `skillPaths`/`forceLoadSkills` wiring in `runProposalAgent`). Exported because the rule text
+ * below and the run wiring key on the same names — a guide rename is one edit here, and the rule
+ * stays conditional on the guides' presence so fail-soft loading and policy never disagree.
+ */
+export const AUTHORING_GUIDE_SKILLS = ["skill-authoring", "workflow-authoring"] as const;
+
+const guideNamesPhrase = AUTHORING_GUIDE_SKILLS.map((name) => `\`${name}\``).join(" and ");
+
+/**
  * The proposal agent's authoring protocol (S7, R7–R9/R14): the worktree cut/push workflow, the
  * one-branch-per-pattern rule, the branch naming rule, and the workspace-skills-only constraint.
  * The prompt-shaped rules mirror the tool surface's mechanical refusals — a violated rule comes
@@ -167,6 +177,7 @@ const PROPOSAL_BASE_PROMPT = `You are the skill-evolution proposal agent. You tu
 ## Ground rules
 
 - **Workspace skills only** (R14): propose only changes under a worktree's \`skills/\` directory. Each workspace skill is a directory under \`$WORKSPACE/skills/\` containing a \`SKILL.md\`; built-in skills are not part of this repository and are out of scope. Never touch anything outside a worktree's \`skills/\` directory.
+- **Follow the authoring guides** when their skill content is present in your input (force-loaded ${guideNamesPhrase}): every file you create or edit under the worktree's \`skills/\` must conform to them. A new \`skills/<name>/SKILL.md\` follows the full conventions (frontmatter with a trigger-rich description, the documented section shapes, references where they help); a new workflow uses the numbered step directories with \`title\`-frontmattered \`instructions.md\` and is documented in its skill's \`SKILL.md\`; edits preserve the skill's established structure. Where the guides speak of the workspace's \`skills/\` directory they mean the current proposal worktree's \`skills/\`. The guides describe runtime workflow and delegation tools that are NOT part of your tool surface — treat them as authoring conventions only. The guides are bundled reference material, never proposal targets.
 - **One branch per pattern**: each pattern you act on gets exactly one proposal on its own branch — either an edit to the existing skill's files, or a new \`skills/<name>/SKILL.md\` for a recurring workflow that has no skill yet (R7).
 - **Branch naming** (R9): \`skill-evolution/<skill>-<slug>\` — the skill directory name, a hyphen, and a short lowercase slug (lowercase letters, digits, single hyphens, starting with a letter or digit). Example: \`skill-evolution/deploy-add-env-flag\`. A name that already exists on the remote is refused on push — pick a fresh one (e.g. append \`-2\`).
 - **Never the default branch, never force**: push only ever creates a brand-new \`skill-evolution/*\` branch; the default branch ($DEFAULT_BRANCH) and any history rewrite are refused.

@@ -22,6 +22,8 @@ const loader = new DefaultResourceLoader({
   systemPromptOverride: () => "...",
   additionalExtensionPaths: ["/path/ext.ts"],
   extensionFactories: [(pi) => { /* inline extension */ }],
+  additionalSkillPaths: ["/path/skills"],           // merged into discovered skills
+  noSkills: true,                                   // drops defaults; added paths still load
   skillsOverride: (current) => ({ skills: [...], diagnostics: current.diagnostics }),
   agentsFilesOverride: (current) => ({ agentsFiles: [...] }),
   promptsOverride: (current) => ({ prompts: [...], diagnostics: current.diagnostics }),
@@ -98,7 +100,7 @@ JSONL trees at `~/.pi/agent/sessions/--<cwd-slug>--/<timestamp>_<uuid>.jsonl`; e
 
 ## Skills
 
-pi implements the **Agent Skills standard** (agentskills.io) — `SKILL.md` + YAML frontmatter (`name`, `description`, optional `license`, `compatibility`, `metadata`, `allowed-tools`, `disable-model-invocation`), the same format Tachikoma's workspace skills use. Discovery: `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, `.agents/skills/` (ancestors, post-trust), settings `skills` array, packages, `resources_discover` event (`skillPaths`). Progressive disclosure: descriptions in system prompt, agent `read`s SKILL.md on demand; `/skill:name` commands force-load. Missing description ⇒ skill not loaded; name collisions keep first found.
+pi implements the **Agent Skills standard** (agentskills.io) — `SKILL.md` + YAML frontmatter (`name`, `description`, optional `license`, `compatibility`, `metadata`, `allowed-tools`, `disable-model-invocation`), the same format Tachikoma's workspace skills use. Discovery: `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, `.agents/skills/` (ancestors, post-trust), settings `skills` array, packages, `resources_discover` event (`skillPaths`). Progressive disclosure: descriptions in system prompt, agent `read`s SKILL.md on demand; `/skill:name` commands force-load. Missing description ⇒ skill not loaded; name collisions keep first found. Loader options (verified against 0.84.x `dist/`, guarded by the real-loader test in `tests/agent/force-load-skills.test.ts` — re-check on upgrade): `additionalSkillPaths` merges the given directories into discovered skills **even under `noSkills: true`** (a nonexistent added path is a diagnostic, not a throw), and `noSkills` plus non-empty added paths loads with `includeDefaults: false` — so an isolated run's catalog is exactly the added directories' skills. The skills-catalog *section* renders in the system prompt only when the built-in `read` tool is active (pi gates the catalog behind read because progressive disclosure loads bodies through it) — a run with no `read` (e.g. skill-evolution's proposal agent) still has the skills in `systemPromptOptions.skills` for extension code to read, and force-loads their content through a `before_agent_start` hidden message instead.
 
 **Consequences for Tachikoma:** progressive disclosure handles base detection; a per-turn conversation-aware classifier (`before_agent_start` in the skills extension) augments it by recommending the skills most relevant to the latest message for the agent to load (it does not replace pi's discovery/loading); skill refresh is `ctx.reload()` rather than a filesystem watcher; skill `dependencies` and bundled agent definitions are not part of the standard — bundled agents can be supported via a subagent-style extension (see `examples/extensions/subagent/`, which discovers `agents/*.md` with frontmatter and spawns isolated `pi` processes).
 

@@ -9,10 +9,11 @@ import { Type } from "typebox";
 import { ALLOWED_GIT_SUBCOMMANDS, refusal, runGitTool, textResult } from "../../git/agent-tools.ts";
 import { listRemoteBranchTips } from "../../git/remote.ts";
 import type { Logger } from "../../log.ts";
+import { builtinSkillsDir } from "../../util/builtin-skills.ts";
 import { fileExists } from "../../util/markdown-store.ts";
 import type { Runner } from "./analyze.ts";
 import { skillEvolutionDir } from "./layout.ts";
-import { proposalSystemPrompt } from "./prompts.ts";
+import { AUTHORING_GUIDE_SKILLS, proposalSystemPrompt } from "./prompts.ts";
 import { formatImpactLog, type ImpactLogEntry } from "./store.ts";
 
 /**
@@ -525,6 +526,12 @@ export interface ProposalAgentDeps {
   /** Current ledger rows — context for what is already open, never a write target. */
   impactLog: readonly ImpactLogEntry[];
   log: Logger;
+  /**
+   * Directory the authoring guides are discovered from (`skillPaths` of the run). Defaults to the
+   * bundled `builtin-skills/` constant; overridable to pin/redirect the discovered directory in
+   * tests.
+   */
+  authoringGuidesDir?: string;
 }
 
 /** One eligible pattern page, inlined for the prompt (a page that vanished mid-run is skipped). */
@@ -578,13 +585,16 @@ const skillsInventorySection = async (workspaceRoot: string, log: Logger): Promi
 /**
  * Run the proposal agent (S7): one context-free headless run over the eligible pattern pages, the
  * impact log, and the workspace skills inventory. `isolatePrompt: true` over `run`'s default empty
- * built-in allowlist makes the five custom tools the entire surface — no grafted context files or
- * skills catalog. Returns the captured `report_proposals` list (possibly empty). A dying run
- * throws a {@link ProposalRunError} carrying the partial capture — the caller still verifies
- * whatever pushed-and-reported before the death, and its verify-and-sweep `finally` runs.
+ * built-in allowlist makes the five custom tools the entire surface — no grafted context files;
+ * the only skills in the run are the two authoring guides, discovered via `skillPaths` and
+ * force-loaded through pi's catalog (`forceLoadSkills`). Returns the captured `report_proposals`
+ * list (possibly empty). A dying run throws a {@link ProposalRunError} carrying the partial
+ * capture — the caller still verifies whatever pushed-and-reported before the death, and its
+ * verify-and-sweep `finally` runs.
  */
 export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<ReportedProposal[]> => {
   const { side, workspaceRoot, tmpDir, defaultBranch, eligible, impactLog, log } = deps;
+  const authoringGuidesDir = deps.authoringGuidesDir ?? builtinSkillsDir;
   const capture: ProposalCapture = { proposals: [] };
 
   // The two prompt sections read disjoint directories — build them concurrently.
@@ -632,6 +642,11 @@ export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<Reporte
       }),
       tier: "processor",
       isolatePrompt: true,
+      // The authoring guides ride the run as actual skills: the loader discovers them from the
+      // bundled dir (isolation-composable `skillPaths`) and their bodies are force-loaded from
+      // pi's catalog on the run's single prompt — no guide content is assembled here.
+      skillPaths: [authoringGuidesDir],
+      forceLoadSkills: [...AUTHORING_GUIDE_SKILLS],
     });
   } catch (error) {
     throw new ProposalRunError(

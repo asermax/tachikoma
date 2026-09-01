@@ -54,6 +54,18 @@ export interface HeadlessRunOptions {
    * does not register throws a self-correcting error before the run starts (see DLT-184).
    */
   extensionTools?: string[];
+  /**
+   * Additional skill directories for pi's loader, forwarded to `open()` (composes with
+   * `isolatePrompt` — the run discovers exactly these directories' skills). See
+   * `OpenSessionOptions.skillPaths`.
+   */
+  skillPaths?: string[];
+  /**
+   * Skill names to force-load from the run's skill catalog, forwarded to `open()`: each name's
+   * full body is injected as hidden skill content on the run's single prompt. Intended for
+   * isolated single-prompt runs only — see `OpenSessionOptions.forceLoadSkills`.
+   */
+  forceLoadSkills?: string[];
 }
 
 export interface HeadlessRunResult {
@@ -230,6 +242,8 @@ export class SideRunner {
     isolatePrompt,
     backgroundExtensions,
     extensionTools,
+    skillPaths,
+    forceLoadSkills,
   }: HeadlessRunOptions): Promise<HeadlessRunResult> {
     // A non-empty `extensionTools` takes the grant path: bind the subagent-scoped factories and
     // resolve the requested names source-agnostically against the opened session (see DLT-184). An
@@ -259,6 +273,8 @@ export class SideRunner {
       ...(isolatePrompt === true ? { isolatePrompt: true } : {}),
       ...(backgroundExtensions === true ? { bindBackgroundFactories: true } : {}),
       ...(requestedExtensions != null ? { bindSubagentFactories: true } : {}),
+      ...(skillPaths != null && skillPaths.length > 0 ? { skillPaths } : {}),
+      ...(forceLoadSkills != null && forceLoadSkills.length > 0 ? { forceLoadSkills } : {}),
       ...(dropToolAllowlist
         ? {}
         : { tools: [...tools, ...(customTools ?? []).map((tool) => tool.name)] }),

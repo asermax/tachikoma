@@ -263,6 +263,29 @@ describe("SideRunner.run", () => {
     expect(opts.tools).toEqual(["read", "myTool"]);
     expect(opts.customTools).toBe(custom);
     expect(opts.bindBackgroundFactories).toBeUndefined();
+    // Neither skill-loading option leaks into the default call (an always-set key fails here).
+    expect(opts).not.toHaveProperty("skillPaths");
+    expect(opts).not.toHaveProperty("forceLoadSkills");
+  });
+
+  it("forwards skillPaths and forceLoadSkills to the session when set", async () => {
+    const dispose = vi.fn();
+    const prompt = vi.fn(async () => undefined);
+    const session = { prompt, dispose, messages: [assistantMessage("ok")] };
+    const open = vi.fn(async () => session as unknown as AgentSession);
+
+    const { manager } = makeManager({ open });
+    const runner = new SideRunner(manager, makeLogger());
+
+    await runner.run({
+      prompt: "go",
+      skillPaths: ["/guides"],
+      forceLoadSkills: ["skill-authoring"],
+    });
+
+    const opts = open.mock.calls[0][0];
+    expect(opts.skillPaths).toEqual(["/guides"]);
+    expect(opts.forceLoadSkills).toEqual(["skill-authoring"]);
   });
 
   it("binds background factories without a tool allowlist and uses defaults", async () => {

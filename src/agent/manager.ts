@@ -17,6 +17,7 @@ import type { AgentExtensionFactory } from "../extensions/api.ts";
 import type { Logger } from "../log.ts";
 import { localIsoDate } from "../util/dates.ts";
 import type { Workspace } from "../workspace.ts";
+import { forceLoadSkillsFactory } from "./force-load-skills.ts";
 import { type ModelTier, ModelTiers } from "./models.ts";
 import { buildMainSystemPrompt } from "./prompts.ts";
 import { lastAssistantText } from "./side-run.ts";
@@ -85,6 +86,25 @@ export interface OpenSessionOptions {
    * binds nothing (the usual headless side work).
    */
   bindSubagentFactories?: boolean;
+  /**
+   * Additional skill directories for pi's loader (`additionalSkillPaths`). Composes with
+   * `isolatePrompt`: pi merges explicitly added paths even under `noSkills` and loads them with
+   * `includeDefaults: false`, so an isolated session discovers exactly these directories' skills
+   * — workspace, user-global, and agent-dir skills stay out. (Caveat: `noSkills` does not gate
+   * extension-contributed `resources_discover` skill paths — a session that also binds factories
+   * contributing skill sources, e.g. `bindBackgroundFactories`, would see those too.) The catalog
+   * alone reaches the model nowhere (pi renders it into the system prompt only when a built-in
+   * `read` tool is active); pair with `forceLoadSkills` to put content in front of the model.
+   */
+  skillPaths?: string[];
+  /**
+   * Skill names to force-load: binds one inline factory that injects each name's full body (from
+   * the loader's catalog, so usually alongside `skillPaths`) as a hidden `skill-content` message
+   * on the first agent start. Intended for single-prompt isolated runs — injection is once per
+   * session with no compaction/topic-change re-evaluation, so persistent multi-turn sessions
+   * must not use it (see `force-load-skills.ts`).
+   */
+  forceLoadSkills?: string[];
 }
 
 /**
@@ -244,7 +264,14 @@ export class AgentManager {
       options.systemPrompt ??
       (!bare ? buildMainSystemPrompt({ workspaceRoot: workspace.root, dateHeader }) : undefined);
 
-    const extensionFactories = selectExtensionFactories({ ...options, bare }, this.sources);
+    const extensionFactories = [
+      ...selectExtensionFactories({ ...options, bare }, this.sources),
+      // The force-load injection binds even for bare sessions — it is the run's grounding, not a
+      // capability slice, so it rides alongside whatever the selection resolved (never replaces).
+      ...(options.forceLoadSkills != null && options.forceLoadSkills.length > 0
+        ? [forceLoadSkillsFactory({ names: options.forceLoadSkills, log: this.log })]
+        : []),
+    ];
 
     const loader = new DefaultResourceLoader({
       cwd: workspace.root,
@@ -252,6 +279,9 @@ export class AgentManager {
       extensionFactories,
       ...(systemPromptOverride != null ? { systemPromptOverride: () => systemPromptOverride } : {}),
       ...(options.isolatePrompt === true ? isolatedLoaderOptions() : {}),
+      ...(options.skillPaths != null && options.skillPaths.length > 0
+        ? { additionalSkillPaths: options.skillPaths }
+        : {}),
     });
     await loader.reload();
 
