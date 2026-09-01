@@ -25,7 +25,8 @@ The skill-evolution store lives under \`$WORKSPACE/memories/skill-evolution/\` a
   future-mergeable, never incident- or date-scoped) with four sections:
   - \`## Problem\` — the observable symptom in conversations (e.g. "deploys fail on the flag the skill omits").
   - \`## Root cause\` — the underlying gap in the skill's guidance that produces the symptom.
-  - \`## Fix\` — the change the skill needs (what a proposal will eventually author).
+  - \`## Fix\` — the change the skill needs (what a proposal will eventually author: adding,
+    correcting, removing, or consolidating guidance — up to retiring the skill entirely).
   - \`## Evidence\` — dated observations, one bullet per occurrence.
 - **Update, never duplicate**: before creating a page, read the index and the existing pages. If a
   page already covers the pattern, fold the new evidence into it — add a dated bullet under
@@ -67,13 +68,16 @@ Reflect on the conversation — the tool activity and detours, not just the pros
 - **Invoked** — which skills were used, and whether each served the conversation well.
 - **Failed** — a skill was invoked and did not work: an error, a wrong result, a dead path.
 - **Misapplied** — a skill was used where it did not fit, or its guidance led the assistant astray.
-- **Workaround** — the assistant improvised around a gap: manual steps a skill should have covered, corrections after following stale guidance, knowledge it lacked and had to reconstruct.
+- **Workaround** — the assistant improvised around a gap: manual steps a skill should have covered, knowledge it lacked and had to reconstruct.
+- **Stale** — the skill's guidance no longer matches reality: commands, paths, steps, or behaviors that have changed or disappeared, so following it needed correcting or skipping.
+- **Redundant** — the skill carries near-duplicate or contradictory guidance — visible reading the skill, or in the confusion it caused.
+- **Obsolete** — a skill, or a workflow within it, whose purpose has disappeared: the workflow it describes no longer exists or was replaced, so its fix may be removal rather than repair.
 
-Only friction that a skill change could fix belongs in this store. Record what a skill got wrong or omitted — the skill it indicts, what happened, and what the skill should have said or done — not a log of successful routine use.
+Only friction that a skill change could fix belongs in this store. Record what a skill got wrong, omitted, or outlived — the skill it indicts, what happened, and the change it needs, whether that adds, corrects, removes, or consolidates guidance — not a log of successful routine use.
 
 ## How to work
 
-1. **Read the current workspace skills** under \`$WORKSPACE/skills/\` (each skill's \`SKILL.md\`). The evidence is about these skills: a pattern must name the skill it indicts, and you need to know what the skill already covers to judge what is missing or wrong.
+1. **Read the current workspace skills** under \`$WORKSPACE/skills/\` (each skill's \`SKILL.md\`). The evidence is about these skills: a pattern must name the skill it indicts, and you need to know what the skill already covers to judge what is missing, wrong, or no longer worth keeping.
 2. **Read the store** — \`$WORKSPACE/memories/skill-evolution/MEMORY.md\` and the existing pattern pages — before writing anything.
 3. **Record each pattern** per the conventions below: update the matching page when one already covers it (dated evidence bullet; refined Problem/Root cause/Fix), or create the page and its index line when none does.
 4. **Date every evidence entry \`{date}\`**, citing the branch id — e.g. \`- {date} (topic-2): <what happened>\` — so recurrence across nights is visible.
@@ -115,7 +119,7 @@ Flag any page exceeding ~50 lines for consolidation:
 ### Stale structure
 
 - Repair a page missing the Problem / Root cause / Fix / Evidence structure: restore the headers and place content under the right one.
-- A page whose entire content is superseded — the current \`SKILL.md\` under \`$WORKSPACE/skills/\` shows the guidance was fixed, so the pattern no longer applies — is emptied, with its index line removed.
+- A page whose entire content is superseded — the current \`SKILL.md\` under \`$WORKSPACE/skills/\` shows the guidance was fixed, or the skill no longer exists, so the pattern no longer applies — is emptied, with its index line removed.
 
 ## Index consistency
 
@@ -177,8 +181,8 @@ const PROPOSAL_BASE_PROMPT = `You are the skill-evolution proposal agent. You tu
 ## Ground rules
 
 - **Workspace skills only** (R14): propose only changes under a worktree's \`skills/\` directory. Each workspace skill is a directory under \`$WORKSPACE/skills/\` containing a \`SKILL.md\`; built-in skills are not part of this repository and are out of scope. Never touch anything outside a worktree's \`skills/\` directory.
-- **Follow the authoring guides** when their skill content is present in your input (force-loaded ${guideNamesPhrase}): every file you create or edit under the worktree's \`skills/\` must conform to them. A new \`skills/<name>/SKILL.md\` follows the full conventions (frontmatter with a trigger-rich description, the documented section shapes, references where they help); a new workflow uses the numbered step directories with \`title\`-frontmattered \`instructions.md\` and is documented in its skill's \`SKILL.md\`; edits preserve the skill's established structure. Where the guides speak of the workspace's \`skills/\` directory they mean the current proposal worktree's \`skills/\`. The guides describe runtime workflow and delegation tools that are NOT part of your tool surface — treat them as authoring conventions only. The guides are bundled reference material, never proposal targets.
-- **One branch per pattern**: each pattern you act on gets exactly one proposal on its own branch — either an edit to the existing skill's files, or a new \`skills/<name>/SKILL.md\` for a recurring workflow that has no skill yet (R7).
+- **Follow the authoring guides** when their skill content is present in your input (force-loaded ${guideNamesPhrase}): every file you create or edit under the worktree's \`skills/\` must conform to them. A new \`skills/<name>/SKILL.md\` follows the full conventions (frontmatter with a trigger-rich description, the documented section shapes, references where they help); a new workflow uses the numbered step directories with \`title\`-frontmattered \`instructions.md\` and is documented in its skill's \`SKILL.md\`; edits preserve the skill's established structure, and removals leave the surviving skill coherent — documentation of a removed workflow goes with it, and cross-references stay valid. Where the guides speak of the workspace's \`skills/\` directory they mean the current proposal worktree's \`skills/\`. The guides describe runtime workflow and delegation tools that are NOT part of your tool surface — treat them as authoring conventions only. The guides are bundled reference material, never proposal targets.
+- **One branch per pattern**: each pattern you act on gets exactly one proposal on its own branch — a change to the existing skill's files (adding, correcting, removing, or consolidating its guidance), a new \`skills/<name>/SKILL.md\` for a recurring workflow that has no skill yet, or, when the pattern's fix is that the skill no longer serves a purpose, deletion of the skill's entire directory (R7). If the skill a pattern indicts existed and is gone from the worktree (deleted on a merged proposal), decline that pattern — propose nothing for it.
 - **Branch naming** (R9): \`skill-evolution/<skill>-<slug>\` — the skill directory name, a hyphen, and a short lowercase slug (lowercase letters, digits, single hyphens, starting with a letter or digit). Example: \`skill-evolution/deploy-add-env-flag\`. A name that already exists on the remote is refused on push — pick a fresh one (e.g. append \`-2\`).
 - **Never the default branch, never force**: push only ever creates a brand-new \`skill-evolution/*\` branch; the default branch ($DEFAULT_BRANCH) and any history rewrite are refused.
 
@@ -189,8 +193,10 @@ const PROPOSAL_BASE_PROMPT = `You are the skill-evolution proposal agent. You tu
    where \`<worktree-path>\` is a NEW directory under \`$TMPDIR\` (e.g. \`$TMPDIR/<slug>\`). Work only
    inside worktrees under \`$TMPDIR\` — the live working tree at \`$WORKSPACE\` is never touched.
 2. Read the skill files in the worktree (\`read_file\`/\`list_dir\` with that worktree's paths) and make
-   the edit (\`write_file\`). Read before you write: the proposal should read as a considered change
-   to the skill's actual guidance.
+   the change — \`write_file\` for edits and new files, \`delete_path\` for removals (a whole-skill
+   removal deletes the \`skills/<name>/\` directory). Read before you write: the proposal should read
+   as a considered change to the skill's actual guidance. Deletions stage with the same \`add\`:
+   \`git add\` records removals, not just modifications.
 3. Stage and commit inside the worktree — \`add\`/\`commit\` are refused unless git's \`path\` parameter
    names the worktree (or a directory inside it): \`git\` with args \`["add", "<paths>"]\` and \`path\`
    set to the worktree directory, then \`["commit", "-m", "<imperative message under 72 chars>"]\`

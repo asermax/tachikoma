@@ -58,6 +58,8 @@ describe("reportRun", () => {
     const { payload } = run();
 
     expect(payload?.prompt).toContain(DEFAULT_POST_WORK_PROMPT);
+    // The default names the full spectrum — removals too, not only modifications.
+    expect(DEFAULT_POST_WORK_PROMPT).toContain("skill-change proposals");
   });
 
   it("forwards a configured post-work prompt verbatim", () => {

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 
@@ -57,7 +57,7 @@ export const REMOTE_BRANCH_PATTERN = `${BRANCH_NAMESPACE}*`;
 /** One entry of the agent's `report_proposals` call — its self-report, pre-verification. */
 export interface ReportedProposal {
   branch: string;
-  /** Skill directory name under `skills/` (existing or the new one). */
+  /** Skill directory name under `skills/` — the skill the proposal adds to, edits, or removes. */
   skill: string;
   /** Pattern page filename within the store dir, exactly as the prompt listed it. */
   pattern: string;
@@ -120,6 +120,13 @@ const WriteFileParams = Type.Object({
   content: Type.String({ description: "Full file contents to write" }),
 });
 
+const DeletePathParams = Type.Object({
+  path: Type.String({
+    description:
+      "Path of the file or directory to delete, inside a worktree under the tmp dir (directories delete recursively)",
+  }),
+});
+
 const ListDirParams = Type.Object({
   path: Type.String({ description: "Directory to list, inside a worktree under the tmp dir" }),
 });
@@ -144,7 +151,10 @@ const ReportParams = Type.Object({
       branch: Type.String({
         description: "The pushed proposal branch, e.g. skill-evolution/deploy-add-env-flag",
       }),
-      skill: Type.String({ description: "The skill directory name under skills/" }),
+      skill: Type.String({
+        description:
+          "The skill directory name under skills/ — the one added to, edited, or removed",
+      }),
       pattern: Type.String({
         description: "The pattern page filename exactly as given in the prompt",
       }),
@@ -358,7 +368,7 @@ export interface ProposalToolDeps {
 }
 
 /**
- * Build the proposal agent's entire tool surface — exactly five tools, bound to one workspace and
+ * Build the proposal agent's entire tool surface — exactly six tools, bound to one workspace and
  * one tmp dir so the agent can never operate on another tree. The file tools refuse any path that
  * escapes the tmp dir; `git` treats `path` as a plain cwd, validated to name a worktree under the
  * tmp dir only for `add`/`commit` — and never via `-C` string surgery. Editor/gpg are disabled
@@ -402,6 +412,38 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
         return textResult(`Wrote ${params.path}`);
       },
     } satisfies ToolDefinition<typeof WriteFileParams>,
+
+    {
+      name: "delete_path",
+      label: "Delete path",
+      description:
+        "Delete a file or directory (recursively) inside a proposal worktree — how a removal is authored, from redundant guidance to a whole skill directory.",
+      parameters: DeletePathParams,
+      async execute(_id, params) {
+        const path = guardPath(params.path);
+
+        if (path == null) return refusal(`\`${params.path}\` escapes the tmp dir.`, pathsGuidance);
+
+        // The guard is root-inclusive; the tmp dir itself holds every worktree, so deleting it
+        // is always a mistake, never a proposal.
+        if (path === resolve(tmpDir)) {
+          return refusal(
+            "`delete_path` cannot remove the tmp dir itself.",
+            `Only paths inside ${tmpDir} are allowed — delete paths inside a proposal worktree, not the worktree area root.`,
+          );
+        }
+
+        if (!(await fileExists(path))) {
+          return refusal(
+            `\`${params.path}\` does not exist.`,
+            "List the worktree (`list_dir`) and delete a path that is there.",
+          );
+        }
+
+        await rm(path, { recursive: true, force: true });
+        return textResult(`Deleted ${params.path}`);
+      },
+    } satisfies ToolDefinition<typeof DeletePathParams>,
 
     {
       name: "list_dir",
@@ -579,7 +621,7 @@ const skillsInventorySection = async (workspaceRoot: string, log: Logger): Promi
 /**
  * Run the proposal agent (S7): one context-free headless run over the eligible pattern pages, the
  * impact log, and the workspace skills inventory. `isolatePrompt: true` over `run`'s default empty
- * built-in allowlist makes the five custom tools the entire surface — no grafted context files;
+ * built-in allowlist makes the six custom tools the entire surface — no grafted context files;
  * the only skills in the run are the two authoring guides, discovered via `skillPaths` and
  * force-loaded through pi's catalog (`forceLoadSkills`). Returns the captured `report_proposals`
  * list (possibly empty). A dying run throws a {@link ProposalRunError} carrying the partial
@@ -616,7 +658,7 @@ export const runProposalAgent = async (deps: ProposalAgentDeps): Promise<Reporte
     "## Task",
     "",
     "For each eligible pattern that justifies a change, author exactly one proposal: worktree add from refs/remotes/origin/" +
-      `${defaultBranch} → edit only under the worktree's skills/ → commit → push origin skill-evolution/<skill>-<slug>. ` +
+      `${defaultBranch} → change only under the worktree's skills/ (create, edit, or delete files) → commit → push origin skill-evolution/<skill>-<slug>. ` +
       "Then call report_proposals once with every proposal (branch, skill, pattern, description) — " +
       "`pattern` is the page filename exactly as listed above. If nothing justifies a change, report an empty list.",
   ].join("\n");

@@ -20,7 +20,7 @@ export const REPORT_SOURCE = "skill-evolution";
  * user and deliberately takes no further action. A configured `postWorkPrompt` replaces it.
  */
 export const DEFAULT_POST_WORK_PROMPT = [
-  "The skill-evolution pass just created the skill-modification proposals listed below.",
+  "The skill-evolution pass just created the skill-change proposals listed below.",
   "Generate one notification for the user summarizing them, then stop.",
   "Take no further action: do not open pull requests, do not merge, do not edit the skills.",
 ].join(" ");

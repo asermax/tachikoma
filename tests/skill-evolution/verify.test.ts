@@ -166,6 +166,65 @@ describe("verifyAndRecord (real git, bare origin)", () => {
     await expect(readImpactLog(impactLogPath(ws), fakeLogger())).resolves.toHaveLength(1);
   });
 
+  it("a deletion-only proposal (a whole-skill removal) passes the scope check and is logged", async () => {
+    // A removal proposal is deletions only: the skill directory vanishes from the branch.
+    await authorProposal("skill-evolution/deploy-retire-skill", async (worktree) => {
+      await rm(join(worktree, "skills", "deploy"), { recursive: true });
+    });
+
+    const verified = await runVerify({
+      reported: [
+        {
+          branch: "skill-evolution/deploy-retire-skill",
+          skill: "deploy",
+          pattern: "deploy-retired.md",
+          description: "Remove the deploy skill — the workflow no longer exists",
+        },
+      ],
+    });
+
+    const remoteTip = (await listRemoteBranchTips(ws, "skill-evolution/*")).get(
+      "skill-evolution/deploy-retire-skill",
+    );
+
+    // Deleted paths still satisfy the skills/ prefix, so the row is written as proposed.
+    expect(verified).toEqual([
+      {
+        date: DAY,
+        skill: "deploy",
+        pattern: "deploy-retired.md",
+        branch: "skill-evolution/deploy-retire-skill",
+        tip: remoteTip,
+        description: "Remove the deploy skill — the workflow no longer exists",
+        status: IMPACT_LOG_STATUSES.proposed,
+      },
+    ]);
+    await expect(readImpactLog(impactLogPath(ws), fakeLogger())).resolves.toEqual(verified);
+  });
+
+  it("a no-op diff (branch pushed with no new commit) passes the scope check vacuously and is logged", async () => {
+    // The deliberate edge: verification checks scope, not substance — an empty diff has no
+    // out-of-scope paths, so the row is written and the reviewer sees an empty branch to discard.
+    const worktree = join(tmpDir, "deploy-noop");
+    await runGit(ws, [
+      "worktree",
+      "add",
+      "-b",
+      "skill-evolution/deploy-noop",
+      worktree,
+      "refs/remotes/origin/main",
+    ]);
+    await runGit(worktree, ["push", "origin", "skill-evolution/deploy-noop"]);
+
+    const verified = await runVerify({ reported: [reported("skill-evolution/deploy-noop")] });
+
+    expect(verified).toHaveLength(1);
+    expect(verified[0]).toMatchObject({
+      branch: "skill-evolution/deploy-noop",
+      status: IMPACT_LOG_STATUSES.proposed,
+    });
+  });
+
   it("a proposal touching README.md is dropped with a warning — no row", async () => {
     await authorProposal("skill-evolution/deploy-env-flag", async (worktree) => {
       await writeFile(join(worktree, "README.md"), "docs\n", "utf8");

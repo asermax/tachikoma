@@ -92,10 +92,11 @@ describe("buildProposalTools — surface and refusal matrix", () => {
       capture,
     });
 
-  it("returns exactly the five scoped tools", () => {
+  it("returns exactly the six scoped tools", () => {
     expect(tools().map((tool) => tool.name)).toEqual([
       "read_file",
       "write_file",
+      "delete_path",
       "list_dir",
       "git",
       "report_proposals",
@@ -123,6 +124,16 @@ describe("buildProposalTools — surface and refusal matrix", () => {
       tool: "write_file",
       params: () => ({ path: join(base, "evil.txt"), content: "nope" }),
     },
+    {
+      name: "delete_path escaping with ..",
+      tool: "delete_path",
+      params: () => ({ path: "../secret.txt" }),
+    },
+    {
+      name: "delete_path with an absolute outside path",
+      tool: "delete_path",
+      params: () => ({ path: join(base, "evil.txt") }),
+    },
     { name: "list_dir on the parent", tool: "list_dir", params: () => ({ path: ".." }) },
     {
       name: "list_dir with an absolute outside path",
@@ -145,6 +156,37 @@ describe("buildProposalTools — surface and refusal matrix", () => {
       "inside\n",
     );
     await expect(invoke(toolNamed(surface, "list_dir"), { path: "." })).resolves.toBe("notes.txt");
+  });
+
+  it("delete_path removes a file or a directory (recursively) and names the deleted path", async () => {
+    const surface = tools();
+    await mkdir(join(tmpDir, "pkg", "references"), { recursive: true });
+    await writeFile(join(tmpDir, "pkg", "references", "api.md"), "detail\n", "utf8");
+
+    await expect(invoke(toolNamed(surface, "delete_path"), { path: "notes.txt" })).resolves.toBe(
+      "Deleted notes.txt",
+    );
+    await expect(invoke(toolNamed(surface, "delete_path"), { path: "pkg" })).resolves.toBe(
+      "Deleted pkg",
+    );
+
+    await expect(fileExists(join(tmpDir, "notes.txt"))).resolves.toBe(false);
+    await expect(fileExists(join(tmpDir, "pkg"))).resolves.toBe(false);
+  });
+
+  it("delete_path on the tmp dir itself is refused — it holds every worktree", async () => {
+    const text = await invoke(toolNamed(tools(), "delete_path"), { path: tmpDir });
+
+    // Like every other path refusal, the guidance names the allowed root.
+    expect(text).toContain("Refused");
+    expect(text).toContain(tmpDir);
+    await expect(fileExists(join(tmpDir, "notes.txt"))).resolves.toBe(true);
+  });
+
+  it("delete_path on a missing path is refused with instructive text, not an error", async () => {
+    await expect(invoke(toolNamed(tools(), "delete_path"), { path: "nope" })).resolves.toContain(
+      "Refused: `nope` does not exist.",
+    );
   });
 
   it.each([
@@ -523,6 +565,62 @@ describe("buildProposalTools — happy paths (real git, bare origin)", () => {
     expect(tips.get("skill-evolution/deploy-env-flag")).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  it("delete_path + add + commit + push author a whole-skill removal on the branch", async () => {
+    // The base branch must carry the skill the removal retires — the worktree is cut from it.
+    await mkdir(join(ws, "skills", "deploy"), { recursive: true });
+    await writeFile(join(ws, "skills", "deploy", "SKILL.md"), "# Deploy\n\nGuidance.\n", "utf8");
+    await runGit(ws, ["add", "-A"]);
+    await runGit(ws, ["-c", "core.editor=true", "commit", "-m", "seed deploy skill"]);
+    await runGit(ws, ["push", "origin", "main"]);
+
+    const path = await cutWorktree("deploy-retire-skill");
+
+    await expect(
+      invoke(toolNamed(tools(), "delete_path"), { path: join(path, "skills", "deploy") }),
+    ).resolves.toContain("Deleted");
+
+    // Deletions stage with the same add — `git add` records removals, not just modifications.
+    await expect(
+      invoke(toolNamed(tools(), "git"), { args: ["add", "skills/deploy"], path }),
+    ).resolves.toMatch(/^exit 0/);
+    await expect(
+      invoke(toolNamed(tools(), "git"), {
+        args: ["commit", "-m", "deploy: remove the retired skill"],
+        path,
+      }),
+    ).resolves.toMatch(/^exit 0/);
+    await expect(
+      invoke(toolNamed(tools(), "git"), {
+        args: ["push", "origin", "skill-evolution/deploy-retire-skill"],
+        path,
+      }),
+    ).resolves.toMatch(/^exit 0/);
+
+    // The pushed diff is the deletion itself, confined to skills/.
+    const tip = (await listRemoteBranchTips(ws, REMOTE_BRANCH_PATTERN)).get(
+      "skill-evolution/deploy-retire-skill",
+    );
+
+    expect(tip).toMatch(/^[0-9a-f]{40}$/);
+    expect(await runGit(ws, ["diff", "--name-only", `refs/remotes/origin/main...${tip}`])).toBe(
+      "skills/deploy/SKILL.md",
+    );
+  });
+
+  it("deleting a worktree's .git marker self-limits — add is then refused", async () => {
+    const path = await cutWorktree("deploy-env-flag");
+
+    await expect(
+      invoke(toolNamed(tools(), "delete_path"), { path: join(path, ".git") }),
+    ).resolves.toContain("Deleted");
+
+    // The directory no longer reads as a worktree, so the mutating pair refuses instead of
+    // staging anywhere else; the host sweep (prune + tmp-dir removal) cleans up afterwards.
+    await expect(
+      invoke(toolNamed(tools(), "git"), { args: ["add", "-A"], path }),
+    ).resolves.toContain("Refused");
+  });
+
   it("worktree remove removes the worktree", async () => {
     const path = await cutWorktree("deploy-env-flag");
 
@@ -568,7 +666,7 @@ describe("runProposalAgent (faked SideRunner)", () => {
 
   const impactLog: ImpactLogEntry[] = [];
 
-  it("passes the isolated five-tool surface with the proposal system prompt", async () => {
+  it("passes the isolated six-tool surface with the proposal system prompt", async () => {
     const { workspaceRoot, tmpDir } = await agentWorkspace();
     const run = vi.fn(
       async (_options: HeadlessRunOptions): Promise<{ text: string }> => ({
@@ -600,7 +698,7 @@ describe("runProposalAgent (faked SideRunner)", () => {
 
     const [options] = run.mock.calls[0] ?? [];
 
-    // isolatePrompt over the default empty built-in allowlist: the five custom tools are the
+    // isolatePrompt over the default empty built-in allowlist: the six custom tools are the
     // entire surface.
     expect(options?.isolatePrompt).toBe(true);
     expect(options?.tier).toBe("processor");
@@ -608,6 +706,7 @@ describe("runProposalAgent (faked SideRunner)", () => {
     expect(options?.customTools?.map((tool) => tool.name)).toEqual([
       "read_file",
       "write_file",
+      "delete_path",
       "list_dir",
       "git",
       "report_proposals",

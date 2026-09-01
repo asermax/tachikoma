@@ -60,11 +60,31 @@ describe("branchAnalysisInstruction", () => {
     expect(instruction).toContain("do NOT use any messaging");
   });
 
-  it("collects the four skill-usage data-point kinds (R3) and allows recording nothing", () => {
-    for (const kind of ["Invoked", "Failed", "Misapplied", "Workaround"]) {
+  it("collects the seven skill-usage data-point kinds (R3) and allows recording nothing", () => {
+    for (const kind of [
+      "Invoked",
+      "Failed",
+      "Misapplied",
+      "Workaround",
+      "Stale",
+      "Redundant",
+      "Obsolete",
+    ]) {
       expect(instruction).toContain(`**${kind}**`);
     }
     expect(instruction).toContain("nothing to record");
+  });
+
+  it("frames the fix as any edit type, not only additions (R1/R2)", () => {
+    // The additive-only collection sentence is gone...
+    expect(instruction).not.toContain("wrong or omitted");
+    expect(instruction).not.toContain("should have said or done");
+    // The Workaround kind no longer presupposes staleness — the Stale kind owns that.
+    expect(instruction).not.toContain("following stale guidance");
+    // ...replaced by the full spectrum, in the collection framing and the Fix convention.
+    expect(instruction).toContain("wrong, omitted, or outlived");
+    expect(instruction).toContain("whether that adds, corrects, removes, or consolidates guidance");
+    expect(instruction).toContain("up to retiring the skill entirely");
   });
 });
 
@@ -82,6 +102,8 @@ describe("maintenanceSystemPrompt", () => {
     expect(system).toContain("~50 lines");
     // No delete tool: empty the file, the host sweeps it afterwards.
     expect(system).toContain("no delete tool");
+    // A retired skill's pages are superseded too — the skill directory no longer exists.
+    expect(system).toContain("or the skill no longer exists");
   });
 
   it("shares the store-conventions section and never carries a day/branch stamp", () => {
@@ -128,6 +150,21 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain("Never the default branch, never force");
     // An empty proposal list is a legitimate outcome.
     expect(system).toContain("report an empty list");
+  });
+
+  it("covers the full edit spectrum: modify, delete/consolidate, retire a whole skill (R7)", () => {
+    // A proposal may change existing guidance, not only add to it.
+    expect(system).toContain("adding, correcting, removing, or consolidating its guidance");
+    expect(system).toContain("deletion of the skill's entire directory");
+    // A pattern whose skill is already gone in the worktree is declined, not improvised —
+    // "existed and is gone", so a new-skill pattern (no skill ever existed) is never declined.
+    expect(system).toContain("existed and is gone from the worktree");
+    expect(system).toContain("decline that pattern");
+    // The worktree protocol documents the deletion tool and that add stages removals.
+    expect(system).toContain("`delete_path` for removals");
+    expect(system).toContain("`git add` records removals");
+    // Removals keep the surviving skill coherent.
+    expect(system).toContain("removals leave the surviving skill coherent");
   });
 
   it("carries the authoring-conventions rule grounded in the force-loaded guides (R17)", () => {

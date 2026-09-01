@@ -9,10 +9,11 @@ The pass runs alongside memory extraction, on the same trunk session and branch 
 1. **Reconcile** — refreshes remote state and classifies yesterday's still-open proposals
    (accepted / pending / rejected). A fetch or default-branch failure aborts the run safely.
 2. **Analyze** — one conversation-aware fork per unanalyzed topic branch looks for skill
-   friction: places a skill was missing, wrong, or fought the task.
+   friction: places a skill was missing, wrong, stale, redundant, or fought the task.
 3. **Maintain** — consolidates near-duplicate patterns and enforces the size caps.
 4. **Propose** — for eligible recurring patterns, an agent authors one branch per pattern
-   that edits the skill and pushes it to origin for review.
+   that changes the skill — adding, correcting, removing, or consolidating guidance, or
+   removing a skill that no longer serves a purpose — and pushes it to origin for review.
 5. **Verify** — host-side, from git state: only branches that actually pushed are recorded.
 6. **Report** — with ≥1 verified proposal, an ad-hoc background task is dispatched with the
    run context. The default prompt is notification-only (summarize for the person, take no
