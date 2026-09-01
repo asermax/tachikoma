@@ -50,10 +50,9 @@ const inlineText = (text: string): string => text.replaceAll(/\r?\n/g, " ").trim
 const evidenceBullets = (evidence: string): string[] =>
   evidence
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line !== "")
     .map((line) =>
       line
+        .trim()
         .replace(/^[-*+]\s*/, "")
         .replace(/^#+\s*/, "")
         .replace(/^[-*+]\s*/, "")
@@ -65,28 +64,29 @@ const evidenceBullets = (evidence: string): string[] =>
 /**
  * One verified proposal as a review-ready block: the row's git facts (skill, pattern, tip) under
  * the branch heading, then the reported reasoning. A verified branch missing from the reported
- * list — impossible in production wiring (rows are built from reports) — degrades to the plain
- * one-line shape rather than rendering reasoning the run cannot vouch for.
+ * list — impossible in production wiring (rows are built from reports) — renders the facts-only
+ * block rather than reasoning the run cannot vouch for.
  */
 const proposalBlock = (row: ImpactLogEntry, proposal: ReportedProposal | undefined): string => {
   // Every agent-authored field renders through `inlineText` — `branch` is pattern-validated and
   // `tip` is a git hex sha, but skill/pattern/description arrive as free-form reported strings.
-  if (proposal == null) {
-    return `- \`${row.branch}\` (${inlineText(row.skill)}, ${inlineText(row.pattern)}): ${inlineText(
-      row.description,
-    )} — tip ${row.tip}`;
-  }
-
-  return [
+  const lines = [
     `### \`${row.branch}\``,
     "",
     `- Skill: ${inlineText(row.skill)} — pattern: ${inlineText(row.pattern)} — tip: ${row.tip}`,
     `- What it does: ${inlineText(row.description)}`,
-    `- Problem: ${inlineText(proposal.problem)}`,
-    `- Root cause: ${inlineText(proposal.rootCause)}`,
-    "- Evidence:",
-    ...evidenceBullets(proposal.evidence),
-  ].join("\n");
+  ];
+
+  if (proposal != null) {
+    lines.push(
+      `- Problem: ${inlineText(proposal.problem)}`,
+      `- Root cause: ${inlineText(proposal.rootCause)}`,
+      "- Evidence:",
+      ...evidenceBullets(proposal.evidence),
+    );
+  }
+
+  return lines.join("\n");
 };
 
 /**

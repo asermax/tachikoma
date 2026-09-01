@@ -13,20 +13,20 @@ import {
   reportRun,
 } from "../../src/extensions/skill-evolution/report.ts";
 import type { ImpactLogEntry } from "../../src/extensions/skill-evolution/store.ts";
+import { proposalFixture } from "./helpers.ts";
 
 const WORKSPACE = "/ws/tachikoma";
 
-/** The reported side of one proposal — the agent-authored reasoning. */
-const proposalFor = (branch: string, over: Partial<ReportedProposal> = {}): ReportedProposal => ({
-  branch,
-  skill: "deploy",
-  pattern: "deploy-env-flag.md",
-  description: "Add the --env flag to the deploy guidance",
-  problem: `Deploys fail on the --env flag the skill omits (${branch})`,
-  rootCause: "The deploy guidance predates the --env requirement",
-  evidence: `- 2027-03-01 (topic-2): deploy failed on ${branch}`,
-  ...over,
-});
+/**
+ * The reported side of one proposal — the shared fixture with the branch stamped into its
+ * reasoning, so pairing-by-branch assertions can tell entries apart.
+ */
+const proposalFor = (branch: string, over: Partial<ReportedProposal> = {}): ReportedProposal =>
+  proposalFixture(branch, {
+    problem: `Deploys fail on the --env flag the skill omits (${branch})`,
+    evidence: `- 2027-03-01 (topic-2): deploy failed on ${branch}`,
+    ...over,
+  });
 
 /** The verified side of one proposal — git facts plus the one-line description. */
 const entry = (branch: string): ImpactLogEntry => ({
@@ -156,12 +156,11 @@ describe("reportRun", () => {
     expect(context).not.toContain(dropped.evidence);
   });
 
-  it("degrades to the one-line shape for a verified branch missing from the report", () => {
+  it("degrades to a facts-only block for a verified branch missing from the report", () => {
     const { payload } = run({ reported: [] });
 
-    expect(payload?.prompt).toContain(
-      "- `skill-evolution/deploy-env-flag` (deploy, deploy-env-flag.md)",
-    );
+    expect(payload?.prompt).toContain("### `skill-evolution/deploy-env-flag`");
+    expect(payload?.prompt).toContain("- What it does: Add the --env flag to the deploy guidance");
     expect(payload?.prompt).not.toContain("- Problem:");
   });
 
