@@ -84,6 +84,94 @@ describe("toTelegramEntities", () => {
     });
   });
 
+  it("emits text_link entities for http, tg, and uppercase-scheme targets verbatim", () => {
+    const payload = toTelegramEntities(
+      "[a](http://x.dev/a) [b](tg://user?id=7) [c](HTTPS://x.dev/c)",
+    );
+
+    const urls = payload.entities.filter((e) => e.type === "text_link").map((e) => e.url);
+    expect(urls).toEqual(["http://x.dev/a", "tg://user?id=7", "HTTPS://x.dev/c"]);
+  });
+
+  it("downgrades a relative-path link to plain text with the target visible", () => {
+    const payload = toTelegramEntities(
+      "[00:06](projects/shin-sekai/02_Areas/Daily_Notes/2026-09-01.md)",
+    );
+
+    expect(payload.text).toBe("00:06 (projects/shin-sekai/02_Areas/Daily_Notes/2026-09-01.md)");
+    expect(payload.entities).toEqual([]);
+  });
+
+  it("downgrades links with non-HTTP schemes (mailto, obsidian) to plain text", () => {
+    const payload = toTelegramEntities(
+      "[write](mailto:a@b.dev) and [open](obsidian://open?vault=x)",
+    );
+
+    expect(payload.text).toBe("write (mailto:a@b.dev) and open (obsidian://open?vault=x)");
+    expect(find(payload, "text_link")).toBeUndefined();
+  });
+
+  it("still links a parseable-but-hostless http target (recovered by the send fallback)", () => {
+    const payload = toTelegramEntities("[x](http:foo)");
+
+    expect(find(payload, "text_link")).toMatchObject({ url: "http:foo" });
+  });
+
+  it("renders markdown-it-blocked scheme links as literal markdown (never entities)", () => {
+    const payload = toTelegramEntities("[x](file:///etc/hosts) [y](javascript:alert(1))");
+
+    // markdown-it's default validateLink blocks these upstream, so the raw
+    // syntax reaches the walker as plain text — no text_link to reject.
+    expect(payload.text).toBe("[x](file:///etc/hosts) [y](javascript:alert(1))");
+    expect(payload.entities).toEqual([]);
+  });
+
+  it("downgrades a mailto autolink to its address with the target visible", () => {
+    const payload = toTelegramEntities("<a@b.dev>");
+
+    expect(payload.text).toBe("a@b.dev (mailto:a@b.dev)");
+    expect(payload.entities).toEqual([]);
+  });
+
+  it("keeps entity offsets correct around downgraded links", () => {
+    const payload = toTelegramEntities("**see [x](rel/path.md)** and [y](o.md) **b**");
+
+    expect(payload.text).toBe("see x (rel/path.md) and y (o.md) b");
+    expect(payload.entities.filter((e) => e.type === "bold")).toEqual([
+      { type: "bold", offset: 0, length: 19 },
+      { type: "bold", offset: 33, length: 1 },
+    ]);
+  });
+
+  it("does not duplicate the target when the label already is the target", () => {
+    const payload = toTelegramEntities("[foo](foo)");
+
+    expect(payload.text).toBe("foo");
+    expect(payload.entities).toEqual([]);
+  });
+
+  it("shows the token's normalized href for a target containing a space", () => {
+    const payload = toTelegramEntities("[note](<my notes.md>)");
+
+    expect(payload.text).toBe("note (my%20notes.md)");
+    expect(payload.entities).toEqual([]);
+  });
+
+  it("renders the bare target for a link with an empty label", () => {
+    const payload = toTelegramEntities("[](rel.md)");
+
+    expect(payload.text).toBe("rel.md");
+    expect(payload.entities).toEqual([]);
+  });
+
+  it("renders an empty-href link as its plain label without popping the enclosing span", () => {
+    const payload = toTelegramEntities("**see [x]() and y**");
+
+    expect(payload.text).toBe("see x and y");
+    const bold = must(payload, "bold");
+    expect(bold).toMatchObject({ offset: 0, length: 11 });
+  });
+
   it("renders a heading as bold (Telegram has no heading entity)", () => {
     const payload = toTelegramEntities("# Title");
 

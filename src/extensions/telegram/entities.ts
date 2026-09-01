@@ -37,6 +37,23 @@ const attr = (token: MdToken, name: string): string | undefined =>
   token.attrs?.find(([key]) => key === name)?.[1];
 
 /**
+ * Telegram accepts only "HTTP or tg:// URL" targets on `text_link` entities and
+ * rejects anything else with a 400 "entity URL ... is invalid" — which would fail the
+ * whole message, not just the link. WHATWG parsing rejects scheme-less relative targets
+ * outright and normalizes scheme case, so the protocol comparison is the whole check.
+ * (Parseable-but-nonstandard targets like `http:foo` still pass; the send path's
+ * plain-text fallback covers any rejection Telegram makes beyond this.)
+ */
+const isSupportedLinkUrl = (href: string): boolean => {
+  try {
+    const { protocol } = new URL(href);
+    return protocol === "http:" || protocol === "https:" || protocol === "tg:";
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Accumulates literal display text and `MessageEntity` spans while walking the
  * token stream. Text outside entities needs no escaping — Telegram treats it as
  * literal when sent with `parse_mode` omitted, so `.`, `-`, `!`, `(` etc. are
@@ -84,6 +101,12 @@ class Renderer {
     return start;
   }
 
+  /** The current write position, flushing any pending separator — for tracking a span's start without opening an entity. */
+  position(): number {
+    this.flushSep();
+    return this.text.length;
+  }
+
   /** Open a formatting span at the current position. */
   beginSpan(type: MessageEntity["type"], extra?: Record<string, unknown>): void {
     this.flushSep();
@@ -116,6 +139,11 @@ class Renderer {
 /** Walk inline tokens (the `children` of an `inline` block), emitting text + spans. */
 const renderInline = (tokens: MdToken[] | null, r: Renderer): void => {
   if (!tokens) return;
+  // One open link at a time — links cannot nest in CommonMark. A non-null `downgraded`
+  // means the link's target is unsupported, so no span was opened and `link_close`
+  // renders the target as plain text instead.
+  let downgraded: { start: number; href: string } | null = null;
+  let inTextLink = false;
   for (const t of tokens) {
     switch (t.type) {
       case "text":
@@ -152,12 +180,35 @@ const renderInline = (tokens: MdToken[] | null, r: Renderer): void => {
         const href = attr(t, "href");
         // Links always carry an href; if one is ever missing, render the text plain
         // rather than emit an invalid `text_link` (handled by not opening a span).
-        if (href) r.beginSpan("text_link", { url: href });
+        if (href && isSupportedLinkUrl(href)) {
+          r.beginSpan("text_link", { url: href });
+          inTextLink = true;
+        } else if (href) {
+          // Telegram would reject a `text_link` with this target, so remember where
+          // the label starts and splice the target in as plain text at close.
+          downgraded = { start: r.position(), href };
+        }
         break;
       }
-      case "link_close":
-        r.endSpan();
+      case "link_close": {
+        // Only pop a span this link opened — a stray close must not eat an
+        // unrelated enclosing span (e.g. the bold around `**[x]()**`).
+        if (inTextLink) {
+          r.endSpan();
+          inTextLink = false;
+          break;
+        }
+        if (downgraded) {
+          const label = r.text.slice(downgraded.start);
+          // Keep the reference visible: bare target when there is no label text
+          // (image links write nothing), parenthesized target otherwise — unless
+          // the label already is the target.
+          if (label.length === 0) r.write(downgraded.href);
+          else if (label !== downgraded.href) r.write(` (${downgraded.href})`);
+          downgraded = null;
+        }
         break;
+      }
       case "image": {
         const alt = attr(t, "alt");
         if (alt) r.write(alt);
@@ -270,7 +321,9 @@ const renderList = (tokens: MdToken[], openIdx: number, r: Renderer, ordered: bo
  * literal display text plus `MessageEntity` spans for bold, italic, strikethrough,
  * code, pre(+language), text_link, blockquote, and headings (as bold). GFM tables
  * are flattened to bullets first. Constructs with no markdown mapping (spoiler,
- * underline, text_mention, custom_emoji) render as plain literal text.
+ * underline, text_mention, custom_emoji) render as plain literal text, as do links
+ * whose target Telegram forbids on `text_link` (anything but http/https/tg) — the
+ * label keeps the target visible in parentheses.
  */
 export const toTelegramEntities = (text: string): TelegramPayload => {
   const r = new Renderer();

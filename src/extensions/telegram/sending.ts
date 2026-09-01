@@ -67,9 +67,22 @@ export const isEntitiesTooManyError = (error: unknown): boolean =>
 export const isMessageTooLongError = (error: unknown): boolean =>
   /message is too long/i.test(errorDetail(error));
 
+/**
+ * Telegram rejects `text_link` URLs outside its HTTP/tg:// grammar (e.g. a
+ * scheme-less workspace path) with "entity URL '...' is invalid". The converter
+ * downgrades such links up front, but any target the server still refuses is
+ * treated like any other render rejection: resend the raw text, which carries no
+ * entities, so the message always sends.
+ */
+export const isEntityUrlInvalidError = (error: unknown): boolean =>
+  /entity URL .+ is invalid|unsupported URL protocol/i.test(errorDetail(error));
+
 /** Any rejection caused by the rendered payload — all recover by resending raw text. */
 const isRenderError = (error: unknown): boolean =>
-  isMarkdownParseError(error) || isEntitiesTooManyError(error) || isMessageTooLongError(error);
+  isMarkdownParseError(error) ||
+  isEntitiesTooManyError(error) ||
+  isMessageTooLongError(error) ||
+  isEntityUrlInvalidError(error);
 
 /** Telegram rejects edits whose content matches the current message — benign. */
 export const isMessageNotModifiedError = (error: unknown): boolean =>

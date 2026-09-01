@@ -8,6 +8,7 @@ import {
   editWithFallback,
   forceNotification,
   isEntitiesTooManyError,
+  isEntityUrlInvalidError,
   isMarkdownParseError,
   isMessageNotModifiedError,
   isMessageTooLongError,
@@ -42,6 +43,11 @@ const tooLongError = () =>
 const tooManyEntitiesError = () =>
   Object.assign(new Error("400: Bad Request: entities too many"), {
     description: "Bad Request: entities too many",
+  });
+
+const entityUrlInvalidError = () =>
+  Object.assign(new Error("400: Bad Request: entity URL 'x' is invalid: Wrong HTTP URL"), {
+    description: "Bad Request: entity URL 'x' is invalid: Wrong HTTP URL",
   });
 
 /** A sendMessage/editMessageText mock that rejects the formatted (entity-bearing) call. */
@@ -103,6 +109,25 @@ describe("isMessageNotModifiedError", () => {
   });
 });
 
+describe("isEntityUrlInvalidError", () => {
+  it("recognizes entity-URL rejections with the Wrong HTTP URL reason", () => {
+    expect(isEntityUrlInvalidError(entityUrlInvalidError())).toBe(true);
+  });
+
+  it("recognizes the unsupported-URL-protocol wording", () => {
+    const error = Object.assign(new Error("400: Bad Request: unsupported URL protocol"), {
+      description: "Bad Request: unsupported URL protocol",
+    });
+
+    expect(isEntityUrlInvalidError(error)).toBe(true);
+  });
+
+  it("rejects unrelated errors", () => {
+    expect(isEntityUrlInvalidError(new Error("chat not found"))).toBe(false);
+    expect(isEntityUrlInvalidError(null)).toBe(false);
+  });
+});
+
 describe("editWithFallback", () => {
   it("edits with the converted entity payload", async () => {
     const editMessageText = vi.fn().mockResolvedValue(true);
@@ -147,6 +172,16 @@ describe("editWithFallback", () => {
   it("falls back to plain text on an entities-too-many rejection", async () => {
     const editMessageText = vi.fn().mockImplementation(rejectFormatted(tooManyEntitiesError()));
     const payload = toTelegramEntities("**hi**");
+
+    await editWithFallback({ editMessageText }, 42, 7, payload);
+
+    expect(editMessageText).toHaveBeenCalledTimes(2);
+    expect(editMessageText).toHaveBeenLastCalledWith(42, 7, payload.text);
+  });
+
+  it("falls back to plain text when an entity URL is invalid", async () => {
+    const editMessageText = vi.fn().mockImplementation(rejectFormatted(entityUrlInvalidError()));
+    const payload = toTelegramEntities("[x](rel/path.md)");
 
     await editWithFallback({ editMessageText }, 42, 7, payload);
 
@@ -262,6 +297,17 @@ describe("sendWithFallback", () => {
     expect(id).toBe(9);
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sendMessage).toHaveBeenLastCalledWith(42, payload.text, { disable_notification: true });
+  });
+
+  it("falls back to plain text when an entity URL is invalid", async () => {
+    const sendMessage = vi.fn().mockImplementation(rejectFormatted(entityUrlInvalidError()));
+    const payload = toTelegramEntities("[x](rel/path.md)");
+
+    const id = await sendWithFallback({ sendMessage }, 42, payload);
+
+    expect(id).toBe(9);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenLastCalledWith(42, payload.text, {});
   });
 
   it("propagates non-render errors", async () => {
