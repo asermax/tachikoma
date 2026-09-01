@@ -1,3 +1,10 @@
+# [3.73.0](https://github.com/asermax/tachikoma/compare/v3.72.0...v3.73.0) (2026-09-01)
+
+
+### Features
+
+* **skill-evolution:** carry proposal reasoning through report dispatch ([381b73a](https://github.com/asermax/tachikoma/commit/381b73a6ca60c9f650a2406c36a5bedeb7b3c1d2))
+
 # [3.72.0](https://github.com/asermax/tachikoma/compare/v3.71.0...v3.72.0) (2026-09-01)
 
 
