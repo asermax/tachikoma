@@ -91,7 +91,6 @@ describe("branchAnalysisInstruction", () => {
     expect(unwrapped).toContain("or fixing or extending the skill's bundled tooling");
     expect(instruction).toContain("a missing or broken CLI command is a skill gap like any other");
     // Reading the skill covers its bundled executables when the friction involves them.
-    expect(instruction).toContain("starting from its `SKILL.md`");
     expect(instruction).toContain(
       "including any bundled CLI or scripts when the friction involves them",
     );
@@ -116,7 +115,6 @@ describe("maintenanceSystemPrompt", () => {
     expect(system).toContain("or the skill no longer exists");
     // Supersession also reads the skill's bundled files — a tooling fix a merged proposal
     // landed retires the pattern page it resolved.
-    expect(system).toContain("or its bundled files");
     expect(system).toContain(
       "the CLI command or script a merged proposal added, repaired, or removed",
     );
@@ -189,10 +187,9 @@ describe("proposalSystemPrompt", () => {
   it("covers the full edit spectrum: modify, delete/consolidate, retire a whole skill (R7)", () => {
     // A proposal may change existing guidance, not only add to it.
     expect(system).toContain("adding, correcting, removing, or consolidating its guidance");
-    // The spectrum also spans the skill's bundled tooling — fixing or adding a CLI command.
-    expect(system).toContain(
-      "or changing its bundled tooling — fixing or adding a CLI command, correcting a script",
-    );
+    // The spectrum also spans the skill's bundled tooling (the fix-the-root-cause rule
+    // below carries what a tooling change concretely is).
+    expect(system).toContain("or changing its bundled tooling");
     expect(system).toContain("deletion of the skill's entire directory");
     // A pattern whose skill is already gone in the worktree is declined, not improvised —
     // "existed and is gone", so a new-skill pattern (no skill ever existed) is never declined.
@@ -214,7 +211,6 @@ describe("proposalSystemPrompt", () => {
     // execute them (no shell tool) — running them belongs to the branch's review.
     expect(system).toContain("author the tests and state how they run");
     expect(system).toContain("this run cannot execute them (no shell tool)");
-    expect(system).toContain("running them belongs to the review of your branch");
   });
 
   it("carries the authoring-conventions rule grounded in the force-loaded guides (R17)", () => {

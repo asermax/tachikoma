@@ -114,11 +114,10 @@ skills = exactly the two bundled authoring guides (skill-authoring, workflow-aut
 read_file(path) / write_file(path) / delete_path(path) / list_dir(path)   — path
     must resolve under the tmp dir (the worktrees live there); delete_path
     removes a file or directory recursively — how removals are authored, from
-    a redundant reference or broken script to a whole skills/<name>/ directory —
-    and additionally
-    refuses the tmp dir itself (the path guard is root-inclusive, and the tmp
-    dir holds every worktree) and a missing path (instructive, pointing at
-    list_dir)
+    a redundant reference or broken script to a whole skills/<name>/ directory
+    — and additionally refuses the tmp dir itself (the path guard is
+    root-inclusive, and the tmp dir holds every worktree) and a missing path
+    (instructive, pointing at list_dir)
 git({args, path?})          — allowlist: worktree(add|remove, path under tmp dir,
     -b name matching ^skill-evolution/), status, diff, log, show, add, commit
     (-c core.editor=true -c commit.gpgsign=false), push(origin, name) with:
