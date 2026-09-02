@@ -1,3 +1,10 @@
+# [3.75.0](https://github.com/asermax/tachikoma/compare/v3.74.0...v3.75.0) (2026-09-02)
+
+
+### Features
+
+* **skill-evolution:** treat bundled tooling as first-class proposal scope ([56dd22a](https://github.com/asermax/tachikoma/commit/56dd22a797094644fc496a871d1aee038283f10f))
+
 # [3.74.0](https://github.com/asermax/tachikoma/compare/v3.73.0...v3.74.0) (2026-09-02)
 
 
