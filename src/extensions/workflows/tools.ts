@@ -132,7 +132,11 @@ export const handleStartWorkflow = (
     throw new Error(
       `Workflow '${workflowName}' is already active for skill '${skillName}'. ` +
         `Existing workflow ID: ${existing.id}. ` +
-        "Use end_workflow to complete or abort it before starting a new one.",
+        `Inspect it first: query_workflow(workflow_id="${existing.id}") and read its scratchpad ` +
+        "to see what was already done. If it serves this request, resume it from its current " +
+        "step rather than restarting. Otherwise surface the interrupted work to the user and " +
+        "ask whether to resume or start fresh before ending it — both end_workflow actions " +
+        "discard the workflow state and scratchpad.",
     );
   }
 
@@ -560,6 +564,7 @@ export const registerWorkflowTools = (pi: ExtensionAPI, deps: WorkflowToolDeps):
     promptSnippet: "start_workflow: begin a tracked multi-step workflow defined by a skill",
     promptGuidelines: [
       "When a skill defines a workflow for the task at hand, drive it with start_workflow and update_workflow_state instead of improvising the steps.",
+      "If start_workflow is rejected because an instance is already active: inspect it with query_workflow and its scratchpad, surface the interrupted work to the user, and resume or end it per their answer — never silently discard an active instance.",
     ],
     parameters: Type.Object({
       skill_name: Type.String({ description: "Name of the skill containing the workflow" }),
@@ -632,9 +637,11 @@ export const registerWorkflowTools = (pi: ExtensionAPI, deps: WorkflowToolDeps):
     label: "End workflow",
     description:
       "End a workflow instance. Primarily used to abort a workflow in progress — normal " +
-      "completion happens automatically when the last step is completed. Aborting a " +
-      "top-level workflow tears down any composed/loop children too. Removes the workflow " +
-      "state and its scratchpad file.",
+      "completion happens automatically when the last step is completed. Both actions " +
+      "discard the workflow state and its scratchpad file, and ending a top-level " +
+      "workflow tears down any composed/loop children too. When you end an in-flight " +
+      "instance you discovered rather than one the user asked to stop (e.g. a stale run " +
+      "from an earlier session), surface to the user what it had done first.",
     promptSnippet: "end_workflow: abort or close out a workflow instance",
     parameters: Type.Object({
       workflow_id: WORKFLOW_ID_PARAM,

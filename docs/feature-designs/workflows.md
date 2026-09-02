@@ -51,7 +51,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 | `src/extensions/workflows/composition.ts` | `resolveComposes`, `detectCycles`, `validateWorkflowGraph`; `Mutation`/`MutationBatch`/`CascadeOutcome`/`BreadcrumbPart` types | Pure, SDK/DB-free so cycle and reference validation are testable in isolation |
 | `src/extensions/workflows/cascade.ts` | `runCascade` (the engine), `validateTransition`, `stepToSnapshot`, `renderBreadcrumb` | Synchronous (better-sqlite3 is sync); stages a `MutationBatch` and throws on routing failure so state is untouched; a depth guard backstops cycles at runtime |
 | `src/extensions/workflows/repository.ts` | `WorkflowStateRepository` CRUD + chains + `applyMutationBatch`/`abortCascade` | Every read filters `deleted_at IS NULL`; `getActive`/`listActive` are top-level only; `getActiveChain` walks a stack; batch apply and abort run in a single transaction; `listStale` is subtree-aware |
-| `src/extensions/workflows/tools.ts` | The four `handle*` functions, nested query rendering, `registerWorkflowTools` | Handlers are pure functions over `WorkflowToolDeps` — pi registration is a thin `execute` that wraps the string result |
+| `src/extensions/workflows/tools.ts` | The four `handle*` functions, nested query rendering, `registerWorkflowTools` (tool descriptions and prompt guidelines carry the agent-facing guidance) | Handlers are pure functions over `WorkflowToolDeps` — pi registration is a thin `execute` that wraps the string result |
 | `src/extensions/workflows/cleanup.ts` | `createStaleWorkflowCleanup` post-processor | Depends on `Pick<WorkflowStateRepository, "listStale" \| "abortCascade">`; uses `abortCascade` so a stale stack is torn down whole (root + descendants), never leaving orphan child rows; deletes the scratchpad only when the cascade removed at least one row; per-record error isolation |
 
 ## Key Decisions
@@ -129,6 +129,16 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 - Pro: authoring mistakes surface at startup, not mid-run; infinite loops are structurally impossible
 - Con: a workflow edited to introduce a cycle after bootstrap fails at runtime with a depth error rather than a load-time warning until the next reload
 
+### Recovery guidance rides the surfaces that fire at the moment of risk
+
+**Choice**: The stale-instance recovery path — a `start_workflow` rejection naming an existing instance, typically one interrupted in an earlier session — is carried by the guidance surfaces that fire there, not by new tool behavior. The rejection error carries a compact directive (inspect via `query_workflow` and the scratchpad → resume if it serves the request → surface the interrupted work and ask the user whether to resume or start fresh before ending it); `start_workflow`'s prompt guidelines state the never-silently-discard rule; `end_workflow`'s description directs surfacing what a discovered instance had done before ending it (both actions, `complete`/`abort`, discard the state and scratchpad identically — the engine treats them the same on an in-flight instance); and the reference page carries the canonical find → inspect → decide → surface procedure per [DES-014](../design/DES-014-two-tier-agent-facing-documentation.md), with the rejection message and the `workflow-authoring` skill as condensed echoes. The surfaces intentionally differ in strength: the rejection and the prompt guideline include the ask-the-user step, while the `end_workflow` description states only the surfacing rule (the user is already in the loop on that path).
+**Why**: The recovery machinery (`query_workflow`, resume, `end_workflow`) is unchanged — a rejection whose only instruction is `end_workflow` invites silently discarding in-flight work, so the rule lives on the surfaces that fire at the decision point (the rejected re-start) and at the destructive moment (an agent that finds a stale instance via `query_workflow` and ends it without ever re-calling `start_workflow`). The inline usage tier stays lean per DES-014; the budget and pointer-integrity gates are untouched, and the usage-sections content guard pins the reference page.
+**Alternatives Considered**:
+- Make `start_workflow` return the existing instance instead of rejecting: silently resolves an ambiguous intent (resume vs restart) and diverges from the one-active-instance invariant (spec R6)
+**Consequences**:
+- Pro: both discard paths — rejected re-start and discovered-then-ended — carry the rule
+- Con: the procedure lives in three prose carriers (rejection error, reference page, `workflow-authoring` skill); the reference page is canonical, and the usage-sections drift guard pins its content
+
 ## System Behavior
 
 ### Scenario: Auto-start cascade and auto-finalize
@@ -142,6 +152,12 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Given**: An active instance whose ID was compacted out of the conversation
 **When**: The agent calls `query_workflow()` with no arguments
 **Then**: All active instances are listed with IDs and current steps; `query_workflow(workflow_id)` then returns per-step states, the scratchpad path, and timestamps — enough to resume at the correct step.
+
+### Scenario: Start rejected while an instance is active
+
+**Given**: An active instance from an interrupted earlier session, and a new request for the same skill+workflow
+**When**: The agent calls `start_workflow`
+**Then**: The call fails citing the existing instance's ID with a compact recovery directive; the agent inspects the instance (`query_workflow(workflow_id=...)` and its scratchpad), resumes it if it serves the request, and otherwise surfaces what the interrupted run had done and asks the user whether to resume or start fresh before ending it — both `end_workflow` actions (`complete`/`abort`) discard the state and scratchpad, and ending a top-level instance tears down the whole nested stack.
 
 ### Scenario: Stale expiry at session close
 

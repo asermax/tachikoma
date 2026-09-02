@@ -79,12 +79,17 @@ describe("handleStartWorkflow", () => {
     expect(() => handleStartWorkflow(deps, "writing", "missing")).toThrow(/not found in skill/);
   });
 
-  it("rejects a second start while an instance is active", () => {
+  it("rejects a second start while an instance is active, directing stale-instance recovery", () => {
     const state = startDraft();
+    const restart = () => handleStartWorkflow(deps, "writing", "draft");
 
-    expect(() => handleStartWorkflow(deps, "writing", "draft")).toThrow(
-      new RegExp(`already active.*${state.id}`, "s"),
-    );
+    expect(restart).toThrow(new RegExp(`already active.*${state.id}`, "s"));
+    expect(restart).toThrow(`query_workflow(workflow_id="${state.id}")`);
+    expect(restart).toThrow("scratchpad");
+    expect(restart).toThrow("resume it from its current step");
+    expect(restart).toThrow("surface the interrupted work");
+    expect(restart).toThrow(/discard/);
+    expect(restart).not.toThrow(/complete or abort/);
   });
 });
 
@@ -686,19 +691,24 @@ describe("handleQueryWorkflow rendering branches", () => {
 });
 
 describe("registerWorkflowTools", () => {
+  type ToolDef = {
+    name: string;
+    description?: string;
+    promptGuidelines?: string[];
+    execute: (id: string, p: unknown) => Promise<unknown>;
+  };
+
   const collectTools = () => {
-    const tools = new Map<string, (toolCallId: string, params: unknown) => Promise<unknown>>();
+    const defs = new Map<string, ToolDef>();
     const pi = {
-      registerTool: vi.fn(
-        (def: { name: string; execute: (id: string, p: unknown) => Promise<unknown> }) => {
-          tools.set(def.name, def.execute);
-        },
-      ),
+      registerTool: vi.fn((def: ToolDef) => {
+        defs.set(def.name, def);
+      }),
     };
 
     registerWorkflowTools(pi as never, deps);
 
-    return tools;
+    return defs;
   };
 
   it("wires each handler through pi.registerTool", async () => {
@@ -708,7 +718,7 @@ describe("registerWorkflowTools", () => {
       ["end_workflow", "query_workflow", "start_workflow", "update_workflow_state"].sort(),
     );
 
-    const started = (await tools.get("start_workflow")?.("c1", {
+    const started = (await tools.get("start_workflow")?.execute("c1", {
       skill_name: "writing",
       workflow_name: "draft",
     })) as { content: { text: string }[] };
@@ -718,22 +728,38 @@ describe("registerWorkflowTools", () => {
 
     if (state == null) throw new Error("workflow was not persisted");
 
-    const updated = (await tools.get("update_workflow_state")?.("c2", {
+    const updated = (await tools.get("update_workflow_state")?.execute("c2", {
       workflow_id: state.id,
       step: "01-plan",
       action: "start",
     })) as { content: { text: string }[] };
     expect(updated.content[0]?.text).toContain("Step **Plan** (`01-plan`) started.");
 
-    const queried = (await tools.get("query_workflow")?.("c3", {})) as {
+    const queried = (await tools.get("query_workflow")?.execute("c3", {})) as {
       content: { text: string }[];
     };
     expect(queried.content[0]?.text).toContain("Active Workflows");
 
-    const ended = (await tools.get("end_workflow")?.("c4", {
+    const ended = (await tools.get("end_workflow")?.execute("c4", {
       workflow_id: state.id,
       action: "abort",
     })) as { content: { text: string }[] };
     expect(ended.content[0]?.text).toContain("aborted");
+  });
+
+  it("carries stale-instance guidance on the agent-facing surfaces", () => {
+    const defs = collectTools();
+
+    const startGuidelines = (defs.get("start_workflow")?.promptGuidelines ?? []).join("\n");
+
+    expect(startGuidelines).toContain("already active");
+    expect(startGuidelines).toContain("query_workflow");
+    expect(startGuidelines).toContain("never silently discard");
+
+    const endDescription = defs.get("end_workflow")?.description ?? "";
+
+    expect(endDescription).toContain("discard");
+    expect(endDescription).toContain("stale run from an earlier session");
+    expect(endDescription).toContain("surface");
   });
 });

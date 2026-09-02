@@ -4,7 +4,7 @@
 
 ## Overview
 
-Workflows map multi-step processes to directory trees inside skill packages: each workflow is a folder of ordered step directories, each step carrying an `instructions.md` with frontmatter. Running a workflow creates a database-persisted step state machine (pending/started/completed/skipped) that the agent drives through four lifecycle tools — start, update, query, end. Because state lives in the database and progress notes live in a scratchpad file, workflows survive context compaction and session boundaries; instances abandoned across sessions are expired by a cleanup post-processor. The extension also contributes a usage context section (scope: main only) explaining when to reach for a workflow; discovery, the lifecycle tools, composition, and loops live in its reference file (`references/workflows.md`, per [DES-014](../design/DES-014-two-tier-agent-facing-documentation.md)).
+Workflows map multi-step processes to directory trees inside skill packages: each workflow is a folder of ordered step directories, each step carrying an `instructions.md` with frontmatter. Running a workflow creates a database-persisted step state machine (pending/started/completed/skipped) that the agent drives through four lifecycle tools — start, update, query, end. Because state lives in the database and progress notes live in a scratchpad file, workflows survive context compaction and session boundaries; instances abandoned across sessions are expired by a cleanup post-processor. The extension also contributes a usage context section (scope: main only) explaining when to reach for a workflow; discovery, the lifecycle tools, composition, loops, and stale-instance recovery live in its reference file (`references/workflows.md`, per [DES-014](../design/DES-014-two-tier-agent-facing-documentation.md)).
 
 Steps can also compose other workflows. A step may declare `composes` (run a sub-workflow to completion, then resume the parent), `loop` (run a sub-workflow once per agent-supplied item), or `condition` (a natural-language predicate that halts auto-advance so the agent decides whether to start or skip). Composition nests to arbitrary depth; the agent drives the whole nested run with a single top-level workflow ID, and a cascade engine routes each transition to the deepest active layer.
 
@@ -13,6 +13,7 @@ Steps can also compose other workflows. A step may declare `composes` (run a sub
 - As a skill developer, I want to define multi-step workflows inside my skill so that the agent executes ordered sequences without skipping steps or losing its place
 - As the assistant, I want tools that validate state transitions so that I progress through steps with ordering and completion guarantees
 - As the assistant, I want workflow state to survive context loss so that I can find and resume active workflows after compaction or a new session
+- As the assistant, I want an already-active rejection to direct stale-instance recovery so that interrupted work is surfaced to the user and resumed or deliberately ended rather than silently discarded
 - As the system, I want stale instances cleaned up so that abandoned workflows do not accumulate
 - As a skill developer, I want a step to inline-reference another workflow so reusable sub-sequences are shared across parents instead of duplicated
 - As a skill developer, I want a step to iterate a referenced workflow once per item in an agent-supplied list so batch processes are expressed without unrolling steps by hand
@@ -28,7 +29,7 @@ Steps can also compose other workflows. A step may declare `composes` (run a sub
 | R3 | Optional `references/` and `scripts/` step subdirectories are detected and recorded on the step definition |
 | R4 | Workflow definitions are read fresh from the filesystem on every lookup — edits on disk apply to the next `start_workflow` without a restart |
 | R5 | Instance state is persisted in the `workflow_states` table: per-step states, current step, a definition snapshot frozen at start, scratchpad path, and created/updated/deleted timestamps |
-| R6 | `start_workflow` creates an instance with a unique ID and a scratchpad file, and returns the step list plus guidance (first-step call, scratchpad usage, progression rules, recovery); it rejects unknown workflows, zero-step workflows, and a second instance while one is active for the same skill+workflow |
+| R6 | `start_workflow` creates an instance with a unique ID and a scratchpad file, and returns the step list plus guidance (first-step call, scratchpad usage, progression rules, recovery); it rejects unknown workflows, zero-step workflows, and a second instance while one is active for the same skill+workflow — the rejection cites the existing instance's ID and carries the compact recovery directive (R27) |
 | R7 | `update_workflow_state` validates the transition and returns step instructions; completing or skipping a step auto-starts the next pending step and returns its instructions; when no pending step remains the workflow auto-finalizes (soft-deleted, scratchpad removed) with a completed/skipped tally |
 | R8 | Transition rules: start only a pending step; complete only a started step; skip only a pending, non-required step; completed and skipped steps are immutable; unknown step IDs are rejected listing the valid IDs |
 | R9 | `query_workflow` with an ID returns the full state view (skill, workflow, current step, scratchpad path, timestamps, per-step states); without an ID it lists all active workflows — the recovery path after context loss |
@@ -49,6 +50,7 @@ Steps can also compose other workflows. A step may declare `composes` (run a sub
 | R24 | `query_workflow(id)` on a top-level workflow inlines the active child path and any loop blocks; a child ID returns a standalone view with a note pointing at the parent; an active composition step whose target is no longer registered prepends a corruption warning directing abort |
 | R25 | `end_workflow` abort on a top-level tears down all transitive descendants atomically; a call on a child ID is rejected, directing to the top-level. Stale cleanup considers the freshest `updated_at` across the whole active stack — an active child keeps the parent alive |
 | R26 | Composition references are validated at bootstrap: a step declaring both `composes` and `loop`, a cycle (composes/loop edges share one graph), and missing/empty/rejected targets reject the workflow with a logged warning; rejection cascades to parents. At runtime the cascade additionally guards against exceeding a safe nesting depth |
+| R27 | Stale-instance recovery guidance is carried on the agent-facing surfaces: the already-active rejection (R6) directs inspection before ending; `start_workflow`'s prompt guidelines state the never-silently-discard rule; the `end_workflow` description directs surfacing what an instance the agent discovered (not one the user asked to stop) had done before ending it, noting both actions (`complete`/`abort`) discard the state and scratchpad identically; and the reference page carries the canonical procedure (find → inspect → decide → surface, nested-stack teardown, staleness expiry) |
 
 ## Behaviors
 
@@ -70,7 +72,7 @@ Four pi tools registered per agent session (`registerWorkflowTools` in `src/exte
 
 **Acceptance Criteria**:
 - Given `start_workflow(skill_name, workflow_name)` for a valid workflow, when it runs, then a record is created with every step `pending`, a scratchpad file exists, and the response contains the step list (skippable steps marked), the workflow ID, and progression/recovery guidance
-- Given an instance is already active for the same skill+workflow, when `start_workflow` is called again, then the call fails citing the existing instance's ID
+- Given an instance is already active for the same skill+workflow, when `start_workflow` is called again, then the call fails citing the existing instance's ID and directing stale-instance recovery: inspect the instance (`query_workflow` and its scratchpad), resume it if it serves the request, and otherwise surface the interrupted work to the user — stating that both `end_workflow` actions discard the workflow state and scratchpad (never presenting `complete` as a non-destructive end)
 - Given `update_workflow_state(id, step, "start")` on a pending step, when it runs, then the step becomes `started`, `current_step` updates, and the response contains the step's `instructions.md` body plus its directory path
 - Given `action="complete"` on a started step with later pending steps, when it runs, then the next pending step is auto-started and its instructions are returned in the same response
 - Given `action="skip"` on a pending non-required step, when it runs, then the step becomes `skipped` and the next pending step (in snapshot order) auto-starts
@@ -78,6 +80,14 @@ Four pi tools registered per agent session (`registerWorkflowTools` in `src/exte
 - Given an invalid transition (complete before start, skip a required step, act on a finished step, unknown step ID, unknown workflow ID), when attempted, then the tool fails with a specific explanation and state is unchanged
 - Given `query_workflow(workflow_id)`, when it runs, then the full state view is returned; without an ID, all active instances are listed with IDs and current steps; with none active, "No active workflows."
 - Given `end_workflow(id, "abort")`, when it runs, then the record is soft-deleted, the scratchpad removed, and subsequent tool calls with that ID fail as not active
+
+### Agent-Facing Guidance (R27)
+
+The tool definitions and the rejection directive are guarded by `tests/workflows/tools.test.ts`; the reference page is pinned by the usage-sections content guard (`tests/usage-sections.test.ts`).
+
+**Acceptance Criteria**:
+- Given the workflow tools are registered, when their agent-facing definitions are read, then `start_workflow`'s prompt guidelines state the never-silently-discard rule and `end_workflow`'s description directs surfacing what a discovered in-flight instance had done before ending it
+- Given the workflows usage section points at its reference file, when the reference page is read, then it carries the stale-instance recovery procedure — find (`query_workflow()`), inspect (the scratchpad, with the state view as evidence when the file is gone), decide (resume preferred; end only when superseded or unwanted), surface — plus the nested-stack teardown note and the `staleHours` expiry window
 
 ### State Persistence and Snapshot (R5)
 
@@ -118,5 +128,6 @@ Four pi tools registered per agent session (`registerWorkflowTools` in `src/exte
 - Conditions are agent-evaluated: the engine halts and delegates the decision rather than calling a model to evaluate the predicate
 - TodoWrite-style task tracking has no pi equivalent; the start guidance instead directs the agent to maintain the scratchpad file and use `query_workflow` for recovery
 - Listing active workflows and reading one workflow's state are a single `query_workflow` tool rather than two separate tools
+- The stale-instance recovery path is also covered in the bundled `workflow-authoring` skill's Recovery section (see [skills](skills.md))
 
 Workflow definitions ship inside skill packages — see [skills](skills.md).
