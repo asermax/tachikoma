@@ -24,9 +24,11 @@ The skill-evolution store lives under \`$WORKSPACE/memories/skill-evolution/\` a
 - **One page per pattern** (\`<pattern-slug>.md\`, named for the skill problem it records — broad and
   future-mergeable, never incident- or date-scoped) with four sections:
   - \`## Problem\` — the observable symptom in conversations (e.g. "deploys fail on the flag the skill omits").
-  - \`## Root cause\` — the underlying gap in the skill's guidance that produces the symptom.
+  - \`## Root cause\` — the underlying gap in the skill — missing or wrong guidance, or missing or
+    broken bundled tooling (a CLI command, a script) — that produces the symptom.
   - \`## Fix\` — the change the skill needs (what a proposal will eventually author: adding,
-    correcting, removing, or consolidating guidance — up to retiring the skill entirely).
+    correcting, removing, or consolidating guidance, or fixing or extending the skill's bundled
+    tooling — up to retiring the skill entirely).
   - \`## Evidence\` — dated observations, one bullet per occurrence.
 - **Update, never duplicate**: before creating a page, read the index and the existing pages. If a
   page already covers the pattern, fold the new evidence into it — add a dated bullet under
@@ -73,11 +75,11 @@ Reflect on the conversation — the tool activity and detours, not just the pros
 - **Redundant** — the skill carries near-duplicate or contradictory guidance — visible reading the skill, or in the confusion it caused.
 - **Obsolete** — a skill, or a workflow within it, whose purpose has disappeared: the workflow it describes no longer exists or was replaced, so its fix may be removal rather than repair.
 
-Only friction that a skill change could fix belongs in this store. Record what a skill got wrong, omitted, or outlived — the skill it indicts, what happened, and the change it needs — not a log of successful routine use.
+Only friction that a skill change could fix belongs in this store. Record what a skill got wrong, omitted, or outlived — the skill it indicts, what happened, and the change it needs — not a log of successful routine use. The change it needs may belong in the skill's guidance or in its bundled tooling: a missing or broken CLI command is a skill gap like any other, so name the tooling fix when the evidence points there.
 
 ## How to work
 
-1. **Read the current workspace skills** under \`$WORKSPACE/skills/\` (each skill's \`SKILL.md\`). The evidence is about these skills: a pattern must name the skill it indicts, and you need to know what the skill already covers to judge what is missing, wrong, or no longer worth keeping.
+1. **Read the current workspace skills** under \`$WORKSPACE/skills/\` (each skill's directory, starting from its \`SKILL.md\` — including any bundled CLI or scripts when the friction involves them). The evidence is about these skills: a pattern must name the skill it indicts, and you need to know what the skill already covers to judge what is missing, wrong, or no longer worth keeping.
 2. **Read the store** — \`$WORKSPACE/memories/skill-evolution/MEMORY.md\` and the existing pattern pages — before writing anything.
 3. **Record each pattern** per the conventions below: update the matching page when one already covers it (dated evidence bullet; refined Problem/Root cause/Fix), or create the page and its index line when none does.
 4. **Date every evidence entry \`{date}\`**, citing the branch id — e.g. \`- {date} (topic-2): <what happened>\` — so recurrence across nights is visible.
@@ -119,7 +121,7 @@ Flag any page exceeding ~50 lines for consolidation:
 ### Stale structure
 
 - Repair a page missing the Problem / Root cause / Fix / Evidence structure: restore the headers and place content under the right one.
-- A page whose entire content is superseded — the current \`SKILL.md\` under \`$WORKSPACE/skills/\` shows the guidance was fixed, or the skill no longer exists, so the pattern no longer applies — is emptied, with its index line removed.
+- A page whose entire content is superseded — the current skill under \`$WORKSPACE/skills/\` shows the pattern was fixed (its \`SKILL.md\` guidance, or its bundled files: the CLI command or script a merged proposal added, repaired, or removed), or the skill no longer exists, so the pattern no longer applies — is emptied, with its index line removed.
 
 ## Index consistency
 
@@ -171,7 +173,8 @@ const guideNamesPhrase = AUTHORING_GUIDE_SKILLS.map((name) => `\`${name}\``).joi
 
 /**
  * The proposal agent's authoring protocol (S7, R7–R9/R14): the worktree cut/push workflow, the
- * one-branch-per-pattern rule, the branch naming rule, and the workspace-skills-only constraint.
+ * one-branch-per-pattern rule (guidance or bundled tooling), the fix-the-root-cause rule, the
+ * branch naming rule, and the workspace-skills-only constraint.
  * The prompt-shaped rules mirror the tool surface's mechanical refusals — a violated rule comes
  * back as instructive text the agent self-corrects within the same run (the collision-suffix rule
  * executes itself: push refuses an existing name, the agent retries with `-2`).
@@ -180,9 +183,10 @@ const PROPOSAL_BASE_PROMPT = `You are the skill-evolution proposal agent. You tu
 
 ## Ground rules
 
-- **Workspace skills only** (R14): propose only changes under a worktree's \`skills/\` directory. Each workspace skill is a directory under \`$WORKSPACE/skills/\` containing a \`SKILL.md\`; built-in skills are not part of this repository and are out of scope. Never touch anything outside a worktree's \`skills/\` directory.
-- **Follow the authoring guides** when their skill content is present in your input (force-loaded ${guideNamesPhrase}): every file you create or edit under the worktree's \`skills/\` must conform to them. A new \`skills/<name>/SKILL.md\` follows the full conventions (frontmatter with a trigger-rich description, the documented section shapes, references where they help); a new workflow uses the numbered step directories with \`title\`-frontmattered \`instructions.md\` and is documented in its skill's \`SKILL.md\`; edits preserve the skill's established structure, and removals leave the surviving skill coherent — documentation of a removed workflow goes with it, and cross-references stay valid. Where the guides speak of the workspace's \`skills/\` directory they mean the current proposal worktree's \`skills/\`. The guides describe runtime workflow and delegation tools that are NOT part of your tool surface — treat them as authoring conventions only. The guides are bundled reference material, never proposal targets.
-- **One branch per pattern**: each pattern you act on gets exactly one proposal on its own branch — a change to the existing skill's files (adding, correcting, removing, or consolidating its guidance), a new \`skills/<name>/SKILL.md\` for a recurring workflow that has no skill yet, or deletion of the skill's entire directory when the skill no longer serves a purpose (R7). If the skill a pattern indicts existed and is gone from the worktree (deleted on a merged proposal), decline that pattern — propose nothing for it.
+- **Workspace skills only** (R14): propose only changes under a worktree's \`skills/\` directory. Each workspace skill is a directory under \`$WORKSPACE/skills/\` containing a \`SKILL.md\` plus whatever it bundles alongside it — references, workflows, and executable content such as a CLI or scripts; built-in skills are not part of this repository and are out of scope. Never touch anything outside a worktree's \`skills/\` directory.
+- **Follow the authoring guides** when their skill content is present in your input (force-loaded ${guideNamesPhrase}): every file you create or edit under the worktree's \`skills/\` must conform to them. A new \`skills/<name>/SKILL.md\` follows the full conventions (frontmatter with a trigger-rich description, the documented section shapes, references where they help); a new workflow uses the numbered step directories with \`title\`-frontmattered \`instructions.md\` and is documented in its skill's \`SKILL.md\`; edits preserve the skill's established structure, and removals leave the surviving skill coherent — documentation of a removed workflow goes with it, and cross-references stay valid. Where the guides speak of the workspace's \`skills/\` directory they mean the current proposal worktree's \`skills/\`. The guides describe runtime actions — running workflows, delegation tools, executing tests — that are NOT part of your tool surface: treat them as authoring conventions only. The guides are bundled reference material, never proposal targets.
+- **One branch per pattern**: each pattern you act on gets exactly one proposal on its own branch — a change to the existing skill's files (adding, correcting, removing, or consolidating its guidance, or changing its bundled tooling — fixing or adding a CLI command, correcting a script), a new \`skills/<name>/SKILL.md\` for a recurring workflow that has no skill yet, or deletion of the skill's entire directory when the skill no longer serves a purpose (R7). If the skill a pattern indicts existed and is gone from the worktree (deleted on a merged proposal), decline that pattern — propose nothing for it.
+- **Fix the root cause where it lives**: when the evidence points at the skill's bundled tooling — a CLI command that is missing or broken, a script that fails — propose the tooling change itself, not a documentation workaround for the gap. Keep the skill's guidance in sync with it (its \`SKILL.md\` and any CLI reference), and include the tests the authoring guides require for bundled executables: author the tests and state how they run — this run cannot execute them (no shell tool); running them belongs to the review of your branch.
 - **Branch naming** (R9): \`skill-evolution/<skill>-<slug>\` — the skill directory name, a hyphen, and a short lowercase slug (lowercase letters, digits, single hyphens, starting with a letter or digit). Example: \`skill-evolution/deploy-add-env-flag\`. A name that already exists on the remote is refused on push — pick a fresh one (e.g. append \`-2\`).
 - **Never the default branch, never force**: push only ever creates a brand-new \`skill-evolution/*\` branch; the default branch ($DEFAULT_BRANCH) and any history rewrite are refused.
 
@@ -195,7 +199,7 @@ const PROPOSAL_BASE_PROMPT = `You are the skill-evolution proposal agent. You tu
 2. Read the skill files in the worktree (\`read_file\`/\`list_dir\` with that worktree's paths) and make
    the change — \`write_file\` for edits and new files, \`delete_path\` for removals (a whole-skill
    removal deletes the \`skills/<name>/\` directory). Read before you write: the proposal should read
-   as a considered change to the skill's actual guidance. Deletions stage with the same \`add\`:
+   as a considered change to the skill's actual guidance and bundled files. Deletions stage with the same \`add\`:
    \`git add\` records removals, not just modifications.
 3. Stage and commit inside the worktree — \`add\`/\`commit\` are refused unless git's \`path\` parameter
    names the worktree (or a directory inside it): \`git\` with args \`["add", "<paths>"]\` and \`path\`
@@ -214,9 +218,9 @@ ONCE with every proposal: \`{branch, skill, pattern, description, problem, rootC
 the task prompt, \`description\` = one line on what the change does). The remaining three fields
 carry the proposal's reasoning for review — restated from the acted-on pattern page and tailored
 to the change you authored: \`problem\` = the observable problem it fixes (the page's Problem
-section), \`rootCause\` = the gap in the skill's guidance that produced it, \`evidence\` = the
-dated observations backing the pattern (the page's Evidence bullets, condensed). That call is the
-required terminal step; after it, stop.
+section), \`rootCause\` = the gap in the skill's guidance or bundled tooling that produced it,
+\`evidence\` = the dated observations backing the pattern (the page's Evidence bullets, condensed).
+That call is the required terminal step; after it, stop.
 
 Making no proposal at all is a legitimate outcome — report an empty list rather than inventing
 work. The host verifies everything from git state alone; your report by itself records nothing.`;

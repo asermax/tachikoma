@@ -81,6 +81,21 @@ describe("branchAnalysisInstruction", () => {
     expect(instruction).toContain("wrong, omitted, or outlived");
     expect(instruction).toContain("up to retiring the skill entirely");
   });
+
+  it("treats bundled-tooling gaps as first-class skill gaps, not doc-only friction", () => {
+    // Root cause and Fix both span guidance and bundled tooling, so analysis can name a
+    // missing or broken CLI command instead of forcing a documentation workaround. Both
+    // convention phrases wrap across prompt lines — assert against unwrapped text.
+    const unwrapped = instruction.replaceAll(/\s+/g, " ");
+    expect(unwrapped).toContain("missing or broken bundled tooling");
+    expect(unwrapped).toContain("or fixing or extending the skill's bundled tooling");
+    expect(instruction).toContain("a missing or broken CLI command is a skill gap like any other");
+    // Reading the skill covers its bundled executables when the friction involves them.
+    expect(instruction).toContain("starting from its `SKILL.md`");
+    expect(instruction).toContain(
+      "including any bundled CLI or scripts when the friction involves them",
+    );
+  });
 });
 
 describe("maintenanceSystemPrompt", () => {
@@ -99,6 +114,12 @@ describe("maintenanceSystemPrompt", () => {
     expect(system).toContain("no delete tool");
     // A retired skill's pages are superseded too — the skill directory no longer exists.
     expect(system).toContain("or the skill no longer exists");
+    // Supersession also reads the skill's bundled files — a tooling fix a merged proposal
+    // landed retires the pattern page it resolved.
+    expect(system).toContain("or its bundled files");
+    expect(system).toContain(
+      "the CLI command or script a merged proposal added, repaired, or removed",
+    );
   });
 
   it("shares the store-conventions section and never carries a day/branch stamp", () => {
@@ -135,12 +156,16 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain('"commit", "-m"');
     expect(system).toContain('"push", "origin", "<branch>"');
     expect(system).toContain("report_proposals");
+    // Reading before writing spans guidance and bundled files alike.
+    expect(system).toContain("considered change to the skill's actual guidance and bundled files");
   });
 
   it("carries the one-branch-per-pattern rule, the naming rule, and workspace-skills-only (R7/R9/R14)", () => {
     expect(system).toContain("One branch per pattern");
     expect(system).toContain("skill-evolution/<skill>-<slug>");
     expect(system).toContain("Workspace skills only");
+    // A workspace skill is its whole directory — the CLI or scripts it bundles are in scope.
+    expect(system).toContain("executable content such as a CLI or scripts");
     // Never the default branch, never force.
     expect(system).toContain("Never the default branch, never force");
     // An empty proposal list is a legitimate outcome.
@@ -154,7 +179,9 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain("reasoning for review");
     expect(system).toContain("restated from the acted-on pattern page");
     expect(system).toContain("`problem` = the observable problem it fixes");
-    expect(system).toContain("`rootCause` = the gap in the skill's guidance that produced it");
+    expect(system).toContain(
+      "`rootCause` = the gap in the skill's guidance or bundled tooling that produced it",
+    );
     // (`evidence`'s definition wraps across prompt lines — assert its unwrapped phrase.)
     expect(system).toContain("dated observations backing the pattern");
   });
@@ -162,6 +189,10 @@ describe("proposalSystemPrompt", () => {
   it("covers the full edit spectrum: modify, delete/consolidate, retire a whole skill (R7)", () => {
     // A proposal may change existing guidance, not only add to it.
     expect(system).toContain("adding, correcting, removing, or consolidating its guidance");
+    // The spectrum also spans the skill's bundled tooling — fixing or adding a CLI command.
+    expect(system).toContain(
+      "or changing its bundled tooling — fixing or adding a CLI command, correcting a script",
+    );
     expect(system).toContain("deletion of the skill's entire directory");
     // A pattern whose skill is already gone in the worktree is declined, not improvised —
     // "existed and is gone", so a new-skill pattern (no skill ever existed) is never declined.
@@ -172,6 +203,18 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain("`git add` records removals");
     // Removals keep the surviving skill coherent.
     expect(system).toContain("removals leave the surviving skill coherent");
+  });
+
+  it("fixes the root cause where it lives — the tooling change itself, not a doc workaround", () => {
+    expect(system).toContain("Fix the root cause where it lives");
+    expect(system).toContain("not a documentation workaround");
+    // Guidance stays in sync with the tooling change it accompanies.
+    expect(system).toContain("Keep the skill's guidance in sync with it");
+    // Tests ship with the change: this run authors them and states how they run, but cannot
+    // execute them (no shell tool) — running them belongs to the branch's review.
+    expect(system).toContain("author the tests and state how they run");
+    expect(system).toContain("this run cannot execute them (no shell tool)");
+    expect(system).toContain("running them belongs to the review of your branch");
   });
 
   it("carries the authoring-conventions rule grounded in the force-loaded guides (R17)", () => {
@@ -191,7 +234,9 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain("preserve the skill's established structure");
     // The guides' workspace vocabulary maps to the current proposal worktree.
     expect(system).toContain("they mean the current proposal worktree's `skills/`");
-    // The guides' runtime tools are conventions only — never part of this run's surface.
+    // The guides' runtime tools are conventions only — never part of this run's surface; the
+    // testing guidance the guides now carry is authoring material, not a tool to run.
+    expect(system).toContain("executing tests");
     expect(system).toContain("NOT part of your tool surface");
     expect(system).toContain("authoring conventions only");
     // Bundled reference material is never a proposal target (qualifies the R14 rule above it).

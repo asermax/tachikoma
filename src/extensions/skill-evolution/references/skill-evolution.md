@@ -12,8 +12,9 @@ The pass runs alongside memory extraction, on the same trunk session and branch 
    friction: places a skill was missing, wrong, stale, redundant, or fought the task.
 3. **Maintain** — consolidates near-duplicate patterns and enforces the size caps.
 4. **Propose** — for eligible recurring patterns, an agent authors one branch per pattern
-   that changes the skill — adding, correcting, removing, or consolidating guidance, or
-   removing a skill that no longer serves a purpose — and pushes it to origin for review.
+   that changes the skill — its guidance, or its bundled tooling (e.g. fixing or adding a CLI
+   command, with tests), or removing a skill that no longer serves a purpose — and pushes it
+   to origin for review.
 5. **Verify** — host-side, from git state: only branches that actually pushed are recorded.
 6. **Report** — with ≥1 verified proposal, an ad-hoc background task is dispatched with the
    run context, including each proposal's full reasoning (what it does, the problem, the root

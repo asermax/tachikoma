@@ -70,7 +70,10 @@ export interface ReportedProposal {
   description: string;
   /** The observable problem the change fixes — the pattern page's Problem section. */
   problem: string;
-  /** The gap in the skill's guidance producing the problem — the page's Root cause section. */
+  /**
+   * The gap in the skill's guidance or bundled tooling producing the problem — the page's Root
+   * cause section.
+   */
   rootCause: string;
   /** The dated observations backing the pattern — the page's Evidence bullets, condensed. */
   evidence: string;
@@ -177,7 +180,7 @@ const ReportParams = Type.Object({
       }),
       rootCause: Type.String({
         description:
-          "The gap in the skill's guidance that produced the problem — the pattern page's Root cause section, restated for the change you authored (a few lines)",
+          "The gap in the skill's guidance or bundled tooling that produced the problem — the pattern page's Root cause section, restated for the change you authored (a few lines)",
       }),
       evidence: Type.String({
         description:
@@ -452,7 +455,7 @@ export const buildProposalTools = (deps: ProposalToolDeps): ToolDefinition[] => 
       name: "delete_path",
       label: "Delete path",
       description:
-        "Delete a file or directory (recursively) inside a proposal worktree — how a removal is authored, from redundant guidance to a whole skill directory.",
+        "Delete a file or directory (recursively) inside a proposal worktree — how a removal is authored, from redundant guidance or a broken script to a whole skill directory.",
       parameters: DeletePathParams,
       async execute(_id, params) {
         const path = guardPath(params.path);
