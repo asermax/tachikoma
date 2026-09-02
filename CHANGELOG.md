@@ -1,3 +1,10 @@
+# [3.74.0](https://github.com/asermax/tachikoma/compare/v3.73.0...v3.74.0) (2026-09-02)
+
+
+### Features
+
+* **workflows:** direct stale-instance recovery on start_workflow rejection ([f57202e](https://github.com/asermax/tachikoma/commit/f57202e609cddf36d97a925426274f2199614d34))
+
 # [3.73.0](https://github.com/asermax/tachikoma/compare/v3.72.0...v3.73.0) (2026-09-01)
 
 
