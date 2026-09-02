@@ -20,7 +20,8 @@ skills/
     │   └── helper.md
     ├── references/    # Optional: detailed docs read on demand
     │   └── api.md
-    └── workflows/     # Optional: multi-step workflow definitions
+    ├── workflows/     # Optional: multi-step workflow definitions
+    └── tests/         # Optional: tests for bundled executables
 ```
 
 **Naming**: lowercase with hyphens (e.g. `code-review`, `git-workflow`). Names must be 64 characters or fewer, use only `a-z`, `0-9`, and hyphens, and must not start/end with a hyphen or contain consecutive hyphens.
@@ -118,7 +119,18 @@ Workflows are directory-based step definitions executed through dedicated lifecy
 
 ### Scripts and Other Content
 
-Skills can bundle executable scripts or data files anywhere in the skill directory; the agent runs them with its shell tool when the SKILL.md body says to. Organize additional content as needed (`data/`, `templates/`, `examples/`). Keep generated runtime state out of the skill directory — a skill should stay a read-only package.
+Skills can bundle executable scripts or data files anywhere in the skill directory; the agent runs them with its shell tool when the SKILL.md body says to. Organize additional content as needed (`data/`, `templates/`, `examples/`). Keep generated runtime state out of the skill directory — a skill should stay a read-only package. Executable logic gets tests — see [Testing Bundled Executables](#testing-bundled-executables).
+
+## Testing Bundled Executables
+
+A skill that bundles executable logic — a CLI, scripts, or any code the agent runs — ships tests with it. Run them with your shell tool whenever you change that logic.
+
+- **Colocate tests in the skill directory** (e.g. `skills/my-skill/tests/`), so the skill stays a self-contained package.
+- **Write tests when the executable is created** — every command, flag, and output shape it exposes gets a test.
+- **Change and test together**: a new command, a changed flag or output, a bug fix — the change and its tests land in the same change, and the tests pass before the work is done.
+- **Keep tests deterministic and offline**: no network, no live workspace state; fixtures live inside the skill directory.
+- **Use the language's standard runner** so no special tooling is needed — e.g. for a Node CLI, run `node --test tests/` from the skill directory (`skills/my-skill/`).
+- **Point to the tests from SKILL.md** — a `Tests` row in the Key Paths table naming where they live and the command that runs them, not a test write-up.
 
 ## Body Structure Guide
 
@@ -152,6 +164,7 @@ Move all commands to `references/cli.md`. Don't embed them in SKILL.md — only 
 | What | Where |
 |------|-------|
 | **CLI** | `skills/my-skill/my-skill` — see `references/cli.md` |
+| **Tests** | `skills/my-skill/tests/` — run `node --test tests/` from the skill directory |
 
 Agents will shortcut past workflows if they can see the raw commands. The CLI is an implementation detail for workflows to use, not a routing surface.
 

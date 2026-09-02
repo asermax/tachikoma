@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -140,6 +140,28 @@ describe("skills extension", () => {
   it("resolves the built-in directory to the repo's shipped authoring skills", () => {
     expect(existsSync(join(builtinSkillsDir, "skill-authoring", "SKILL.md"))).toBe(true);
     expect(existsSync(join(builtinSkillsDir, "workflow-authoring", "SKILL.md"))).toBe(true);
+  });
+
+  it("carries testing expectations for bundled executables in the authoring guides", async () => {
+    const readGuide = (name: string) => readFile(join(builtinSkillsDir, name, "SKILL.md"), "utf8");
+    const skillGuide = await readGuide("skill-authoring");
+    const workflowGuide = await readGuide("workflow-authoring");
+
+    // The skill guide: bundled executable logic ships tests — written when the executable is
+    // created, changed together with it, colocated, deterministic, standard-runner-runnable,
+    // and pointed to from SKILL.md's Key Paths table.
+    expect(skillGuide).toContain("## Testing Bundled Executables");
+    expect(skillGuide).toContain("Write tests when the executable is created");
+    expect(skillGuide).toContain("land in the same change");
+    expect(skillGuide).toContain("deterministic and offline");
+    expect(skillGuide).toContain("node --test");
+    expect(skillGuide).toContain("`Tests` row in the Key Paths table");
+    // The workflow guide: step scripts that compute, parse, or decide get tests too, wired
+    // into the step's Validation criteria and changed with their docs.
+    expect(workflowGuide).toContain("### Testing Step Scripts");
+    expect(workflowGuide).toContain("compute, parse, or decide");
+    expect(workflowGuide).toContain("Validation criteria");
+    expect(workflowGuide).toContain("same change");
   });
 
   it("registers delegate_to_agent with the built-in general-purpose agent even with no skill agents", async () => {

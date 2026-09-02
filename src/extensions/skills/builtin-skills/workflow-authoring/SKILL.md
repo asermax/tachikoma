@@ -301,6 +301,17 @@ Before considering a workflow complete:
 2. **Ordering check**: are steps in the right order? Do dependencies flow correctly?
 3. **Validation check**: does each step have clear success criteria?
 4. **SKILL.md check**: is the workflow documented in the skill's SKILL.md?
+5. **Script check**: does every step script that carries real logic have tests (see below)?
+
+### Testing Step Scripts
+
+A step's `scripts/` directory holds executable logic, not documentation — when a script does real work, it gets tests:
+
+- **Test scripts that compute, parse, or decide** — argument handling, output shaping, state decisions. A script that only chains shell commands together does not need tests.
+- **Colocate the tests** with the workflow's skill (the skill's `tests/` directory or beside the script) and run them with the language's standard runner from the skill directory — the same expectations as the `skill-authoring` guide's Testing Bundled Executables section.
+- **Keep them deterministic and offline**: no network, no live workspace state; fixtures live in the skill directory.
+- **Reference the tests in the step's Validation criteria** when they exist ("script tests pass"), so completing the step includes running them.
+- **Change docs and tests together**: when a change alters what a script does (new inputs, changed output), update the step's instructions, the workflow's SKILL.md documentation, and the script's tests in the same change.
 
 ## Common Patterns
 
