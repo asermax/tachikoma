@@ -78,8 +78,15 @@ const CASES: { [K in keyof typeof USAGE_SECTIONS]?: SectionCase } = {
     inline: ["upgrade_self", "never run"],
   },
   "workflows/usage.ts": {
-    rule: "the top-level-id routing rule stays inline",
+    rule: "the top-level-id routing rule stays inline; the stale-instance recovery procedure in the reference",
     inline: ["top-level"],
+    reference: [
+      "Stale instances",
+      "query_workflow(workflow_id=...)",
+      "tears down its whole nested stack",
+      "tell the user what the interrupted run had done",
+      "staleHours",
+    ],
   },
   "boundary/usage.ts": {
     rule: "names its feature's key surfaces",

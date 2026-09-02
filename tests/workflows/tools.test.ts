@@ -79,12 +79,23 @@ describe("handleStartWorkflow", () => {
     expect(() => handleStartWorkflow(deps, "writing", "missing")).toThrow(/not found in skill/);
   });
 
-  it("rejects a second start while an instance is active", () => {
+  it("rejects a second start while an instance is active, directing stale-instance recovery", () => {
     const state = startDraft();
 
-    expect(() => handleStartWorkflow(deps, "writing", "draft")).toThrow(
-      new RegExp(`already active.*${state.id}`, "s"),
-    );
+    let message = "";
+    try {
+      handleStartWorkflow(deps, "writing", "draft");
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message).toMatch(new RegExp(`already active.*${state.id}`, "s"));
+    expect(message).toContain(`query_workflow(workflow_id="${state.id}")`);
+    expect(message).toContain("scratchpad");
+    expect(message).toContain("resume it from its current step");
+    expect(message).toContain("surface the interrupted work");
+    expect(message).toMatch(/discard/);
+    expect(message).not.toContain("complete or abort");
   });
 });
 
@@ -688,21 +699,31 @@ describe("handleQueryWorkflow rendering branches", () => {
 describe("registerWorkflowTools", () => {
   const collectTools = () => {
     const tools = new Map<string, (toolCallId: string, params: unknown) => Promise<unknown>>();
+    const defs = new Map<string, { description?: string; promptGuidelines?: string[] }>();
     const pi = {
       registerTool: vi.fn(
-        (def: { name: string; execute: (id: string, p: unknown) => Promise<unknown> }) => {
+        (def: {
+          name: string;
+          description?: string;
+          promptGuidelines?: string[];
+          execute: (id: string, p: unknown) => Promise<unknown>;
+        }) => {
           tools.set(def.name, def.execute);
+          defs.set(def.name, {
+            description: def.description,
+            promptGuidelines: def.promptGuidelines,
+          });
         },
       ),
     };
 
     registerWorkflowTools(pi as never, deps);
 
-    return tools;
+    return { tools, defs };
   };
 
   it("wires each handler through pi.registerTool", async () => {
-    const tools = collectTools();
+    const { tools } = collectTools();
 
     expect([...tools.keys()].sort()).toEqual(
       ["end_workflow", "query_workflow", "start_workflow", "update_workflow_state"].sort(),
@@ -735,5 +756,21 @@ describe("registerWorkflowTools", () => {
       action: "abort",
     })) as { content: { text: string }[] };
     expect(ended.content[0]?.text).toContain("aborted");
+  });
+
+  it("carries stale-instance guidance on the agent-facing surfaces", () => {
+    const { defs } = collectTools();
+
+    const startGuidelines = (defs.get("start_workflow")?.promptGuidelines ?? []).join("\n");
+
+    expect(startGuidelines).toContain("already active");
+    expect(startGuidelines).toContain("query_workflow");
+    expect(startGuidelines).toContain("never silently discard");
+
+    const endDescription = defs.get("end_workflow")?.description ?? "";
+
+    expect(endDescription).toContain("discard");
+    expect(endDescription).toContain("stale run from an earlier session");
+    expect(endDescription).toContain("surface");
   });
 });

@@ -124,6 +124,8 @@ Workflow state survives context loss and restarts:
 - `query_workflow(workflow_id=...)` returns the full state: per-step status, current step, and scratchpad path
 - Resume from the current step — all progress is preserved
 
+Starting a workflow while an instance of it is already active is rejected, naming the existing instance's ID. When that happens, recover the existing instance rather than discarding it: inspect its state and scratchpad, resume it if it serves the request, and otherwise tell the user what the interrupted run had done and ask whether to resume or start fresh before ending it. Both `end_workflow` actions discard the state and scratchpad — never end an active instance without surfacing what it had done.
+
 Instances abandoned across sessions are expired automatically after a configurable staleness window.
 
 ## Composing Workflows
