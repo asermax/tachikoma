@@ -1,3 +1,10 @@
+# [3.77.0](https://github.com/asermax/tachikoma/compare/v3.76.0...v3.77.0) (2026-09-07)
+
+
+### Features
+
+* **skill-evolution:** record uncovered workflows and add content-placement rules ([a7cd983](https://github.com/asermax/tachikoma/commit/a7cd983973931c9b3b80ef39db85b3f8b6e59698))
+
 # [3.76.0](https://github.com/asermax/tachikoma/compare/v3.75.0...v3.76.0) (2026-09-07)
 
 
