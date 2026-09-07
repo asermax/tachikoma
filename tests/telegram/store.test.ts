@@ -2,9 +2,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type AppDatabase, createDatabase, runMigrations } from "../../src/db/index.ts";
+import { channelMessages } from "../../src/extensions/telegram/schema.ts";
 import { TelegramMessageStore } from "../../src/extensions/telegram/store.ts";
 import type { Logger } from "../../src/log.ts";
 
@@ -17,6 +19,10 @@ const fakeLog = {
 
 let db: AppDatabase;
 let store: TelegramMessageStore;
+
+/** The stored row for a message id — persistence details resolve() doesn't surface. */
+const storedRow = (messageId: string) =>
+  db.select().from(channelMessages).where(eq(channelMessages.messageId, messageId)).get();
 
 beforeEach(async () => {
   const dir = await mkdtemp(join(tmpdir(), "tachi-tg-store-"));
@@ -33,8 +39,6 @@ describe("TelegramMessageStore", () => {
       treeEntryId: "entry-1",
       branchId: "topic-3",
       label: null,
-      inConversation: true,
-      isLatestInConversation: true,
     });
   });
 
@@ -112,7 +116,7 @@ describe("conditional conflict set", () => {
     });
     store.record("m-1", { treeEntryId: "e2", branchId: "t1" }, "outgoing");
 
-    expect(store.resolve("m-1")?.inConversation).toBe(false);
+    expect(storedRow("m-1")?.inConversation).toBe(false);
   });
 
   it("overwrites inConversation when re-recorded with it", () => {
@@ -121,26 +125,26 @@ describe("conditional conflict set", () => {
       inConversation: false,
     });
 
-    expect(store.resolve("m-1")?.inConversation).toBe(false);
+    expect(storedRow("m-1")?.inConversation).toBe(false);
   });
 
   it("defaults inConversation to true when omitted (insert)", () => {
     store.record("m-1", { treeEntryId: "e1", branchId: "t1" }, "incoming");
 
-    expect(store.resolve("m-1")?.inConversation).toBe(true);
+    expect(storedRow("m-1")?.inConversation).toBe(true);
   });
 });
 
-describe("isLatestInConversation (bottom-of-entry test)", () => {
+describe("isConversationBottom (bottom-of-entry test)", () => {
   it("marks the newest same-direction in-conversation row on an entry", () => {
     // One exchange, entry e1: inbound i1, outgoing chunks c1 then c2 (the final chunk).
     store.record("i1", { treeEntryId: "e1", branchId: "t1" }, "incoming");
     store.record("c1", { treeEntryId: "e1", branchId: "t1" }, "outgoing", { label: "chunk 1" });
     store.record("c2", { treeEntryId: "e1", branchId: "t1" }, "outgoing", { label: "chunk 2" });
 
-    expect(store.resolve("i1")?.isLatestInConversation).toBe(true);
-    expect(store.resolve("c1")?.isLatestInConversation).toBe(false);
-    expect(store.resolve("c2")?.isLatestInConversation).toBe(true);
+    expect(store.isConversationBottom("i1")).toBe(true);
+    expect(store.isConversationBottom("c1")).toBe(false);
+    expect(store.isConversationBottom("c2")).toBe(true);
   });
 
   it("is newest per direction — the inbound and the final chunk both qualify", () => {
@@ -148,7 +152,7 @@ describe("isLatestInConversation (bottom-of-entry test)", () => {
     store.record("c1", { treeEntryId: "e1", branchId: "t1" }, "outgoing");
     store.record("i2", { treeEntryId: "e2", branchId: "t1" }, "incoming");
 
-    expect(store.resolve("i1")?.isLatestInConversation).toBe(true);
+    expect(store.isConversationBottom("i1")).toBe(true);
   });
 
   it("excludes out-of-conversation rows even when recorded last on the entry", () => {
@@ -161,8 +165,12 @@ describe("isLatestInConversation (bottom-of-entry test)", () => {
       inConversation: false,
     });
 
-    expect(store.resolve("d1")?.isLatestInConversation).toBe(false);
-    expect(store.resolve("c1")?.isLatestInConversation).toBe(true);
+    expect(store.isConversationBottom("d1")).toBe(false);
+    expect(store.isConversationBottom("c1")).toBe(true);
+  });
+
+  it("returns false for an unrecorded message", () => {
+    expect(store.isConversationBottom("missing")).toBe(false);
   });
 
   it("orders ties by row id when createdAt matches (same second)", () => {
@@ -170,7 +178,21 @@ describe("isLatestInConversation (bottom-of-entry test)", () => {
       store.record(id, { treeEntryId: "e1", branchId: "t1" }, "outgoing");
     }
 
-    expect(store.resolve("c3")?.isLatestInConversation).toBe(true);
-    expect(store.resolve("c2")?.isLatestInConversation).toBe(false);
+    expect(store.isConversationBottom("c3")).toBe(true);
+    expect(store.isConversationBottom("c2")).toBe(false);
+  });
+});
+
+describe("recording failures", () => {
+  it("never throws — a recording failure is logged and skipped", () => {
+    db.run(sql`drop table channel_messages`);
+
+    expect(() =>
+      store.record("m-1", { treeEntryId: "e1", branchId: "t1" }, "outgoing", { label: "x" }),
+    ).not.toThrow();
+    expect(fakeLog.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ messageId: "m-1" }),
+      "recording channel message failed",
+    );
   });
 });

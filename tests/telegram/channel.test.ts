@@ -7,6 +7,7 @@ import { textMessage } from "../../src/domain/message.ts";
 import { packCallbackData } from "../../src/extensions/telegram/buttons.ts";
 import {
   BOT_COMMANDS,
+  type RecordDetails,
   STOP_ACKNOWLEDGEMENT,
   STOP_COMMAND,
   TelegramChannel,
@@ -42,8 +43,8 @@ interface MessageRouting {
 }
 
 /**
- * A ledger row the fake store resolves — routing plus the quote-recovery metadata (R18/R19).
- * Omitted fields default the way the real store does: in-conversation, latest of its direction
+ * A ledger row the fake store serves — routing plus the quote-recovery metadata seeds (R18/R19).
+ * Omitted flags default the way the real store does: in-conversation, bottom of its direction
  * (tests that seed a bare routing behave like the pre-ledger bottom-of-conversation row).
  */
 interface LedgerRow extends MessageRouting {
@@ -56,7 +57,7 @@ interface RecordedMessage {
   messageId: string;
   routing: MessageRouting;
   direction: "incoming" | "outgoing";
-  details?: { label?: string | null; inConversation?: boolean };
+  details?: RecordDetails;
 }
 
 const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
@@ -77,14 +78,9 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
         messageId: string,
         value: MessageRouting,
         direction: "incoming" | "outgoing",
-        details?: { label?: string | null; inConversation?: boolean },
+        details?: RecordDetails,
       ) => {
-        recorded.push({
-          messageId,
-          routing: value,
-          direction,
-          ...(details != null ? { details } : {}),
-        });
+        recorded.push({ messageId, routing: value, direction, details });
         mappings.set(messageId, { ...value, ...details });
       },
     ),
@@ -92,15 +88,13 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
       const row = mappings.get(messageId);
       if (row == null) return null;
 
-      const inConversation = row.inConversation ?? true;
-      return {
-        treeEntryId: row.treeEntryId,
-        branchId: row.branchId,
-        label: row.label ?? null,
-        inConversation,
-        // Out-of-conversation rows never qualify as the conversation's bottom (store semantics).
-        isLatestInConversation: inConversation && (row.isLatestInConversation ?? true),
-      };
+      return { treeEntryId: row.treeEntryId, branchId: row.branchId, label: row.label ?? null };
+    }),
+    // Store semantics: an unrecorded row is never the bottom; seeded flags default to
+    // in-conversation and bottom-of-direction (a bare routing = the pre-ledger bottom row).
+    isConversationBottom: vi.fn((messageId: string) => {
+      const row = mappings.get(messageId);
+      return row != null && (row.inConversation ?? true) && (row.isLatestInConversation ?? true);
     }),
   };
 
@@ -1831,29 +1825,6 @@ describe("shutdownStatus error handling", () => {
 });
 
 describe("message recording errors", () => {
-  it("swallows a store.record failure", async () => {
-    const { channel, runtime, store } = makeChannel({
-      store: {
-        record: vi.fn(() => {
-          throw new Error("db down");
-        }),
-        resolve: vi.fn(() => null),
-      },
-    });
-    void store;
-    await channel.start(runtime);
-
-    await expect(
-      channel.respond({
-        message: inboundWith("hi", 7),
-        events: stream([
-          { kind: "text", text: "Hi" },
-          { kind: "result", stopReason: "done" },
-        ]),
-      }),
-    ).resolves.toBeUndefined();
-  });
-
   it("skips recording the inbound id when it is not numeric", async () => {
     const { channel, runtime, recorded } = makeChannel();
     await channel.start(runtime);

@@ -170,6 +170,20 @@ export class StreamRenderer {
   }
 
   /**
+   * Retarget the ledger entry of a message replaced by a copy (the push-notification
+   * copy-delete): the copy (`toId`) inherits the original's text, entering the send order
+   * last — the conversation's bottom — and the original's entry is pruned when the original
+   * was deleted. When both stay live (a failed delete), both keep entries, copy last.
+   */
+  retargetChunk(fromId: number, toId: number, deleted: boolean): void {
+    const text = this.sentChunksById.get(fromId);
+    if (text == null) return;
+
+    if (deleted) this.sentChunksById.delete(fromId);
+    this.noteSent(toId, text);
+  }
+
+  /**
    * Anchor a turn-scoped decision header (R8) above the streamed text. Set before streaming begins;
    * `compose()` recomposes it on every edit so the body never overwrites it. Best-effort: it is dropped
    * (and logged) if the body grows past the edit limit or a render fails.

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "286cec6e-3418-49e6-91b1-583d45975d41",
+  "id": "55e7ee72-70d6-47b3-82bd-c3f9920e5ca8",
   "prevId": "ccca27db-50ac-4588-84bc-7d71a2a8a3bd",
   "tables": {
     "detached_processes": {
@@ -426,6 +426,18 @@
           "name": "ix_channel_messages_branch",
           "columns": [
             "branch_id"
+          ],
+          "isUnique": false
+        },
+        "ix_channel_messages_entry_bottom": {
+          "name": "ix_channel_messages_entry_bottom",
+          "columns": [
+            "channel",
+            "tree_entry_id",
+            "direction",
+            "in_conversation",
+            "created_at",
+            "id"
           ],
           "isUnique": false
         }

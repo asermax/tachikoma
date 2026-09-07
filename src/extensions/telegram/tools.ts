@@ -9,6 +9,7 @@ import type { Logger } from "../../log.ts";
 import { buildInlineKeyboard, validateButtons } from "./buttons.ts";
 import type { ChannelMessageStore, MessageRouting } from "./channel.ts";
 import { toTelegramEntities } from "./entities.ts";
+import { messageRef } from "./inbound.ts";
 import { sendEntitiesOrFallback } from "./sending.ts";
 
 /** Narrow grammY API surface the tools call — fakeable in tests. */
@@ -66,7 +67,7 @@ export interface ToolDeps {
    */
   requestPin: () => Promise<number | null>;
   /** Record/lookup message→branch mappings for reply-to routing. */
-  store: ChannelMessageStore;
+  store: Pick<ChannelMessageStore, "record" | "resolve">;
   /** The current trunk routing (live leaf entry + branch), for outbound recording. */
   currentRouting: () => MessageRouting | null;
 }
@@ -122,25 +123,21 @@ export const validateFilePath = async (
 };
 
 /**
- * Record an outbound tool message against the current trunk routing with a describing label,
- * best-effort — mirrors the channel's `recordMessage`: a recording failure is logged, never
- * thrown, so it can't break a send that already succeeded. Routing is resolved from the live
- * leaf so a later reply/reaction on the message resolves back to the branch that produced it,
- * and the label lets the reaction recovery quote the message's content from the ledger alone
- * (the session tree can't describe channel-only artifacts).
+ * Record an outbound tool message against the current trunk routing with a describing label.
+ * The store never throws (a recording failure is logged inside it), so this can't break a
+ * send that already succeeded. Routing is resolved from the live leaf so a later
+ * reply/reaction on the message resolves back to the branch that produced it, and the label
+ * lets the reaction recovery quote the message's content from the ledger alone (the session
+ * tree can't describe channel-only artifacts).
  */
 const recordOutbound = (
-  deps: Pick<ToolDeps, "log" | "store" | "currentRouting">,
+  deps: Pick<ToolDeps, "store" | "currentRouting">,
   messageId: number,
   label: string,
 ): void => {
   const routing = deps.currentRouting();
   if (routing == null) return;
-  try {
-    deps.store.record(String(messageId), routing, "outgoing", { label });
-  } catch (error) {
-    deps.log.warn({ err: error, messageId }, "recording channel message failed");
-  }
+  deps.store.record(String(messageId), routing, "outgoing", { label });
 };
 
 const SendFileParams = Type.Object({
@@ -203,7 +200,7 @@ export const handleSendFile = async (
 
   // The id lets the agent tie a later reaction/reply notification (which names the id) to
   // this send without a lookup.
-  return `File sent: ${name} (message_id: ${messageId})`;
+  return `File sent: ${name} ${messageRef(messageId)}`;
 };
 
 // ---- react_to_message ---------------------------------------------------------

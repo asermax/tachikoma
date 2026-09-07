@@ -41,6 +41,16 @@ export const channelMessages = sqliteTable(
   (table) => [
     uniqueIndex("ux_channel_messages_channel_message").on(table.channel, table.messageId),
     index("ix_channel_messages_branch").on(table.branchId),
+    // Covers the bottom-of-entry lookup (isConversationBottom): equality prefix, then the
+    // (createdAt, id) ordering pair — a one-row index seek instead of a scan+sort.
+    index("ix_channel_messages_entry_bottom").on(
+      table.channel,
+      table.treeEntryId,
+      table.direction,
+      table.inConversation,
+      table.createdAt,
+      table.id,
+    ),
   ],
 );
 

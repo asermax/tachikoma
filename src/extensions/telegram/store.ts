@@ -2,21 +2,18 @@ import { and, desc, eq } from "drizzle-orm";
 
 import type { AppDatabase } from "../../db/index.ts";
 import type { Logger } from "../../log.ts";
-import type { ChannelMessageStore, ResolvedChannelMessage } from "./channel.ts";
+import type {
+  ChannelMessageStore,
+  MessageRouting,
+  RecordDetails,
+  ResolvedChannelMessage,
+} from "./channel.ts";
 import { CHANNEL_NAME, truncateQuote } from "./inbound.ts";
 import {
   type ChannelMessageDirection,
   type ChannelMessageRecord,
   channelMessages,
 } from "./schema.ts";
-
-/** Optional per-message ledger details; omitted fields never overwrite on re-record. */
-export interface RecordDetails {
-  /** Bounded content label for reaction/reply quotes (blank normalizes to null). */
-  label?: string | null;
-  /** Whether the message belongs to the conversation surface (default true). */
-  inConversation?: boolean;
-}
 
 /**
  * Telegram-owned ledger over the channel_messages table (daily-trunk model). Records
@@ -37,7 +34,7 @@ export class TelegramMessageStore implements ChannelMessageStore {
 
   record(
     messageId: string,
-    routing: { treeEntryId: string; branchId: string },
+    routing: MessageRouting,
     direction: ChannelMessageDirection,
     details?: RecordDetails,
   ): void {
@@ -48,67 +45,61 @@ export class TelegramMessageStore implements ChannelMessageStore {
         ? truncateQuote(details.label)
         : null;
 
-    this.db
-      .insert(channelMessages)
-      .values({
-        channel: CHANNEL_NAME,
-        messageId,
-        treeEntryId: routing.treeEntryId,
-        branchId: routing.branchId,
-        direction,
-        ...(label != null ? { label } : {}),
-        ...(details?.inConversation != null ? { inConversation: details.inConversation } : {}),
-        createdAt: new Date(),
-      })
-      // Re-point the mapping on conflict (e.g. an outbound id re-recorded after a later branch
-      // shift). Label and inConversation enter the update only when supplied, so a re-record
-      // can never clobber a previously written label (a button prompt keeps its label across
-      // the tap turn that references it).
-      .onConflictDoUpdate({
-        target: [channelMessages.channel, channelMessages.messageId],
-        set: {
+    // A recording failure must never break a send that already succeeded: log and skip.
+    try {
+      this.db
+        .insert(channelMessages)
+        .values({
+          channel: CHANNEL_NAME,
+          messageId,
           treeEntryId: routing.treeEntryId,
           branchId: routing.branchId,
           direction,
-          ...(label != null ? { label } : {}),
-          ...(details?.inConversation != null ? { inConversation: details.inConversation } : {}),
-        },
-      })
-      .run();
+          label,
+          inConversation: details?.inConversation ?? true,
+          createdAt: new Date(),
+        })
+        // Re-point the mapping on conflict (e.g. an outbound id re-recorded after a later branch
+        // shift). Label and inConversation enter the update only when supplied, so a re-record
+        // can never clobber a previously written label (a button prompt keeps its label across
+        // the tap turn that references it).
+        .onConflictDoUpdate({
+          target: [channelMessages.channel, channelMessages.messageId],
+          set: {
+            treeEntryId: routing.treeEntryId,
+            branchId: routing.branchId,
+            direction,
+            ...(label != null ? { label } : {}),
+            ...(details?.inConversation != null ? { inConversation: details.inConversation } : {}),
+          },
+        })
+        .run();
+    } catch (error) {
+      this.log.warn({ err: error, messageId, direction }, "recording channel message failed");
+    }
   }
 
   resolve(messageId: string): ResolvedChannelMessage | null {
-    const row = this.db
-      .select()
-      .from(channelMessages)
-      .where(
-        and(eq(channelMessages.channel, CHANNEL_NAME), eq(channelMessages.messageId, messageId)),
-      )
-      .get();
-
+    const row = this.fetchRow(messageId);
     if (row == null) {
       this.log.debug({ messageId }, "no channel routing for telegram message");
       return null;
     }
 
-    return {
-      treeEntryId: row.treeEntryId,
-      branchId: row.branchId,
-      label: row.label,
-      inConversation: row.inConversation,
-      isLatestInConversation: this.isLatestInConversation(row),
-    };
+    return { treeEntryId: row.treeEntryId, branchId: row.branchId, label: row.label };
   }
 
   /**
-   * Whether `row` is the newest in-conversation row of its direction on its tree entry — a
-   * bottom-most message of that exchange's side (the final chunk of the outgoing side, the
-   * inbound message of the incoming side). Ordered by (createdAt, id) so same-second writes
-   * resolve deterministically by insertion order. Out-of-conversation rows (deliveries,
-   * notices) never qualify: they may sit at the bottom of the chat but not of the conversation.
+   * Whether the message is the bottom-most row of its side of the exchange — in-conversation
+   * and the newest such row of its direction on its tree entry (the final chunk of the
+   * outgoing side, the inbound message of the incoming side). Ordered by (createdAt, id) so
+   * same-second writes resolve deterministically by insertion order. Out-of-conversation rows
+   * (deliveries, notices) never qualify: they may sit at the bottom of the chat but not of
+   * the conversation.
    */
-  private isLatestInConversation(row: ChannelMessageRecord): boolean {
-    if (!row.inConversation) return false;
+  isConversationBottom(messageId: string): boolean {
+    const row = this.fetchRow(messageId);
+    if (row == null || !row.inConversation) return false;
 
     const latest = this.db
       .select({ id: channelMessages.id })
@@ -126,5 +117,17 @@ export class TelegramMessageStore implements ChannelMessageStore {
       .get();
 
     return latest?.id === row.id;
+  }
+
+  private fetchRow(messageId: string): ChannelMessageRecord | null {
+    return (
+      this.db
+        .select()
+        .from(channelMessages)
+        .where(
+          and(eq(channelMessages.channel, CHANNEL_NAME), eq(channelMessages.messageId, messageId)),
+        )
+        .get() ?? null
+    );
   }
 }

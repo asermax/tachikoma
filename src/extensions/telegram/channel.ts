@@ -40,17 +40,18 @@ export interface MessageRouting {
   branchId: string;
 }
 
-/**
- * A ledger row resolved by message id: trunk routing plus the content metadata that backs
- * quote recovery. `isLatestInConversation` (computed by the store) says whether the row is
- * the bottom-most in-conversation row of its direction on its tree entry.
- */
+/** A ledger row resolved by message id: trunk routing plus the content metadata for quotes. */
 export interface ResolvedChannelMessage extends MessageRouting {
   /** Bounded content label, or null when blank / never recorded (pre-ledger rows). */
   label: string | null;
-  /** Whether the message belongs to the conversation surface at its recorded position. */
-  inConversation: boolean;
-  isLatestInConversation: boolean;
+}
+
+/** Optional per-message ledger details; omitted fields never overwrite on re-record. */
+export interface RecordDetails {
+  /** Bounded content label for reaction/reply quotes (blank normalizes to null). */
+  label?: string | null;
+  /** Whether the message belongs to the conversation surface (default true). */
+  inConversation?: boolean;
 }
 
 /**
@@ -60,14 +61,25 @@ export interface ResolvedChannelMessage extends MessageRouting {
  * re-record only when supplied, so a re-record never clobbers a previously written label.
  */
 export interface ChannelMessageStore {
+  /**
+   * Record a message in the ledger. Never throws — a recording failure is logged and
+   * skipped, so it can't break a send that already succeeded.
+   */
   record(
     messageId: string,
     routing: MessageRouting,
     direction: ChannelMessageDirection,
-    details?: { label?: string | null; inConversation?: boolean },
+    details?: RecordDetails,
   ): void;
   /** Resolve a recorded message to its ledger row, or null when unrecorded. */
   resolve(messageId: string): ResolvedChannelMessage | null;
+  /**
+   * Whether the recorded message is the bottom-most row of its side of the exchange —
+   * in-conversation and the newest such row of its direction on its tree entry. Unlike
+   * resolve()'s keyed lookup this costs a query, so ask only when the answer matters
+   * (quote suppression).
+   */
+  isConversationBottom(messageId: string): boolean;
 }
 
 export interface TelegramChannelOptions {
@@ -305,7 +317,7 @@ export class TelegramChannel implements Channel {
       // live tip's bottom-most in-conversation rows — already visible to the agent in full).
       // Earlier-branch context (summary + ask_branch hint) is injected by the boundary on the
       // forced route, so it isn't duplicated here.
-      const reactedToText = this.shouldSuppressQuote(reference) ? null : reference.label;
+      const reactedToText = this.shouldSuppressQuote(messageId, reference) ? null : reference.label;
 
       const inbound = mapReaction(event, { reactedToText });
       if (inbound == null) return;
@@ -402,13 +414,11 @@ export class TelegramChannel implements Channel {
    * can't tell a delivery recorded between exchanges (same leaf) from the actual bottom, and
    * every chunk of one exchange shares the settled routing — only the last is the bottom.
    * Out-of-conversation rows (deliveries, notices) never suppress: they surface out-of-band.
+   * The live-tip check is pure memory, so it runs first — the store's bottom query fires
+   * only for live-tip targets (anything else keeps its quote regardless).
    */
-  private shouldSuppressQuote(reference: ResolvedChannelMessage): boolean {
-    return (
-      reference.inConversation &&
-      reference.isLatestInConversation &&
-      this.isLiveBranchTip(reference)
-    );
+  private shouldSuppressQuote(messageId: string, reference: ResolvedChannelMessage): boolean {
+    return this.isLiveBranchTip(reference) && this.options.store.isConversationBottom(messageId);
   }
 
   /**
@@ -422,7 +432,7 @@ export class TelegramChannel implements Channel {
     if (target == null) return false;
 
     const reference = this.options.store.resolve(target);
-    return reference != null && this.shouldSuppressQuote(reference);
+    return reference != null && this.shouldSuppressQuote(target, reference);
   }
 
   async respond({ message, events, header }: Exchange): Promise<void> {
@@ -543,12 +553,14 @@ export class TelegramChannel implements Channel {
     const routing = this.options.currentRouting();
     if (routing != null) {
       for (const chunk of chunks) {
-        this.recordMessage(String(chunk.id), routing, "outgoing", { label: chunk.text });
+        this.options.store.record(String(chunk.id), routing, "outgoing", { label: chunk.text });
       }
 
       const inboundId = message.metadata.messageId;
       if (typeof inboundId === "number" && message.metadata.buttonValue == null) {
-        this.recordMessage(String(inboundId), routing, "incoming", { label: message.text });
+        this.options.store.record(String(inboundId), routing, "incoming", {
+          label: message.text,
+        });
       }
     }
   }
@@ -625,7 +637,6 @@ export class TelegramChannel implements Channel {
         id != null &&
         elapsedSeconds >= this.options.pushNotificationMinSeconds;
 
-      const chunks = renderer.sentChunks();
       let outboundId = id;
       if (shouldPush && id != null) {
         try {
@@ -636,18 +647,11 @@ export class TelegramChannel implements Channel {
             log,
           );
           outboundId = copiedId;
-          // The push copy replaces the streamed final chunk: the ledger records the surviving
-          // copy under the final chunk's label, and the deleted streamed id leaves no row.
-          const finalIndex = chunks.findIndex((chunk) => chunk.id === id);
-          const finalChunk = finalIndex >= 0 ? chunks[finalIndex] : undefined;
-          if (finalChunk != null && deleted) {
-            chunks[finalIndex] = { id: copiedId, text: finalChunk.text };
-          } else if (finalChunk != null) {
-            // The delete failed: both the streamed original and the copy are live in the chat.
-            // Record both (the copy last — it is the conversation's bottom) so a reaction or
-            // reply on either resolves.
-            chunks.push({ id: copiedId, text: finalChunk.text });
-          }
+          // The push copy replaces the streamed final chunk in the ledger: the copy inherits
+          // the chunk's entry, and the deleted streamed id leaves none (when the delete
+          // failed, both stay live in the chat and both keep entries — the copy last, as the
+          // conversation's bottom).
+          renderer.retargetChunk(id, copiedId, deleted);
         } catch (error) {
           log.warn(
             { err: error },
@@ -658,7 +662,7 @@ export class TelegramChannel implements Channel {
 
       if (outboundId != null) this.lastOutboundId = outboundId;
 
-      return { outboundId, chunks };
+      return { outboundId, chunks: renderer.sentChunks() };
     });
   }
 
@@ -695,19 +699,6 @@ export class TelegramChannel implements Channel {
     }
   }
 
-  private recordMessage(
-    messageId: string,
-    routing: MessageRouting,
-    direction: ChannelMessageDirection,
-    details?: { label?: string | null; inConversation?: boolean },
-  ): void {
-    try {
-      this.options.store.record(messageId, routing, direction, details);
-    } catch (error) {
-      this.log().warn({ err: error, messageId, direction }, "recording channel message failed");
-    }
-  }
-
   /**
    * Record out-of-conversation sends (deliveries, notices): every chunk, so a reaction on any
    * chunk of a long delivery recovers its content. Skipped when no trunk is active — there is
@@ -720,7 +711,7 @@ export class TelegramChannel implements Channel {
     if (routing == null) return;
 
     for (const chunk of chunks) {
-      this.recordMessage(String(chunk.id), routing, "outgoing", {
+      this.options.store.record(String(chunk.id), routing, "outgoing", {
         label: chunk.text,
         inConversation: false,
       });

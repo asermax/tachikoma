@@ -11,6 +11,13 @@ const REPLY_QUOTE_MAX = 280;
  * ledger label written per channel message (R19) — blank-normalized upstream by `quoteBlock`
  * or the store.
  */
+/**
+ * Agent-facing reference to a Telegram message id — the one format reaction prose and
+ * tool results share, so the agent can correlate a later reaction/reply notification
+ * with the send that produced the id.
+ */
+export const messageRef = (id: number): string => `(message_id: ${id})`;
+
 export const truncateQuote = (text: string): string => {
   const stripped = text.trim();
 
@@ -140,7 +147,7 @@ export const mapReaction = (
     removed.length > 0 ? `removed reaction ${removed.join(" ")}` : null,
   ].filter((part) => part != null);
 
-  const prose = `The user ${parts.join(" and ")} to a previous message (message_id: ${event.message_id}).`;
+  const prose = `The user ${parts.join(" and ")} to a previous message ${messageRef(event.message_id)}.`;
   const quote = reactionQuote(context?.reactedToText);
   const text =
     quote != null ? `${quote}\n\n${prose} Interpret it in context and respond accordingly.` : prose;
