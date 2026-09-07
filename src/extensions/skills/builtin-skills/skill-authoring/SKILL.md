@@ -190,6 +190,17 @@ Only include what's necessary. Avoid redundant explanations, overly verbose inst
 
 Put essential information in the main body. Move detailed reference material to `references/` files. This keeps loaded context focused while making details available on demand.
 
+### Content Placement
+
+Progressive disclosure covers detail *altitude* — what belongs in the body versus a reference. Two placement rules cover where information *lives*:
+
+- **Single source**: the same information — an explanation, a rule, a procedure — appears in exactly one place in the skill. When more than one section or file needs it, it lives in a `references/` file and each consumer points to it ("See `references/notation.md` for the tracking notation") rather than restating it. Duplicated copies drift apart when the information changes: one copy gets corrected, the other goes stale, and an agent following the stale copy behaves wrongly with no error signal.
+- **Conditional content**: information needed only in some situations — an edge-case rule, a rarely-used procedure, a platform-specific caveat — lives in a reference read only when its condition applies, never in the always-loaded body. Name the condition at the pointer ("If the build fails with `E_LOCK`, read `references/lock-errors.md`") so the body stays lean for every session that loads the skill.
+
+### Keep It Generic
+
+Skill content is reusable guidance, not an incident log. State each rule as a rule that applies whenever its condition holds, and never justify it with a specific occurrence — no dated incidents, no "the assistant did X on project Y" specifics as a rule's rationale. Where an example clarifies, use a generic one: a typical scenario, not a real conversation's events.
+
 ## Example
 
 ```yaml

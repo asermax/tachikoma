@@ -26,6 +26,7 @@ Workflows live in a `workflows/` subdirectory within a skill:
 skills/
 └── my-skill/
     ├── SKILL.md              # Mentions available workflows
+    ├── references/           # Optional: skill-level reference docs
     └── workflows/
         └── my-workflow/
             ├── 01-first-step/
@@ -254,6 +255,16 @@ Use `references/` for detailed content that doesn't fit in the main instructions
 └── scripts/
     └── lint-checks.sh       # Executable: runs project linting
 ```
+
+### Single Source for Shared Information
+
+The same information — an explanation, a rule, a procedure — appears in exactly one place across the skill: never duplicated across steps, between a step and the skill's `SKILL.md`, or between step instructions and a reference. When more than one step needs it, it lives once in the skill's `references/` and each consumer points at it; detailed content only one step needs lives in that step's `references/`, while the step's own essentials stay inline in `instructions.md`. Pointers name which `references/` they mean ("read the skill's `references/notation.md`", "read this step's `references/lint-rules.md`") rather than a bare relative path. Duplicated copies drift apart when the information changes — the stale copy misleads with no error signal.
+
+Information a step needs only in some situations — an edge-case rule, a rarely-used procedure, a platform-specific caveat — belongs in that step's `references/`, read when its condition applies (name the condition at the pointer), not in the `instructions.md` every run of the step loads.
+
+### Keep Content Generic
+
+Authored content — step instructions, references, and the skill's `SKILL.md` documentation alike — is reusable guidance, not an incident log: the `skill-authoring` guide's Keep It Generic section carries the rule (never justify a rule with a specific occurrence; generic examples only, never a real conversation's events).
 
 ## Example Workflow
 
