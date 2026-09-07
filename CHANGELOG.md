@@ -1,3 +1,15 @@
+# [3.76.0](https://github.com/asermax/tachikoma/compare/v3.75.0...v3.76.0) (2026-09-07)
+
+
+### Bug Fixes
+
+* **telegram:** identify reaction targets via a unified message ledger ([f432c5c](https://github.com/asermax/tachikoma/commit/f432c5c0b3c09d47daf4f0559804515d0217b543)), closes [#463](https://github.com/asermax/tachikoma/issues/463)
+
+
+### Features
+
+* **issue-463:** wip patch ([9bd55fa](https://github.com/asermax/tachikoma/commit/9bd55faba75eaca894777b6be3e9da3c8c10a4ec))
+
 # [3.75.0](https://github.com/asermax/tachikoma/compare/v3.74.0...v3.75.0) (2026-09-02)
 
 
