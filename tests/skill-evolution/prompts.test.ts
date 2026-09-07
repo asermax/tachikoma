@@ -75,6 +75,26 @@ describe("branchAnalysisInstruction", () => {
     expect(instruction).toContain("nothing to record");
   });
 
+  it("reads Redundant as restated information and Workaround as possibly uncovered work", () => {
+    // Redundancy is a content-placement failure — the same information living in more than one
+    // file or step — and a workaround may name work no skill covers at all, not only friction
+    // with an existing skill.
+    expect(instruction).toContain("the same information restated in more than one file or step");
+    expect(instruction).toContain(
+      "including a workflow no skill covers at all, improvised from scratch",
+    );
+  });
+
+  it("collects the work no skill covers, not only friction with existing skills", () => {
+    // Collection framing and the how-to-work step both admit a pattern naming a needed skill
+    // rather than an indicted one; the shared Fix convention gains the create end of the
+    // spectrum (it wraps across prompt lines — assert the unwrapped phrase).
+    expect(instruction).toContain("or the work no skill covered");
+    expect(instruction).toContain("or, when no skill covers the work, the workflow that needs one");
+    const unwrapped = instruction.replaceAll(/\s+/g, " ");
+    expect(unwrapped).toContain("creating a new skill when a recurring workflow has none");
+  });
+
   it("frames the fix as any edit type, not only additions (R1/R2)", () => {
     // The full spectrum: outlived guidance in the collection framing, and every edit type up
     // to retirement in the Fix convention the instruction composes.
@@ -118,6 +138,15 @@ describe("maintenanceSystemPrompt", () => {
     expect(system).toContain(
       "the CLI command or script a merged proposal added, repaired, or removed",
     );
+  });
+
+  it("retires a no-skill pattern page only when a skill now covers its workflow", () => {
+    // A page naming a workflow no skill covered matches no skill directory by construction;
+    // without an explicit rule, "the skill no longer exists" would empty it every night.
+    expect(system).toContain(
+      "For a page naming a workflow no skill covered, superseded means a skill now covers that workflow",
+    );
+    expect(system).toContain("never retired merely because no skill of its name exists");
   });
 
   it("shares the store-conventions section and never carries a day/branch stamp", () => {
@@ -237,5 +266,16 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain("authoring conventions only");
     // Bundled reference material is never a proposal target (qualifies the R14 rule above it).
     expect(system).toContain("never proposal targets");
+    // Placement and genericity ride with the guides: duplicated content gets fixed where the
+    // edit lands, and pattern evidence never rides into the skill as dated specifics.
+    expect(system).toContain("never restate information the skill already carries elsewhere");
+    expect(system).toContain("point at its single source");
+    expect(system).toContain("conditionally-needed detail goes in references");
+    expect(system).toContain("fix the placement as part of the change");
+    expect(system).toContain("without reaching into unrelated parts of the skill");
+    expect(system).toContain(
+      "pattern evidence motivates the change but never rides into the skill",
+    );
+    expect(system).toContain("examples are generic, not a real conversation's events");
   });
 });
