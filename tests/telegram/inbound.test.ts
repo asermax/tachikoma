@@ -149,7 +149,7 @@ describe("mapReaction", () => {
   it("surfaces an added reaction with the reacted-to message as the reply target", () => {
     const inbound = mapReaction(reaction(12, 42, ["👍"]));
 
-    expect(inbound?.text).toBe("The user reacted 👍 to a previous message.");
+    expect(inbound?.text).toBe("The user reacted 👍 to a previous message (message_id: 12).");
     expect(inbound?.metadata).toEqual({ reaction: true, replyToMessageId: "12" });
   });
 
@@ -157,7 +157,7 @@ describe("mapReaction", () => {
     const inbound = mapReaction(reaction(12, 42, ["🎉"], ["👍"]));
 
     expect(inbound?.text).toBe(
-      "The user reacted 🎉 and removed reaction 👍 to a previous message.",
+      "The user reacted 🎉 and removed reaction 👍 to a previous message (message_id: 12).",
     );
   });
 
@@ -168,7 +168,9 @@ describe("mapReaction", () => {
   it("reports a removal-only change without an addition clause", () => {
     const inbound = mapReaction(reaction(12, 42, [], ["👍"]));
 
-    expect(inbound?.text).toBe("The user removed reaction 👍 to a previous message.");
+    expect(inbound?.text).toBe(
+      "The user removed reaction 👍 to a previous message (message_id: 12).",
+    );
   });
 
   it("ignores non-emoji reaction types and treats absent reaction lists as empty", () => {
@@ -183,7 +185,7 @@ describe("mapReaction", () => {
 
     const inbound = mapReaction(event);
 
-    expect(inbound?.text).toBe("The user reacted 🔥 to a previous message.");
+    expect(inbound?.text).toBe("The user reacted 🔥 to a previous message (message_id: 15).");
   });
 
   it("prepends the reacted-to message quote and guidance when context is supplied", () => {
@@ -193,7 +195,8 @@ describe("mapReaction", () => {
 
     expect(inbound?.text).toBe(
       "Reacted to:\n> the plan is ready\n\n" +
-        "The user reacted 👍 to a previous message. Interpret it in context and respond accordingly.",
+        "The user reacted 👍 to a previous message (message_id: 12). Interpret it in context and " +
+        "respond accordingly.",
     );
     expect(inbound?.metadata).toEqual({ reaction: true, replyToMessageId: "12" });
   });
@@ -212,7 +215,7 @@ describe("mapReaction", () => {
   it("omits the quote when the reacted-to text is blank", () => {
     const inbound = mapReaction(reaction(12, 42, ["👍"]), { reactedToText: "   " });
 
-    expect(inbound?.text).toBe("The user reacted 👍 to a previous message.");
+    expect(inbound?.text).toBe("The user reacted 👍 to a previous message (message_id: 12).");
   });
 });
 

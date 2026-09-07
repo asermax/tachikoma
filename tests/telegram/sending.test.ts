@@ -331,9 +331,15 @@ describe("sendChunked", () => {
     const first = "a".repeat(3000);
     const second = "b".repeat(3000);
 
-    const ids = await sendChunked({ sendMessage }, 42, `${first}\n\n${second}`, { silent: true });
+    const chunks = await sendChunked({ sendMessage }, 42, `${first}\n\n${second}`, {
+      silent: true,
+    });
 
-    expect(ids).toEqual([1, 2]);
+    // Each chunk reports its id AND text — the pair the message ledger records (R19).
+    expect(chunks).toEqual([
+      { id: 1, text: first },
+      { id: 2, text: second },
+    ]);
     const firstPayload: TelegramPayload = toTelegramEntities(first);
     const secondPayload: TelegramPayload = toTelegramEntities(second);
     expect(sendMessage).toHaveBeenNthCalledWith(1, 42, firstPayload.text, {
@@ -362,11 +368,11 @@ describe("sendChunked", () => {
     const first = "a".repeat(3000);
     const second = "b".repeat(3000);
 
-    const ids = await sendChunked({ sendMessage }, 42, `${first}\n\n${second}`, {
+    const chunks = await sendChunked({ sendMessage }, 42, `${first}\n\n${second}`, {
       notifyOnlyLast: true,
     });
 
-    expect(ids).toEqual([1, 2]);
+    expect(chunks.map((chunk) => chunk.id)).toEqual([1, 2]);
     const firstPayload: TelegramPayload = toTelegramEntities(first);
     const secondPayload: TelegramPayload = toTelegramEntities(second);
     expect(sendMessage).toHaveBeenNthCalledWith(1, 42, firstPayload.text, {
@@ -419,9 +425,13 @@ describe("deliverText", () => {
     const firstPayload: TelegramPayload = toTelegramEntities(first);
     const secondPayload: TelegramPayload = toTelegramEntities(second);
 
-    const id = await deliverText(api, 42, `${first}\n\n${second}`, true);
+    const chunks = await deliverText(api, 42, `${first}\n\n${second}`, true);
 
-    expect(id).toBe(2);
+    expect(chunks).toEqual([
+      { id: 1, text: firstPayload.text },
+      { id: 2, text: secondPayload.text },
+    ]);
+    expect(chunks.at(-1)?.id).toBe(2); // the delivery's outbound id rides the final chunk
     expect(calls).toEqual(["send:a", "send:b"]);
     expect(api.sendMessage).toHaveBeenNthCalledWith(1, 42, firstPayload.text, {
       disable_notification: true,
@@ -436,17 +446,17 @@ describe("deliverText", () => {
     const { api, calls } = fakeApi();
     const payload: TelegramPayload = toTelegramEntities("notice");
 
-    const id = await deliverText(api, 42, "notice", false);
+    const chunks = await deliverText(api, 42, "notice", false);
 
-    expect(id).toBe(1);
+    expect(chunks).toEqual([{ id: 1, text: payload.text }]);
     expect(calls).toEqual(["send:n"]);
     expect(api.sendMessage).toHaveBeenCalledWith(42, payload.text, { entities: payload.entities });
   });
 
-  it("returns null when there is nothing to send", async () => {
+  it("returns an empty list when there is nothing to send", async () => {
     const { api } = fakeApi();
 
-    expect(await deliverText(api, 42, "   ", true)).toBeNull();
+    expect(await deliverText(api, 42, "   ", true)).toEqual([]);
     expect(api.sendMessage).not.toHaveBeenCalled();
   });
 });
@@ -456,20 +466,20 @@ describe("forceNotification", () => {
     const copyMessage = vi.fn().mockResolvedValue({ message_id: 9 });
     const deleteMessage = vi.fn().mockResolvedValue(true);
 
-    const id = await forceNotification({ copyMessage, deleteMessage }, 42, 7, fakeLog);
+    const result = await forceNotification({ copyMessage, deleteMessage }, 42, 7, fakeLog);
 
-    expect(id).toBe(9);
+    expect(result).toEqual({ id: 9, deleted: true });
     expect(copyMessage).toHaveBeenCalledWith(42, 42, 7);
     expect(deleteMessage).toHaveBeenCalledWith(42, 7);
   });
 
-  it("returns the copy id even when the original delete fails", async () => {
+  it("returns the copy id with deleted: false when the original delete fails", async () => {
     const copyMessage = vi.fn().mockResolvedValue({ message_id: 9 });
     const deleteMessage = vi.fn().mockRejectedValue(new Error("already gone"));
 
-    const id = await forceNotification({ copyMessage, deleteMessage }, 42, 7, fakeLog);
+    const result = await forceNotification({ copyMessage, deleteMessage }, 42, 7, fakeLog);
 
-    expect(id).toBe(9);
+    expect(result).toEqual({ id: 9, deleted: false });
   });
 
   it("propagates a copy failure without deleting (leaves the original in place)", async () => {

@@ -122,19 +122,22 @@ export const validateFilePath = async (
 };
 
 /**
- * Record an outbound tool message against the current trunk routing, best-effort — mirrors the
- * channel's `recordMessage`: a recording failure is logged, never thrown, so it can't break a
- * send that already succeeded. Routing is resolved from the live leaf so a later reply/reaction
- * on the message resolves back to the branch that produced it.
+ * Record an outbound tool message against the current trunk routing with a describing label,
+ * best-effort — mirrors the channel's `recordMessage`: a recording failure is logged, never
+ * thrown, so it can't break a send that already succeeded. Routing is resolved from the live
+ * leaf so a later reply/reaction on the message resolves back to the branch that produced it,
+ * and the label lets the reaction recovery quote the message's content from the ledger alone
+ * (the session tree can't describe channel-only artifacts).
  */
 const recordOutbound = (
   deps: Pick<ToolDeps, "log" | "store" | "currentRouting">,
   messageId: number,
+  label: string,
 ): void => {
   const routing = deps.currentRouting();
   if (routing == null) return;
   try {
-    deps.store.record(String(messageId), routing, "outgoing");
+    deps.store.record(String(messageId), routing, "outgoing", { label });
   } catch (error) {
     deps.log.warn({ err: error, messageId }, "recording channel message failed");
   }
@@ -182,17 +185,25 @@ export const handleSendFile = async (
       break;
   }
 
-  // Map the sent file message to the current trunk routing so a later reply/reaction on the file
-  // resolves to the branch that sent it (mirroring send_message_with_buttons); without this, a
-  // reaction on the file is dropped as unresolved.
-  recordOutbound(deps, messageId);
+  // Map the sent file message to the current trunk routing with a describing label so a later
+  // reply/reaction on the file resolves to the branch that sent it AND can quote what the file
+  // was (mirroring send_message_with_buttons); without this, a reaction on the file is dropped
+  // as unresolved.
+  const name = basename(resolved);
+  recordOutbound(
+    deps,
+    messageId,
+    `${mediaType} ${name}${params.caption ? ` — ${params.caption}` : ""}`,
+  );
 
   deps.log.debug(
     { tool: "send_telegram_file", path: resolved, mediaType, messageId },
     "telegram file sent",
   );
 
-  return `File sent: ${basename(resolved)}`;
+  // The id lets the agent tie a later reaction/reply notification (which names the id) to
+  // this send without a lookup.
+  return `File sent: ${name} (message_id: ${messageId})`;
 };
 
 // ---- react_to_message ---------------------------------------------------------
@@ -314,9 +325,16 @@ export const handleSendMessageWithButtons = async (
     deps.log,
   );
 
-  // Map the button message to the current trunk routing so a later tap routes back to the branch
-  // that asked the question.
-  recordOutbound(deps, messageId);
+  // Map the button message to the current trunk routing with the prompt + choice labels, so a
+  // later tap or reaction routes back to the branch that asked the question and can quote it.
+  recordOutbound(
+    deps,
+    messageId,
+    `${params.prompt} [${params.buttons
+      .flat()
+      .map((button) => button.label)
+      .join(" | ")}]`,
+  );
 
   deps.log.debug({ tool: "send_message_with_buttons", messageId }, "telegram buttons sent");
 

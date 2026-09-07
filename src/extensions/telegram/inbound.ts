@@ -6,8 +6,12 @@ export const CHANNEL_NAME = "telegram";
 
 const REPLY_QUOTE_MAX = 280;
 
-/** Keep a reply/reaction quote short: head and tail with an ellipsis between. */
-const truncateQuote = (text: string): string => {
+/**
+ * Keep a reply/reaction quote short: head and tail with an ellipsis between. Also bounds the
+ * ledger label written per channel message (R19) — blank-normalized upstream by `quoteBlock`
+ * or the store.
+ */
+export const truncateQuote = (text: string): string => {
   const stripped = text.trim();
 
   if (stripped.length <= REPLY_QUOTE_MAX) return stripped;
@@ -113,10 +117,11 @@ const emojiSet = (reactions: ReactionType[] | undefined): Set<string> =>
 /**
  * Frame a reaction update as an inbound message. Diffs old/new reactions so the
  * agent sees what the user added or removed; returns null when nothing changed.
- * When `context.reactedToText` is supplied (the channel recovered the targeted
- * message's text — the reaction is not aimed at the session's most recent
- * message), it is prepended as a `Reacted to:` quote so the agent knows which
- * message the emoji targets; otherwise the bare reaction prose is used.
+ * The prose names the target's Telegram message id (`(message_id: N)`) so the agent can
+ * resolve it (e.g. against tool results) without a lookup. When `context.reactedToText`
+ * is supplied (the channel recovered the targeted message's content label — the reaction
+ * is not aimed at the conversation's bottom), it is prepended as a `Reacted to:` quote so
+ * the agent knows which message the emoji targets; otherwise the bare reaction prose is used.
  */
 export const mapReaction = (
   event: MessageReactionUpdated,
@@ -135,7 +140,7 @@ export const mapReaction = (
     removed.length > 0 ? `removed reaction ${removed.join(" ")}` : null,
   ].filter((part) => part != null);
 
-  const prose = `The user ${parts.join(" and ")} to a previous message.`;
+  const prose = `The user ${parts.join(" and ")} to a previous message (message_id: ${event.message_id}).`;
   const quote = reactionQuote(context?.reactedToText);
   const text =
     quote != null ? `${quote}\n\n${prose} Interpret it in context and respond accordingly.` : prose;

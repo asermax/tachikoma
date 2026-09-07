@@ -12,7 +12,7 @@ The **daily trunk session + collapsible topic branches** model replaces the topi
 
 ## Decision
 
-The **pi session file is the source of truth** for conversational state. Trunk/branch structure, the current topic base, branch records, and per-branch/per-step idempotency markers live as pi custom entries on the session file; injected cross-branch context uses `appendCustomMessageEntry`. The small amount of state the file cannot serve efficiently lives in the kept `app_state` key-value store (the active-trunk pointer `{ sessionFile, day, openedAt }` and an `unclosed` trunk index) and in a slimmed, extension-owned `channel_messages` routing table (`messageId → { treeEntryId, branchId }`).
+The **pi session file is the source of truth** for conversational state. Trunk/branch structure, the current topic base, branch records, and per-branch/per-step idempotency markers live as pi custom entries on the session file; injected cross-branch context uses `appendCustomMessageEntry`. The small amount of state the file cannot serve efficiently lives in the kept `app_state` key-value store (the active-trunk pointer `{ sessionFile, day, openedAt }` and an `unclosed` trunk index) and in a slimmed, extension-owned `channel_messages` ledger (`messageId → { treeEntryId, branchId, label, inConversation }`). The ledger's `label`/`inConversation` columns are bounded channel-content metadata for identifying a referenced message in a quote — channel-only artifacts (tool-sent files, button prompts, deliveries) have no session-tree entry to describe them — and never a second conversational record: the session file remains the sole source of what was said.
 
 Consequently:
 - The `sessions` table (`src/db/core-schema.ts`) and `src/sessions/registry.ts` are **removed**.

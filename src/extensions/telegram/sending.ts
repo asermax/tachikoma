@@ -172,31 +172,38 @@ export const convertAndSplit = (text: string): TelegramPayload[] => {
   return splitMessageWithEntities(body, entities);
 };
 
+/** One sent message: its Telegram id and the text it carries (for ledger recording). */
+export interface SentChunk {
+  id: number;
+  text: string;
+}
+
 /**
  * Send text as one or more messages, split at Telegram's length limit without ever
  * cutting a formatting entity across two messages. With `notifyOnlyLast`, every
  * chunk but the last is sent silently so the delivery fires exactly one push
- * notification — on the final chunk.
+ * notification — on the final chunk. Returns every chunk's id + text so callers
+ * can record the full send in the message ledger (R19).
  */
 export const sendChunked = async (
   api: Pick<SendApi, "sendMessage">,
   chatId: number,
   text: string,
   options: { silent?: boolean; notifyOnlyLast?: boolean } = {},
-): Promise<number[]> => {
+): Promise<SentChunk[]> => {
   if (text.trim().length === 0) return [];
 
   const chunks = convertAndSplit(text);
-  const ids: number[] = [];
+  const sent: SentChunk[] = [];
 
   for (const [index, chunk] of chunks.entries()) {
     const silent =
       options.notifyOnlyLast === true ? index < chunks.length - 1 : options.silent === true;
 
-    ids.push(await sendWithFallback(api, chatId, chunk, { silent }));
+    sent.push({ id: await sendWithFallback(api, chatId, chunk, { silent }), text: chunk.text });
   }
 
-  return ids;
+  return sent;
 };
 
 /**
@@ -205,16 +212,16 @@ export const sendChunked = async (
  * final chunk. Editing never notifies and Telegram has no notify-in-place API,
  * so a fresh loud send is the only way to fire a push; sending the last chunk
  * loud does that directly, with a stable message id and no extra round-trips.
+ * Returns every sent chunk (id + text) for ledger recording; the final chunk's
+ * id is the delivery's outbound id.
  */
 export const deliverText = async (
   api: Pick<SendApi, "sendMessage">,
   chatId: number,
   text: string,
   pushNotifications: boolean,
-): Promise<number | null> => {
-  const ids = await sendChunked(api, chatId, text, { notifyOnlyLast: pushNotifications });
-
-  return ids.at(-1) ?? null;
+): Promise<SentChunk[]> => {
+  return sendChunked(api, chatId, text, { notifyOnlyLast: pushNotifications });
 };
 
 /**
@@ -223,23 +230,24 @@ export const deliverText = async (
  * notify (there is no notify-in-place API). Copying the message within the same
  * chat creates a fresh message that notifies; deleting the original leaves a
  * single loud message in its place. The delete is best-effort: a failure leaves a
- * silent duplicate rather than throwing the delivery away.
+ * silent duplicate rather than throwing the delivery away, and `deleted: false`
+ * reports it so the caller can keep both live ids in the message ledger.
  */
 export const forceNotification = async (
   api: Pick<SendApi, "copyMessage" | "deleteMessage">,
   chatId: number,
   messageId: number,
   log: Logger,
-): Promise<number> => {
+): Promise<{ id: number; deleted: boolean }> => {
   const copied = await api.copyMessage(chatId, chatId, messageId);
 
-  await api
-    .deleteMessage(chatId, messageId)
-    .catch((error) =>
-      log.debug({ err: error, messageId }, "force-notification delete failed; duplicate left"),
-    );
+  let deleted = true;
+  await api.deleteMessage(chatId, messageId).catch((error) => {
+    deleted = false;
+    log.debug({ err: error, messageId }, "force-notification delete failed; duplicate left");
+  });
 
-  return copied.message_id;
+  return { id: copied.message_id, deleted };
 };
 
 /** Show a typing indicator until the returned stop function is called. */

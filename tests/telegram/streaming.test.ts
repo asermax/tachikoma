@@ -396,6 +396,133 @@ describe("StreamRenderer", () => {
   });
 });
 
+describe("StreamRenderer sentChunks (outbound ledger capture, R19)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("captures a finalize edit with the FINAL text, replacing the provisional reveal entry", async () => {
+    // The common single-message path: a tool reveals the held text as a provisional send, then
+    // finalize edits that same message to its final form. The ledger entry must hold the final
+    // text under the same id — the baked tool summary (`a.ts`), not the live label (/a.ts).
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.appendText("Hello.");
+    await renderer.appendTool("read", { path: "/a.ts" }); // reveal: send id 1 (provisional)
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("Done.");
+    expect(await renderer.finalize()).toBe(1);
+
+    expect(renderer.sentChunks()).toEqual([
+      { id: 1, text: rendered("Hello.\n\n_🔧 Reading `a.ts`_\n\nDone.") },
+    ]);
+  });
+
+  it("captures a fresh finalize send when no message was revealed mid-stream", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.appendText("Hello");
+    await renderer.appendText(" world");
+    await renderer.finalize();
+
+    expect(renderer.sentChunks()).toEqual([{ id: 1, text: rendered("Hello world") }]);
+  });
+
+  it("captures every chunk of a multi-chunk finalize, in send order", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    const text = "a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 100);
+
+    await renderer.appendText("start");
+    await renderer.appendText(text.slice(5));
+    await renderer.finalize();
+
+    expect(renderer.sentChunks()).toEqual([
+      { id: 1, text: rendered(`start${text.slice(5, TELEGRAM_MAX_MESSAGE_LENGTH)}`) },
+      { id: 2, text: rendered(text.slice(TELEGRAM_MAX_MESSAGE_LENGTH)) },
+    ]);
+  });
+
+  it("captures an overflow-committed chunk finalized in place by edit", async () => {
+    // The reveal creates message 1; the overflow commit then finalizes the first chunk INTO
+    // that message by edit (the entry must take the committed chunk's full text, replacing the
+    // provisional reveal), further committed chunks send fresh, and the tail lands at finalize.
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.appendText("Lead.");
+    await renderer.appendTool("read", { path: "/a.ts" }); // reveal: send id 1
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText(`${"a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 200)}\n\n`);
+    await renderer.finalize();
+
+    const chunks = renderer.sentChunks();
+    // splitMessage keeps paragraph boundaries: ["Lead.\n\n<marker>", "a"×4096, "a"×200] — the
+    // first is edited into message 1, the second sends fresh, the tail lands at finalize.
+    expect(chunks.map((chunk) => chunk.id)).toEqual([1, 2, 3]);
+    // The edit-finalized chunk carries the baked tool summary (basename "a.ts" — entity
+    // conversion drops the code backticks), not the provisional live label ("/a.ts").
+    expect(chunks[0]?.text).toContain("Reading a.ts");
+    expect(chunks[0]?.text).not.toContain("/a.ts");
+    expect(chunks[0]?.text.startsWith("Lead.")).toBe(true);
+  });
+
+  it("prunes the entry when the placeholder is deleted by an empty finalize", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.showTransient("Compacting…"); // send id 1 (provisional entry)
+    expect(await renderer.finalize()).toBeNull();
+
+    expect(renderer.sentChunks()).toEqual([]);
+  });
+
+  it("prunes the deleted tail on the broken path and records only the fresh re-sends", async () => {
+    const api = fakeApi();
+    api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+
+    await renderer.appendText("Hello.");
+    await renderer.appendTool("read", { path: "/a.ts" }); // send id 1 (provisional)
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendText("world.");
+    await renderer.appendTool("read", { path: "/b.ts" }); // edit fails → broken
+    await renderer.finalize(); // deletes id 1, re-sends the full buffer fresh
+
+    expect(renderer.sentChunks()).toEqual([
+      { id: 2, text: rendered("Hello.\n\n_🔧 Reading `a.ts`_\n\nworld.\n\n_🔧 Reading `b.ts`_") },
+    ]);
+  });
+
+  it("keeps overflow-committed chunks when the broken path re-sends the tail", async () => {
+    const api = fakeApi();
+    const renderer = new StreamRenderer(api, 42, fakeLog);
+    const first = "a".repeat(TELEGRAM_MAX_MESSAGE_LENGTH + 100);
+
+    await renderer.appendText(first); // held — nothing revealed yet
+    await renderer.appendText("\n\nb-tail"); // flush → commitOverflow sends chunk 1 fresh; tail held
+    expect(api.calls.filter((call) => call.type === "send")).toHaveLength(1);
+
+    // Reveal the tail (send id 2), then break the renderer: the next tool's settle edit rejects.
+    // (Pure text never edits — it stays held — so a tool call is what triggers the failing edit.)
+    await renderer.appendTool("read", { path: "/x.ts" });
+    api.editMessageText.mockRejectedValue(new Error("400: message can't be edited"));
+    vi.advanceTimersByTime(EDIT_THROTTLE_MS);
+    await renderer.appendTool("read", { path: "/y.ts" }); // the edit rejects → broken
+    await renderer.finalize(); // deletes id 2 (pruned), re-sends the tail fresh
+
+    // Committed chunk 1 survives; the deleted tail (2) leaves no entry; the fresh re-send (3) lands.
+    expect(renderer.sentChunks().map((chunk) => chunk.id)).toEqual([1, 3]);
+    expect(renderer.sentChunks()[1]?.text).toContain("b-tail");
+  });
+});
+
 describe("StreamRenderer decision header (DLT-181)", () => {
   beforeEach(() => {
     vi.useFakeTimers();

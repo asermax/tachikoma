@@ -4,7 +4,7 @@ import { autoRetry } from "@grammyjs/auto-retry";
 import { Bot } from "grammy";
 import { type Static, Type } from "typebox";
 
-import { getEntry, getLeafId, messageText } from "../../agent/session-tree.ts";
+import { getLeafId } from "../../agent/session-tree.ts";
 import { provideContext } from "../../agent/system-prompt-section.ts";
 import { getBranchRecords, nextBranchId } from "../../sessions/trunk.ts";
 import { expandHome } from "../../workspace.ts";
@@ -98,16 +98,6 @@ export default defineExtension<TelegramConfig>({
       return { treeEntryId, branchId: nextBranchId(getBranchRecords(trunk)) };
     };
 
-    const reactedToText = (treeEntryId: string): string | null => {
-      const trunk = app.sessions.activeTrunkSession();
-      if (trunk == null) return null;
-
-      const entry = getEntry(trunk, treeEntryId);
-      if (entry == null) return null;
-
-      return messageText(entry) || null;
-    };
-
     const channel = new TelegramChannel(bot, {
       chatId,
       allowMedia,
@@ -119,7 +109,6 @@ export default defineExtension<TelegramConfig>({
       stop: () => app.sessions.abortExchange(),
       store,
       currentRouting,
-      reactedToText,
     });
 
     app.bootstrap("media-dir", () => ensureMediaDir(mediaDir, app.log));

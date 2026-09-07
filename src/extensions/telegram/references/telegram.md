@@ -18,11 +18,15 @@ when a bot token and chat are configured (`[extensions.telegram]`).
 The chat is a single authorized conversation. Media the person sends (`allowMedia`, default
 on) is downloaded into the workspace data dir and referenced to you as files. Referencing an
 old message — replying to it, reacting to it, tapping a button on it — routes the new
-message back to that message's branch. `/stop` in the chat aborts your running exchange.
-Long exchanges can be rendered compactly (activity collapsed to markers) per
-`collapseIntensiveWork` / `intensiveWorkThreshold`, and completed replies can be pushed as a
-notification (`pushNotifications`, `pushNotificationMinSeconds`) when the exchange streamed
-for at least that many seconds.
+message back to that message's branch, and the notification you see names the referenced
+message's id (e.g. `The user reacted ❤ to a previous message (message_id: 42).`), often with
+a `Replied to:`/`Reacted to:` quote of its content; `send_telegram_file` names the same id in
+its result (`File sent: chart.png (message_id: 12)`), so a later notification referencing
+that id is the person reacting to or answering that file. `/stop` in the chat aborts your
+running exchange. Long exchanges can be rendered compactly (activity collapsed to markers)
+per `collapseIntensiveWork` / `intensiveWorkThreshold`, and completed replies can be pushed
+as a notification (`pushNotifications`, `pushNotificationMinSeconds`) when the exchange
+streamed for at least that many seconds.
 
 ## Configuration
 

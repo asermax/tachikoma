@@ -41,10 +41,22 @@ interface MessageRouting {
   branchId: string;
 }
 
+/**
+ * A ledger row the fake store resolves — routing plus the quote-recovery metadata (R18/R19).
+ * Omitted fields default the way the real store does: in-conversation, latest of its direction
+ * (tests that seed a bare routing behave like the pre-ledger bottom-of-conversation row).
+ */
+interface LedgerRow extends MessageRouting {
+  label?: string | null;
+  inConversation?: boolean;
+  isLatestInConversation?: boolean;
+}
+
 interface RecordedMessage {
   messageId: string;
   routing: MessageRouting;
   direction: "incoming" | "outgoing";
+  details?: { label?: string | null; inConversation?: boolean };
 }
 
 const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
@@ -53,8 +65,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
   let next = 0;
 
   const recorded: RecordedMessage[] = [];
-  const mappings = new Map<string, MessageRouting>();
-  const reactedToTexts = new Map<string, string>();
+  const mappings = new Map<string, LedgerRow>();
   // The trunk routing for the message being produced/received: live leaf entry + live branch id.
   const routing = {
     current: { treeEntryId: "entry-1", branchId: "topic-1" } as MessageRouting | null,
@@ -62,12 +73,35 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
 
   const store = {
     record: vi.fn(
-      (messageId: string, value: MessageRouting, direction: "incoming" | "outgoing") => {
-        recorded.push({ messageId, routing: value, direction });
-        mappings.set(messageId, value);
+      (
+        messageId: string,
+        value: MessageRouting,
+        direction: "incoming" | "outgoing",
+        details?: { label?: string | null; inConversation?: boolean },
+      ) => {
+        recorded.push({
+          messageId,
+          routing: value,
+          direction,
+          ...(details != null ? { details } : {}),
+        });
+        mappings.set(messageId, { ...value, ...details });
       },
     ),
-    resolve: vi.fn((messageId: string) => mappings.get(messageId) ?? null),
+    resolve: vi.fn((messageId: string) => {
+      const row = mappings.get(messageId);
+      if (row == null) return null;
+
+      const inConversation = row.inConversation ?? true;
+      return {
+        treeEntryId: row.treeEntryId,
+        branchId: row.branchId,
+        label: row.label ?? null,
+        inConversation,
+        // Out-of-conversation rows never qualify as the conversation's bottom (store semantics).
+        isLatestInConversation: inConversation && (row.isLatestInConversation ?? true),
+      };
+    }),
   };
 
   const api = {
@@ -125,7 +159,6 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
   const stop = vi.fn(async () => {});
   const submit = vi.fn();
   const runtime: ChannelRuntime = { log: fakeLog, submit };
-  const reactedToText = vi.fn((treeEntryId: string) => reactedToTexts.get(treeEntryId) ?? null);
 
   const channel = new TelegramChannel(bot, {
     chatId: 42,
@@ -136,7 +169,6 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     stop,
     store,
     currentRouting: () => routing.current,
-    reactedToText,
     ...overrides,
   });
 
@@ -218,8 +250,6 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     store,
     recorded,
     mappings,
-    reactedToText,
-    reactedToTexts,
     routing,
     triggerError: (error: unknown) => errorHandler({ error }),
     startCalls,
@@ -408,7 +438,7 @@ describe("respond push notification", () => {
     expect(channel.lastOutboundMessageId).toBe(1);
   });
 
-  it("records the copied outbound id against the receiving session", async () => {
+  it("records the copied outbound id (the streamed id leaves no ledger row)", async () => {
     const { channel, runtime, recorded } = makeChannel({ pushNotifications: true });
     await channel.start(runtime);
 
@@ -420,10 +450,44 @@ describe("respond push notification", () => {
       ]),
     });
 
+    // The push copy (id 2) replaces the streamed final chunk (id 1, deleted): the ledger
+    // records the surviving copy under the chunk's text, and the deleted id leaves no row.
     expect(recorded).toContainEqual({
       messageId: "2",
       routing: { treeEntryId: "entry-1", branchId: "topic-1" },
       direction: "outgoing",
+      details: { label: "Hello" },
+    });
+    expect(recorded.find((row) => row.messageId === "1")).toBeUndefined();
+  });
+
+  it("records both ids when the copy succeeds but the delete fails", async () => {
+    const { channel, runtime, recorded, api } = makeChannel({ pushNotifications: true });
+    await channel.start(runtime);
+    api.deleteMessage.mockRejectedValueOnce(new Error("message to delete not found"));
+
+    await channel.respond({
+      message: inboundWith("hi", 7),
+      events: stream([
+        { kind: "text", text: "Hello" },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    // The delete failed: the streamed original (id 1) and the push copy (id 2) are both
+    // live in the chat, so the ledger records both under the chunk's text (the copy last
+    // — it is the conversation's bottom) and a reaction on either resolves.
+    expect(recorded).toContainEqual({
+      messageId: "1",
+      routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+      direction: "outgoing",
+      details: { label: "Hello" },
+    });
+    expect(recorded).toContainEqual({
+      messageId: "2",
+      routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+      direction: "outgoing",
+      details: { label: "Hello" },
     });
   });
 
@@ -525,6 +589,7 @@ describe("respond push notification", () => {
       messageId: "1",
       routing: { treeEntryId: "entry-1", branchId: "topic-1" },
       direction: "outgoing",
+      details: { label: "Hello" },
     });
   });
 });
@@ -1010,7 +1075,7 @@ const inboundWith = (text: string, messageId: number) => ({
 });
 
 describe("message recording", () => {
-  it("records the inbound and outbound message ids against the current routing", async () => {
+  it("records the exchange in the ledger: every chunk plus the inbound, with labels", async () => {
     const { channel, runtime, recorded } = makeChannel();
     await channel.start(runtime);
 
@@ -1022,18 +1087,80 @@ describe("message recording", () => {
       ]),
     });
 
+    // Routing has settled at finalize: each chunk is recorded outgoing with its final text as
+    // the label, then the user's message incoming with its own text.
     expect(recorded).toEqual([
-      {
-        messageId: "7",
-        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
-        direction: "incoming",
-      },
       {
         messageId: "1",
         routing: { treeEntryId: "entry-1", branchId: "topic-1" },
         direction: "outgoing",
+        details: { label: "Hello" },
+      },
+      {
+        messageId: "7",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "incoming",
+        details: { label: "hi" },
       },
     ]);
+  });
+
+  it("records every chunk of a multi-chunk response, each with its own text", async () => {
+    const { channel, runtime, recorded } = makeChannel();
+    await channel.start(runtime);
+
+    const big = "a".repeat(4200);
+    await channel.respond({
+      message: inboundWith("hi", 7),
+      events: stream([
+        { kind: "text", text: big },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(recorded).toEqual([
+      {
+        messageId: "1",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "outgoing",
+        details: { label: "a".repeat(4096) },
+      },
+      {
+        messageId: "2",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "outgoing",
+        details: { label: "a".repeat(104) },
+      },
+      {
+        messageId: "7",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "incoming",
+        details: { label: "hi" },
+      },
+    ]);
+  });
+
+  it("records no inbound row for a button-tap turn (the button message keeps its row)", async () => {
+    const { channel, runtime, recorded } = makeChannel();
+    await channel.start(runtime);
+
+    // A tap's metadata points at the tapped button message (id 5, already recorded outgoing
+    // when the prompt was sent) — re-recording it inbound would clobber that row.
+    await channel.respond({
+      message: {
+        text: "The user tapped the option `yes` out of the options you displayed.",
+        channel: "telegram",
+        receivedAt: new Date(),
+        media: [],
+        metadata: { messageId: 5, buttonValue: "yes" },
+      },
+      events: stream([
+        { kind: "text", text: "Done." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(recorded.map((row) => [row.messageId, row.direction])).toEqual([["1", "outgoing"]]);
   });
 
   it("skips recording when no trunk is active", async () => {
@@ -1050,6 +1177,98 @@ describe("message recording", () => {
     });
 
     expect(recorded).toEqual([]);
+  });
+});
+
+describe("out-of-band recording (deliveries and notices)", () => {
+  it("records a delivery out-of-conversation with its text as the label", async () => {
+    const { channel, runtime, recorded } = makeChannel({ pushNotifications: false });
+    await channel.start(runtime);
+
+    await channel.deliver({ text: "scheduled reminder" });
+
+    expect(recorded).toEqual([
+      {
+        messageId: "1",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "outgoing",
+        details: { label: "scheduled reminder", inConversation: false },
+      },
+    ]);
+  });
+
+  it("skips delivery recording when no trunk is active", async () => {
+    const { channel, runtime, recorded, routing } = makeChannel();
+    routing.current = null;
+    await channel.start(runtime);
+
+    await channel.deliver({ text: "orphan delivery" });
+
+    expect(recorded).toEqual([]);
+  });
+
+  it("records the /stop acknowledgement out-of-conversation", async () => {
+    const { channel, runtime, recorded, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchText(STOP_COMMAND);
+
+    expect(recorded).toEqual([
+      {
+        messageId: "1",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "outgoing",
+        details: { label: STOP_ACKNOWLEDGEMENT, inConversation: false },
+      },
+    ]);
+  });
+
+  it("records the unresolved-reaction notice out-of-conversation", async () => {
+    const { channel, runtime, recorded, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchReaction(404, "👍");
+
+    expect(recorded).toEqual([
+      {
+        messageId: "1",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "outgoing",
+        details: { label: UNRESOLVED_REACTION_NOTICE, inConversation: false },
+      },
+    ]);
+  });
+
+  it("records a notice only when its send succeeds (no id on failure)", async () => {
+    const { channel, runtime, api, recorded, dispatchText } = makeChannel();
+    api.sendMessage.mockRejectedValueOnce(new Error("send failed"));
+    await channel.start(runtime);
+
+    await dispatchText(STOP_COMMAND);
+
+    expect(recorded).toEqual([]);
+  });
+
+  it("records the header-label fallback of an empty reaction turn out-of-conversation", async () => {
+    const { channel, runtime, recorded } = makeChannel({ pushNotifications: false });
+    await channel.start(runtime);
+
+    // An empty turn with a reaction-bearing header surfaces the label as a one-off message;
+    // that fallback send is ledger-recorded like any other out-of-band message.
+    await channel.respond({
+      message: textMessage("telegram", "hi"),
+      events: stream([{ kind: "result", stopReason: "done" }]),
+      header: { label: "🆕 New topic", note: "fresh topic", rollbackable: true, reaction: "🔥" },
+    });
+
+    expect(recorded).toEqual([
+      {
+        messageId: "1",
+        routing: { treeEntryId: "entry-1", branchId: "topic-1" },
+        direction: "outgoing",
+        details: { label: rendered("_🆕 New topic — fresh topic_"), inConversation: false },
+      },
+    ]);
   });
 });
 
@@ -1126,10 +1345,42 @@ describe("reply-to branch routing", () => {
     const submitted = submit.mock.calls[0]?.[0];
     expect(submitted.text).toBe("Replied to:\n> the plan is ready\n\nfollow-up");
   });
+
+  it("keeps the reply quote for a non-final chunk of the bottom exchange", async () => {
+    const { channel, runtime, submit, mappings, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    // Routing matches the live tip, but the row is not the newest of its direction on the entry
+    // (an earlier chunk of the last exchange): only the final chunk is the conversation's bottom.
+    mappings.set("3", {
+      treeEntryId: "entry-1",
+      branchId: "topic-1",
+      isLatestInConversation: false,
+    });
+
+    await dispatchText("follow-up", 9, { message_id: 3, text: "the plan is ready" });
+
+    const submitted = submit.mock.calls[0]?.[0];
+    expect(submitted.text).toBe("Replied to:\n> the plan is ready\n\nfollow-up");
+  });
+
+  it("keeps the reply quote for an out-of-conversation delivery at the live tip", async () => {
+    const { channel, runtime, submit, mappings, dispatchText } = makeChannel();
+    await channel.start(runtime);
+
+    // A delivery recorded between exchanges shares the live leaf's routing but sits outside the
+    // conversation surface: it still gets its identifying quote.
+    mappings.set("3", { treeEntryId: "entry-1", branchId: "topic-1", inConversation: false });
+
+    await dispatchText("follow-up", 9, { message_id: 3, text: "the plan is ready" });
+
+    const submitted = submit.mock.calls[0]?.[0];
+    expect(submitted.text).toBe("Replied to:\n> the plan is ready\n\nfollow-up");
+  });
 });
 
 describe("inbound reactions", () => {
-  it("surfaces an authorized reaction to the agent", async () => {
+  it("surfaces an authorized reaction to the agent, naming the target's message id", async () => {
     const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
     await channel.start(runtime);
 
@@ -1139,7 +1390,7 @@ describe("inbound reactions", () => {
 
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "The user reacted 👍 to a previous message.",
+        text: "The user reacted 👍 to a previous message (message_id: 12).",
         metadata: expect.objectContaining({ reaction: true, replyToMessageId: "12" }),
       }),
     );
@@ -1190,55 +1441,125 @@ describe("inbound reactions", () => {
     expect(submit).not.toHaveBeenCalled();
   });
 
-  it("prepends the reacted-to message quote when reacting to a non-live message", async () => {
-    const { channel, runtime, submit, mappings, reactedToTexts, reactedToText, dispatchReaction } =
-      makeChannel();
+  it("quotes the ledger label when reacting to a message on an earlier branch", async () => {
+    const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
     await channel.start(runtime);
 
-    // Reaction targets a message on an earlier branch (topic-2, not the live topic-1).
-    mappings.set("10", { treeEntryId: "entry-10", branchId: "topic-2" });
-    reactedToTexts.set("entry-10", "ship the fix tonight");
+    // Reaction targets a message on an earlier branch (topic-2, not the live topic-1); its
+    // content label comes from the ledger row the branch recorded at send time.
+    mappings.set("10", {
+      treeEntryId: "entry-10",
+      branchId: "topic-2",
+      label: "ship the fix tonight",
+    });
 
     await dispatchReaction(10, "👍");
 
-    expect(reactedToText).toHaveBeenCalledWith("entry-10");
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Reacted to:\n> ship the fix tonight\n\nThe user reacted 👍 to a previous message. Interpret it in context and respond accordingly.",
+        text: "Reacted to:\n> ship the fix tonight\n\nThe user reacted 👍 to a previous message (message_id: 10). Interpret it in context and respond accordingly.",
       }),
     );
   });
 
-  it("omits the quote when reacting to the live branch's most recent message", async () => {
-    const { channel, runtime, submit, mappings, reactedToTexts, reactedToText, dispatchReaction } =
-      makeChannel();
+  it("omits the quote when reacting to the conversation's bottom message (already visible)", async () => {
+    const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
     await channel.start(runtime);
 
-    // The live branch's tip (entry-1, the current routing leaf): already at the bottom, no quote.
-    mappings.set("11", { treeEntryId: "entry-1", branchId: "topic-1" });
-    reactedToTexts.set("entry-1", "ship the fix tonight");
-
-    await dispatchReaction(11, "👍");
-
-    expect(reactedToText).not.toHaveBeenCalled();
-    expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({ text: "The user reacted 👍 to a previous message." }),
-    );
-  });
-
-  it("keeps the quote for an older message on the live branch", async () => {
-    const { channel, runtime, submit, mappings, reactedToTexts, dispatchReaction } = makeChannel();
-    await channel.start(runtime);
-
-    // An older live-branch message (entry-11, not the live leaf entry-1): the quote identifies it.
-    mappings.set("11", { treeEntryId: "entry-11", branchId: "topic-1" });
-    reactedToTexts.set("entry-11", "ship the fix tonight");
+    // The live branch's bottom row (entry-1, the current routing leaf, newest of its direction):
+    // already visible to the agent in full, so the id alone suffices — no quote.
+    mappings.set("11", {
+      treeEntryId: "entry-1",
+      branchId: "topic-1",
+      label: "ship the fix tonight",
+    });
 
     await dispatchReaction(11, "👍");
 
     expect(submit).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "Reacted to:\n> ship the fix tonight\n\nThe user reacted 👍 to a previous message. Interpret it in context and respond accordingly.",
+        text: "The user reacted 👍 to a previous message (message_id: 11).",
+      }),
+    );
+  });
+
+  it("quotes the ledger label for an older message on the live branch", async () => {
+    const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    // An older live-branch message (entry-11, not the live leaf entry-1): the quote identifies it.
+    mappings.set("11", {
+      treeEntryId: "entry-11",
+      branchId: "topic-1",
+      label: "ship the fix tonight",
+    });
+
+    await dispatchReaction(11, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Reacted to:\n> ship the fix tonight\n\nThe user reacted 👍 to a previous message (message_id: 11). Interpret it in context and respond accordingly.",
+      }),
+    );
+  });
+
+  it("quotes the label for a non-final chunk of the bottom exchange", async () => {
+    const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    // Routing matches the live tip, but the row is an earlier chunk of the last exchange (not
+    // the newest of its direction): the agent can't be assumed to know which chunk was meant.
+    mappings.set("11", {
+      treeEntryId: "entry-1",
+      branchId: "topic-1",
+      label: "chunk one of the answer",
+      isLatestInConversation: false,
+    });
+
+    await dispatchReaction(11, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Reacted to:\n> chunk one of the answer\n\nThe user reacted 👍 to a previous message (message_id: 11). Interpret it in context and respond accordingly.",
+      }),
+    );
+  });
+
+  it("quotes the label for an out-of-conversation delivery at the live tip", async () => {
+    const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    // A delivery recorded between exchanges shares the live leaf's routing but sits outside the
+    // conversation surface: its content still needs the quote to be identifiable.
+    mappings.set("11", {
+      treeEntryId: "entry-1",
+      branchId: "topic-1",
+      label: "scheduled reminder",
+      inConversation: false,
+    });
+
+    await dispatchReaction(11, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "Reacted to:\n> scheduled reminder\n\nThe user reacted 👍 to a previous message (message_id: 11). Interpret it in context and respond accordingly.",
+      }),
+    );
+  });
+
+  it("omits the quote for a pre-ledger row (no label) but still names the message id", async () => {
+    const { channel, runtime, submit, mappings, dispatchReaction } = makeChannel();
+    await channel.start(runtime);
+
+    // Rows written before the ledger existed (or with a blank label) carry null: nothing to
+    // quote, but the prose still names the id so the agent can ask or look it up.
+    mappings.set("11", { treeEntryId: "entry-11", branchId: "topic-2", label: null });
+
+    await dispatchReaction(11, "👍");
+
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "The user reacted 👍 to a previous message (message_id: 11).",
       }),
     );
   });
@@ -1556,6 +1877,7 @@ describe("message recording errors", () => {
         messageId: "1",
         routing: { treeEntryId: "entry-1", branchId: "topic-1" },
         direction: "outgoing",
+        details: { label: "Hi" },
       },
     ]);
   });

@@ -91,7 +91,7 @@ describe("handleSendFile", () => {
       caption: "a chart",
     });
 
-    expect(result).toBe("File sent: pic.png");
+    expect(result).toBe("File sent: pic.png (message_id: 12)");
     expect(api.sendPhoto).toHaveBeenCalledWith(42, expect.anything(), { caption: "a chart" });
     expect(api.sendDocument).not.toHaveBeenCalled();
   });
@@ -182,11 +182,38 @@ describe("handleSendFile", () => {
       { filePath: "pic.png" },
     );
 
-    // sendPhoto returns message_id: 12 in the fake api; the file message maps to the live branch.
+    // sendPhoto returns message_id: 12 in the fake api; the file message maps to the live branch
+    // with a label naming what was sent (media type + filename) for reaction-quote recovery.
     expect(record).toHaveBeenCalledWith(
       "12",
       { treeEntryId: "entry-1", branchId: "topic-1" },
       "outgoing",
+      { label: "photo pic.png" },
+    );
+  });
+
+  it("includes the caption in the recorded label", async () => {
+    const api = fakeApi();
+    const record = vi.fn();
+
+    await handleSendFile(
+      {
+        api,
+        log: fakeLog,
+        chatId: 42,
+        workspaceRoot: workspace,
+        allowedRoots: [workspace],
+        store: { record, resolve: vi.fn(() => null) },
+        currentRouting: () => ({ treeEntryId: "entry-1", branchId: "topic-1" }),
+      },
+      { filePath: "pic.png", caption: "a chart" },
+    );
+
+    expect(record).toHaveBeenCalledWith(
+      "12",
+      { treeEntryId: "entry-1", branchId: "topic-1" },
+      "outgoing",
+      { label: "photo pic.png — a chart" },
     );
   });
 
@@ -399,6 +426,9 @@ describe("handleSendMessageWithButtons", () => {
       "11",
       { treeEntryId: "entry-1", branchId: "topic-1" },
       "outgoing",
+      // The label carries the prompt and the choice labels, so a later tap/reaction on the
+      // message recovers the question that was asked.
+      { label: "Proceed? [Yes]" },
     );
   });
 
@@ -547,7 +577,7 @@ describe("registerTelegramTools", () => {
     });
 
     const sent = await tools.get("send_telegram_file")?.execute("call-5", { filePath: "pic.png" });
-    expect(sent?.content[0].text).toBe("File sent: pic.png");
+    expect(sent?.content[0].text).toBe("File sent: pic.png (message_id: 12)");
     expect(api.sendPhoto).toHaveBeenCalled();
 
     await rm(workspace, { recursive: true, force: true });

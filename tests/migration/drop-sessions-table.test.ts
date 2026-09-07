@@ -121,6 +121,9 @@ describe("backupBeforeSessionsDrop + drizzle 0008", () => {
         "created_at",
         "direction",
         "id",
+        // Ledger columns (0010): bounded content label + conversation-surface membership.
+        "in_conversation",
+        "label",
         "message_id",
         "tree_entry_id",
       ].sort(),

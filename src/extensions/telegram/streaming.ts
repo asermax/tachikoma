@@ -12,6 +12,7 @@ import {
   convertAndSplit,
   editWithFallback,
   type SendApi,
+  type SentChunk,
   sendChunked,
   sendWithFallback,
 } from "./sending.ts";
@@ -42,7 +43,9 @@ export const composeDecisionHeaderText = (header: DecisionHeader): string => {
  * which both records the activity and supplies the blank line separating one text
  * segment from the next. When the buffer outgrows Telegram's edit limit the full
  * chunks are finalized in place and the tail keeps streaming. Edit failures
- * degrade to the plain final-send behavior.
+ * degrade to the plain final-send behavior. Every final message the exchange
+ * produces — fresh sends, finalize/overflow edits, broken-path re-sends — is
+ * accumulated for the outbound ledger (see `sentChunks`), pruned when deleted.
  */
 export class StreamRenderer {
   private readonly api: StreamApi;
@@ -53,6 +56,14 @@ export class StreamRenderer {
   private transient: string | null = null;
   private pendingTools: ToolActivity[] = [];
   private messageId: number | null = null;
+  /**
+   * The final messages this exchange produced, keyed by message id in send order — the
+   * outbound ledger entries reported via {@link sentChunks} at finalize (R19). Keyed and
+   * upserted so a message's finalize edit REPLACES its provisional-reveal entry with the
+   * final text, and deleted ids are pruned so no entry points at a nonexistent message.
+   * Memory only: the channel performs the store writes at finalize.
+   */
+  private readonly sentChunksById = new Map<number, string>();
   private lastRendered = "";
   private lastEditAt = 0;
   private broken = false;
@@ -150,6 +161,15 @@ export class StreamRenderer {
   }
 
   /**
+   * The final messages this exchange produced, in send order, each with the text it finally
+   * carries. The channel records these against the trunk at finalize (R19); a message deleted
+   * along the way (empty finalize, broken-stream recovery) is absent.
+   */
+  sentChunks(): SentChunk[] {
+    return [...this.sentChunksById].map(([id, text]) => ({ id, text }));
+  }
+
+  /**
    * Anchor a turn-scoped decision header (R8) above the streamed text. Set before streaming begins;
    * `compose()` recomposes it on every edit so the body never overwrites it. Best-effort: it is dropped
    * (and logged) if the body grows past the edit limit or a render fails.
@@ -218,6 +238,9 @@ export class StreamRenderer {
       if (index === 0 && this.messageId != null) {
         try {
           await editWithFallback(this.api, this.chatId, this.messageId, payload, this.log);
+          // The message is now final — its ledger entry takes the final text, replacing the
+          // provisional reveal's entry for the same id (mid-stream edits never note).
+          this.noteSent(this.messageId, payload.text);
           lastId = this.messageId;
           continue;
         } catch (error) {
@@ -225,7 +248,7 @@ export class StreamRenderer {
         }
       }
 
-      lastId = await sendWithFallback(this.api, this.chatId, payload, { silent: this.silent });
+      lastId = await this.sendPayload(payload);
     }
 
     return lastId;
@@ -347,9 +370,12 @@ export class StreamRenderer {
 
       if (this.messageId != null) {
         await editWithFallback(this.api, this.chatId, this.messageId, payload, this.log);
+        // The committed chunk is final in place: its ledger entry takes the chunk's full text
+        // (replacing the provisional reveal's entry for that id) and the tail streams on fresh.
+        this.noteSent(this.messageId, payload.text);
         this.messageId = null;
       } else {
-        await sendWithFallback(this.api, this.chatId, payload, { silent: this.silent });
+        await this.sendPayload(payload);
       }
     }
 
@@ -459,24 +485,36 @@ export class StreamRenderer {
   /**
    * Send a fresh payload as a new message, honoring the renderer's `silent` setting so
    * streamed work-in-progress and overflow never fire partial pushes. Centralized so every
-   * fresh send from the renderer shares that contract — including the collapse payload.
+   * fresh send from the renderer shares that contract — including noting the send in the
+   * exchange's ledger (the provisional text is later replaced by the finalize edit's entry).
    */
   private async sendPayload(payload: TelegramPayload): Promise<number> {
-    return sendWithFallback(this.api, this.chatId, payload, { silent: this.silent });
+    const id = await sendWithFallback(this.api, this.chatId, payload, { silent: this.silent });
+    this.noteSent(id, payload.text);
+    return id;
+  }
+
+  /** Upsert a ledger entry: same-id re-notes replace the text, keeping send order. */
+  private noteSent(id: number, text: string): void {
+    this.sentChunksById.set(id, text);
   }
 
   /**
    * Fallback path after a streaming failure: the partial message may hold
    * stale or duplicated content, so drop it and send the full remainder fresh.
+   * The deleted tail's ledger entry is pruned with it (only the fresh sends are
+   * recorded); committed overflow chunks survive untouched in the ledger.
    */
   private async finalizeBroken(): Promise<number | null> {
     await this.deleteCurrentMessage();
 
-    const ids = await sendChunked(this.api, this.chatId, this.buffer.trimEnd(), {
+    const sent = await sendChunked(this.api, this.chatId, this.buffer.trimEnd(), {
       silent: this.silent,
     });
 
-    return ids.at(-1) ?? null;
+    for (const chunk of sent) this.noteSent(chunk.id, chunk.text);
+
+    return sent.at(-1)?.id ?? null;
   }
 
   private async deleteCurrentMessage(): Promise<void> {
@@ -484,6 +522,8 @@ export class StreamRenderer {
     if (messageId == null) return;
 
     this.messageId = null;
+    // A deleted message leaves the ledger — no entry may point at a nonexistent message.
+    this.sentChunksById.delete(messageId);
 
     await this.api
       .deleteMessage(this.chatId, messageId)

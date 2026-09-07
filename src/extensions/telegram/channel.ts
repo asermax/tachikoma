@@ -28,6 +28,7 @@ import {
   deliverText,
   editWithFallback,
   forceNotification,
+  type SentChunk,
   sendWithFallback,
   startTyping,
 } from "./sending.ts";
@@ -39,11 +40,34 @@ export interface MessageRouting {
   branchId: string;
 }
 
-/** Persists message id → trunk routing so a reply/reaction/button can be force-routed to its branch. */
+/**
+ * A ledger row resolved by message id: trunk routing plus the content metadata that backs
+ * quote recovery. `isLatestInConversation` (computed by the store) says whether the row is
+ * the bottom-most in-conversation row of its direction on its tree entry.
+ */
+export interface ResolvedChannelMessage extends MessageRouting {
+  /** Bounded content label, or null when blank / never recorded (pre-ledger rows). */
+  label: string | null;
+  /** Whether the message belongs to the conversation surface at its recorded position. */
+  inConversation: boolean;
+  isLatestInConversation: boolean;
+}
+
+/**
+ * Persists every final Telegram message sent/received while a trunk is active — routing plus
+ * a bounded content label — so a reply/reaction/button can be force-routed to its branch and
+ * its content recovered for an identifying quote. `details` fields apply on insert and on
+ * re-record only when supplied, so a re-record never clobbers a previously written label.
+ */
 export interface ChannelMessageStore {
-  record(messageId: string, routing: MessageRouting, direction: ChannelMessageDirection): void;
-  /** Resolve a recorded message to its trunk routing, or null when unrecorded. */
-  resolve(messageId: string): MessageRouting | null;
+  record(
+    messageId: string,
+    routing: MessageRouting,
+    direction: ChannelMessageDirection,
+    details?: { label?: string | null; inConversation?: boolean },
+  ): void;
+  /** Resolve a recorded message to its ledger row, or null when unrecorded. */
+  resolve(messageId: string): ResolvedChannelMessage | null;
 }
 
 export interface TelegramChannelOptions {
@@ -66,8 +90,6 @@ export interface TelegramChannelOptions {
    * null when no trunk is active. Read post-append so the tree entry id exists.
    */
   currentRouting: () => MessageRouting | null;
-  /** Recover the text of a recorded message by its tree-entry id, for reaction context. */
-  reactedToText: (treeEntryId: string) => string | null;
 }
 
 export const STOP_COMMAND = "/stop";
@@ -277,13 +299,13 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      // Quote the reacted-to message's text so the agent knows which message the emoji targets,
-      // unless the reaction lands on the live branch's most recent message (already at the bottom
-      // of the conversation). Earlier-branch context (summary + ask_branch hint) is injected by the
-      // boundary on the forced route, so it isn't duplicated here.
-      const reactedToText = this.isLiveBranchTip(reference)
-        ? null
-        : this.options.reactedToText(reference.treeEntryId);
+      // Quote the reacted-to message's content label (recovered from the ledger — the session
+      // tree can't describe channel-only artifacts like tool-sent files) so the agent knows which
+      // message the emoji targets, unless the reaction lands on the conversation's bottom (the
+      // live tip's bottom-most in-conversation rows — already visible to the agent in full).
+      // Earlier-branch context (summary + ask_branch hint) is injected by the boundary on the
+      // forced route, so it isn't duplicated here.
+      const reactedToText = this.shouldSuppressQuote(reference) ? null : reference.label;
 
       const inbound = mapReaction(event, { reactedToText });
       if (inbound == null) return;
@@ -373,16 +395,34 @@ export class TelegramChannel implements Channel {
   }
 
   /**
-   * Whether to suppress the reply quote: only when the reply targets the live branch's most recent
-   * message (already at the bottom of the conversation). Any other target — an older live-branch
-   * message or an earlier branch — keeps the quote so the agent can tell which message was replied to.
+   * Whether the reference sits at the conversation's bottom — the live tip's bottom-most
+   * in-conversation rows: its routing matches the live leaf AND it is the newest in-conversation
+   * row of its direction on that entry (the exchange's final chunk, or its inbound message).
+   * Quote suppression keys on this for both reactions and replies: routing equality alone
+   * can't tell a delivery recorded between exchanges (same leaf) from the actual bottom, and
+   * every chunk of one exchange shares the settled routing — only the last is the bottom.
+   * Out-of-conversation rows (deliveries, notices) never suppress: they surface out-of-band.
+   */
+  private shouldSuppressQuote(reference: ResolvedChannelMessage): boolean {
+    return (
+      reference.inConversation &&
+      reference.isLatestInConversation &&
+      this.isLiveBranchTip(reference)
+    );
+  }
+
+  /**
+   * Whether to suppress the reply quote: only when the reply targets the conversation's
+   * bottom (see {@link shouldSuppressQuote} — the same rule reactions use). Any other target
+   * — a non-final chunk, a delivery, an older live-branch message or an earlier branch —
+   * keeps the quote so the agent can tell which message was replied to.
    */
   private shouldSkipQuote(message: Pick<Message, "reply_to_message">): boolean {
     const target = replyTargetId(message);
     if (target == null) return false;
 
     const reference = this.options.store.resolve(target);
-    return reference != null && this.isLiveBranchTip(reference);
+    return reference != null && this.shouldSuppressQuote(reference);
   }
 
   async respond({ message, events, header }: Exchange): Promise<void> {
@@ -441,7 +481,7 @@ export class TelegramChannel implements Channel {
             break;
 
           case "error":
-            await this.sendErrorNotice(event.message, event.recoverable, log);
+            await this.sendErrorNotice(event.message, event.recoverable);
             break;
 
           case "result":
@@ -466,7 +506,12 @@ export class TelegramChannel implements Channel {
       stopTyping();
     }
 
-    const outboundId = await this.finalizeResponse(renderer, startedAt, notifyingToolUsed, log);
+    const { outboundId, chunks } = await this.finalizeResponse(
+      renderer,
+      startedAt,
+      notifyingToolUsed,
+      log,
+    );
 
     // A reaction-bearing decision surfaces on the outbound message rather than as header text. The id is
     // only known after finalize (past the push-notification copy-delete), so react to it here, best-effort.
@@ -477,27 +522,34 @@ export class TelegramChannel implements Channel {
         await this.reactToMessage(outboundId, reaction, log);
       } else if (header != null && header.label.length > 0) {
         await this.mutex.run(async () => {
-          const fallbackId = await deliverText(
+          const sent = await deliverText(
             this.bot.api,
             this.options.chatId,
             composeDecisionHeaderText(header),
             this.options.pushNotifications,
           );
+          const fallbackId = sent.at(-1)?.id ?? null;
           if (fallbackId != null) this.lastOutboundId = fallbackId;
+          this.recordOutOfBand(sent);
         });
       }
     }
 
-    // Routing has settled by now: map both the user's message and the bot's reply to the trunk leaf
-    // entry + live branch so a future reply/reaction/button can resolve them to a branch.
+    // Routing has settled by now: record the full exchange in the ledger — every chunk the
+    // renderer produced (labels = their final text) plus the user's message. A tap turn has
+    // no message of its own (its metadata points at the tapped button message, already
+    // recorded outgoing when sent) and records nothing inbound, so the button row is never
+    // re-pointed or re-labeled.
     const routing = this.options.currentRouting();
     if (routing != null) {
-      const inboundId = message.metadata.messageId;
-      if (typeof inboundId === "number") {
-        this.recordMessage(String(inboundId), routing, "incoming");
+      for (const chunk of chunks) {
+        this.recordMessage(String(chunk.id), routing, "outgoing", { label: chunk.text });
       }
 
-      if (outboundId != null) this.recordMessage(String(outboundId), routing, "outgoing");
+      const inboundId = message.metadata.messageId;
+      if (typeof inboundId === "number" && message.metadata.buttonValue == null) {
+        this.recordMessage(String(inboundId), routing, "incoming", { label: message.text });
+      }
     }
   }
 
@@ -554,7 +606,7 @@ export class TelegramChannel implements Channel {
     startedAt: number,
     notifyingToolUsed: boolean,
     log: Logger,
-  ): Promise<number | null> {
+  ): Promise<{ outboundId: number | null; chunks: SentChunk[] }> {
     return this.mutex.run(async () => {
       const id = await renderer.finalize();
 
@@ -573,10 +625,29 @@ export class TelegramChannel implements Channel {
         id != null &&
         elapsedSeconds >= this.options.pushNotificationMinSeconds;
 
+      const chunks = renderer.sentChunks();
       let outboundId = id;
       if (shouldPush && id != null) {
         try {
-          outboundId = await forceNotification(this.bot.api, this.options.chatId, id, log);
+          const { id: copiedId, deleted } = await forceNotification(
+            this.bot.api,
+            this.options.chatId,
+            id,
+            log,
+          );
+          outboundId = copiedId;
+          // The push copy replaces the streamed final chunk: the ledger records the surviving
+          // copy under the final chunk's label, and the deleted streamed id leaves no row.
+          const finalIndex = chunks.findIndex((chunk) => chunk.id === id);
+          const finalChunk = finalIndex >= 0 ? chunks[finalIndex] : undefined;
+          if (finalChunk != null && deleted) {
+            chunks[finalIndex] = { id: copiedId, text: finalChunk.text };
+          } else if (finalChunk != null) {
+            // The delete failed: both the streamed original and the copy are live in the chat.
+            // Record both (the copy last — it is the conversation's bottom) so a reaction or
+            // reply on either resolves.
+            chunks.push({ id: copiedId, text: finalChunk.text });
+          }
         } catch (error) {
           log.warn(
             { err: error },
@@ -587,7 +658,7 @@ export class TelegramChannel implements Channel {
 
       if (outboundId != null) this.lastOutboundId = outboundId;
 
-      return outboundId;
+      return { outboundId, chunks };
     });
   }
 
@@ -628,11 +699,31 @@ export class TelegramChannel implements Channel {
     messageId: string,
     routing: MessageRouting,
     direction: ChannelMessageDirection,
+    details?: { label?: string | null; inConversation?: boolean },
   ): void {
     try {
-      this.options.store.record(messageId, routing, direction);
+      this.options.store.record(messageId, routing, direction, details);
     } catch (error) {
       this.log().warn({ err: error, messageId, direction }, "recording channel message failed");
+    }
+  }
+
+  /**
+   * Record out-of-conversation sends (deliveries, notices): every chunk, so a reaction on any
+   * chunk of a long delivery recovers its content. Skipped when no trunk is active — there is
+   * no routing to record against. Routing is resolved at record time, i.e. at send: a delivery
+   * lands between exchanges, so its rows carry the live leaf but the out-of-conversation flag,
+   * keeping quote suppression (a delivery at the live tip still quotes) honest.
+   */
+  private recordOutOfBand(chunks: SentChunk[]): void {
+    const routing = this.options.currentRouting();
+    if (routing == null) return;
+
+    for (const chunk of chunks) {
+      this.recordMessage(String(chunk.id), routing, "outgoing", {
+        label: chunk.text,
+        inConversation: false,
+      });
     }
   }
 
@@ -646,14 +737,16 @@ export class TelegramChannel implements Channel {
         return;
       }
 
-      const lastId = await deliverText(
+      const chunks = await deliverText(
         this.bot.api,
         this.options.chatId,
         delivery.text,
         this.options.pushNotifications,
       );
 
+      const lastId = chunks.at(-1)?.id ?? null;
       if (lastId != null) this.lastOutboundId = lastId;
+      this.recordOutOfBand(chunks);
     });
   }
 
@@ -806,9 +899,7 @@ export class TelegramChannel implements Channel {
       log.warn({ err: error }, "exchange abort failed");
     }
 
-    await this.bot.api
-      .sendMessage(this.options.chatId, STOP_ACKNOWLEDGEMENT)
-      .catch((error) => log.warn({ err: error }, "stop acknowledgement failed"));
+    await this.sendNotice(STOP_ACKNOWLEDGEMENT, "stop acknowledgement failed");
   }
 
   private async handleMedia(message: Message): Promise<void> {
@@ -855,27 +946,36 @@ export class TelegramChannel implements Channel {
           ? error.message
           : "Failed to download the file. Please try again.";
 
-      await this.bot.api
-        .sendMessage(this.options.chatId, notice)
-        .catch((sendError) => log.warn({ err: sendError }, "media failure notice failed"));
+      await this.sendNotice(notice, "media failure notice failed");
     }
   }
 
-  private async sendErrorNotice(message: string, recoverable: boolean, log: Logger): Promise<void> {
+  private async sendErrorNotice(message: string, recoverable: boolean): Promise<void> {
     const notice = recoverable
       ? `⚠️ Error: ${message}`
       : `⚠️ Error: ${message}\n\nThis needs your attention — the next message won't recover on its own.`;
 
-    await this.bot.api
-      .sendMessage(this.options.chatId, notice)
-      .catch((error) => log.warn({ err: error }, "error notice failed"));
+    await this.sendNotice(notice, "error notice failed");
+  }
+
+  /**
+   * Send a one-off message (acknowledgement, error/failure/unresolved-reaction notice) and
+   * record it in the ledger out-of-conversation, so a later reaction/reply on it recovers its
+   * content and keeps its identifying quote even when its routing matches the live tip.
+   * Recorded only on success — a failed send has no id — and only under an active trunk.
+   */
+  private async sendNotice(text: string, warnLabel: string): Promise<void> {
+    try {
+      const sent = await this.bot.api.sendMessage(this.options.chatId, text);
+      this.recordOutOfBand([{ id: sent.message_id, text }]);
+    } catch (error) {
+      this.log().warn({ err: error }, warnLabel);
+    }
   }
 
   /** Tell the user a reaction couldn't be matched to a conversation and was dropped. */
   private async notifyUnresolvedReaction(): Promise<void> {
-    await this.bot.api
-      .sendMessage(this.options.chatId, UNRESOLVED_REACTION_NOTICE)
-      .catch((error) => this.log().warn({ err: error }, "unresolved reaction notice failed"));
+    await this.sendNotice(UNRESOLVED_REACTION_NOTICE, "unresolved reaction notice failed");
   }
 
   /**
