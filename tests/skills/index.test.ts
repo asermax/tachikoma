@@ -16,6 +16,13 @@ import skills from "../../src/extensions/skills/index.ts";
 import { SKILLS_USAGE } from "../../src/extensions/skills/usage.ts";
 import { builtinSkillsDir } from "../../src/util/builtin-skills.ts";
 
+// The two bundled guides, read once for the guide-content tests below (disjoint files —
+// read concurrently).
+const [skillGuide, workflowGuide] = await Promise.all([
+  readFile(join(builtinSkillsDir, "skill-authoring", "SKILL.md"), "utf8"),
+  readFile(join(builtinSkillsDir, "workflow-authoring", "SKILL.md"), "utf8"),
+]);
+
 const setup = async (
   config: { enabled: boolean; proactiveLoading?: boolean } = {
     enabled: true,
@@ -142,14 +149,7 @@ describe("skills extension", () => {
     expect(existsSync(join(builtinSkillsDir, "workflow-authoring", "SKILL.md"))).toBe(true);
   });
 
-  it("carries testing expectations for bundled executables in the authoring guides", async () => {
-    const readGuide = (name: string) => readFile(join(builtinSkillsDir, name, "SKILL.md"), "utf8");
-    // Disjoint files — read them concurrently.
-    const [skillGuide, workflowGuide] = await Promise.all([
-      readGuide("skill-authoring"),
-      readGuide("workflow-authoring"),
-    ]);
-
+  it("carries testing expectations for bundled executables in the authoring guides", () => {
     // The skill guide: bundled executable logic ships tests — written when the executable is
     // created, changed together with it, colocated, deterministic, standard-runner-runnable,
     // and pointed to from SKILL.md's Key Paths table.
@@ -167,14 +167,7 @@ describe("skills extension", () => {
     expect(workflowGuide).toContain("same change");
   });
 
-  it("carries content-placement and genericity rules in the authoring guides", async () => {
-    const readGuide = (name: string) => readFile(join(builtinSkillsDir, name, "SKILL.md"), "utf8");
-    // Disjoint files — read them concurrently.
-    const [skillGuide, workflowGuide] = await Promise.all([
-      readGuide("skill-authoring"),
-      readGuide("workflow-authoring"),
-    ]);
-
+  it("carries content-placement and genericity rules in the authoring guides", () => {
     // The skill guide: information lives in exactly one place (shared → reference, consumers
     // point at it) and conditionally-needed content sits in a reference, not the loaded body.
     expect(skillGuide).toContain("### Content Placement");

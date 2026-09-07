@@ -21,6 +21,8 @@ const DAY = "2026-08-30";
 
 describe("branchAnalysisInstruction", () => {
   const instruction = branchAnalysisInstruction(WORKSPACE, record("topic-2", "s-2"), DAY);
+  // Convention phrases wrap across prompt lines — assertions that span a wrap use the unwrapped text.
+  const unwrapped = instruction.replaceAll(/\s+/g, " ");
 
   it("substitutes $WORKSPACE everywhere (no token survives)", () => {
     expect(instruction).toContain(`${WORKSPACE}/memories/skill-evolution/`);
@@ -86,12 +88,13 @@ describe("branchAnalysisInstruction", () => {
   });
 
   it("collects the work no skill covers, not only friction with existing skills", () => {
-    // Collection framing and the how-to-work step both admit a pattern naming a needed skill
-    // rather than an indicted one; the shared Fix convention gains the create end of the
-    // spectrum (it wraps across prompt lines — assert the unwrapped phrase).
+    // The pattern model — a gap in an existing skill or a workflow no skill covers — is stated
+    // once in the shared store conventions and recalled by the how-to-work step; the shared Fix
+    // convention gains the create end of the spectrum (it wraps across prompt lines — assert
+    // the unwrapped phrase).
+    expect(unwrapped).toContain("a gap in an existing skill or a workflow no skill covers");
     expect(instruction).toContain("or the work no skill covered");
     expect(instruction).toContain("or, when no skill covers the work, the workflow that needs one");
-    const unwrapped = instruction.replaceAll(/\s+/g, " ");
     expect(unwrapped).toContain("creating a new skill when a recurring workflow has none");
   });
 
@@ -106,7 +109,6 @@ describe("branchAnalysisInstruction", () => {
     // Root cause and Fix both span guidance and bundled tooling, so analysis can name a
     // missing or broken CLI command instead of forcing a documentation workaround. Both
     // convention phrases wrap across prompt lines — assert against unwrapped text.
-    const unwrapped = instruction.replaceAll(/\s+/g, " ");
     expect(unwrapped).toContain("missing or broken bundled tooling");
     expect(unwrapped).toContain("or fixing or extending the skill's bundled tooling");
     expect(instruction).toContain("a missing or broken CLI command is a skill gap like any other");
@@ -146,7 +148,7 @@ describe("maintenanceSystemPrompt", () => {
     expect(system).toContain(
       "For a page naming a workflow no skill covered, superseded means a skill now covers that workflow",
     );
-    expect(system).toContain("never retired merely because no skill of its name exists");
+    expect(system).toContain("not merely that no skill of its name exists");
   });
 
   it("shares the store-conventions section and never carries a day/branch stamp", () => {
@@ -266,12 +268,11 @@ describe("proposalSystemPrompt", () => {
     expect(system).toContain("authoring conventions only");
     // Bundled reference material is never a proposal target (qualifies the R14 rule above it).
     expect(system).toContain("never proposal targets");
-    // Placement and genericity ride with the guides: duplicated content gets fixed where the
-    // edit lands, and pattern evidence never rides into the skill as dated specifics.
-    expect(system).toContain("never restate information the skill already carries elsewhere");
-    expect(system).toContain("point at its single source");
-    expect(system).toContain("conditionally-needed detail goes in references");
-    expect(system).toContain("fix the placement as part of the change");
+    // Placement and genericity ride with the guides — the definitions stay in the force-loaded
+    // guides, so this rule adds only the run-specific policy: violations in edited content are
+    // fixed with the change (scoped to it), and pattern evidence never rides into the skill.
+    expect(system).toContain("Content placement and genericity follow the guides as well");
+    expect(system).toContain("fixed as part of the change rather than preserved");
     expect(system).toContain("without reaching into unrelated parts of the skill");
     expect(system).toContain(
       "pattern evidence motivates the change but never rides into the skill",
