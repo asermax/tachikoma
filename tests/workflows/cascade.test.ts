@@ -102,6 +102,30 @@ const makeDeps = (
 const pendingStates = (snapshot: StepSnapshot[]): StepStates =>
   Object.fromEntries(snapshot.map((step) => [step.id, STEP_STATES.pending]));
 
+/** Root with an in-flight composes step and a live `sub` child running `c1`. */
+const descendingChain = (): WorkflowStateRecord[] => {
+  const rootSnapshot = makeSnapshot([{ id: "01", composes: "sub" }, { id: "02" }]);
+  const childSnapshot = makeSnapshot([{ id: "c1" }]);
+
+  return [
+    makeRecord({
+      id: "root",
+      currentStep: "01",
+      stepStates: { "01": "started", "02": "pending" },
+      snapshot: rootSnapshot,
+    }),
+    makeRecord({
+      id: "child",
+      workflowName: "sub",
+      parentWorkflowId: "root",
+      parentStepId: "01",
+      currentStep: "c1",
+      stepStates: { c1: "started" },
+      snapshot: childSnapshot,
+    }),
+  ];
+};
+
 describe("stepToSnapshot", () => {
   it("derives a snapshot from a step definition's directory", () => {
     const step: StepDefinition = {
@@ -629,30 +653,6 @@ describe("runCascade chain-aware step-id resolution (issue-467)", () => {
     ["writing/clash", makeDefinition("writing", "clash", [{ id: "c0" }, { id: "01" }])],
   ]);
 
-  /** Root with an in-flight composes step and a live `sub` child running `c1`. */
-  const descendingChain = (): WorkflowStateRecord[] => {
-    const rootSnapshot = makeSnapshot([{ id: "01", composes: "sub" }, { id: "02" }]);
-    const childSnapshot = makeSnapshot([{ id: "c1" }]);
-
-    return [
-      makeRecord({
-        id: "root",
-        currentStep: "01",
-        stepStates: { "01": "started", "02": "pending" },
-        snapshot: rootSnapshot,
-      }),
-      makeRecord({
-        id: "child",
-        workflowName: "sub",
-        parentWorkflowId: "root",
-        parentStepId: "01",
-        currentStep: "c1",
-        stepStates: { c1: "started" },
-        snapshot: childSnapshot,
-      }),
-    ];
-  };
-
   it("rejects an id absent from every layer, naming the deepest layer's valid steps", () => {
     expect(() =>
       runCascade(makeDeps(descendingChain(), definitions), "root", "zzz", "start"),
@@ -787,26 +787,7 @@ describe("runCascade early completion of an in-flight step (issue-467)", () => {
   });
 
   it("completes an in-flight composes step: teardown without loop bookkeeping, resume", () => {
-    const rootSnapshot = makeSnapshot([{ id: "01", composes: "sub" }, { id: "02" }]);
-    const chain = [
-      makeRecord({
-        id: "root",
-        currentStep: "01",
-        stepStates: { "01": "started", "02": "pending" },
-        snapshot: rootSnapshot,
-      }),
-      makeRecord({
-        id: "child",
-        workflowName: "sub",
-        parentWorkflowId: "root",
-        parentStepId: "01",
-        currentStep: "c1",
-        stepStates: { c1: "started" },
-        snapshot: makeSnapshot([{ id: "c1" }]),
-      }),
-    ];
-
-    const result = runCascade(makeDeps(chain, definitions), "root", "01", "complete");
+    const result = runCascade(makeDeps(descendingChain(), definitions), "root", "01", "complete");
 
     expect(result.endedSubworkflows).toEqual(["sub"]);
     expect(result.batch).toEqual([

@@ -256,47 +256,50 @@ export const runCascade = (
 
   // ── resolve the step's owning layer (deepest-first) ──────────────────────────
 
+  const deepestValidIds = deepest.definitionSnapshot.map((s) => s.id).join(", ");
   let ownerIndex = -1;
   let owner: WorkflowStateRecord | null = null;
+  let stepInfo: StepSnapshot | null = null;
 
   for (let i = chain.length - 1; i >= 0; i -= 1) {
     const layer = chain[i];
 
-    if (layer != null && getSnapshotStep(layer.definitionSnapshot, step) != null) {
+    if (layer == null) continue;
+
+    const found = getSnapshotStep(layer.definitionSnapshot, step);
+
+    if (found != null) {
       ownerIndex = i;
       owner = layer;
+      stepInfo = found;
       break;
     }
   }
 
-  if (owner == null) {
-    const validIds = deepest.definitionSnapshot.map((s) => s.id).join(", ");
+  if (owner == null || stepInfo == null) {
     throw new Error(
       `Invalid step '${step}'. The deepest active layer is '${deepest.workflowName}'. ` +
-        `Valid steps: ${validIds}.`,
+        `Valid steps: ${deepestValidIds}.`,
     );
   }
 
-  const stepInfo = getSnapshotStep(owner.definitionSnapshot, step) as StepSnapshot;
   const isDeepest = ownerIndex === chain.length - 1;
   // The in-flight composition step: the chain link below the owner was spawned by this step.
   const isInFlight = !isDeepest && chain[ownerIndex + 1]?.parentStepId === step;
+  const isLoopStep = stepInfo.loop != null;
 
   if (items != null && action !== "start") {
     throw new Error("items parameter is only allowed on the 'start' action.");
   }
 
-  const routingContext = () => {
-    const validIds = deepest.definitionSnapshot.map((s) => s.id).join(", ");
-    return `The deepest active layer is '${deepest.workflowName}' (valid steps: ${validIds}).`;
-  };
+  const routingContext = `The deepest active layer is '${deepest.workflowName}' (valid steps: ${deepestValidIds}).`;
 
   if (!isDeepest) {
     if (isInFlight) {
       if (action !== "complete") {
         throw new Error(
           `Step '${step}' of '${owner.workflowName}' is already started and running its sub-workflow. ` +
-            `${routingContext()} Complete '${step}' to finish it early.`,
+            `${routingContext} Complete '${step}' to finish it early.`,
         );
       }
     } else {
@@ -308,12 +311,12 @@ export const runCascade = (
       );
 
       if (transitionError != null) {
-        throw new Error(`${transitionError} ${routingContext()}`);
+        throw new Error(`${transitionError} ${routingContext}`);
       }
 
       throw new Error(
         `Step '${step}' belongs to '${owner.workflowName}', which is suspended while its ` +
-          `sub-workflow runs. ${routingContext()}`,
+          `sub-workflow runs. ${routingContext}`,
       );
     }
   } else {
@@ -325,8 +328,6 @@ export const runCascade = (
     );
 
     if (transitionError != null) throw new Error(transitionError);
-
-    const isLoopStep = stepInfo.loop != null;
 
     if (action === "start" && items != null && !isLoopStep) {
       throw new Error("items parameter is not allowed when starting a non-loop step.");
@@ -437,42 +438,60 @@ export const runCascade = (
   const ss = mutableSs.get(current.id) as StepStates;
   const endedSubworkflows: string[] = [];
 
+  // Complete a step on a suspended-owner resume (early completion) or loop
+  // exhaustion: freeze its loop bookkeeping as fully iterated and stage the
+  // update that persists it (`loopState` rides along only for loop steps).
+  const completeStep = (layerId: string, stepId: string): void => {
+    const states = mutableSs.get(layerId) as StepStates;
+    states[stepId] = STEP_STATES.completed;
+
+    const loopState = mutableLoop.get(layerId) ?? null;
+    const entry = loopState?.[stepId] ?? null;
+    const frozen =
+      entry != null
+        ? mergeLoopState(loopState, stepId, entry.items, entry.items.length)
+        : loopState;
+
+    mutableLoop.set(layerId, frozen);
+    batch.push({
+      kind: "update",
+      layerId,
+      stepStates: { ...states },
+      currentStep: stepId,
+      ...(frozen != null ? { loopState: frozen } : {}),
+    });
+  };
+
+  // Build the result from the current chain state; every exit path funnels through it.
+  const finish = (
+    outcome: CascadeOutcome,
+    parts: BreadcrumbPart[] = buildBreadcrumb(),
+  ): CascadeResult => ({
+    batch,
+    outcome,
+    breadcrumbParts: parts,
+    deepestSnapshot: current.definitionSnapshot,
+    scratchpadPath,
+    endedSubworkflows,
+  });
+
   if (!isDeepest) {
     // Early completion of the in-flight composition/loop step: tear down every
-    // layer below the owner, mark the step completed (loop bookkeeping frozen
-    // complete), and resume the owner's auto-advance.
-    for (let i = ownerIndex + 1; i < chain.length; i += 1) {
-      const layer = chain[i];
-
-      if (layer == null) continue;
-
+    // layer below the owner (a contiguous tail of the chain), mark the step
+    // completed (loop bookkeeping frozen complete), and resume the owner's
+    // auto-advance.
+    for (const layer of chain.slice(ownerIndex + 1)) {
       batch.push({ kind: "softDelete", layerId: layer.id });
-      chainOrder.splice(chainOrder.indexOf(layer.id), 1);
       endedSubworkflows.push(layer.workflowName);
     }
+    chainOrder.splice(ownerIndex + 1);
 
-    ss[step] = STEP_STATES.completed;
     // Keep the in-memory current-step mirror in step with the staged mutation, so the
     // auto-advance halt branches read the same value the batch persists.
     currentSteps.set(current.id, step);
-
-    const loopState = mutableLoop.get(owner.id) ?? null;
-    const entry = loopState?.[step] ?? null;
-    const frozen =
-      entry != null ? mergeLoopState(loopState, step, entry.items, entry.items.length) : loopState;
-
-    mutableLoop.set(owner.id, frozen);
-    batch.push({
-      kind: "update",
-      layerId: owner.id,
-      stepStates: { ...ss },
-      currentStep: step,
-      ...(frozen != null ? { loopState: frozen } : {}),
-    });
+    completeStep(current.id, step);
     // Fall through to auto-advance on the owner.
   } else if (action === "start") {
-    const isLoopStep = stepInfo.loop != null;
-
     if (isLoopStep) {
       if (items == null) {
         throw new Error(
@@ -519,14 +538,7 @@ export const runCascade = (
       currentSteps.set(current.id, step);
       batch.push({ kind: "update", layerId: current.id, stepStates: { ...ss }, currentStep: step });
 
-      return {
-        batch,
-        outcome: { deepestLayerId: current.id, activeStepId: step, finalizedTopLevel: false },
-        breadcrumbParts: buildBreadcrumb(),
-        deepestSnapshot: current.definitionSnapshot,
-        scratchpadPath,
-        endedSubworkflows,
-      };
+      return finish({ deepestLayerId: current.id, activeStepId: step, finalizedTopLevel: false });
     } else {
       ss[step] = STEP_STATES.started;
       currentSteps.set(current.id, step);
@@ -557,19 +569,12 @@ export const runCascade = (
         currentStep: currentSteps.get(current.id) ?? null,
       });
 
-      return {
-        batch,
-        outcome: {
-          deepestLayerId: current.id,
-          activeStepId: next.id,
-          finalizedTopLevel: false,
-          haltedAtConditionStep: next.id,
-        },
-        breadcrumbParts: buildBreadcrumb(),
-        deepestSnapshot: current.definitionSnapshot,
-        scratchpadPath,
-        endedSubworkflows,
-      };
+      return finish({
+        deepestLayerId: current.id,
+        activeStepId: next.id,
+        finalizedTopLevel: false,
+        haltedAtConditionStep: next.id,
+      });
     }
 
     if (next == null) {
@@ -584,20 +589,16 @@ export const runCascade = (
 
         const values = Object.values(currentSs);
 
-        return {
-          batch,
-          outcome: {
+        return finish(
+          {
             deepestLayerId: current.id,
             activeStepId: null,
             finalizedTopLevel: true,
             completedCount: values.filter((v) => v === "completed").length,
             skippedCount: values.filter((v) => v === "skipped").length,
           },
-          breadcrumbParts: [],
-          deepestSnapshot: current.definitionSnapshot,
-          scratchpadPath,
-          endedSubworkflows,
-        };
+          [],
+        );
       }
 
       // Child layer exhausted — finalize it and advance the parent.
@@ -654,21 +655,7 @@ export const runCascade = (
         }
 
         // Loop exhausted — complete the loop step and persist final bookkeeping.
-        (mutableSs.get(parentId) as StepStates)[parentStepId] = STEP_STATES.completed;
-        const finalLoop = mergeLoopState(
-          mutableLoop.get(parentId) ?? null,
-          parentStepId,
-          entry.items,
-          nextIndex,
-        );
-        mutableLoop.set(parentId, finalLoop);
-        batch.push({
-          kind: "update",
-          layerId: parentId,
-          stepStates: { ...(mutableSs.get(parentId) as StepStates) },
-          currentStep: parentStepId,
-          loopState: finalLoop,
-        });
+        completeStep(parentId, parentStepId);
         current = parent;
         continue;
       }
@@ -688,19 +675,12 @@ export const runCascade = (
         currentStep: currentSteps.get(current.id) ?? null,
       });
 
-      return {
-        batch,
-        outcome: {
-          deepestLayerId: current.id,
-          activeStepId: next.id,
-          finalizedTopLevel: false,
-          haltedAtLoopStep: next.id,
-        },
-        breadcrumbParts: buildBreadcrumb(),
-        deepestSnapshot: current.definitionSnapshot,
-        scratchpadPath,
-        endedSubworkflows,
-      };
+      return finish({
+        deepestLayerId: current.id,
+        activeStepId: next.id,
+        finalizedTopLevel: false,
+        haltedAtLoopStep: next.id,
+      });
     }
 
     if (next.composes != null) {
@@ -729,13 +709,6 @@ export const runCascade = (
       currentStep: next.id,
     });
 
-    return {
-      batch,
-      outcome: { deepestLayerId: current.id, activeStepId: next.id, finalizedTopLevel: false },
-      breadcrumbParts: buildBreadcrumb(),
-      deepestSnapshot: current.definitionSnapshot,
-      scratchpadPath,
-      endedSubworkflows,
-    };
+    return finish({ deepestLayerId: current.id, activeStepId: next.id, finalizedTopLevel: false });
   }
 };

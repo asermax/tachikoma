@@ -93,6 +93,13 @@ const stepListMarkers = (step: {
     step.loop != null ? ` (loop: ${step.loop})` : "",
   ].join("");
 
+/**
+ * Render the `update_workflow_state` params that (re)start a step — the announced
+ * call must succeed verbatim, so every rendering site builds it the same way.
+ */
+const startCallParams = (stepId: string, isLoop: boolean): string =>
+  `step="${stepId}", action="start"${isLoop ? ", items=[...]" : ""}`;
+
 // ---- handlers (testable without pi) ---------------------------------------------
 
 export const handleStartWorkflow = (
@@ -180,10 +187,7 @@ export const handleStartWorkflow = (
   );
 
   const firstStep = definition.steps[0];
-  const firstCall =
-    firstStep != null && firstStep.loop != null
-      ? `step="${firstStep.id}", action="start", items=[...]`
-      : `step="${firstStep?.id}", action="start"`;
+  const firstCall = startCallParams(firstStep?.id ?? "", firstStep?.loop != null);
 
   return [
     `Workflow started: **${workflowName}**`,
@@ -259,7 +263,7 @@ export const handleUpdateWorkflowState = (
       `Step \`${step}\` ${past}${earlyFinishSuffix}.\n\n` +
       `The next step **${title}** (\`${outcome.haltedAtLoopStep}\`) is a loop step. ` +
       `Call \`update_workflow_state(workflow_id="${workflowId}", ` +
-      `step="${outcome.haltedAtLoopStep}", action="start", items=[...])\` to begin iterating, ` +
+      `${startCallParams(outcome.haltedAtLoopStep, true)})\` to begin iterating, ` +
       "or `items=[]` to skip with zero iterations."
     );
   }
@@ -267,11 +271,10 @@ export const handleUpdateWorkflowState = (
   if (outcome.haltedAtConditionStep != null) {
     const halted = getSnapshotStep(deepestSnapshot, outcome.haltedAtConditionStep);
     const title = halted?.title ?? outcome.haltedAtConditionStep;
+    const isLoopStep = halted?.loop != null;
     const startCall =
-      halted?.loop != null
-        ? `step="${outcome.haltedAtConditionStep}", action="start", items=[...]` +
-          " (items=[] completes the loop with zero iterations)"
-        : `step="${outcome.haltedAtConditionStep}", action="start"`;
+      startCallParams(outcome.haltedAtConditionStep, isLoopStep) +
+      (isLoopStep ? " (items=[] completes the loop with zero iterations)" : "");
 
     return (
       `Step \`${step}\` ${past}${earlyFinishSuffix}.\n\n` +
