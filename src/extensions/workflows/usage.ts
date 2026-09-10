@@ -10,6 +10,6 @@ Skills can define ordered, multi-step processes — workflows — that track sta
 
 Workflows are not auto-detected: read a skill's SKILL.md to see which workflows it offers and when to use them.
 
-When advancing a step, always pass the **top-level** workflow id — the engine routes to the deepest active (composed/loop) layer.
+When advancing a step, always pass the **top-level** workflow id — the engine resolves the step id against the active (composed/loop) chain.
 
 ${referencePointer(import.meta.dirname, "workflows")}`;

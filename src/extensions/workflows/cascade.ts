@@ -12,6 +12,7 @@ import {
 import type { StepDefinition, WorkflowDefinition } from "./loader.ts";
 import { type LoopState, STEP_STATES, type StepSnapshot, type StepStates } from "./model.ts";
 import type { WorkflowStateRepository } from "./repository.ts";
+import type { WorkflowStateRecord } from "./schema.ts";
 
 export type UpdateAction = "start" | "complete" | "skip";
 
@@ -28,6 +29,8 @@ export interface CascadeResult {
   /** Snapshot of the deepest active layer — used to render the response. */
   deepestSnapshot: StepSnapshot[];
   scratchpadPath: string;
+  /** Sub-workflow names torn down by an early completion of their parent step. */
+  endedSubworkflows: string[];
 }
 
 // Belt-and-suspenders against a cycle slipping past bootstrap validation (the
@@ -224,8 +227,11 @@ const spawnChild = (
 /**
  * Apply a step transition addressed by the top-level workflow id and auto-advance
  * across composition / loop layer boundaries, staging every change as a
- * {@link MutationBatch}. Throws on routing/validation failure (state unchanged);
- * returns the staged batch plus the outcome for response rendering.
+ * {@link MutationBatch}. The step id resolves deepest-first across the active
+ * chain; completing the in-flight composition/loop step of a suspended layer
+ * finishes it early (its sub-workflow is torn down). Throws on routing/validation
+ * failure (state unchanged); returns the staged batch plus the outcome for
+ * response rendering.
  */
 export const runCascade = (
   deps: CascadeDeps,
@@ -248,9 +254,22 @@ export const runCascade = (
     );
   }
 
-  const stepInfo = getSnapshotStep(deepest.definitionSnapshot, step);
+  // ── resolve the step's owning layer (deepest-first) ──────────────────────────
 
-  if (stepInfo == null) {
+  let ownerIndex = -1;
+  let owner: WorkflowStateRecord | null = null;
+
+  for (let i = chain.length - 1; i >= 0; i -= 1) {
+    const layer = chain[i];
+
+    if (layer != null && getSnapshotStep(layer.definitionSnapshot, step) != null) {
+      ownerIndex = i;
+      owner = layer;
+      break;
+    }
+  }
+
+  if (owner == null) {
     const validIds = deepest.definitionSnapshot.map((s) => s.id).join(", ");
     throw new Error(
       `Invalid step '${step}'. The deepest active layer is '${deepest.workflowName}'. ` +
@@ -258,23 +277,60 @@ export const runCascade = (
     );
   }
 
-  const transitionError = validateTransition(
-    deepest.stepStates,
-    step,
-    action,
-    deepest.definitionSnapshot,
-  );
-
-  if (transitionError != null) throw new Error(transitionError);
-
-  const isLoopStep = stepInfo.loop != null;
+  const stepInfo = getSnapshotStep(owner.definitionSnapshot, step) as StepSnapshot;
+  const isDeepest = ownerIndex === chain.length - 1;
+  // The in-flight composition step: the chain link below the owner was spawned by this step.
+  const isInFlight = !isDeepest && chain[ownerIndex + 1]?.parentStepId === step;
 
   if (items != null && action !== "start") {
     throw new Error("items parameter is only allowed on the 'start' action.");
   }
 
-  if (action === "start" && items != null && !isLoopStep) {
-    throw new Error("items parameter is not allowed when starting a non-loop step.");
+  const routingContext = () => {
+    const validIds = deepest.definitionSnapshot.map((s) => s.id).join(", ");
+    return `The deepest active layer is '${deepest.workflowName}' (valid steps: ${validIds}).`;
+  };
+
+  if (!isDeepest) {
+    if (isInFlight) {
+      if (action !== "complete") {
+        throw new Error(
+          `Step '${step}' of '${owner.workflowName}' is already started and running its sub-workflow. ` +
+            `${routingContext()} Complete '${step}' to finish it early.`,
+        );
+      }
+    } else {
+      const transitionError = validateTransition(
+        owner.stepStates,
+        step,
+        action,
+        owner.definitionSnapshot,
+      );
+
+      if (transitionError != null) {
+        throw new Error(`${transitionError} ${routingContext()}`);
+      }
+
+      throw new Error(
+        `Step '${step}' belongs to '${owner.workflowName}', which is suspended while its ` +
+          `sub-workflow runs. ${routingContext()}`,
+      );
+    }
+  } else {
+    const transitionError = validateTransition(
+      deepest.stepStates,
+      step,
+      action,
+      deepest.definitionSnapshot,
+    );
+
+    if (transitionError != null) throw new Error(transitionError);
+
+    const isLoopStep = stepInfo.loop != null;
+
+    if (action === "start" && items != null && !isLoopStep) {
+      throw new Error("items parameter is not allowed when starting a non-loop step.");
+    }
   }
 
   // ── mutable in-memory chain state ──────────────────────────────────────────
@@ -375,12 +431,45 @@ export const runCascade = (
     chainOrder.push(child.layer.id);
   };
 
-  // ── apply the requested action on the deepest layer ────────────────────────
+  // ── apply the requested action on the owning layer ─────────────────────────
 
-  let current = layers.get(deepest.id) as CascadeLayer;
+  let current = layers.get(owner.id) as CascadeLayer;
   const ss = mutableSs.get(current.id) as StepStates;
+  const endedSubworkflows: string[] = [];
 
-  if (action === "start") {
+  if (!isDeepest) {
+    // Early completion of the in-flight composition/loop step: tear down every
+    // layer below the owner, mark the step completed (loop bookkeeping frozen
+    // complete), and resume the owner's auto-advance.
+    for (let i = ownerIndex + 1; i < chain.length; i += 1) {
+      const layer = chain[i];
+
+      if (layer == null) continue;
+
+      batch.push({ kind: "softDelete", layerId: layer.id });
+      chainOrder.splice(chainOrder.indexOf(layer.id), 1);
+      endedSubworkflows.push(layer.workflowName);
+    }
+
+    ss[step] = STEP_STATES.completed;
+
+    const loopState = mutableLoop.get(owner.id) ?? null;
+    const entry = loopState?.[step] ?? null;
+    const frozen =
+      entry != null ? mergeLoopState(loopState, step, entry.items, entry.items.length) : loopState;
+
+    mutableLoop.set(owner.id, frozen);
+    batch.push({
+      kind: "update",
+      layerId: owner.id,
+      stepStates: { ...ss },
+      currentStep: step,
+      ...(frozen != null ? { loopState: frozen } : {}),
+    });
+    // Fall through to auto-advance on the owner.
+  } else if (action === "start") {
+    const isLoopStep = stepInfo.loop != null;
+
     if (isLoopStep) {
       if (items == null) {
         throw new Error(
@@ -433,6 +522,7 @@ export const runCascade = (
         breadcrumbParts: buildBreadcrumb(),
         deepestSnapshot: current.definitionSnapshot,
         scratchpadPath,
+        endedSubworkflows,
       };
     } else {
       ss[step] = STEP_STATES.started;
@@ -475,6 +565,7 @@ export const runCascade = (
         breadcrumbParts: buildBreadcrumb(),
         deepestSnapshot: current.definitionSnapshot,
         scratchpadPath,
+        endedSubworkflows,
       };
     }
 
@@ -502,6 +593,7 @@ export const runCascade = (
           breadcrumbParts: [],
           deepestSnapshot: current.definitionSnapshot,
           scratchpadPath,
+          endedSubworkflows,
         };
       }
 
@@ -604,6 +696,7 @@ export const runCascade = (
         breadcrumbParts: buildBreadcrumb(),
         deepestSnapshot: current.definitionSnapshot,
         scratchpadPath,
+        endedSubworkflows,
       };
     }
 
@@ -639,6 +732,7 @@ export const runCascade = (
       breadcrumbParts: buildBreadcrumb(),
       deepestSnapshot: current.definitionSnapshot,
       scratchpadPath,
+      endedSubworkflows,
     };
   }
 };

@@ -220,7 +220,7 @@ describe("runCascade routing failures", () => {
     );
   });
 
-  it("throws when the step is not in the deepest layer", () => {
+  it("throws when the step id is unknown to every active layer", () => {
     const snapshot = makeSnapshot([{ id: "01" }]);
     const root = makeRecord({ id: "root", stepStates: pendingStates(snapshot), snapshot });
 
@@ -618,5 +618,270 @@ describe("runCascade loops", () => {
 
     expect(result.outcome.activeStepId).toBe("i2");
     expect(result.breadcrumbParts.at(-1)?.item).toBe("apple");
+  });
+});
+
+// ---- issue-467: chain-aware step-id resolution and early completion --------------
+
+describe("runCascade chain-aware step-id resolution (issue-467)", () => {
+  const definitions = new Map([
+    ["writing/sub", makeDefinition("writing", "sub", [{ id: "c1" }])],
+    ["writing/clash", makeDefinition("writing", "clash", [{ id: "c0" }, { id: "01" }])],
+  ]);
+
+  /** Root with an in-flight composes step and a live `sub` child running `c1`. */
+  const descendingChain = (): WorkflowStateRecord[] => {
+    const rootSnapshot = makeSnapshot([{ id: "01", composes: "sub" }, { id: "02" }]);
+    const childSnapshot = makeSnapshot([{ id: "c1" }]);
+
+    return [
+      makeRecord({
+        id: "root",
+        currentStep: "01",
+        stepStates: { "01": "started", "02": "pending" },
+        snapshot: rootSnapshot,
+      }),
+      makeRecord({
+        id: "child",
+        workflowName: "sub",
+        parentWorkflowId: "root",
+        parentStepId: "01",
+        currentStep: "c1",
+        stepStates: { c1: "started" },
+        snapshot: childSnapshot,
+      }),
+    ];
+  };
+
+  it("rejects an id absent from every layer, naming the deepest layer's valid steps", () => {
+    expect(() =>
+      runCascade(makeDeps(descendingChain(), definitions), "root", "zzz", "start"),
+    ).toThrow(/Invalid step 'zzz'\. The deepest active layer is 'sub'\. Valid steps: c1\./);
+  });
+
+  it("resolves a colliding id deepest-first: the child's step shadows the parent's", () => {
+    const rootSnapshot = makeSnapshot([{ id: "01", composes: "clash" }, { id: "02" }]);
+    const childSnapshot = makeSnapshot([{ id: "c0" }, { id: "01" }]);
+    const chain = [
+      makeRecord({
+        id: "root",
+        currentStep: "01",
+        stepStates: { "01": "started", "02": "pending" },
+        snapshot: rootSnapshot,
+      }),
+      makeRecord({
+        id: "child",
+        workflowName: "clash",
+        parentWorkflowId: "root",
+        parentStepId: "01",
+        currentStep: "c0",
+        stepStates: { c0: "started", "01": "pending" },
+        snapshot: childSnapshot,
+      }),
+    ];
+
+    const result = runCascade(makeDeps(chain, definitions), "root", "01", "start");
+
+    // The child's pending `01` is started — the parent's in-flight `01` is shadowed.
+    expect(result.batch).toEqual([
+      {
+        kind: "update",
+        layerId: "child",
+        stepStates: { c0: "started", "01": "started" },
+        currentStep: "01",
+      },
+    ]);
+    expect(result.deepestSnapshot).toBe(childSnapshot);
+  });
+
+  it("rejects an invalid transition on a suspended parent step, appending routing context", () => {
+    expect(() =>
+      runCascade(makeDeps(descendingChain(), definitions), "root", "02", "complete"),
+    ).toThrow(
+      /Must start a step before completing it\. The deepest active layer is 'sub' \(valid steps: c1\)\./,
+    );
+  });
+
+  it("rejects a valid transition on a suspended parent step that is not in flight", () => {
+    expect(() =>
+      runCascade(makeDeps(descendingChain(), definitions), "root", "02", "start"),
+    ).toThrow(
+      /Step '02' belongs to 'draft', which is suspended while its sub-workflow runs\. The deepest active layer is 'sub' \(valid steps: c1\)\./,
+    );
+  });
+
+  it("guides start and skip on the in-flight step toward early completion", () => {
+    const deps = makeDeps(descendingChain(), definitions);
+
+    expect(() => runCascade(deps, "root", "01", "start")).toThrow(
+      /already started and running its sub-workflow/,
+    );
+    expect(() => runCascade(deps, "root", "01", "skip")).toThrow(
+      /Complete '01' to finish it early/,
+    );
+  });
+
+  it("rejects items on complete of an in-flight step before routing", () => {
+    expect(() =>
+      runCascade(makeDeps(descendingChain(), definitions), "root", "01", "complete", ["x"]),
+    ).toThrow(/items parameter is only allowed on the 'start' action/);
+  });
+});
+
+describe("runCascade early completion of an in-flight step (issue-467)", () => {
+  const definitions = new Map([
+    ["writing/iter", makeDefinition("writing", "iter", [{ id: "i1" }])],
+    ["writing/sub", makeDefinition("writing", "sub", [{ id: "c1" }])],
+  ]);
+
+  /** Root mid-iteration of a loop step, with the live iteration child running `i1`. */
+  const iteratingChain = (rootSnapshot: StepSnapshot[]): WorkflowStateRecord[] => [
+    makeRecord({
+      id: "root",
+      currentStep: "01",
+      stepStates: { "01": "started", "02": "pending" },
+      loopState: { "01": { items: ["a", "b"], index: 0 } },
+      snapshot: rootSnapshot,
+    }),
+    makeRecord({
+      id: "child",
+      workflowName: "iter",
+      parentWorkflowId: "root",
+      parentStepId: "01",
+      currentStep: "i1",
+      stepStates: { i1: "started" },
+      snapshot: makeSnapshot([{ id: "i1" }]),
+    }),
+  ];
+
+  it("completes an in-flight loop step mid-iteration: teardown, frozen bookkeeping, resume", () => {
+    const result = runCascade(
+      makeDeps(
+        iteratingChain(makeSnapshot([{ id: "01", loop: "iter" }, { id: "02" }])),
+        definitions,
+      ),
+      "root",
+      "01",
+      "complete",
+    );
+
+    expect(result.endedSubworkflows).toEqual(["iter"]);
+    expect(result.batch).toEqual([
+      { kind: "softDelete", layerId: "child" },
+      {
+        kind: "update",
+        layerId: "root",
+        stepStates: { "01": "completed", "02": "pending" },
+        currentStep: "01",
+        loopState: { "01": { items: ["a", "b"], index: 2 } },
+      },
+      {
+        kind: "update",
+        layerId: "root",
+        stepStates: { "01": "completed", "02": "started" },
+        currentStep: "02",
+      },
+    ]);
+    expect(result.outcome).toMatchObject({ deepestLayerId: "root", activeStepId: "02" });
+    expect(result.breadcrumbParts.map((p) => p.stepId)).toEqual(["02"]);
+  });
+
+  it("completes an in-flight composes step: teardown without loop bookkeeping, resume", () => {
+    const rootSnapshot = makeSnapshot([{ id: "01", composes: "sub" }, { id: "02" }]);
+    const chain = [
+      makeRecord({
+        id: "root",
+        currentStep: "01",
+        stepStates: { "01": "started", "02": "pending" },
+        snapshot: rootSnapshot,
+      }),
+      makeRecord({
+        id: "child",
+        workflowName: "sub",
+        parentWorkflowId: "root",
+        parentStepId: "01",
+        currentStep: "c1",
+        stepStates: { c1: "started" },
+        snapshot: makeSnapshot([{ id: "c1" }]),
+      }),
+    ];
+
+    const result = runCascade(makeDeps(chain, definitions), "root", "01", "complete");
+
+    expect(result.endedSubworkflows).toEqual(["sub"]);
+    expect(result.batch).toEqual([
+      { kind: "softDelete", layerId: "child" },
+      {
+        kind: "update",
+        layerId: "root",
+        stepStates: { "01": "completed", "02": "pending" },
+        currentStep: "01",
+      },
+      {
+        kind: "update",
+        layerId: "root",
+        stepStates: { "01": "completed", "02": "started" },
+        currentStep: "02",
+      },
+    ]);
+    expect(result.outcome.activeStepId).toBe("02");
+  });
+
+  it("tears down every layer below the owner, grandchildren included", () => {
+    const grandDefs = new Map([
+      ["writing/sub", makeDefinition("writing", "sub", [{ id: "c1", composes: "subsub" }])],
+      ["writing/subsub", makeDefinition("writing", "subsub", [{ id: "g1" }])],
+    ]);
+    const chain = [
+      makeRecord({
+        id: "root",
+        currentStep: "01",
+        stepStates: { "01": "started", "02": "pending" },
+        snapshot: makeSnapshot([{ id: "01", composes: "sub" }, { id: "02" }]),
+      }),
+      makeRecord({
+        id: "child",
+        workflowName: "sub",
+        parentWorkflowId: "root",
+        parentStepId: "01",
+        currentStep: "c1",
+        stepStates: { c1: "started" },
+        snapshot: makeSnapshot([{ id: "c1", composes: "subsub" }]),
+      }),
+      makeRecord({
+        id: "grandchild",
+        workflowName: "subsub",
+        parentWorkflowId: "child",
+        parentStepId: "c1",
+        currentStep: "g1",
+        stepStates: { g1: "started" },
+        snapshot: makeSnapshot([{ id: "g1" }]),
+      }),
+    ];
+
+    const result = runCascade(makeDeps(chain, grandDefs), "root", "01", "complete");
+
+    expect(result.endedSubworkflows).toEqual(["sub", "subsub"]);
+    expect(result.batch.filter((m) => m.kind === "softDelete").map((m) => m.layerId)).toEqual([
+      "child",
+      "grandchild",
+    ]);
+    expect(result.outcome.activeStepId).toBe("02");
+  });
+
+  it("finalizes the top-level workflow when the early-completed step is the last step", () => {
+    const result = runCascade(
+      makeDeps(iteratingChain(makeSnapshot([{ id: "01", loop: "iter" }])), definitions),
+      "root",
+      "01",
+      "complete",
+    );
+
+    expect(result.outcome).toMatchObject({
+      finalizedTopLevel: true,
+      completedCount: 1,
+      skippedCount: 0,
+    });
+    expect(result.endedSubworkflows).toEqual(["iter"]);
   });
 });

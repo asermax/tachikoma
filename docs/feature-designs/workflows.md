@@ -36,7 +36,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
         registerWorkflowTools (pi)      cleanup.ts (post-processor)
 ```
 
-`loader.ts` reads definitions fresh from disk. `handleStartWorkflow` freezes the step list into a `definition_snapshot` and seeds the scratchpad. From then on, `handleUpdateWorkflowState` delegates to `runCascade` (`cascade.ts`), which reads the active chain, routes the transition to the deepest layer, auto-advances across composition/loop boundaries, and stages every change as a `MutationBatch` the repository applies atomically. `composition.ts` holds the pure helpers — `resolveComposes`, cycle/reference validation, and the mutation/outcome types. `query_workflow` doubles as the recovery tool and renders the nested view. `cleanup.ts` expires abandoned stacks at session close. For a flat workflow (no `composes`/`loop`/`condition`) the chain is one layer and the cascade reduces to the original auto-start behavior.
+`loader.ts` reads definitions fresh from disk. `handleStartWorkflow` freezes the step list into a `definition_snapshot` and seeds the scratchpad. From then on, `handleUpdateWorkflowState` delegates to `runCascade` (`cascade.ts`), which reads the active chain, resolves the step id deepest-layer-first to its owning layer (completing an in-flight composes/loop step tears down the layers below it), auto-advances across composition/loop boundaries, and stages every change as a `MutationBatch` the repository applies atomically. `composition.ts` holds the pure helpers — `resolveComposes`, cycle/reference validation, and the mutation/outcome types. `query_workflow` doubles as the recovery tool and renders the nested view. `cleanup.ts` expires abandoned stacks at session close. For a flat workflow (no `composes`/`loop`/`condition`) the chain is one layer and the cascade reduces to the original auto-start behavior.
 
 ## Components
 
@@ -105,13 +105,14 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 - Pro: nested transitions are all-or-nothing; handlers stay synchronous and pure over the chain
 - Con: the engine holds a mirror of the chain's mutable state, which must track the real records faithfully
 
-### Address nested runs by the top-level ID, route to the deepest layer
+### Address nested runs by the top-level ID, resolve step ids against the active chain
 
-**Choice**: Children carry `parent_workflow_id`/`parent_step_id`; the agent only ever names the top-level ID, and the cascade resolves the active chain and applies the transition at the deepest layer. Child IDs are rejected by `update_workflow_state` and `end_workflow`.
-**Why**: The agent should not have to track which sub-workflow it is "inside" — that is bookkeeping the engine already has. One stable ID per run also means recovery (`query_workflow`) and abort have a single handle, and the one-active-instance rule cleanly applies to top-levels only.
+**Choice**: Children carry `parent_workflow_id`/`parent_step_id`; the agent only ever names the top-level ID, and the cascade resolves the announced step id against the active chain deepest-layer-first to find its owning layer. Completing the in-flight composes/loop step of a waiting layer (the suspended step whose child is live directly below it) ends that sub-workflow early: every layer below the owner is torn down, the step completes with loop bookkeeping frozen to fully iterated, and the owner auto-advances. Child IDs are rejected by `update_workflow_state` and `end_workflow`.
+**Why**: The agent should not have to track which sub-workflow it is "inside" — that is bookkeeping the engine already has. But the engine itself announces step ids in its own responses (halt messages, breadcrumbs, start guidance), and those announcements name parent-layer ids whenever a condition or loop step gates a composition — so an announced id must keep resolving and executing after a sub-workflow spawns (issue-467). Deepest-first resolution makes those ids usable, and early completion falls out of the same rule: the in-flight step is just a suspended layer's step whose child is live. One stable ID per run also means recovery (`query_workflow`) and abort have a single handle, and the one-active-instance rule cleanly applies to top-levels only.
 **Consequences**:
-- Pro: the agent drives arbitrarily deep nesting with one ID and a breadcrumb to orient
-- Con: routing errors must name the deepest layer's workflow and valid steps, since the agent's mental model can lag the real depth
+- Pro: the agent drives arbitrarily deep nesting with one ID and a breadcrumb to orient, and every id the engine announces is a valid next call
+- Pro: early completion needs no separate tool or action — `complete` on the announced in-flight step id ends the run below it, and the response notes which sub-workflows ended early
+- Con: routing errors must name the deepest layer's workflow and valid steps, since the agent's mental model can lag the real depth; a colliding child step id shadows the parent's (deepest-first wins), so authoring keeps ids distinct per layer (the conventional `01-`, `02-` prefixes)
 
 ### Loop iterations are repeated composition children; conditions halt and delegate
 
@@ -182,6 +183,12 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Given**: A `02-each` step `loop: handle-one`, started with `items=["x","y"]`
 **When**: The agent completes each `handle-one` run in turn, then later aborts the top-level
 **Then**: Completing iteration `x` spawns iteration `y` in the same call (breadcrumb suffix `(item: y)`); completing `y` exhausts the loop, marks `02-each` complete, and resumes the parent. An `end_workflow(outer_id, "abort")` at any point soft-deletes the root and every active descendant in one transaction.
+
+### Scenario: Completing the in-flight step ends its sub-workflow early (issue-467)
+
+**Given**: A `process-all` workflow whose `02-each` step `loop: handle-one` was started with `items=["x","y"]`, with iteration `x` live
+**When**: The agent calls `update_workflow_state(top_id, "02-each", "complete")` — the parent-layer id the engine itself announced when the loop started
+**Then**: The cascade soft-deletes every layer below the owner (the live iteration child, grandchildren included), marks `02-each` completed with loop bookkeeping frozen to `index: 2` (rendered as `2 / 2 (complete)`), auto-starts the parent's next step, and returns that step's instructions with the note `(ended handle-one early)` — the note rides step-activation, halt, and finalize responses alike. Symmetrically, a condition step gating a loop halts with a start call that includes `items`, so the literal call shown in the halt response succeeds.
 
 ## Notes
 

@@ -7,9 +7,14 @@ Multi-step processes backed by a persisted state machine. Owned by the workflows
 | Tool | Role |
 |------|------|
 | `start_workflow` | Begin an instance of a workflow a skill defines |
-| `update_workflow_state` | Start, complete, or skip a step (always with the **top-level** id — the engine routes to the deepest active layer and shows a breadcrumb) |
+| `update_workflow_state` | Start, complete, or skip a step (always with the **top-level** id — the engine resolves the step id against the active chain and shows a breadcrumb) |
 | `query_workflow` | Inspect active workflows and their step states |
 | `end_workflow` | Abort or close out an instance |
+
+Step ids resolve across the active composed/loop chain, so an id the engine announced
+keeps working after a sub-workflow spawns. Completing the in-flight composes/loop step
+of a waiting layer ends its sub-workflow early — the active child layers are discarded
+and the parent resumes from its next step.
 
 ## Model
 

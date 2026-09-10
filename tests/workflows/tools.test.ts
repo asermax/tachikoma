@@ -374,9 +374,8 @@ describe("loop steps", () => {
       /not allowed when starting a non-loop step/,
     );
 
-    // The items-on-non-start guard runs after transition validation, so the
-    // step must be started before the guard can fire.
-    handleUpdateWorkflowState(deps, fresh.id, "01-plan", "start");
+    // The items-on-non-start guard runs before routing and transition validation,
+    // so it fires on a pending step with no prior start.
     expect(() => handleUpdateWorkflowState(deps, fresh.id, "01-plan", "complete", ["a"])).toThrow(
       /only allowed on the 'start' action/,
     );
@@ -427,6 +426,193 @@ describe("condition steps", () => {
 
     expect(response).toContain("Next step **Last** (`03-last`) started.");
     expect(repository.get(state.id)?.stepStates["02-gate"]).toBe("skipped");
+  });
+});
+
+// ---- issue-467: announced ids across composed layers ------------------------------
+
+describe("condition-gated loop steps (issue-467)", () => {
+  beforeEach(async () => {
+    await writeWorkflowFixture(skillsRoot, "checkin", "morning", [
+      { id: "01-open", frontmatter: "title: Open", body: "Open the day." },
+      {
+        id: "02-discuss",
+        frontmatter:
+          "title: Discuss\ncondition: there is progress to discuss\nloop: discuss-progress",
+      },
+      { id: "03-wrap", frontmatter: "title: Wrap" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "checkin", "discuss-progress", [
+      { id: "01-talk", frontmatter: "title: Talk", body: "Talk through the item." },
+    ]);
+  });
+
+  const advanceToGate = () => {
+    const state = startTop("checkin", "morning");
+    handleUpdateWorkflowState(deps, state.id, "01-open", "start");
+    const halt = handleUpdateWorkflowState(deps, state.id, "01-open", "complete");
+
+    return { state, halt };
+  };
+
+  it("announces a start call that works verbatim for a condition-gated loop step", () => {
+    const { state, halt } = advanceToGate();
+
+    expect(halt).toContain("has a condition to evaluate");
+    expect(halt).toContain('step="02-discuss", action="start", items=[...]');
+
+    // The literal announced call succeeds — no follow-up items error, no invalid step.
+    const started = handleUpdateWorkflowState(deps, state.id, "02-discuss", "start", ["p1", "p2"]);
+
+    expect(started).toContain("Next step **Talk** (`01-talk`) started.");
+    expect(started).toContain("morning/02-discuss > discuss-progress/01-talk (item: p1)");
+  });
+
+  it("hints that items=[] completes a condition-gated loop with zero iterations", () => {
+    const { state, halt } = advanceToGate();
+
+    expect(halt).toContain("(items=[] completes the loop with zero iterations)");
+
+    const skipped = handleUpdateWorkflowState(deps, state.id, "02-discuss", "start", []);
+
+    expect(skipped).toContain("Next step **Wrap** (`03-wrap`) started.");
+    expect(repository.get(state.id)?.stepStates["02-discuss"]).toBe("completed");
+  });
+});
+
+describe("start_workflow with a loop first step", () => {
+  it("shows the items call in Getting Started", async () => {
+    await writeWorkflowFixture(skillsRoot, "batch", "loopfirst", [
+      { id: "01-each", frontmatter: "title: Each\nloop: handle-one" },
+      { id: "02-end", frontmatter: "title: End" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "batch", "handle-one", [
+      { id: "01-do", frontmatter: "title: Do" },
+    ]);
+
+    const guidance = handleStartWorkflow(deps, "batch", "loopfirst");
+
+    expect(guidance).toContain('step="01-each", action="start", items=[...]');
+  });
+});
+
+describe("early completion of an in-flight step (issue-467)", () => {
+  beforeEach(async () => {
+    await writeWorkflowFixture(skillsRoot, "early", "process-all", [
+      { id: "01-collect", frontmatter: "title: Collect" },
+      { id: "02-each", frontmatter: "title: Each\nloop: handle-one" },
+      { id: "03-report", frontmatter: "title: Report" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "early", "process-cond", [
+      { id: "01-collect", frontmatter: "title: Collect" },
+      { id: "02-each", frontmatter: "title: Each\nloop: handle-one" },
+      { id: "03-ask", frontmatter: "title: Ask\ncondition: the user should weigh in" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "early", "process-last", [
+      { id: "01-collect", frontmatter: "title: Collect" },
+      { id: "02-each", frontmatter: "title: Each\nloop: handle-one" },
+      { id: "03-report", frontmatter: "title: Report\nrequired: false" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "early", "outer", [
+      { id: "01-prep", frontmatter: "title: Prep" },
+      { id: "02-sub", frontmatter: "title: Sub\ncomposes: inner" },
+      { id: "03-wrap", frontmatter: "title: Wrap" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "early", "handle-one", [
+      { id: "01-do", frontmatter: "title: Do", body: "Handle the item." },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "early", "inner", [
+      { id: "01-a", frontmatter: "title: A" },
+      { id: "02-b", frontmatter: "title: B" },
+    ]);
+  });
+
+  const iterating = (workflow: string) => {
+    const state = startTop("early", workflow);
+    handleUpdateWorkflowState(deps, state.id, "01-collect", "start");
+    handleUpdateWorkflowState(deps, state.id, "01-collect", "complete");
+    handleUpdateWorkflowState(deps, state.id, "02-each", "start", ["x", "y"]);
+
+    return state;
+  };
+
+  it("completing the in-flight loop step mid-iteration ends the sub-workflow and resumes the parent", () => {
+    const state = iterating("process-all");
+
+    const response = handleUpdateWorkflowState(deps, state.id, "02-each", "complete");
+
+    expect(response).toContain("Step `02-each` completed (ended handle-one early).");
+    expect(response).toContain("Next step **Report** (`03-report`) started.");
+    expect(repository.get(state.id)?.stepStates["02-each"]).toBe("completed");
+    expect(repository.getActiveChild(state.id)).toBeNull();
+
+    // The frozen loop bookkeeping renders as fully iterated.
+    const view = handleQueryWorkflow(deps, state.id);
+    expect(view).toContain("2 / 2 (complete)");
+  });
+
+  it("carries the early-finish note onto a condition halt that follows an early completion", () => {
+    const state = iterating("process-cond");
+
+    const response = handleUpdateWorkflowState(deps, state.id, "02-each", "complete");
+
+    expect(response).toContain("Step `02-each` completed (ended handle-one early).");
+    expect(response).toContain("has a condition to evaluate");
+    expect(response).toContain("the user should weigh in");
+  });
+
+  it("notes the early finish when early completion finalizes the workflow", () => {
+    const state = startTop("early", "process-last");
+    handleUpdateWorkflowState(deps, state.id, "01-collect", "start");
+    handleUpdateWorkflowState(deps, state.id, "01-collect", "complete");
+    handleUpdateWorkflowState(deps, state.id, "03-report", "skip");
+    handleUpdateWorkflowState(deps, state.id, "02-each", "start", ["x"]);
+
+    const response = handleUpdateWorkflowState(deps, state.id, "02-each", "complete");
+
+    expect(response).toContain("Workflow complete and finalized!");
+    expect(response).toContain("2 completed, 1 skipped");
+    expect(response).toContain("(ended handle-one early)");
+    expect(repository.get(state.id)).toBeNull();
+  });
+
+  it("completing the in-flight composes step ends the sub-workflow early", () => {
+    const state = startTop("early", "outer");
+    handleUpdateWorkflowState(deps, state.id, "01-prep", "start");
+    handleUpdateWorkflowState(deps, state.id, "01-prep", "complete"); // descends into inner/01-a
+    handleUpdateWorkflowState(deps, state.id, "01-a", "complete"); // 02-b started
+
+    const response = handleUpdateWorkflowState(deps, state.id, "02-sub", "complete");
+
+    expect(response).toContain("Step `02-sub` completed (ended inner early).");
+    expect(response).toContain("Next step **Wrap** (`03-wrap`) started.");
+    expect(repository.get(state.id)?.stepStates["02-sub"]).toBe("completed");
+    expect(repository.getActiveChild(state.id)).toBeNull();
+  });
+
+  it("rejects start and skip on an in-flight step, guiding toward early completion", () => {
+    const state = iterating("process-all");
+
+    expect(() => handleUpdateWorkflowState(deps, state.id, "02-each", "start")).toThrow(
+      /already started and running its sub-workflow/,
+    );
+    expect(() => handleUpdateWorkflowState(deps, state.id, "02-each", "skip")).toThrow(
+      /Complete '02-each' to finish it early/,
+    );
+  });
+
+  it("rejects touching a suspended parent step, naming the deepest active layer", () => {
+    const state = iterating("process-all");
+
+    expect(() => handleUpdateWorkflowState(deps, state.id, "03-report", "complete")).toThrow(
+      /Must start a step before completing it\. The deepest active layer is 'handle-one' /,
+    );
+    expect(() => handleUpdateWorkflowState(deps, state.id, "03-report", "start")).toThrow(
+      /suspended while its sub-workflow runs/,
+    );
+    expect(() => handleUpdateWorkflowState(deps, state.id, "99-nope", "start")).toThrow(
+      /Invalid step '99-nope'\. The deepest active layer is 'handle-one'/,
+    );
   });
 });
 

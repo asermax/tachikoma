@@ -131,7 +131,7 @@ Instances abandoned across sessions are expired automatically after a configurab
 
 ## Composing Workflows
 
-Beyond a flat sequence, a step can pull in another workflow. This lets you share reusable sub-sequences, iterate over a list, and branch — all driven by the **single top-level workflow ID**. When a sub-workflow is active, your `update_workflow_state` calls route to its steps automatically, and responses carry a breadcrumb (`parent/step > child/step`) so you know where you are.
+Beyond a flat sequence, a step can pull in another workflow. This lets you share reusable sub-sequences, iterate over a list, and branch — all driven by the **single top-level workflow ID**. Step ids resolve across the active chain: when a sub-workflow is running, its steps are the ones you can transition, and completing the parent's in-flight composes/loop step ends the sub-workflow early (the active child layers are discarded and the parent resumes from its next step). Responses carry a breadcrumb (`parent/step > child/step`) so you know where you are.
 
 A composition reference is `<workflow>` for a workflow in the same skill, or `<skill>/<workflow>` to reach across skills. A composed step's own `instructions.md` body is not shown — the child's steps carry the instructions.
 
@@ -180,6 +180,7 @@ When auto-advance reaches a condition step it halts and shows you the predicate.
 
 - `composes` and `loop` cannot both be on one step.
 - Composition graphs must be acyclic — `A composes B`, `B composes A`, or a step composing its own workflow are rejected at load with a warning, as are references to missing or empty workflows. Check the logs after adding composition.
+- Avoid reusing a parent step's id inside a composed/loop target: ids resolve deepest-first, so a colliding child step id shadows the parent's and the parent step can no longer be completed early. The conventional `01-`, `02-` prefixes per layer keep ids distinct.
 - Document composed/looped sub-workflows in SKILL.md like any other workflow so they can also be started on their own.
 
 ## Step Design Patterns

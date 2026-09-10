@@ -179,12 +179,18 @@ export const handleStartWorkflow = (
     (step, index) => `${index + 1}. **${step.title}** (\`${step.id}\`)${stepListMarkers(step)}`,
   );
 
+  const firstStep = definition.steps[0];
+  const firstCall =
+    firstStep != null && firstStep.loop != null
+      ? `step="${firstStep.id}", action="start", items=[...]`
+      : `step="${firstStep?.id}", action="start"`;
+
   return [
     `Workflow started: **${workflowName}**`,
     `## Steps\n\n${stepLines.join("\n")}`,
     "## Getting Started",
-    `1. Call \`update_workflow_state\` with \`workflow_id="${workflowId}", ` +
-      `step="${definition.steps[0]?.id}", action="start"\` to begin the first step\n` +
+    `1. Call \`update_workflow_state\` with \`workflow_id="${workflowId}", ${firstCall}\` ` +
+      "to begin the first step\n" +
       `2. Read the scratchpad file at \`${scratchpadPath}\` first, then keep it updated ` +
       `with your workflow ID (\`${workflowId}\`) and progress notes`,
     "## Progressing",
@@ -215,8 +221,11 @@ export const handleUpdateWorkflowState = (
 
   deps.repository.applyMutationBatch(result.batch);
 
-  const { outcome, breadcrumbParts, deepestSnapshot, scratchpadPath } = result;
+  const { outcome, breadcrumbParts, deepestSnapshot, scratchpadPath, endedSubworkflows } = result;
   const past = ACTION_PAST_TENSE[action];
+  // Rendered in every outcome branch so an early finish is always visible.
+  const earlyFinishSuffix =
+    endedSubworkflows.length > 0 ? ` (ended ${endedSubworkflows.join(", ")} early)` : "";
 
   deps.log.info(
     {
@@ -235,7 +244,8 @@ export const handleUpdateWorkflowState = (
 
     return (
       "Workflow complete and finalized! " +
-      `All steps finished (${outcome.completedCount} completed, ${outcome.skippedCount} skipped).`
+      `All steps finished (${outcome.completedCount} completed, ${outcome.skippedCount} skipped).` +
+      earlyFinishSuffix
     );
   }
 
@@ -244,7 +254,7 @@ export const handleUpdateWorkflowState = (
     const title = halted?.title ?? outcome.haltedAtLoopStep;
 
     return (
-      `Step \`${step}\` ${past}.\n\n` +
+      `Step \`${step}\` ${past}${earlyFinishSuffix}.\n\n` +
       `The next step **${title}** (\`${outcome.haltedAtLoopStep}\`) is a loop step. ` +
       `Call \`update_workflow_state(workflow_id="${workflowId}", ` +
       `step="${outcome.haltedAtLoopStep}", action="start", items=[...])\` to begin iterating, ` +
@@ -255,14 +265,19 @@ export const handleUpdateWorkflowState = (
   if (outcome.haltedAtConditionStep != null) {
     const halted = getSnapshotStep(deepestSnapshot, outcome.haltedAtConditionStep);
     const title = halted?.title ?? outcome.haltedAtConditionStep;
+    const startCall =
+      halted?.loop != null
+        ? `step="${outcome.haltedAtConditionStep}", action="start", items=[...]` +
+          " (items=[] completes the loop with zero iterations)"
+        : `step="${outcome.haltedAtConditionStep}", action="start"`;
 
     return (
-      `Step \`${step}\` ${past}.\n\n` +
+      `Step \`${step}\` ${past}${earlyFinishSuffix}.\n\n` +
       `The next step **${title}** (\`${outcome.haltedAtConditionStep}\`) has a condition to evaluate:\n\n` +
       `**Condition**: ${halted?.condition}\n\n` +
       "Evaluate this condition based on the current context.\n" +
       `- If it passes: call \`update_workflow_state(workflow_id="${workflowId}", ` +
-      `step="${outcome.haltedAtConditionStep}", action="start")\`\n` +
+      `${startCall})\`\n` +
       `- If it does not pass: call \`update_workflow_state(workflow_id="${workflowId}", ` +
       `step="${outcome.haltedAtConditionStep}", action="skip")\``
     );
@@ -287,7 +302,7 @@ export const handleUpdateWorkflowState = (
   const prefix =
     action === "start" && activeStepId === step
       ? `Step **${stepInfo.title}** (\`${activeStepId}\`) started.`
-      : `Step \`${step}\` ${past}. Next step **${stepInfo.title}** (\`${activeStepId}\`) started.`;
+      : `Step \`${step}\` ${past}${earlyFinishSuffix}. Next step **${stepInfo.title}** (\`${activeStepId}\`) started.`;
 
   const response = buildStepResponse(stepInfo, prefix, deps.log);
   const breadcrumb = breadcrumbParts.length > 1 ? renderBreadcrumb(breadcrumbParts) : "";
@@ -584,7 +599,9 @@ export const registerWorkflowTools = (pi: ExtensionAPI, deps: WorkflowToolDeps):
       "instructions. Completing or skipping a step auto-starts the next pending step. " +
       "A loop step requires `items` on the start action (each item runs the loop target " +
       "once); a step with a condition halts auto-advance so you decide start vs skip. " +
-      "When all steps are done, the workflow is auto-finalized (cleaned up).",
+      "Step ids resolve across the active composed/loop chain; completing the in-flight " +
+      "composes/loop step of a waiting layer ends its sub-workflow early and resumes " +
+      "that layer. When all steps are done, the workflow is auto-finalized (cleaned up).",
     promptSnippet: "update_workflow_state: start, complete, or skip a workflow step",
     parameters: Type.Object({
       workflow_id: WORKFLOW_ID_PARAM,
