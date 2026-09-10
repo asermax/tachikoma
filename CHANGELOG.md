@@ -1,3 +1,16 @@
+# [3.78.0](https://github.com/asermax/tachikoma/compare/v3.77.0...v3.78.0) (2026-09-10)
+
+
+### Bug Fixes
+
+* **workflows:** keep current-step mirror in sync on early completion ([56544e2](https://github.com/asermax/tachikoma/commit/56544e2546fd2b3cf20ca0562d8595f02d21e396))
+
+
+### Features
+
+* **issue-467:** wip patch ([4787722](https://github.com/asermax/tachikoma/commit/4787722aff60ff29681f827c3224f450378da8d4))
+* **workflows:** resolve step ids across layers and support early completion ([c88ea00](https://github.com/asermax/tachikoma/commit/c88ea00f5d2c3bac8e1b33e02adb12d9e5355437))
+
 # [3.77.0](https://github.com/asermax/tachikoma/compare/v3.76.0...v3.77.0) (2026-09-07)
 
 
