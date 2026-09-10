@@ -235,6 +235,8 @@ export const handleUpdateWorkflowState = (
       finalized: outcome.finalizedTopLevel,
       haltedAt: outcome.haltedAtLoopStep ?? outcome.haltedAtConditionStep ?? null,
       activeStepId: outcome.activeStepId ?? null,
+      // The discarded sub-workflows of an early completion, for audit.
+      endedSubworkflows,
     },
     "workflow step transitioned",
   );
@@ -612,7 +614,8 @@ export const registerWorkflowTools = (pi: ExtensionAPI, deps: WorkflowToolDeps):
           description:
             "Required when starting a loop step: opaque references the loop target iterates " +
             "over, one run per item. Pass [] to skip a loop step with zero iterations. " +
-            "Rejected on non-loop steps and on non-start actions.",
+            "Rejected on non-loop steps and on non-start actions; routing and validation " +
+            "errors take precedence over these checks.",
         }),
       ),
     }),

@@ -452,6 +452,9 @@ export const runCascade = (
     }
 
     ss[step] = STEP_STATES.completed;
+    // Keep the in-memory current-step mirror in step with the staged mutation, so the
+    // auto-advance halt branches read the same value the batch persists.
+    currentSteps.set(current.id, step);
 
     const loopState = mutableLoop.get(owner.id) ?? null;
     const entry = loopState?.[step] ?? null;

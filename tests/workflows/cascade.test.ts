@@ -869,6 +869,68 @@ describe("runCascade early completion of an in-flight step (issue-467)", () => {
     expect(result.outcome.activeStepId).toBe("02");
   });
 
+  it("early-completes a mid-chain owner: only the layers below it tear down, its parent stays suspended", () => {
+    const midDefs = new Map([
+      [
+        "writing/mid",
+        makeDefinition("writing", "mid", [
+          { id: "a1" },
+          { id: "a2", composes: "leaf" },
+          { id: "a3" },
+        ]),
+      ],
+      ["writing/leaf", makeDefinition("writing", "leaf", [{ id: "b1" }])],
+    ]);
+    const chain = [
+      makeRecord({
+        id: "root",
+        currentStep: "01",
+        stepStates: { "01": "started", "02": "pending" },
+        snapshot: makeSnapshot([{ id: "01", composes: "mid" }, { id: "02" }]),
+      }),
+      makeRecord({
+        id: "mid",
+        workflowName: "mid",
+        parentWorkflowId: "root",
+        parentStepId: "01",
+        currentStep: "a2",
+        stepStates: { a1: "completed", a2: "started", a3: "pending" },
+        snapshot: makeSnapshot([{ id: "a1" }, { id: "a2", composes: "leaf" }, { id: "a3" }]),
+      }),
+      makeRecord({
+        id: "leaf",
+        workflowName: "leaf",
+        parentWorkflowId: "mid",
+        parentStepId: "a2",
+        currentStep: "b1",
+        stepStates: { b1: "started" },
+        snapshot: makeSnapshot([{ id: "b1" }]),
+      }),
+    ];
+
+    const result = runCascade(makeDeps(chain, midDefs), "root", "a2", "complete");
+
+    expect(result.endedSubworkflows).toEqual(["leaf"]);
+    expect(result.batch).toEqual([
+      { kind: "softDelete", layerId: "leaf" },
+      {
+        kind: "update",
+        layerId: "mid",
+        stepStates: { a1: "completed", a2: "completed", a3: "pending" },
+        currentStep: "a2",
+      },
+      {
+        kind: "update",
+        layerId: "mid",
+        stepStates: { a1: "completed", a2: "completed", a3: "started" },
+        currentStep: "a3",
+      },
+    ]);
+    // The root stays suspended on its own in-flight step while `mid` resumes.
+    expect(result.outcome).toMatchObject({ deepestLayerId: "mid", activeStepId: "a3" });
+    expect(result.breadcrumbParts.map((p) => p.stepId)).toEqual(["01", "a3"]);
+  });
+
   it("finalizes the top-level workflow when the early-completed step is the last step", () => {
     const result = runCascade(
       makeDeps(iteratingChain(makeSnapshot([{ id: "01", loop: "iter" }])), definitions),
