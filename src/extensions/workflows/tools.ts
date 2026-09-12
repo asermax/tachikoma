@@ -17,7 +17,7 @@ import {
 } from "./cascade.ts";
 import { resolveComposes } from "./composition.ts";
 import type { WorkflowDefinition } from "./loader.ts";
-import { STEP_STATES, type StepSnapshot } from "./model.ts";
+import { STEP_STATES, type StepSnapshot, type StepStates } from "./model.ts";
 import type { WorkflowStateRepository } from "./repository.ts";
 import type { WorkflowStateRecord } from "./schema.ts";
 
@@ -94,6 +94,15 @@ const stepListMarkers = (step: {
   ].join("");
 
 /**
+ * A step's state line for the query views — one template shared by the state
+ * view and the active-child lines so the markers never drift apart.
+ */
+const renderStepStateLine = (step: StepSnapshot, stepStates: StepStates, indent = ""): string =>
+  `${indent}- **${step.title}** (\`${step.id}\`)${stepListMarkers(step)}: ${
+    stepStates[step.id] ?? STEP_STATES.pending
+  }`;
+
+/**
  * Render the `update_workflow_state` params that (re)start a step — the announced
  * call must succeed verbatim, so every rendering site builds it the same way.
  */
@@ -109,18 +118,17 @@ const startCallParams = (stepId: string, isLoop: boolean): string =>
 const renderConditionDecision = (
   workflowId: string,
   stepId: string,
-  title: string,
-  condition: string | null,
-  isLoop: boolean,
+  step: { title: string; condition: string | null; loop: string | null } | null,
   ordinal: "first" | "next",
 ): string => {
+  const isLoop = step?.loop != null;
   const startCall =
     startCallParams(stepId, isLoop) +
     (isLoop ? " (items=[] completes the loop with zero iterations)" : "");
 
   return (
-    `The ${ordinal} step **${title}** (\`${stepId}\`) has a condition to evaluate:\n\n` +
-    `**Condition**: ${condition}\n\n` +
+    `The ${ordinal} step **${step?.title ?? stepId}** (\`${stepId}\`) has a condition to evaluate:\n\n` +
+    `**Condition**: ${step?.condition ?? null}\n\n` +
     "Evaluate this condition based on the current context.\n" +
     `- If it passes: call \`update_workflow_state(workflow_id="${workflowId}", ` +
     `${startCall})\`\n` +
@@ -221,14 +229,7 @@ export const handleStartWorkflow = (
   // transition — skip is only valid while the step is pending (issue-471).
   const gettingStarted =
     firstStep?.condition != null
-      ? renderConditionDecision(
-          workflowId,
-          firstStep.id,
-          firstStep.title,
-          firstStep.condition,
-          firstStep.loop != null,
-          "first",
-        ) +
+      ? renderConditionDecision(workflowId, firstStep.id, firstStep, "first") +
         `\n\nThen read the scratchpad file at \`${scratchpadPath}\` and keep it ` +
         `updated with your workflow ID (\`${workflowId}\`) and progress notes.`
       : `1. Call \`update_workflow_state\` with \`workflow_id="${workflowId}", ` +
@@ -314,18 +315,10 @@ export const handleUpdateWorkflowState = (
 
   if (outcome.haltedAtConditionStep != null) {
     const halted = getSnapshotStep(deepestSnapshot, outcome.haltedAtConditionStep);
-    const title = halted?.title ?? outcome.haltedAtConditionStep;
 
     return (
       `Step \`${step}\` ${past}${earlyFinishSuffix}.\n\n` +
-      renderConditionDecision(
-        workflowId,
-        outcome.haltedAtConditionStep,
-        title,
-        halted?.condition ?? null,
-        halted?.loop != null,
-        "next",
-      )
+      renderConditionDecision(workflowId, outcome.haltedAtConditionStep, halted, "next")
     );
   }
 
@@ -385,9 +378,8 @@ const renderLoopStepBlocks = (state: WorkflowStateRecord): string => {
 const renderStateView = (state: WorkflowStateRecord): string => {
   // Markers mirror the start step list so a pending condition's predicate stays
   // visible on the recovery path — the agent can evaluate before resuming.
-  const stepLines = state.definitionSnapshot.map(
-    (step) =>
-      `- **${step.title}** (\`${step.id}\`)${stepListMarkers(step)}: ${state.stepStates[step.id] ?? STEP_STATES.pending}`,
+  const stepLines = state.definitionSnapshot.map((step) =>
+    renderStepStateLine(step, state.stepStates),
   );
 
   const loopBlocks = renderLoopStepBlocks(state);
@@ -544,9 +536,8 @@ export const handleQueryWorkflow = (deps: WorkflowToolDeps, workflowId?: string)
   parts.push(renderStateView(head));
 
   for (const child of chain.slice(1)) {
-    const childSteps = child.definitionSnapshot.map(
-      (step) =>
-        `  - **${step.title}** (\`${step.id}\`)${stepListMarkers(step)}: ${child.stepStates[step.id] ?? STEP_STATES.pending}`,
+    const childSteps = child.definitionSnapshot.map((step) =>
+      renderStepStateLine(step, child.stepStates, "  "),
     );
     const childLoops = renderLoopStepBlocks(child);
 
