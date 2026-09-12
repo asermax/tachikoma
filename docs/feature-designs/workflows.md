@@ -116,10 +116,16 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 
 ### Loop iterations are repeated composition children; conditions halt and delegate
 
-**Choice**: A `loop` step spawns the target as a fresh composition child per item, tracking `{items, index}` in a `loop_state` JSON column on the parent; iteration N+1 spawns in the same call that finalizes N. A `condition` step halts auto-advance and asks the agent to `start` (passes) or `skip` (fails) — the agent is the evaluator, and a condition makes a required step skippable.
-**Why**: Reusing the composition machinery means iterations inherit every step-level semantic (nested composition, conditions, snapshots) for free. Delegating condition evaluation to the agent avoids a second model round-trip inside a tool call and keeps the engine deterministic — it never calls a model.
+**Choice**: A `loop` step spawns the target as a fresh composition child per item, tracking `{items, index}` in a `loop_state` JSON column on the parent; iteration N+1 spawns in the same call that finalizes N. A `condition` step halts auto-advance and asks the agent to `start` (passes) or `skip` (fails) — the agent is the evaluator, and a condition makes a required step skippable. The predicate is visible at every surface where a start decision is made: the halt, `start_workflow`'s first-step decision when a condition gates step one (the same block with the ordinal `first` where the halt says `next`, from a shared `renderConditionDecision` helper), and `(if: ...)` markers in the query views — one marker rendering (`stepListMarkers`) shared by the start step list, the state view, and the active-child lines. Skip is valid only while a step is pending, so the predicate must be visible before the step starts (issue-471).
+**Why**: Reusing the composition machinery means iterations inherit every step-level semantic (nested composition, conditions, snapshots) for free. Delegating condition evaluation to the agent avoids a second model round-trip inside a tool call and keeps the engine deterministic — it never calls a model. A decision surfaced only after start is a trap: the agent commits, reads the skip guidance, and can no longer skip (issue-471 — a condition-gated first step was directed to start unconditionally, and the predicate vanished with the halt response on the recovery path).
+**Alternatives Considered**:
+- Allow `skip` on a started step: rescues an agent that started blind, but a started step is committed work — retroactive skip discards partial runs and blurs the pending/started/completed/skipped state machine; the fix belongs at the guidance surface
+- Declaring skip windows in skill-package docs (a data-repo workaround was tried and failed): doc-level guidance does not fire at the decision point
 **Consequences**:
 - Pro: batch processes and branches need no new execution model; the engine stays model-free and testable
+- Pro: no blind starts — the start decision is made with the predicate in view on every surface, including recovery after context loss (the query markers are render-only: the view carries no directive, the agent evaluates the predicate itself)
+- Pro: the `workflow-authoring` guide's conditional-step pattern and the reference page carry the same rule ([DES-014](../design/DES-014-two-tier-agent-facing-documentation.md)), steering authors away from body-prose skip windows that are readable only after start
+- Note: the `items=[]` zero-iteration note rides the first-step decision only for a condition-gated loop first step; a conditionless loop first step keeps the plain `items` call (spec R20)
 - Con: loop items are opaque strings the target must interpret; a careless condition step the agent always starts is just a normal step with a prompt
 
 ### Validate the composition graph at bootstrap, guard depth at runtime
@@ -189,6 +195,12 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Given**: A `process-all` workflow whose `02-each` step `loop: handle-one` was started with `items=["x","y"]`, with iteration `x` live
 **When**: The agent calls `update_workflow_state(top_id, "02-each", "complete")` — the parent-layer id the engine itself announced when the loop started
 **Then**: The cascade soft-deletes every layer below the owner (the live iteration child, grandchildren included), marks `02-each` completed with loop bookkeeping frozen to `index: 2` (rendered as `2 / 2 (complete)`), auto-starts the parent's next step, and returns that step's instructions with the note `(ended handle-one early)` — the note rides step-activation, halt, and finalize responses alike. Symmetrically, a condition step gating a loop halts with a start call that includes `items`, so the literal call shown in the halt response succeeds.
+
+### Scenario: A gated first step surfaces its condition at start (issue-471)
+
+**Given**: A workflow whose first step `00-gate` declares `condition: "only when the inbox is non-empty"`
+**When**: The agent calls `start_workflow`
+**Then**: The Getting Started guidance presents the condition decision — the predicate, the evaluate instruction, and start/skip calls naming `00-gate` — instead of an unconditional first-step start directive (the numbered directive still renders for conditionless first steps; a gated loop first step announces the `items` call with the zero-iteration note, identical to the halt); at any later point `query_workflow` shows the pending gate with its `(if: ...)` marker, so the decision survives context loss.
 
 ## Notes
 
