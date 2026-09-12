@@ -1,3 +1,10 @@
+# [3.79.0](https://github.com/asermax/tachikoma/compare/v3.78.0...v3.79.0) (2026-09-12)
+
+
+### Features
+
+* **workflows:** surface step conditions at decision time ([d242a37](https://github.com/asermax/tachikoma/commit/d242a371b7109f80e1a22134d081543d676f168b))
+
 # [3.78.0](https://github.com/asermax/tachikoma/compare/v3.77.0...v3.78.0) (2026-09-10)
 
 
