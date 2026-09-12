@@ -89,7 +89,7 @@ what to produce, and how to validate completion.
 |-------|----------|-------------|
 | `title` | Yes | Human-readable step title (non-empty string) |
 | `required` | No | If `false`, the step may be skipped when not applicable (default: `true`) |
-| `condition` | No | Natural-language predicate; auto-advance halts so the agent decides start vs skip (see [Composing Workflows](#composing-workflows)) |
+| `condition` | No | Natural-language predicate; surfaced before the step starts so the agent decides start vs skip (see [Composing Workflows](#composing-workflows)) |
 | `composes` | No | Run another workflow to completion when this step activates |
 | `loop` | No | Run another workflow once per agent-supplied item |
 | `*` | No | Custom fields are preserved as step metadata but are not interpreted by the engine |
@@ -110,9 +110,9 @@ The body is returned to the agent when the step starts. Explain:
 The agent drives workflows through four tools:
 
 1. **Start**: `start_workflow(skill_name, workflow_name)` creates a tracked instance with a unique ID, a scratchpad file for progress notes, and returns the step list. Only one instance per skill/workflow pair can be active at a time.
-2. **First step**: `update_workflow_state(workflow_id, step, action="start")` begins the first step and returns its instructions.
+2. **First step**: `update_workflow_state(workflow_id, step, action="start")` begins the first step and returns its instructions. When the first step carries a `condition`, the start guidance instead presents it as a start-or-skip decision — evaluate before calling anything.
 3. **Execute**: the agent performs the step's actions, producing outputs and updating the scratchpad.
-4. **Advance**: `update_workflow_state(workflow_id, step, action="complete")` marks the step done, **auto-starts** the next pending step, and returns its instructions — no separate `start` call needed. `action="skip"` does the same for steps declared `required: false`.
+4. **Advance**: `update_workflow_state(workflow_id, step, action="complete")` marks the step done, **auto-starts** the next pending step, and returns its instructions — no separate `start` call needed. `action="skip"` does the same for skippable steps (`required: false` or carrying a `condition`).
 5. **Finalize**: when the last step is completed or skipped, the workflow is **auto-finalized** — state and scratchpad are cleaned up automatically.
 
 To abort a workflow early, use `end_workflow(workflow_id, action="abort")`.
@@ -122,7 +122,7 @@ To abort a workflow early, use `end_workflow(workflow_id, action="abort")`.
 Workflow state survives context loss and restarts:
 
 - `query_workflow()` without arguments lists all active workflows
-- `query_workflow(workflow_id=...)` returns the full state: per-step status, current step, and scratchpad path
+- `query_workflow(workflow_id=...)` returns the full state: per-step status (conditions marked inline), current step, and scratchpad path
 - Resume from the current step — all progress is preserved
 
 Starting a workflow while an instance of it is already active is rejected, naming the existing instance's ID. When that happens, recover the existing instance rather than discarding it, and if it no longer serves the request, tell the user what the interrupted run had done and ask whether to resume or start fresh before ending it. Both `end_workflow` actions discard the state and scratchpad — never end an active instance without surfacing what it had done.
@@ -176,6 +176,8 @@ condition: "the issue could not be resolved automatically"
 
 When auto-advance reaches a condition step it halts and shows you the predicate. You evaluate it against the current context and either `action="start"` (condition holds) or `action="skip"` (it does not). A condition makes the step skippable even if it is `required`.
 
+The predicate is likewise surfaced up front in `start_workflow`'s guidance when a condition gates the workflow's first step, and as `(if: ...)` markers in `query_workflow`'s step list — a condition is always visible before the step starts.
+
 ### Authoring rules
 
 - `composes` and `loop` cannot both be on one step.
@@ -228,21 +230,29 @@ Each step should define what "done" looks like:
 - [ ] Type checking succeeds
 ```
 
-### Mark Steps as Optional When Needed
+### Gate Conditional Steps with `condition`
 
-Use `required: false` for steps that are conditionally needed, and say in the body how to decide:
+Use `condition` when a step applies only sometimes. The engine surfaces the predicate
+**before** the step starts (see [the `condition` section](#condition--branch-on-a-natural-language-predicate)),
+so the run-or-skip decision is made before any work begins:
 
 ```yaml
 ---
 title: "Configure Database"
-required: false
+condition: "the project has no configured database (check for `config/database.toml`)"
 ---
 
 # Database Configuration
 
-Skip this step if the project already has a configured database.
-Check for `config/database.toml` to verify.
+Set up the database connection...
 ```
+
+Keep the predicate self-contained: name what to check and how, not just when to skip.
+
+`required: false` alone is the weaker option: it makes a step skippable but nothing
+prompts evaluation, and skip guidance written in the step body is read only after the
+step starts — past the point where skipping is still possible. Reserve it for steps the
+agent may legitimately skip by its own judgment mid-run.
 
 ### Leveraging References and Scripts
 

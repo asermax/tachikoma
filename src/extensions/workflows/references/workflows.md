@@ -23,6 +23,11 @@ database, not the conversation — which is the point: a long procedure survives
 compaction and session boundaries and resumes cleanly. Composed and looping layers are
 supported; the breadcrumb in each update result shows where you are in the nesting.
 
+A step carrying a `condition` surfaces its predicate **before** it starts — in the start
+guidance when it gates the first step, when auto-advance halts at it, and as an `(if: ...)`
+marker in `query_workflow`'s step list. Evaluate it before calling `start`: a step can only
+be skipped while it is pending.
+
 ## Stale instances
 
 A `start_workflow` rejection naming an existing ID means a prior run of that workflow is

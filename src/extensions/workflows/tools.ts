@@ -100,6 +100,35 @@ const stepListMarkers = (step: {
 const startCallParams = (stepId: string, isLoop: boolean): string =>
   `step="${stepId}", action="start"${isLoop ? ", items=[...]" : ""}`;
 
+/**
+ * Render the condition decision block shared by the auto-advance halt and the
+ * first-step guidance — one decision format across every surface where a start
+ * decision is made, so the agent evaluates before the skip window closes (skip
+ * is only valid while the step is pending).
+ */
+const renderConditionDecision = (
+  workflowId: string,
+  stepId: string,
+  title: string,
+  condition: string | null,
+  isLoop: boolean,
+  ordinal: "first" | "next",
+): string => {
+  const startCall =
+    startCallParams(stepId, isLoop) +
+    (isLoop ? " (items=[] completes the loop with zero iterations)" : "");
+
+  return (
+    `The ${ordinal} step **${title}** (\`${stepId}\`) has a condition to evaluate:\n\n` +
+    `**Condition**: ${condition}\n\n` +
+    "Evaluate this condition based on the current context.\n" +
+    `- If it passes: call \`update_workflow_state(workflow_id="${workflowId}", ` +
+    `${startCall})\`\n` +
+    `- If it does not pass: call \`update_workflow_state(workflow_id="${workflowId}", ` +
+    `step="${stepId}", action="skip")\``
+  );
+};
+
 // ---- handlers (testable without pi) ---------------------------------------------
 
 export const handleStartWorkflow = (
@@ -187,16 +216,31 @@ export const handleStartWorkflow = (
   );
 
   const firstStep = definition.steps[0];
-  const firstCall = startCallParams(firstStep?.id ?? "", firstStep?.loop != null);
+
+  // A condition on the first step is a decision the agent must make before any
+  // transition — skip is only valid while the step is pending (issue-471).
+  const gettingStarted =
+    firstStep?.condition != null
+      ? renderConditionDecision(
+          workflowId,
+          firstStep.id,
+          firstStep.title,
+          firstStep.condition,
+          firstStep.loop != null,
+          "first",
+        ) +
+        `\n\nThen read the scratchpad file at \`${scratchpadPath}\` and keep it ` +
+        `updated with your workflow ID (\`${workflowId}\`) and progress notes.`
+      : `1. Call \`update_workflow_state\` with \`workflow_id="${workflowId}", ` +
+        `${startCallParams(firstStep?.id ?? "", firstStep?.loop != null)}\` to begin the first step\n` +
+        `2. Read the scratchpad file at \`${scratchpadPath}\` first, then keep it updated ` +
+        `with your workflow ID (\`${workflowId}\`) and progress notes`;
 
   return [
     `Workflow started: **${workflowName}**`,
     `## Steps\n\n${stepLines.join("\n")}`,
     "## Getting Started",
-    `1. Call \`update_workflow_state\` with \`workflow_id="${workflowId}", ${firstCall}\` ` +
-      "to begin the first step\n" +
-      `2. Read the scratchpad file at \`${scratchpadPath}\` first, then keep it updated ` +
-      `with your workflow ID (\`${workflowId}\`) and progress notes`,
+    gettingStarted,
     "## Progressing",
     '- Use `action="start"` to begin the first step (returns its instructions)\n' +
       '- Use `action="complete"` to finish a started step — this **auto-starts** the next ' +
@@ -271,20 +315,17 @@ export const handleUpdateWorkflowState = (
   if (outcome.haltedAtConditionStep != null) {
     const halted = getSnapshotStep(deepestSnapshot, outcome.haltedAtConditionStep);
     const title = halted?.title ?? outcome.haltedAtConditionStep;
-    const isLoopStep = halted?.loop != null;
-    const startCall =
-      startCallParams(outcome.haltedAtConditionStep, isLoopStep) +
-      (isLoopStep ? " (items=[] completes the loop with zero iterations)" : "");
 
     return (
       `Step \`${step}\` ${past}${earlyFinishSuffix}.\n\n` +
-      `The next step **${title}** (\`${outcome.haltedAtConditionStep}\`) has a condition to evaluate:\n\n` +
-      `**Condition**: ${halted?.condition}\n\n` +
-      "Evaluate this condition based on the current context.\n" +
-      `- If it passes: call \`update_workflow_state(workflow_id="${workflowId}", ` +
-      `${startCall})\`\n` +
-      `- If it does not pass: call \`update_workflow_state(workflow_id="${workflowId}", ` +
-      `step="${outcome.haltedAtConditionStep}", action="skip")\``
+      renderConditionDecision(
+        workflowId,
+        outcome.haltedAtConditionStep,
+        title,
+        halted?.condition ?? null,
+        halted?.loop != null,
+        "next",
+      )
     );
   }
 
@@ -342,9 +383,11 @@ const renderLoopStepBlocks = (state: WorkflowStateRecord): string => {
 };
 
 const renderStateView = (state: WorkflowStateRecord): string => {
+  // Markers mirror the start step list so a pending condition's predicate stays
+  // visible on the recovery path — the agent can evaluate before resuming.
   const stepLines = state.definitionSnapshot.map(
     (step) =>
-      `- **${step.title}** (\`${step.id}\`): ${state.stepStates[step.id] ?? STEP_STATES.pending}`,
+      `- **${step.title}** (\`${step.id}\`)${stepListMarkers(step)}: ${state.stepStates[step.id] ?? STEP_STATES.pending}`,
   );
 
   const loopBlocks = renderLoopStepBlocks(state);
@@ -503,7 +546,7 @@ export const handleQueryWorkflow = (deps: WorkflowToolDeps, workflowId?: string)
   for (const child of chain.slice(1)) {
     const childSteps = child.definitionSnapshot.map(
       (step) =>
-        `  - **${step.title}** (\`${step.id}\`): ${child.stepStates[step.id] ?? STEP_STATES.pending}`,
+        `  - **${step.title}** (\`${step.id}\`)${stepListMarkers(step)}: ${child.stepStates[step.id] ?? STEP_STATES.pending}`,
     );
     const childLoops = renderLoopStepBlocks(child);
 

@@ -73,6 +73,11 @@ describe("handleStartWorkflow", () => {
     expect(guidance).toContain("**Plan** (`01-plan`)");
     expect(guidance).toContain("**Research** (`02-research`) (skippable)");
     expect(guidance).toContain(state?.id);
+    // A conditionless first step keeps the plain numbered start directive (issue-471).
+    expect(guidance).toContain(
+      `1. Call \`update_workflow_state\` with \`workflow_id="${state?.id}", ` +
+        'step="01-plan", action="start"` to begin the first step',
+    );
   });
 
   it("rejects unknown workflows", () => {
@@ -493,6 +498,170 @@ describe("start_workflow with a loop first step", () => {
     const guidance = handleStartWorkflow(deps, "batch", "loopfirst");
 
     expect(guidance).toContain('step="01-each", action="start", items=[...]');
+    // No condition on the first step — no zero-iteration note rides the call.
+    expect(guidance).not.toContain("items=[] completes the loop with zero iterations");
+  });
+});
+
+// ---- issue-471: skip conditions visible at decision time ----------------------------
+
+describe("start_workflow with a condition first step (issue-471)", () => {
+  beforeEach(async () => {
+    await writeWorkflowFixture(skillsRoot, "cond", "gatefirst", [
+      { id: "01-gate", frontmatter: "title: Gate\ncondition: only when the inbox is non-empty" },
+      { id: "02-last", frontmatter: "title: Last" },
+    ]);
+  });
+
+  it("presents the first step's condition as a start-or-skip decision", () => {
+    const guidance = handleStartWorkflow(deps, "cond", "gatefirst");
+    const state = repository.getActive("cond", "gatefirst");
+
+    if (state == null) throw new Error("workflow was not persisted");
+
+    expect(guidance).toContain("The first step **Gate** (`01-gate`) has a condition to evaluate");
+    expect(guidance).toContain("**Condition**: only when the inbox is non-empty");
+    expect(guidance).toContain(
+      `update_workflow_state(workflow_id="${state.id}", step="01-gate", action="start")`,
+    );
+    expect(guidance).toContain(
+      `update_workflow_state(workflow_id="${state.id}", step="01-gate", action="skip")`,
+    );
+
+    // The Getting Started start directive is replaced by the decision block...
+    expect(guidance).not.toContain("1. Call `update_workflow_state`");
+    // ...while the rest of the guidance is retained.
+    expect(guidance).toContain("Then read the scratchpad file at");
+    expect(guidance).toContain("## Progressing");
+    expect(guidance).toContain('- Use `action="start"` to begin the first step');
+    expect(guidance).toContain("## Recovery");
+  });
+
+  it("skips the gated first step from pending and auto-advances", () => {
+    const state = startTop("cond", "gatefirst");
+
+    const response = handleUpdateWorkflowState(deps, state.id, "01-gate", "skip");
+
+    expect(repository.get(state.id)?.stepStates["01-gate"]).toBe("skipped");
+    expect(response).toContain("Next step **Last** (`02-last`) started.");
+  });
+
+  it("renders the same decision lines as the auto-advance halt", async () => {
+    await writeWorkflowFixture(skillsRoot, "cond", "maybe", [
+      { id: "01-first", frontmatter: "title: First" },
+      { id: "02-gate", frontmatter: "title: Gate\ncondition: only when the inbox is non-empty" },
+      { id: "03-last", frontmatter: "title: Last" },
+    ]);
+
+    const halted = startTop("cond", "maybe");
+    handleUpdateWorkflowState(deps, halted.id, "01-first", "start");
+    const haltResponse = handleUpdateWorkflowState(deps, halted.id, "01-first", "complete");
+    const guidance = handleStartWorkflow(deps, "cond", "gatefirst");
+    const started = repository.getActive("cond", "gatefirst");
+
+    if (started == null) throw new Error("workflow was not persisted");
+
+    expect(haltResponse).toContain(
+      "The next step **Gate** (`02-gate`) has a condition to evaluate",
+    );
+
+    // Both surfaces share the decision block, differing only by prefix and ordinal:
+    // identical condition, evaluate framing, and id-qualified start/skip calls.
+    for (const shared of [
+      "**Condition**: only when the inbox is non-empty",
+      "Evaluate this condition based on the current context.",
+    ]) {
+      expect(guidance).toContain(shared);
+      expect(haltResponse).toContain(shared);
+    }
+
+    expect(haltResponse).toContain(
+      `update_workflow_state(workflow_id="${halted.id}", step="02-gate", action="start")`,
+    );
+    expect(haltResponse).toContain(
+      `update_workflow_state(workflow_id="${halted.id}", step="02-gate", action="skip")`,
+    );
+  });
+});
+
+describe("start_workflow with a condition-gated loop first step (issue-471)", () => {
+  beforeEach(async () => {
+    await writeWorkflowFixture(skillsRoot, "checkin", "gatefirst", [
+      {
+        id: "01-discuss",
+        frontmatter:
+          "title: Discuss\ncondition: there is progress to discuss\nloop: discuss-progress",
+      },
+      { id: "02-wrap", frontmatter: "title: Wrap" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "checkin", "discuss-progress", [
+      { id: "01-talk", frontmatter: "title: Talk", body: "Talk through the item." },
+    ]);
+  });
+
+  it("announces the same items call and zero-iteration note as the halt response", () => {
+    const guidance = handleStartWorkflow(deps, "checkin", "gatefirst");
+
+    expect(guidance).toContain(
+      "The first step **Discuss** (`01-discuss`) has a condition to evaluate",
+    );
+    expect(guidance).toContain('step="01-discuss", action="start", items=[...]');
+    expect(guidance).toContain("(items=[] completes the loop with zero iterations)");
+    expect(guidance).toContain('step="01-discuss", action="skip")');
+  });
+
+  it("succeeds verbatim when the announced start call is issued with items", () => {
+    const state = startTop("checkin", "gatefirst");
+
+    const started = handleUpdateWorkflowState(deps, state.id, "01-discuss", "start", ["p1"]);
+
+    expect(started).toContain("Next step **Talk** (`01-talk`) started.");
+    expect(started).toContain("gatefirst/01-discuss > discuss-progress/01-talk (item: p1)");
+  });
+});
+
+describe("query_workflow step markers (issue-471)", () => {
+  it("shows every step marker kind in the state view", async () => {
+    await writeWorkflowFixture(skillsRoot, "cond", "marked", [
+      { id: "01-gate", frontmatter: "title: Gate\ncondition: only when the inbox is non-empty" },
+      { id: "02-extra", frontmatter: "title: Extra\nrequired: false" },
+      { id: "03-run", frontmatter: "title: Run\ncomposes: other" },
+      { id: "04-each", frontmatter: "title: Each\nloop: other" },
+      { id: "05-last", frontmatter: "title: Last" },
+    ]);
+
+    const state = startTop("cond", "marked");
+
+    const view = handleQueryWorkflow(deps, state.id);
+
+    expect(view).toContain(
+      "- **Gate** (`01-gate`) (if: only when the inbox is non-empty): pending",
+    );
+    expect(view).toContain("- **Extra** (`02-extra`) (skippable): pending");
+    expect(view).toContain("- **Run** (`03-run`) (composes: other): pending");
+    expect(view).toContain("- **Each** (`04-each`) (loop: other): pending");
+    expect(view).toContain("- **Last** (`05-last`): pending");
+  });
+
+  it("shows markers on Active Child step lines", async () => {
+    await writeWorkflowFixture(skillsRoot, "outer", "parent", [
+      { id: "01-run", frontmatter: "title: Run\ncomposes: child" },
+      { id: "02-end", frontmatter: "title: End" },
+    ]);
+    await writeWorkflowFixture(skillsRoot, "outer", "child", [
+      { id: "01-gate", frontmatter: "title: Gate\ncondition: only when the inbox is non-empty" },
+      { id: "02-done", frontmatter: "title: Done" },
+    ]);
+
+    const state = startTop("outer", "parent");
+    handleUpdateWorkflowState(deps, state.id, "01-run", "start");
+
+    const view = handleQueryWorkflow(deps, state.id);
+
+    expect(view).toContain("### Active Child: child");
+    expect(view).toContain("- **Run** (`01-run`) (composes: child): started");
+    // The child's gated first step halts pending — its predicate stays visible.
+    expect(view).toContain("**Gate** (`01-gate`) (if: only when the inbox is non-empty): pending");
   });
 });
 
