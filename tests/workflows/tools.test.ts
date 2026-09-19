@@ -78,6 +78,13 @@ describe("handleStartWorkflow", () => {
       `1. Call \`update_workflow_state\` with \`workflow_id="${state?.id}", ` +
         'step="01-plan", action="start"` to begin the first step',
     );
+    // Every mechanics-bearing marker gets its Progressing line, composes included (issue-474).
+    expect(guidance).toContain(
+      "A step marked `(composes: ...)` runs a sub-workflow when started — drive its steps " +
+        "with this same workflow id; completing the in-flight step ends the sub-workflow early",
+    );
+    // The recovery line points at re-reading a started step's instructions (issue-474).
+    expect(guidance).toContain("re-read its instructions.md");
   });
 
   it("rejects unknown workflows", () => {
@@ -170,6 +177,10 @@ describe("handleQueryWorkflow", () => {
 
     expect(view).toContain(`- **ID**: ${state.id}`);
     expect(view).toContain("- **Current Step**: 01-plan");
+    // The current step names its step path so its instructions survive context loss (issue-474).
+    expect(view).toMatch(
+      /- \*\*Current Step\*\*: 01-plan — instructions: `.+01-plan\/instructions\.md`/,
+    );
     expect(view).toContain("- **Plan** (`01-plan`): started");
     expect(view).toContain("- **Write** (`03-write`): pending");
   });
@@ -269,6 +280,9 @@ describe("composition (composes)", () => {
     expect(view).toContain("outer/02-sub > inner/01-a");
     expect(view).toContain("### Active Child: inner");
     expect(view).toContain("**A** (`01-a`): started");
+    // The active child's current step carries its step path too (issue-474) — after context
+    // loss mid-sub-workflow, the live work's instructions are reachable from this block.
+    expect(view).toMatch(/- \*\*Current Step\*\*: 01-a — instructions: `.+01-a\/instructions\.md`/);
   });
 
   it("rejects operating on a composed child id directly", () => {
@@ -634,6 +648,8 @@ describe("query_workflow step markers (issue-471)", () => {
 
     const view = handleQueryWorkflow(deps, state.id);
 
+    // No step started yet — the current-step line falls back to `none` (issue-474).
+    expect(view).toContain("- **Current Step**: none");
     expect(view).toContain(
       "- **Gate** (`01-gate`) (if: only when the inbox is non-empty): pending",
     );
@@ -862,6 +878,8 @@ describe("handleQueryWorkflow composed child and corruption", () => {
 
     expect(view).toContain("This is a composed child");
     expect(view).toContain(`Parent workflow ID: \`${state.id}\``);
+    // The standalone-child view also names where the current step's instructions live.
+    expect(view).toMatch(/- \*\*Current Step\*\*: 01-a — instructions: `.+01-a\/instructions\.md`/);
   });
 
   it("flags a composition step whose target is no longer registered", async () => {
@@ -914,9 +932,11 @@ describe("handleQueryWorkflow composed child and corruption", () => {
     db.update(workflowStates)
       .set({
         // stepStates is missing entries for the snapshot steps, forcing the
-        // pending fallback; the loop block reads a step absent from the snapshot.
+        // pending fallback; the loop block reads a step absent from the snapshot;
+        // currentStep names a step the snapshot cannot resolve either.
         stepStates: {},
         loopState: { "99-ghost": { items: ["x"], index: 0 } },
+        currentStep: "98-ghost",
       })
       .where(eq(workflowStates.id, state.id))
       .run();
@@ -925,6 +945,9 @@ describe("handleQueryWorkflow composed child and corruption", () => {
 
     expect(view).toContain("**Plan** (`01-plan`): pending");
     expect(view).toContain("### Loop step: 99-ghost (`99-ghost`)");
+    // An unresolvable current step falls back to the bare id, with no path invented.
+    expect(view).toContain("- **Current Step**: 98-ghost");
+    expect(view).not.toContain("98-ghost — instructions");
   });
 });
 

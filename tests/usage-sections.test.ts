@@ -78,11 +78,15 @@ const CASES: { [K in keyof typeof USAGE_SECTIONS]?: SectionCase } = {
     inline: ["upgrade_self", "never run"],
   },
   "workflows/usage.ts": {
-    rule: "the top-level-id routing rule stays inline; chain resolution detail and the stale-instance recovery procedure in the reference",
-    inline: ["top-level"],
+    rule: "the driving model — top-level-id routing, instruction delivery, per-type mechanics, recovery entry — stays inline; the early-end mechanic, full driving detail, and the stale-instance recovery procedure in the reference",
+    inline: ["top-level", "items=[", "(if:", "(composes:", "query_workflow()", "instructions"],
+    notInline: ["ends its sub-workflow early"],
     reference: [
       "resolve across the active composed/loop chain",
       "ends its sub-workflow early",
+      "Driving a Workflow",
+      "items=[]",
+      "re-read its instructions.md",
       "Stale instances",
       "query_workflow(workflow_id=...)",
       "tears down its whole nested stack",

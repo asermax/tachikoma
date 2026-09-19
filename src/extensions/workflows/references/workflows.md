@@ -28,6 +28,45 @@ guidance when it gates the first step, when auto-advance halts at it, and as an 
 marker in `query_workflow`'s step list. Evaluate it before calling `start`: a step can only
 be skipped while it is pending.
 
+## Driving a Workflow
+
+`start_workflow(skill_name, workflow_name)` creates the instance (one active per
+skill+workflow), returns the step list, and seeds a scratchpad file for progress notes.
+From there a single tool drives everything: `update_workflow_state`, always with the
+**top-level** workflow id.
+
+**Instructions arrive in the tool result.** The result that starts a step — an explicit
+`action="start"`, or the auto-start that follows completing/skipping the previous step —
+carries that step's `instructions.md` body plus its step path. Until a step starts, its
+instructions are unread; a result that halts at an `(if: ...)` or `(loop: ...)` step
+instead carries the decision block. If you lose a started step's instructions, the query
+state view names the current step and its step path — re-read its instructions.md (body
+edits on disk apply mid-run).
+
+**Auto-advance.** Completing or skipping a step auto-starts the next pending step and
+returns its instructions in the same response — no separate start call. When the last
+step finishes, the workflow is auto-finalized (state and scratchpad cleaned up; no
+`end_workflow` call needed).
+
+**Per-step mechanics** — the markers shown in the step list and `query_workflow`:
+
+| Step | Start | Skip |
+|------|-------|------|
+| plain | begins the step; returns its instructions | only when not `required` |
+| `(skippable)` | as plain | allowed while pending |
+| `(if: ...)` | auto-advance halts — evaluate the predicate, then start if it holds | the fail path: allowed while pending, even when `required` |
+| `(loop: ...)` | halts — requires `items=[...]` (opaque strings; the target runs once per item, in order; current item rides the breadcrumb) | start with `items=[]` instead — completes with zero iterations |
+| `(composes: ...)` | spawns the sub-workflow; drive its steps with the same top-level id (the step's own body is never shown) | allowed while pending if skippable — advances without running the sub-workflow |
+
+Completing the in-flight composes/loop step of a waiting layer ends its sub-workflow
+early. Completing a loop's current iteration child spawns the next item's iteration in
+the same response; after the last item the loop step completes and the parent resumes.
+
+**Recovery.** After context loss, call `query_workflow()` to list active workflows, then
+`query_workflow(workflow_id=...)` for the full state: per-step statuses with their
+markers, the current step and its step path, and the scratchpad path. Resume from the
+current step — all progress is preserved.
+
 ## Stale instances
 
 A `start_workflow` rejection naming an existing ID means a prior run of that workflow is
@@ -37,7 +76,8 @@ starting over:
 1. **Find**: `query_workflow()` lists active workflows; `query_workflow(workflow_id=...)`
    returns the full state — per-step statuses, current step, and the scratchpad path.
 2. **Inspect**: read the scratchpad for progress notes. If the file is gone, the state
-   view itself is the evidence of what was done.
+   view itself is the evidence of what was done — and the current step's instructions can
+   be re-read from the step path the view shows.
 3. **Decide**: compare the per-step states and scratchpad contents against the current
    request. If the instance serves it, resume from the current step — all progress is
    preserved, and resuming is preferred over restarting. End it only when the work is

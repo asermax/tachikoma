@@ -249,11 +249,14 @@ export const handleStartWorkflow = (
       '- Use `action="skip"` to skip a skippable step — also auto-starts the next step\n' +
       '- A step marked `(loop: ...)` needs `action="start"` with `items=[...]`; a step marked ' +
       "`(if: ...)` halts so you can decide to start or skip it\n" +
+      "- A step marked `(composes: ...)` runs a sub-workflow when started — drive its steps " +
+      "with this same workflow id; completing the in-flight step ends the sub-workflow early\n" +
       "- When the last step is completed, the workflow is **auto-finalized** " +
       "(no need to call `end_workflow`)",
     "## Recovery",
     "If you lose context, call `query_workflow()` without arguments to find your workflow, " +
-      "then `query_workflow(workflow_id=...)` to resume.",
+      "then `query_workflow(workflow_id=...)` to resume. The state view names the current " +
+      "step and its step path — re-read its instructions.md to resume a step you already started.",
   ].join("\n\n");
 };
 
@@ -375,6 +378,21 @@ const renderLoopStepBlocks = (state: WorkflowStateRecord): string => {
   return blocks.join("\n\n");
 };
 
+/**
+ * A layer's current-step line for the query views — the id plus where to re-read the
+ * step's instructions from (recovery aid: the tool result that carried them may be
+ * compacted away). Falls back to id-only when the snapshot no longer resolves the id.
+ */
+const currentStepLine = (state: WorkflowStateRecord): string => {
+  const id = state.currentStep;
+
+  if (id == null) return "none";
+
+  const step = getSnapshotStep(state.definitionSnapshot, id);
+
+  return step == null ? id : `${id} — instructions: \`${join(step.path, "instructions.md")}\``;
+};
+
 const renderStateView = (state: WorkflowStateRecord): string => {
   // Markers mirror the start step list so a pending condition's predicate stays
   // visible on the recovery path — the agent can evaluate before resuming.
@@ -389,7 +407,7 @@ const renderStateView = (state: WorkflowStateRecord): string => {
     `- **ID**: ${state.id}\n` +
       `- **Skill**: ${state.skillName}\n` +
       `- **Workflow**: ${state.workflowName}\n` +
-      `- **Current Step**: ${state.currentStep ?? "none"}\n` +
+      `- **Current Step**: ${currentStepLine(state)}\n` +
       `- **Scratchpad**: \`${state.scratchpadPath}\`\n` +
       `- **Created**: ${formatUtc(state.createdAt)}\n` +
       `- **Updated**: ${formatUtc(state.updatedAt)}`,
@@ -543,7 +561,7 @@ export const handleQueryWorkflow = (deps: WorkflowToolDeps, workflowId?: string)
 
     parts.push(
       `### Active Child: ${child.workflowName}\n\n` +
-        `- **ID**: ${child.id}\n- **Current Step**: ${child.currentStep ?? "none"}\n\n` +
+        `- **ID**: ${child.id}\n- **Current Step**: ${currentStepLine(child)}\n\n` +
         `#### Steps\n\n${childSteps.join("\n")}` +
         (childLoops.length > 0 ? `\n\n${childLoops}` : ""),
     );

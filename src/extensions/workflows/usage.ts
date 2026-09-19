@@ -6,10 +6,8 @@ import { referencePointer } from "../../agent/prompt-references.ts";
  */
 export const WORKFLOWS_USAGE = `## Workflows
 
-Skills can define ordered, multi-step processes — workflows — that track state across context boundaries, so a long procedure survives compaction and resumes cleanly. Use one when a task is a defined sequence of steps that must run in order without losing progress (e.g. a procedure a skill documents).
+Skills can define ordered, multi-step processes — workflows — that track state across context boundaries, so a long procedure survives compaction and resumes cleanly. Workflows are not auto-detected: read a skill's SKILL.md to see which it offers and when to use them.
 
-Workflows are not auto-detected: read a skill's SKILL.md to see which workflows it offers and when to use them.
-
-When advancing a step, always pass the **top-level** workflow id — the engine resolves the step id against the active (composed/loop) chain.
+Drive an instance with \`update_workflow_state\`, always passing the **top-level** workflow id. Each call's result carries the active step's instructions — a step's instructions are only visible after it starts. Completing or skipping a step auto-starts the next; the last one auto-finalizes the workflow. Step mechanics: \`(loop: ...)\` halts until you start it with \`items=[...]\` (one run per item; \`[]\` = zero iterations); \`(if: ...)\` halts for an explicit start-or-skip decision on its predicate; \`(composes: ...)\` runs a sub-workflow whose steps you drive with the same id. After context loss, recover your place with \`query_workflow()\`.
 
 ${referencePointer(import.meta.dirname, "workflows")}`;
