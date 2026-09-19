@@ -76,8 +76,7 @@ starting over:
 1. **Find**: `query_workflow()` lists active workflows; `query_workflow(workflow_id=...)`
    returns the full state — per-step statuses, current step, and the scratchpad path.
 2. **Inspect**: read the scratchpad for progress notes. If the file is gone, the state
-   view itself is the evidence of what was done — and the current step's instructions can
-   be re-read from the step path the view shows.
+   view itself is the evidence of what was done.
 3. **Decide**: compare the per-step states and scratchpad contents against the current
    request. If the instance serves it, resume from the current step — all progress is
    preserved, and resuming is preferred over restarting. End it only when the work is

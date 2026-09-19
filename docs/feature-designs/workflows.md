@@ -155,7 +155,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 - Teach everything inline: would blow the DES-014 budget and duplicate what each tool result already demonstrates at the moment it matters
 **Consequences**:
 - Pro: every session can drive every step type without prior reading
-- Con: the inline tier now sits at 10,394 of the 10,500 canonicalized chars (the workflows section grew 653 → 988, the second-largest usage constant), leaving ~106 chars of global headroom
+- Con: the inline tier now sits at 10,358 of the 10,500 canonicalized chars (the workflows section grew 653 → 952, the second-largest usage constant), leaving ~142 chars of global headroom
 
 ## System Behavior
 
