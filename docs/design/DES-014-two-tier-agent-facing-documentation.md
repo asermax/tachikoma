@@ -2,11 +2,11 @@
 
 **Scope**: Project-wide
 **Date**: 2026-08-31
-**Last Updated**: 2026-08-31
+**Last Updated**: 2026-09-19
 
 ## Pattern
 
-Agent-facing documentation is delivered in **two tiers**. The **inline tier** is what stands in every session's context: the core base prompt's conversation-substrate block (`buildMainSystemPrompt`) and one lean `usage.ts` constant per extension, each injected once per session as a hidden message via `provideContext(<constant>, "<name>-usage")`, scoped by `sessionScopes`. An inline section opens with a `## <Topic>` heading, carries only what the feature **is**, **when to reach for it**, and its **critical safety rules**, and closes with its pointer line(s) — one `referencePointer` line per reference topic it names. Everything else (lists, edge cases, config knobs, turn-shape and mechanics detail) lives in the **reference tier**: a `<topic>.md` page in a `references/` directory beside the owning module (`src/extensions/<name>/references/`, `src/agent/references/`), named by `referencePointer(moduleDir, topic)` (`src/agent/prompt-references.ts`) — `Details: <abs path> (read on demand)` — the same progressive disclosure skills use. Reference pages are non-TS assets mirrored into `dist/` by `scripts/copy-assets.mjs`, since tsc emits only JS.
+Agent-facing documentation is delivered in **two tiers**. The **inline tier** is what stands in every session's context: the core base prompt's conversation-substrate block (`buildMainSystemPrompt`) and one lean `usage.ts` constant per extension, each injected once per session as a hidden message via `provideContext(<constant>, "<name>-usage")`, scoped by `sessionScopes`. An inline section opens with a `## <Topic>` heading, carries only what the feature **is**, **when to reach for it**, and its **critical rules** — the safety rules plus the operating mechanics whose absence causes misuse (a required parameter, a decision the agent must make) — and closes with its pointer line(s) — one `referencePointer` line per reference topic it names. Everything else (lists, edge cases, config knobs, turn-shape and *occasionally-needed* mechanics detail) lives in the **reference tier**: a `<topic>.md` page in a `references/` directory beside the owning module (`src/extensions/<name>/references/`, `src/agent/references/`), named by `referencePointer(moduleDir, topic)` (`src/agent/prompt-references.ts`) — `Details: <abs path> (read on demand)` — the same progressive disclosure skills use. Reference pages are non-TS assets mirrored into `dist/` by `scripts/copy-assets.mjs`, since tsc emits only JS.
 
 Two structural rules govern placement:
 
