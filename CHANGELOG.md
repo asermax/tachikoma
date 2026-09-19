@@ -1,3 +1,11 @@
+# [3.81.0](https://github.com/asermax/tachikoma/compare/v3.80.0...v3.81.0) (2026-09-19)
+
+
+### Features
+
+* **workflows:** surface step instructions path in query views ([36d2bde](https://github.com/asermax/tachikoma/commit/36d2bde6baf5baf6221d9977f9fcd21f41b31f7d))
+* **workflows:** teach compact driving model in usage section ([afffe04](https://github.com/asermax/tachikoma/commit/afffe048a4693c4e0068890a0d12a34ac581fa23))
+
 # [3.80.0](https://github.com/asermax/tachikoma/compare/v3.79.0...v3.80.0) (2026-09-19)
 
 
