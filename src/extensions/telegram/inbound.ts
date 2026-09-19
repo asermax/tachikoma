@@ -7,17 +7,18 @@ export const CHANNEL_NAME = "telegram";
 const REPLY_QUOTE_MAX = 280;
 
 /**
+ * Agent-facing reference to one or more Telegram message ids — the one format reaction
+ * prose and tool results share, so the agent can correlate a later reaction/reply
+ * notification with the send that produced the id. Multiple ids (an album's items)
+ * comma-join inside one reference.
+ */
+export const messageRef = (...ids: number[]): string => `(message_id: ${ids.join(", ")})`;
+
+/**
  * Keep a reply/reaction quote short: head and tail with an ellipsis between. Also bounds the
  * ledger label written per channel message (R19) — blank-normalized upstream by `quoteBlock`
  * or the store.
  */
-/**
- * Agent-facing reference to a Telegram message id — the one format reaction prose and
- * tool results share, so the agent can correlate a later reaction/reply notification
- * with the send that produced the id.
- */
-export const messageRef = (id: number): string => `(message_id: ${id})`;
-
 export const truncateQuote = (text: string): string => {
   const stripped = text.trim();
 

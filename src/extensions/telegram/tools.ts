@@ -2,7 +2,15 @@ import { stat } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { InputFile } from "grammy";
-import type { InlineKeyboardMarkup, MessageEntity, ReactionTypeEmoji } from "grammy/types";
+import type {
+  InlineKeyboardMarkup,
+  InputMediaAudio,
+  InputMediaDocument,
+  InputMediaPhoto,
+  InputMediaVideo,
+  MessageEntity,
+  ReactionTypeEmoji,
+} from "grammy/types";
 import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
@@ -11,6 +19,16 @@ import type { ChannelMessageStore, MessageRouting } from "./channel.ts";
 import { toTelegramEntities } from "./entities.ts";
 import { messageRef } from "./inbound.ts";
 import { sendEntitiesOrFallback } from "./sending.ts";
+
+/**
+ * One sendMediaGroup album payload — the groupable InputMedia shapes. Telegram groups
+ * photos/videos together while documents and audio group only with their own type, so the
+ * union mirrors grammY's sendMediaGroup parameter (minus live photos, never sent here).
+ */
+type MediaGroupItems =
+  | ReadonlyArray<InputMediaPhoto | InputMediaVideo>
+  | ReadonlyArray<InputMediaDocument>
+  | ReadonlyArray<InputMediaAudio>;
 
 /** Narrow grammY API surface the tools call — fakeable in tests. */
 export interface ToolApi {
@@ -39,6 +57,8 @@ export interface ToolApi {
     document: InputFile,
     other?: { caption?: string },
   ): Promise<{ message_id: number }>;
+  /** Sends 2-10 same-groupable-type files as one album; resolves with one message per item, in input order. */
+  sendMediaGroup(chatId: number, media: MediaGroupItems): Promise<{ message_id: number }[]>;
   setMessageReaction(
     chatId: number,
     messageId: number,
@@ -141,28 +161,45 @@ const recordOutbound = (
 };
 
 const SendFileParams = Type.Object({
-  filePath: Type.String({
-    description:
-      "Path to the file — workspace-relative, or absolute under the workspace, " +
-      "the system temporary directory, or a configured extra root",
-  }),
+  filePath: Type.Union(
+    [
+      Type.String({
+        description:
+          "Path to the file — workspace-relative, or absolute under the workspace, " +
+          "the system temporary directory, or a configured extra root",
+      }),
+      Type.Array(Type.String(), {
+        description:
+          "2-10 file paths delivered as one grouped album: photos and videos group " +
+          "together, documents only with documents, audio only with audio",
+      }),
+    ],
+    { description: "File path(s) to send — one file, or a same-type list for one album" },
+  ),
   caption: Type.Optional(
-    Type.String({ maxLength: 1024, description: "Brief description of the file" }),
+    Type.Union(
+      [
+        Type.String({
+          maxLength: 1024,
+          description: "Brief description of the file; for an album, shown with the first item",
+        }),
+        Type.Array(Type.String({ maxLength: 1024 }), {
+          description: "One caption per file, mapped positionally onto the file list",
+        }),
+      ],
+      { description: "Brief description of the file — one shared caption, or one per file" },
+    ),
   ),
 });
 
-export const handleSendFile = async (
-  deps: Pick<
-    ToolDeps,
-    "api" | "log" | "chatId" | "workspaceRoot" | "allowedRoots" | "store" | "currentRouting"
-  >,
-  params: Static<typeof SendFileParams>,
+/** The single-file send: per-type dispatch, unchanged — one path (bare or one-element list) lands here. */
+const sendSingleFile = async (
+  deps: Pick<ToolDeps, "api" | "log" | "chatId" | "store" | "currentRouting">,
+  resolved: string,
+  caption: string | undefined,
 ): Promise<string> => {
-  deps.log.info({ tool: "send_telegram_file", filePath: params.filePath }, "telegram tool invoked");
-
-  const resolved = await validateFilePath(params.filePath, deps.workspaceRoot, deps.allowedRoots);
   const file = new InputFile(resolved);
-  const other = params.caption != null ? { caption: params.caption } : {};
+  const other = caption != null ? { caption } : {};
 
   const mediaType = detectMediaType(resolved);
 
@@ -187,11 +224,7 @@ export const handleSendFile = async (
   // was (mirroring send_message_with_buttons); without this, a reaction on the file is dropped
   // as unresolved.
   const name = basename(resolved);
-  recordOutbound(
-    deps,
-    messageId,
-    `${mediaType} ${name}${params.caption ? ` — ${params.caption}` : ""}`,
-  );
+  recordOutbound(deps, messageId, `${mediaType} ${name}${caption ? ` — ${caption}` : ""}`);
 
   deps.log.debug(
     { tool: "send_telegram_file", path: resolved, mediaType, messageId },
@@ -201,6 +234,140 @@ export const handleSendFile = async (
   // The id lets the agent tie a later reaction/reply notification (which names the id) to
   // this send without a lookup.
   return `File sent: ${name} ${messageRef(messageId)}`;
+};
+
+export const handleSendFile = async (
+  deps: Pick<
+    ToolDeps,
+    "api" | "log" | "chatId" | "workspaceRoot" | "allowedRoots" | "store" | "currentRouting"
+  >,
+  params: Static<typeof SendFileParams>,
+): Promise<string> => {
+  deps.log.info({ tool: "send_telegram_file", filePath: params.filePath }, "telegram tool invoked");
+
+  const paths = Array.isArray(params.filePath) ? params.filePath : [params.filePath];
+  if (paths.length === 0) {
+    throw new Error("filePath must name at least one file to send (got an empty list)");
+  }
+
+  if (Array.isArray(params.caption) && params.caption.length !== paths.length) {
+    throw new Error(
+      `caption has ${params.caption.length} entries but filePath lists ${paths.length} files — ` +
+        "provide one shared caption or one caption per file",
+    );
+  }
+
+  // One caption slot per file: a shared string captions the first item only, an array maps
+  // positionally. An empty string means no caption (the same falsy rule the label uses).
+  const captions: (string | undefined)[] =
+    params.caption == null
+      ? paths.map(() => undefined)
+      : Array.isArray(params.caption)
+        ? params.caption
+        : [params.caption, ...paths.slice(1).map(() => undefined)];
+
+  // Resolve and validate every path before the first API call — a media group is sent
+  // atomically, so a bad path must never strand a partial album. Failures are aggregated
+  // into one error so a single retry can fix them all.
+  const failures: Error[] = [];
+  const resolved: string[] = [];
+  for (const path of paths) {
+    try {
+      resolved.push(await validateFilePath(path, deps.workspaceRoot, deps.allowedRoots));
+    } catch (error) {
+      failures.push(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
+  if (failures.length > 0) {
+    throw failures.length === 1
+      ? failures[0]
+      : new Error(failures.map((failure) => failure.message).join("\n"));
+  }
+
+  // A single path (bare string or one-element list) keeps the per-type single-file send.
+  const single = resolved.length === 1 ? resolved.at(0) : undefined;
+  if (single !== undefined) return sendSingleFile(deps, single, captions[0]);
+
+  const types = resolved.map((path) => detectMediaType(path));
+
+  if (resolved.length > 10) {
+    throw new Error(
+      `Telegram albums hold at most 10 files per message (${resolved.length} given) — ` +
+        "send the files in multiple send_telegram_file calls",
+    );
+  }
+
+  // Telegram's album grouping: photos and videos mix freely; documents and audio group only
+  // with their own type.
+  const kinds = new Set(types);
+  const albumKind: "photo-video" | "document" | "audio" | null = types.every(
+    (type) => type === "photo" || type === "video",
+  )
+    ? "photo-video"
+    : kinds.size === 1 && kinds.has("document")
+      ? "document"
+      : kinds.size === 1 && kinds.has("audio")
+        ? "audio"
+        : null;
+
+  if (albumKind === null) {
+    throw new Error(
+      `Telegram albums cannot mix these media types: ${[...kinds].join(", ")} — photos and ` +
+        "videos group together, but documents group only with documents and audio only with " +
+        "audio; send incompatible files in separate calls",
+    );
+  }
+
+  const captionField = (caption?: string) => (caption ? { caption } : {});
+
+  const items: MediaGroupItems =
+    albumKind === "document"
+      ? resolved.map((path, index) => ({
+          type: "document" as const,
+          media: new InputFile(path),
+          ...captionField(captions[index]),
+        }))
+      : albumKind === "audio"
+        ? resolved.map((path, index) => ({
+            type: "audio" as const,
+            media: new InputFile(path),
+            ...captionField(captions[index]),
+          }))
+        : resolved.map((path, index) => ({
+            type: types[index] === "video" ? ("video" as const) : ("photo" as const),
+            media: new InputFile(path),
+            ...captionField(captions[index]),
+          }));
+
+  const messages = await deps.api.sendMediaGroup(deps.chatId, items);
+
+  // Telegram returns one message per album item; a mismatched count would misalign the
+  // id→file labels below, so surface it rather than recording wrong labels.
+  if (messages.length !== resolved.length) {
+    throw new Error(
+      `Telegram returned ${messages.length} messages for ${resolved.length} album items`,
+    );
+  }
+
+  // Every album item is its own Telegram message: record each returned id with its own label
+  // so a reply/reaction on any item resolves to the branch that sent it and quotes that file.
+  const names = resolved.map((path) => basename(path));
+  messages.forEach((message, index) => {
+    recordOutbound(
+      deps,
+      message.message_id,
+      `${types[index]} ${names[index]}${captions[index] ? ` — ${captions[index]}` : ""}`,
+    );
+  });
+
+  deps.log.debug(
+    { tool: "send_telegram_file", paths: resolved, count: messages.length },
+    "telegram file album sent",
+  );
+
+  // The ids let the agent tie a later reaction/reply notification (which names the id) to
+  // this send without a lookup.
+  return `Files sent: ${names.join(", ")} ${messageRef(...messages.map((m) => m.message_id))}`;
 };
 
 // ---- react_to_message ---------------------------------------------------------
@@ -340,7 +507,15 @@ export const handleSendMessageWithButtons = async (
 
 // ---- registration -----------------------------------------------------------------
 
-const SEND_FILE_DESCRIPTION = `Send a file to the user via Telegram.
+const SEND_FILE_DESCRIPTION = `Send one or more files to the user via Telegram.
+
+A single path sends one message. Pass 2-10 paths to deliver them as one grouped
+album instead of a burst of separate messages. Photos and videos group together;
+documents group only with documents and audio only with audio — mixed types are
+rejected, so send them in separate calls. An album holds at most 10 files.
+
+caption: a single string captions the whole album (shown on the first item); an
+array captions each file in order (same length as the file list).
 
 Supported media types (auto-detected from extension):
 - Images (.png, .jpg, .jpeg, .gif, .webp) → sent as photo
@@ -348,10 +523,10 @@ Supported media types (auto-detected from extension):
 - Video (.mp4, .avi, .mov, .webm) → sent as video
 - All other files → sent as document
 
-The file must exist on disk and be a regular file under one of the allowed roots
+Every file must exist on disk and be a regular file under one of the allowed roots
 (the workspace, the system temporary directory, or a configured extra root).
 Allowed roots are enumerated in any rejection error. Telegram enforces a 50MB
-upload limit.`;
+upload limit per file.`;
 
 const REACT_DESCRIPTION = `React to a Telegram message with an emoji.
 
@@ -411,9 +586,10 @@ export const registerTelegramTools = (pi: ExtensionAPI, deps: ToolDeps): void =>
     name: "send_telegram_file",
     label: "Send Telegram file",
     description: SEND_FILE_DESCRIPTION,
-    promptSnippet: "Send a file from disk to the user via Telegram",
+    promptSnippet: "Send one or more files from disk to the user via Telegram",
     promptGuidelines: [
       "Use send_telegram_file to deliver files (images, audio, video, documents) to the user instead of pasting their contents.",
+      "When delivering several related images (diagrams, charts, screenshots), pass all their paths in one send_telegram_file call so they arrive as a single album.",
     ],
     parameters: SendFileParams,
     async execute(_toolCallId, params) {

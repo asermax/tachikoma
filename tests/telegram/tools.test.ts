@@ -2,6 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { InputFile } from "grammy";
+import type { Mock } from "vitest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -37,10 +39,19 @@ const fakeApi = () =>
     sendAudio: vi.fn().mockResolvedValue({ message_id: 13 }),
     sendVideo: vi.fn().mockResolvedValue({ message_id: 14 }),
     sendDocument: vi.fn().mockResolvedValue({ message_id: 15 }),
+    sendMediaGroup: vi.fn().mockResolvedValue([{ message_id: 16 }, { message_id: 17 }]),
     setMessageReaction: vi.fn().mockResolvedValue(true),
     pinChatMessage: vi.fn().mockResolvedValue(true),
     unpinChatMessage: vi.fn().mockResolvedValue(true),
   }) satisfies ToolApi;
+
+/** The album items one sendMediaGroup call received — type + InputFile-inferred filename, in order. */
+const sentAlbumItems = (api: ToolApi) => {
+  const media = (api.sendMediaGroup as Mock).mock.calls[0]?.[1] as
+    | { type: string; media: InputFile; caption?: string }[]
+    | undefined;
+  return media ?? [];
+};
 
 describe("detectMediaType", () => {
   it("detects categories from the extension, case-insensitively", () => {
@@ -61,8 +72,11 @@ describe("handleSendFile", () => {
     outside = await mkdtemp(join(tmpdir(), "tachi-telegram-out-"));
 
     await writeFile(join(workspace, "pic.png"), "fake image");
+    await writeFile(join(workspace, "pic2.png"), "fake image two");
     await writeFile(join(workspace, "notes.txt"), "fake notes");
+    await writeFile(join(workspace, "notes2.txt"), "fake notes two");
     await writeFile(join(workspace, "song.mp3"), "fake audio");
+    await writeFile(join(workspace, "song2.mp3"), "fake audio two");
     await writeFile(join(workspace, "clip.mp4"), "fake video");
     await writeFile(join(outside, "secret.txt"), "nope");
   });
@@ -232,6 +246,201 @@ describe("handleSendFile", () => {
         currentRouting: () => null,
       },
       { filePath: "notes.txt" },
+    );
+
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("dispatches a one-element array like a bare path", async () => {
+    const api = fakeApi();
+
+    const result = await handleSendFile(deps(api), { filePath: ["pic.png"], caption: "a chart" });
+
+    expect(result).toBe("File sent: pic.png (message_id: 12)");
+    expect(api.sendPhoto).toHaveBeenCalledWith(42, expect.anything(), { caption: "a chart" });
+    expect(api.sendMediaGroup).not.toHaveBeenCalled();
+  });
+
+  it("sends multiple images as one album in input order, shared caption on the first item", async () => {
+    const api = fakeApi();
+
+    const result = await handleSendFile(deps(api), {
+      filePath: ["pic.png", "pic2.png"],
+      caption: "the diagrams",
+    });
+
+    expect(api.sendMediaGroup).toHaveBeenCalledTimes(1);
+    const items = sentAlbumItems(api);
+    expect(items.map((item) => [item.type, item.media.filename])).toEqual([
+      ["photo", "pic.png"],
+      ["photo", "pic2.png"],
+    ]);
+    expect(items[0].media).toBeInstanceOf(InputFile);
+    expect(items[0].caption).toBe("the diagrams");
+    expect(items[1].caption).toBeUndefined();
+    expect(result).toBe("Files sent: pic.png, pic2.png (message_id: 16, 17)");
+    expect(api.sendPhoto).not.toHaveBeenCalled();
+  });
+
+  it("groups photos and videos in one album", async () => {
+    const api = fakeApi();
+
+    await handleSendFile(deps(api), { filePath: ["pic.png", "clip.mp4"] });
+
+    expect(api.sendMediaGroup).toHaveBeenCalledTimes(1);
+    expect(sentAlbumItems(api).map((item) => item.type)).toEqual(["photo", "video"]);
+  });
+
+  it("maps a caption array positionally onto the album items", async () => {
+    const api = fakeApi();
+
+    await handleSendFile(deps(api), {
+      filePath: ["pic.png", "pic2.png"],
+      caption: ["first cap", ""],
+    });
+
+    const items = sentAlbumItems(api);
+    expect(items[0].caption).toBe("first cap");
+    // An empty caption behaves as no caption for that item.
+    expect(items[1].caption).toBeUndefined();
+  });
+
+  it("sends duplicate paths as distinct album items", async () => {
+    const api = fakeApi();
+
+    await handleSendFile(deps(api), { filePath: ["pic.png", "pic.png"] });
+
+    expect(api.sendMediaGroup).toHaveBeenCalledTimes(1);
+    expect(sentAlbumItems(api).map((item) => item.media.filename)).toEqual(["pic.png", "pic.png"]);
+  });
+
+  it("groups documents and audio in same-type albums", async () => {
+    const api = fakeApi();
+
+    await handleSendFile(deps(api), { filePath: ["notes.txt", "notes2.txt"] });
+    expect(sentAlbumItems(api).map((item) => item.type)).toEqual(["document", "document"]);
+
+    await handleSendFile(deps(api), { filePath: ["song.mp3", "song2.mp3"] });
+    expect(
+      (api.sendMediaGroup as Mock).mock.calls[1]?.[1].map((item: { type: string }) => item.type),
+    ).toEqual(["audio", "audio"]);
+  });
+
+  it("rejects more than 10 files before any send", async () => {
+    const api = fakeApi();
+
+    await expect(
+      handleSendFile(deps(api), { filePath: Array.from({ length: 11 }, () => "pic.png") }),
+    ).rejects.toThrow(/at most 10 files/);
+    expect(api.sendMediaGroup).not.toHaveBeenCalled();
+  });
+
+  it("rejects media mixes Telegram cannot group", async () => {
+    const api = fakeApi();
+
+    await expect(handleSendFile(deps(api), { filePath: ["pic.png", "notes.txt"] })).rejects.toThrow(
+      /cannot mix these media types/,
+    );
+
+    // The easily-missed pairing: neither documents nor audio group with anything but their own type.
+    await expect(
+      handleSendFile(deps(api), { filePath: ["song.mp3", "notes.txt"] }),
+    ).rejects.toThrow(/cannot mix these media types/);
+
+    expect(api.sendMediaGroup).not.toHaveBeenCalled();
+  });
+
+  it("aggregates every failing path into one error before any send", async () => {
+    const api = fakeApi();
+
+    const error = await handleSendFile(deps(api), {
+      filePath: ["pic.png", "missing.txt", join(outside, "secret.txt")],
+    }).catch((failure: Error) => failure);
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toMatch(/File not found/);
+    expect(error.message).toMatch(/allowed roots/);
+    expect(api.sendMediaGroup).not.toHaveBeenCalled();
+    expect(api.sendPhoto).not.toHaveBeenCalled();
+  });
+
+  it("rejects an empty file list and a caption length mismatch", async () => {
+    const api = fakeApi();
+
+    await expect(handleSendFile(deps(api), { filePath: [] })).rejects.toThrow(/at least one file/);
+
+    await expect(
+      handleSendFile(deps(api), { filePath: ["pic.png", "pic2.png"], caption: ["only one"] }),
+    ).rejects.toThrow(/one caption per file/);
+
+    expect(api.sendMediaGroup).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sendMediaGroup response that miscounts the album items", async () => {
+    const api = fakeApi();
+    api.sendMediaGroup.mockResolvedValueOnce([{ message_id: 16 }]);
+    const record = vi.fn();
+
+    // Telegram returns one message per item; a mismatch would misalign the id→file ledger
+    // labels, so the handler surfaces it rather than recording wrong labels.
+    await expect(
+      handleSendFile(
+        { ...deps(api), store: { record, resolve: vi.fn(() => null) } },
+        {
+          filePath: ["pic.png", "pic2.png"],
+        },
+      ),
+    ).rejects.toThrow(/returned 1 messages for 2 album items/);
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("records every album item id with its own label", async () => {
+    const api = fakeApi();
+    const record = vi.fn();
+
+    await handleSendFile(
+      {
+        api,
+        log: fakeLog,
+        chatId: 42,
+        workspaceRoot: workspace,
+        allowedRoots: [workspace],
+        store: { record, resolve: vi.fn(() => null) },
+        currentRouting: () => ({ treeEntryId: "entry-1", branchId: "topic-1" }),
+      },
+      { filePath: ["pic.png", "pic2.png"], caption: ["first cap", ""] },
+    );
+
+    expect(record).toHaveBeenCalledWith(
+      "16",
+      { treeEntryId: "entry-1", branchId: "topic-1" },
+      "outgoing",
+      { label: "photo pic.png — first cap" },
+    );
+    // The empty caption adds no suffix to the second item's label.
+    expect(record).toHaveBeenCalledWith(
+      "17",
+      { treeEntryId: "entry-1", branchId: "topic-1" },
+      "outgoing",
+      { label: "photo pic2.png" },
+    );
+  });
+
+  it("skips album recording when no trunk is active", async () => {
+    const api = fakeApi();
+    const record = vi.fn();
+
+    await handleSendFile(
+      {
+        api,
+        log: fakeLog,
+        chatId: 42,
+        workspaceRoot: workspace,
+        allowedRoots: [workspace],
+        store: { record, resolve: vi.fn(() => null) },
+        currentRouting: () => null,
+      },
+      { filePath: ["pic.png", "pic2.png"] },
     );
 
     expect(record).not.toHaveBeenCalled();
@@ -505,6 +714,19 @@ describe("validateButtons", () => {
 describe("registerTelegramTools", () => {
   type RegisteredTool = {
     name: string;
+    description: string;
+    parameters?: {
+      properties?: Record<
+        string,
+        {
+          anyOf?: {
+            maxLength?: number;
+            description?: string;
+            items?: { maxLength?: number };
+          }[];
+        }
+      >;
+    };
     execute: (toolCallId: string, params: unknown) => Promise<{ content: { text: string }[] }>;
   };
 
@@ -581,5 +803,32 @@ describe("registerTelegramTools", () => {
     expect(api.sendPhoto).toHaveBeenCalled();
 
     await rm(workspace, { recursive: true, force: true });
+  });
+
+  it("teaches the album form on the send_telegram_file surface", () => {
+    const tools = register(baseDeps(fakeApi()));
+    const tool = tools.get("send_telegram_file");
+
+    // The model-visible surface must document the array form, the 2-10 cap, the grouping
+    // constraints, and both caption modes — otherwise the agent keeps issuing one call
+    // per file, which is the bug being fixed.
+    expect(tool?.description).toMatch(/2-10 paths/);
+    expect(tool?.description).toMatch(/documents group only with documents/);
+    expect(tool?.description).toMatch(/audio only with audio/);
+    expect(tool?.description).toMatch(/one grouped\s+album/);
+    expect(tool?.description).toMatch(/a single string captions the whole album/);
+    expect(tool?.description).toMatch(/an\s+array captions each file in order/);
+
+    const filePath = tool?.parameters?.properties?.filePath;
+    expect(filePath?.anyOf?.[1]?.items).toBeDefined();
+    expect(filePath?.anyOf?.[1]?.description).toMatch(/2-10/);
+    expect(filePath?.anyOf?.[1]?.description).toMatch(/documents only with documents/);
+
+    // The 1024-caption bound survives on both union members, and the caption array member
+    // documents the positional mapping.
+    const caption = tool?.parameters?.properties?.caption;
+    expect(caption?.anyOf?.[0]?.maxLength).toBe(1024);
+    expect(caption?.anyOf?.[1]?.items?.maxLength).toBe(1024);
+    expect(caption?.anyOf?.[1]?.description).toMatch(/positionally/);
   });
 });

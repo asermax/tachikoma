@@ -7,6 +7,7 @@ import {
   mapMediaMessage,
   mapReaction,
   mapTextMessage,
+  messageRef,
 } from "../../src/extensions/telegram/inbound.ts";
 import {
   buildAttachment,
@@ -14,6 +15,16 @@ import {
   type MediaMessage,
   resolveMedia,
 } from "../../src/extensions/telegram/media.ts";
+
+describe("messageRef", () => {
+  it("references a single message id", () => {
+    expect(messageRef(42)).toBe("(message_id: 42)");
+  });
+
+  it("comma-joins multiple ids — one album's items — inside a single reference", () => {
+    expect(messageRef(12, 13, 14)).toBe("(message_id: 12, 13, 14)");
+  });
+});
 
 describe("mapTextMessage", () => {
   it("maps text and records the Telegram message id", () => {
