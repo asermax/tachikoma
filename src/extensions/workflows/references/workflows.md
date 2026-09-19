@@ -39,9 +39,9 @@ From there a single tool drives everything: `update_workflow_state`, always with
 `action="start"`, or the auto-start that follows completing/skipping the previous step —
 carries that step's `instructions.md` body plus its step path. Until a step starts, its
 instructions are unread; a result that halts at an `(if: ...)` or `(loop: ...)` step
-instead carries the decision block. If you lose a started step's instructions, the query
-state view names the current step and its step path — re-read its instructions.md (body
-edits on disk apply mid-run).
+instead carries the decision to make, not instructions. If you lose a started step's
+instructions, the query state view names the current step and its step path —
+re-read its instructions.md (what you read back is the current body).
 
 **Auto-advance.** Completing or skipping a step auto-starts the next pending step and
 returns its instructions in the same response — no separate start call. When the last
