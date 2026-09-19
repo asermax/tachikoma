@@ -160,6 +160,20 @@ const recordOutbound = (
   deps.store.record(String(messageId), routing, "outgoing", { label });
 };
 
+/** Caption fields for a send — an empty string means no caption (the label's falsy rule). */
+const captionField = (caption?: string): { caption?: string } => (caption ? { caption } : {});
+
+/**
+ * The ledger label for one sent file (R19) — what a later reply/reaction quote recovers.
+ * The album path passes undefined-tainted index access (the returned-count check above the
+ * call guarantees alignment), so the template coerces exactly as it did when inline.
+ */
+const fileLabel = (
+  mediaType: OutboundMediaType | undefined,
+  name: string | undefined,
+  caption?: string,
+): string => `${mediaType} ${name}${caption ? ` — ${caption}` : ""}`;
+
 const SendFileParams = Type.Object({
   filePath: Type.Union(
     [
@@ -169,6 +183,8 @@ const SendFileParams = Type.Object({
           "the system temporary directory, or a configured extra root",
       }),
       Type.Array(Type.String(), {
+        minItems: 1,
+        maxItems: 10,
         description:
           "2-10 file paths delivered as one grouped album: photos and videos group " +
           "together, documents only with documents, audio only with audio",
@@ -199,7 +215,7 @@ const sendSingleFile = async (
   caption: string | undefined,
 ): Promise<string> => {
   const file = new InputFile(resolved);
-  const other = caption != null ? { caption } : {};
+  const other = captionField(caption);
 
   const mediaType = detectMediaType(resolved);
 
@@ -224,7 +240,7 @@ const sendSingleFile = async (
   // was (mirroring send_message_with_buttons); without this, a reaction on the file is dropped
   // as unresolved.
   const name = basename(resolved);
-  recordOutbound(deps, messageId, `${mediaType} ${name}${caption ? ` — ${caption}` : ""}`);
+  recordOutbound(deps, messageId, fileLabel(mediaType, name, caption));
 
   deps.log.debug(
     { tool: "send_telegram_file", path: resolved, mediaType, messageId },
@@ -249,6 +265,12 @@ export const handleSendFile = async (
   if (paths.length === 0) {
     throw new Error("filePath must name at least one file to send (got an empty list)");
   }
+  if (paths.length > 10) {
+    throw new Error(
+      `Telegram albums hold at most 10 files per message (${paths.length} given) — ` +
+        "send the files in multiple send_telegram_file calls",
+    );
+  }
 
   if (Array.isArray(params.caption) && params.caption.length !== paths.length) {
     throw new Error(
@@ -258,24 +280,28 @@ export const handleSendFile = async (
   }
 
   // One caption slot per file: a shared string captions the first item only, an array maps
-  // positionally. An empty string means no caption (the same falsy rule the label uses).
-  const captions: (string | undefined)[] =
-    params.caption == null
-      ? paths.map(() => undefined)
-      : Array.isArray(params.caption)
-        ? params.caption
-        : [params.caption, ...paths.slice(1).map(() => undefined)];
+  // positionally, and indexing past the end yields undefined, so a shared caption needs only
+  // slot 0. An empty string means no caption (the same falsy rule the label uses).
+  const captions: (string | undefined)[] = Array.isArray(params.caption)
+    ? params.caption
+    : params.caption != null
+      ? [params.caption]
+      : [];
 
   // Resolve and validate every path before the first API call — a media group is sent
   // atomically, so a bad path must never strand a partial album. Failures are aggregated
   // into one error so a single retry can fix them all.
+  const settled = await Promise.allSettled(
+    paths.map((path) => validateFilePath(path, deps.workspaceRoot, deps.allowedRoots)),
+  );
   const failures: Error[] = [];
   const resolved: string[] = [];
-  for (const path of paths) {
-    try {
-      resolved.push(await validateFilePath(path, deps.workspaceRoot, deps.allowedRoots));
-    } catch (error) {
-      failures.push(error instanceof Error ? error : new Error(String(error)));
+  for (const result of settled) {
+    if (result.status === "fulfilled") {
+      resolved.push(result.value);
+    } else {
+      const reason: unknown = result.reason;
+      failures.push(reason instanceof Error ? reason : new Error(String(reason)));
     }
   }
   if (failures.length > 0) {
@@ -285,32 +311,19 @@ export const handleSendFile = async (
   }
 
   // A single path (bare string or one-element list) keeps the per-type single-file send.
+  // The `at(0)` narrowing is how index access stays provable under noUncheckedIndexedAccess.
   const single = resolved.length === 1 ? resolved.at(0) : undefined;
   if (single !== undefined) return sendSingleFile(deps, single, captions[0]);
 
   const types = resolved.map((path) => detectMediaType(path));
 
-  if (resolved.length > 10) {
-    throw new Error(
-      `Telegram albums hold at most 10 files per message (${resolved.length} given) — ` +
-        "send the files in multiple send_telegram_file calls",
-    );
-  }
-
   // Telegram's album grouping: photos and videos mix freely; documents and audio group only
   // with their own type.
   const kinds = new Set(types);
-  const albumKind: "photo-video" | "document" | "audio" | null = types.every(
-    (type) => type === "photo" || type === "video",
-  )
-    ? "photo-video"
-    : kinds.size === 1 && kinds.has("document")
-      ? "document"
-      : kinds.size === 1 && kinds.has("audio")
-        ? "audio"
-        : null;
-
-  if (albumKind === null) {
+  const groupable =
+    types.every((type) => type === "photo" || type === "video") ||
+    (kinds.size === 1 && (kinds.has("document") || kinds.has("audio")));
+  if (!groupable) {
     throw new Error(
       `Telegram albums cannot mix these media types: ${[...kinds].join(", ")} — photos and ` +
         "videos group together, but documents group only with documents and audio only with " +
@@ -318,26 +331,13 @@ export const handleSendFile = async (
     );
   }
 
-  const captionField = (caption?: string) => (caption ? { caption } : {});
-
-  const items: MediaGroupItems =
-    albumKind === "document"
-      ? resolved.map((path, index) => ({
-          type: "document" as const,
-          media: new InputFile(path),
-          ...captionField(captions[index]),
-        }))
-      : albumKind === "audio"
-        ? resolved.map((path, index) => ({
-            type: "audio" as const,
-            media: new InputFile(path),
-            ...captionField(captions[index]),
-          }))
-        : resolved.map((path, index) => ({
-            type: types[index] === "video" ? ("video" as const) : ("photo" as const),
-            media: new InputFile(path),
-            ...captionField(captions[index]),
-          }));
+  // Each item keeps its own detected type on every arm of the grouping rule above
+  // (photos/videos pass through mixed; document/audio albums are homogeneous).
+  const items = resolved.map((path, index) => ({
+    type: types[index],
+    media: new InputFile(path),
+    ...captionField(captions[index]),
+  })) as MediaGroupItems;
 
   const messages = await deps.api.sendMediaGroup(deps.chatId, items);
 
@@ -356,7 +356,7 @@ export const handleSendFile = async (
     recordOutbound(
       deps,
       message.message_id,
-      `${types[index]} ${names[index]}${captions[index] ? ` — ${captions[index]}` : ""}`,
+      fileLabel(types[index], names[index], captions[index]),
     );
   });
 

@@ -46,8 +46,8 @@ const fakeApi = () =>
   }) satisfies ToolApi;
 
 /** The album items one sendMediaGroup call received — type + InputFile-inferred filename, in order. */
-const sentAlbumItems = (api: ToolApi) => {
-  const media = (api.sendMediaGroup as Mock).mock.calls[0]?.[1] as
+const sentAlbumItems = (api: ToolApi, call = 0) => {
+  const media = (api.sendMediaGroup as Mock).mock.calls[call]?.[1] as
     | { type: string; media: InputFile; caption?: string }[]
     | undefined;
   return media ?? [];
@@ -321,9 +321,7 @@ describe("handleSendFile", () => {
     expect(sentAlbumItems(api).map((item) => item.type)).toEqual(["document", "document"]);
 
     await handleSendFile(deps(api), { filePath: ["song.mp3", "song2.mp3"] });
-    expect(
-      (api.sendMediaGroup as Mock).mock.calls[1]?.[1].map((item: { type: string }) => item.type),
-    ).toEqual(["audio", "audio"]);
+    expect(sentAlbumItems(api, 1).map((item) => item.type)).toEqual(["audio", "audio"]);
   });
 
   it("rejects more than 10 files before any send", async () => {
@@ -400,11 +398,7 @@ describe("handleSendFile", () => {
 
     await handleSendFile(
       {
-        api,
-        log: fakeLog,
-        chatId: 42,
-        workspaceRoot: workspace,
-        allowedRoots: [workspace],
+        ...deps(api),
         store: { record, resolve: vi.fn(() => null) },
         currentRouting: () => ({ treeEntryId: "entry-1", branchId: "topic-1" }),
       },
@@ -431,15 +425,7 @@ describe("handleSendFile", () => {
     const record = vi.fn();
 
     await handleSendFile(
-      {
-        api,
-        log: fakeLog,
-        chatId: 42,
-        workspaceRoot: workspace,
-        allowedRoots: [workspace],
-        store: { record, resolve: vi.fn(() => null) },
-        currentRouting: () => null,
-      },
+      { ...deps(api), store: { record, resolve: vi.fn(() => null) } },
       { filePath: ["pic.png", "pic2.png"] },
     );
 
@@ -721,6 +707,8 @@ describe("registerTelegramTools", () => {
         {
           anyOf?: {
             maxLength?: number;
+            minItems?: number;
+            maxItems?: number;
             description?: string;
             items?: { maxLength?: number };
           }[];
@@ -821,6 +809,8 @@ describe("registerTelegramTools", () => {
 
     const filePath = tool?.parameters?.properties?.filePath;
     expect(filePath?.anyOf?.[1]?.items).toBeDefined();
+    expect(filePath?.anyOf?.[1]?.minItems).toBe(1);
+    expect(filePath?.anyOf?.[1]?.maxItems).toBe(10);
     expect(filePath?.anyOf?.[1]?.description).toMatch(/2-10/);
     expect(filePath?.anyOf?.[1]?.description).toMatch(/documents only with documents/);
 
