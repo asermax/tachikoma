@@ -56,6 +56,14 @@ const startDraft = () => {
   return state;
 };
 
+/** The query views' current-step line names the step's instructions path (issue-474). */
+const expectCurrentStepLine = (view: string, stepId: string) =>
+  expect(view).toMatch(
+    new RegExp(
+      `- \\*\\*Current Step\\*\\*: ${stepId} — instructions: \`.+${stepId}/instructions\\.md\``,
+    ),
+  );
+
 describe("handleStartWorkflow", () => {
   it("creates a tracked instance with a scratchpad and returns guidance", () => {
     const guidance = handleStartWorkflow(deps, "writing", "draft");
@@ -176,11 +184,8 @@ describe("handleQueryWorkflow", () => {
     const view = handleQueryWorkflow(deps, state.id);
 
     expect(view).toContain(`- **ID**: ${state.id}`);
-    expect(view).toContain("- **Current Step**: 01-plan");
     // The current step names its step path so its instructions survive context loss (issue-474).
-    expect(view).toMatch(
-      /- \*\*Current Step\*\*: 01-plan — instructions: `.+01-plan\/instructions\.md`/,
-    );
+    expectCurrentStepLine(view, "01-plan");
     expect(view).toContain("- **Plan** (`01-plan`): started");
     expect(view).toContain("- **Write** (`03-write`): pending");
   });
@@ -282,7 +287,7 @@ describe("composition (composes)", () => {
     expect(view).toContain("**A** (`01-a`): started");
     // The active child's current step carries its step path too (issue-474) — after context
     // loss mid-sub-workflow, the live work's instructions are reachable from this block.
-    expect(view).toMatch(/- \*\*Current Step\*\*: 01-a — instructions: `.+01-a\/instructions\.md`/);
+    expectCurrentStepLine(view, "01-a");
   });
 
   it("rejects operating on a composed child id directly", () => {
@@ -879,7 +884,7 @@ describe("handleQueryWorkflow composed child and corruption", () => {
     expect(view).toContain("This is a composed child");
     expect(view).toContain(`Parent workflow ID: \`${state.id}\``);
     // The standalone-child view also names where the current step's instructions live.
-    expect(view).toMatch(/- \*\*Current Step\*\*: 01-a — instructions: `.+01-a\/instructions\.md`/);
+    expectCurrentStepLine(view, "01-a");
   });
 
   it("flags a composition step whose target is no longer registered", async () => {

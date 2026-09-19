@@ -54,9 +54,12 @@ export const deleteScratchpad = (path: string, log?: Logger): void => {
   }
 };
 
+/** A step's instructions.md path — shared by the reader and the query views so they never drift. */
+const stepInstructionsPath = (step: StepSnapshot): string => join(step.path, "instructions.md");
+
 const readStepInstructions = (step: StepSnapshot, log: Logger): string | null => {
   try {
-    return readFileSync(join(step.path, "instructions.md"), "utf8");
+    return readFileSync(stepInstructionsPath(step), "utf8");
   } catch (error) {
     log.warn(
       { stepId: step.id, path: step.path, err: error },
@@ -390,7 +393,7 @@ const currentStepLine = (state: WorkflowStateRecord): string => {
 
   const step = getSnapshotStep(state.definitionSnapshot, id);
 
-  return step == null ? id : `${id} — instructions: \`${join(step.path, "instructions.md")}\``;
+  return step == null ? id : `${id} — instructions: \`${stepInstructionsPath(step)}\``;
 };
 
 const renderStateView = (state: WorkflowStateRecord): string => {
