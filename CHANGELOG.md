@@ -1,3 +1,11 @@
+# [3.80.0](https://github.com/asermax/tachikoma/compare/v3.79.0...v3.80.0) (2026-09-19)
+
+
+### Features
+
+* **issue-473:** wip patch ([6c43a15](https://github.com/asermax/tachikoma/commit/6c43a15540874c4cba13e3072f39a0afcf676aef))
+* **telegram:** send multiple files as one grouped album ([3ce007d](https://github.com/asermax/tachikoma/commit/3ce007d91acce34a39155a30e0fa8158ed2b4dfd))
+
 # [3.79.0](https://github.com/asermax/tachikoma/compare/v3.78.0...v3.79.0) (2026-09-12)
 
 
