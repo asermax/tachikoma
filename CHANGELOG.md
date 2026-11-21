@@ -1,3 +1,10 @@
+# [3.82.0](https://github.com/asermax/tachikoma/compare/v3.81.0...v3.82.0) (2026-11-21)
+
+
+### Features
+
+* **telegram:** add multi-select button prompts ([01ae76a](https://github.com/asermax/tachikoma/commit/01ae76a51421ecb838d3842d0eb580d00f481ec9))
+
 # [3.81.0](https://github.com/asermax/tachikoma/compare/v3.80.0...v3.81.0) (2026-09-19)
 
 
