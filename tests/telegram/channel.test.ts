@@ -16,6 +16,7 @@ import {
   UNRESOLVED_REPLY_HINT,
 } from "../../src/extensions/telegram/channel.ts";
 import { toTelegramEntities } from "../../src/extensions/telegram/entities.ts";
+import { MultiSelectRegistry } from "../../src/extensions/telegram/multiselect.ts";
 import type { Logger } from "../../src/log.ts";
 
 /** The literal display text the channel produces for a given markdown input. */
@@ -153,6 +154,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
   const stop = vi.fn(async () => {});
   const submit = vi.fn();
   const runtime: ChannelRuntime = { log: fakeLog, submit };
+  const multiSelects = new MultiSelectRegistry();
 
   const channel = new TelegramChannel(bot, {
     chatId: 42,
@@ -162,6 +164,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     mediaDir: "/tmp/media",
     stop,
     store,
+    multiSelects,
     currentRouting: () => routing.current,
     ...overrides,
   });
@@ -237,6 +240,7 @@ const makeChannel = (overrides: Partial<TelegramChannelOptions> = {}) => {
     stop,
     submit,
     runtime,
+    multiSelects,
     dispatchText,
     dispatchReaction,
     dispatchMessage,
@@ -1707,6 +1711,274 @@ describe("callback queries", () => {
     const submitted = submit.mock.calls[0]?.[0];
     expect(submitted.metadata.buttonValue).toBe("yes");
     expect(submitted.metadata.forcedBranchId).toBeUndefined();
+  });
+});
+
+describe("multi-select button taps", () => {
+  const rows = [
+    [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+    ],
+    [{ label: "Maybe", value: "maybe" }],
+  ];
+
+  const notModified = () =>
+    Object.assign(new Error("not modified"), {
+      description: "Bad Request: message is not modified",
+    });
+
+  it("toggles a selection and re-renders the keyboard without submitting", async () => {
+    const { channel, runtime, submit, api, multiSelects, dispatchCallback } = makeChannel();
+    multiSelects.seed(5, rows);
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnM:yes", messageId: 5 });
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(api.editMessageReplyMarkup).toHaveBeenCalledWith(42, 5, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ Yes", callback_data: "btnM:yes" },
+            { text: "No", callback_data: "btnM:no" },
+          ],
+          [{ text: "Maybe", callback_data: "btnM:maybe" }],
+          [{ text: "Done (1)", callback_data: "btnD:" }],
+        ],
+      },
+    });
+  });
+
+  it("accumulates rapid toggles — each render reflects the settled state", async () => {
+    const { channel, runtime, api, multiSelects, dispatchCallback } = makeChannel();
+    multiSelects.seed(5, rows);
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnM:yes", messageId: 5 });
+    await dispatchCallback({ data: "btnM:maybe", messageId: 5 });
+
+    expect(api.editMessageReplyMarkup).toHaveBeenLastCalledWith(42, 5, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "✅ Yes", callback_data: "btnM:yes" },
+            { text: "No", callback_data: "btnM:no" },
+          ],
+          [{ text: "✅ Maybe", callback_data: "btnM:maybe" }],
+          [{ text: "Done (2)", callback_data: "btnD:" }],
+        ],
+      },
+    });
+  });
+
+  it("swallows the benign not-modified rejection when a toggle reproduces the prior markup", async () => {
+    const { channel, runtime, submit, api, multiSelects, dispatchCallback } = makeChannel();
+    multiSelects.seed(5, rows);
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnM:yes", messageId: 5 });
+    // Toggling back off rebuilds the original markup — Telegram answers "message is not
+    // modified". The toggle still stands: the following Done submits an empty selection.
+    api.editMessageReplyMarkup.mockRejectedValueOnce(notModified());
+    await dispatchCallback({ data: "btnM:yes", messageId: 5 });
+    await dispatchCallback({ data: "btnD:", messageId: 5 });
+
+    expect(fakeLog.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "multi-select keyboard re-render failed",
+    );
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit.mock.calls[0]?.[0]?.text).toContain("without selecting any option");
+  });
+
+  it("submits the whole selection as one turn on Done, routed to the owning branch, and clears the keyboard", async () => {
+    const { channel, runtime, submit, api, multiSelects, mappings, dispatchCallback } =
+      makeChannel();
+    multiSelects.seed(5, rows);
+    mappings.set("5", { treeEntryId: "entry-5", branchId: "topic-2" });
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnM:yes", messageId: 5 });
+    await dispatchCallback({ data: "btnM:maybe", messageId: 5 });
+    await dispatchCallback({ data: "btnD:", messageId: 5 });
+    await settle();
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "The user finished the multi-select prompt you displayed, selecting: `yes`, `maybe`.",
+        metadata: expect.objectContaining({
+          buttonValues: ["yes", "maybe"],
+          messageId: 5,
+          forcedBranchId: "topic-2",
+          forcedTreeEntryId: "entry-5",
+        }),
+      }),
+    );
+    // The keyboard removal is the last markup edit — enqueued through the send mutex so it
+    // orders after any queued re-render.
+    expect(api.editMessageReplyMarkup).toHaveBeenLastCalledWith(42, 5);
+  });
+
+  it("submits an explicit empty selection when nothing is selected", async () => {
+    const { channel, runtime, submit, multiSelects, dispatchCallback } = makeChannel();
+    multiSelects.seed(5, rows);
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnD:", messageId: 5 });
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "The user finished the multi-select prompt you displayed, without selecting any option.",
+        metadata: expect.objectContaining({ buttonValues: [] }),
+      }),
+    );
+  });
+
+  it("drops a repeated Done tap and later option taps instead of submitting twice", async () => {
+    const { channel, runtime, submit, multiSelects, dispatchCallback } = makeChannel();
+    multiSelects.seed(5, rows);
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnM:yes", messageId: 5 });
+    await dispatchCallback({ data: "btnD:", messageId: 5 });
+    await dispatchCallback({ data: "btnD:", messageId: 5 });
+    await dispatchCallback({ data: "btnM:no", messageId: 5 });
+
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it("degrades an option tap when the selection state is lost", async () => {
+    const { channel, runtime, submit, api, dispatchCallback } = makeChannel();
+
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnM:yes", messageId: 5 });
+    await settle();
+    // A second tap on the (now cleared) prompt is recognized as a duplicate, not another turn.
+    await dispatchCallback({ data: "btnM:no", messageId: 5 });
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("selection state was lost"),
+        metadata: expect.objectContaining({ buttonValue: "yes", messageId: 5 }),
+      }),
+    );
+    expect(api.editMessageReplyMarkup).toHaveBeenCalledWith(42, 5);
+  });
+
+  it("degrades a Done tap when the selection state is lost", async () => {
+    const { channel, runtime, submit, mappings, dispatchCallback } = makeChannel();
+    mappings.set("5", { treeEntryId: "entry-5", branchId: "topic-2" });
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnD:", messageId: 5 });
+    await settle();
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    // Degraded turns force-route to the owning branch like any tap when the ledger resolves.
+    expect(submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("nothing was recorded"),
+        metadata: expect.objectContaining({
+          buttonValues: [],
+          messageId: 5,
+          forcedBranchId: "topic-2",
+          forcedTreeEntryId: "entry-5",
+        }),
+      }),
+    );
+  });
+
+  it("submits a bare degraded Done turn when the message id is absent", async () => {
+    const { channel, runtime, submit, api, dispatchCallback } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnD:", messageId: null });
+
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit.mock.calls[0]?.[0]?.metadata).toEqual({ buttonValues: [] });
+    expect(api.editMessageReplyMarkup).not.toHaveBeenCalled();
+  });
+
+  it("drops a toggle without a message id", async () => {
+    const { channel, runtime, submit, api, dispatchCallback } = makeChannel();
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnM:yes", messageId: null });
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(api.editMessageReplyMarkup).not.toHaveBeenCalled();
+  });
+
+  it("drops multi-select taps from an unauthorized user", async () => {
+    const { channel, runtime, submit, api, multiSelects, dispatchCallback } = makeChannel();
+    multiSelects.seed(5, rows);
+    await channel.start(runtime);
+
+    await dispatchCallback({ data: "btnM:yes", messageId: 5, fromId: 999 });
+    await dispatchCallback({ data: "btnD:", messageId: 5, fromId: 999 });
+
+    expect(submit).not.toHaveBeenCalled();
+    expect(api.editMessageReplyMarkup).not.toHaveBeenCalled();
+  });
+
+  it("does not re-add the keyboard when a toggle render is queued behind a Done", async () => {
+    const { channel, runtime, submit, api, multiSelects, dispatchCallback } = makeChannel();
+    multiSelects.seed(5, rows);
+    await channel.start(runtime);
+
+    // Occupy the send mutex so the toggle's re-render waits in the queue.
+    let release: (() => void) | null = null;
+    api.sendMessage.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ message_id: 99 });
+        }),
+    );
+    const holding = channel.shutdownStatus("holding…");
+    await settle();
+
+    // The toggle mutates state synchronously, then queues its render behind the mutex; the
+    // Done tap finishes while that render is still queued.
+    const toggling = dispatchCallback({ data: "btnM:yes", messageId: 5 });
+    const finishing = dispatchCallback({ data: "btnD:", messageId: 5 });
+    await settle();
+    release?.();
+    await Promise.all([holding, toggling, finishing]);
+    await settle();
+
+    // The queued render must not run: only the Done removal ever edits the markup.
+    expect(api.editMessageReplyMarkup).toHaveBeenCalledTimes(1);
+    expect(api.editMessageReplyMarkup).toHaveBeenCalledWith(42, 5);
+    expect(submit).toHaveBeenCalledTimes(1);
+    expect(submit.mock.calls[0]?.[0]?.metadata).toEqual(
+      expect.objectContaining({ buttonValues: ["yes"], messageId: 5 }),
+    );
+  });
+
+  it("records no inbound row for a multi-select Done turn (the button message keeps its row)", async () => {
+    const { channel, runtime, recorded } = makeChannel();
+    await channel.start(runtime);
+
+    await channel.respond({
+      message: {
+        text: "The user finished the multi-select prompt you displayed, selecting: `yes`.",
+        channel: "telegram",
+        receivedAt: new Date(),
+        media: [],
+        metadata: { messageId: 5, buttonValues: ["yes"] },
+      },
+      events: stream([
+        { kind: "text", text: "Saved." },
+        { kind: "result", stopReason: "done" },
+      ]),
+    });
+
+    expect(recorded.map((row) => [row.messageId, row.direction])).toEqual([["1", "outgoing"]]);
   });
 });
 

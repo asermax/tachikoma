@@ -14,10 +14,11 @@ import type {
 import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
-import { buildInlineKeyboard, validateButtons } from "./buttons.ts";
+import { buildInlineKeyboard, buildMultiSelectKeyboard, validateButtons } from "./buttons.ts";
 import type { ChannelMessageStore, MessageRouting } from "./channel.ts";
 import { toTelegramEntities } from "./entities.ts";
 import { messageRef } from "./inbound.ts";
+import type { MultiSelectRegistry } from "./multiselect.ts";
 import { sendEntitiesOrFallback } from "./sending.ts";
 
 /**
@@ -90,6 +91,8 @@ export interface ToolDeps {
   store: Pick<ChannelMessageStore, "record" | "resolve">;
   /** The current trunk routing (live leaf entry + branch), for outbound recording. */
   currentRouting: () => MessageRouting | null;
+  /** Seed per-message selection state when a multi-select prompt is sent (shared with the channel). */
+  multiSelects: Pick<MultiSelectRegistry, "seed">;
 }
 
 // ---- send_telegram_file -------------------------------------------------------
@@ -463,25 +466,39 @@ const ButtonsParams = Type.Object({
       description: "Remove the keyboard after the first tap (default true)",
     }),
   ),
+  multiSelect: Type.Optional(
+    Type.Boolean({
+      description:
+        "Let the user pick several options at once: option taps toggle a ✅ on the keyboard " +
+        "(never reaching you) and a Done button is appended; only the Done tap comes back to " +
+        "you, as one message listing every selected value",
+    }),
+  ),
 });
 
 export const handleSendMessageWithButtons = async (
-  deps: Pick<ToolDeps, "api" | "log" | "chatId" | "store" | "currentRouting">,
+  deps: Pick<ToolDeps, "api" | "log" | "chatId" | "store" | "currentRouting" | "multiSelects">,
   params: Static<typeof ButtonsParams>,
 ): Promise<string> => {
+  const multiSelect = params.multiSelect === true;
+
   deps.log.info(
-    { tool: "send_message_with_buttons", rows: params.buttons.length },
+    { tool: "send_message_with_buttons", rows: params.buttons.length, multiSelect },
     "telegram tool invoked",
   );
 
-  validateButtons(params.buttons);
+  validateButtons(params.buttons, { multiSelect });
 
   // Convert the prompt to a Telegram entity payload so agent markdown in the
   // prompt renders, reusing the channel's convert-then-fallback policy (raw text
   // on a render rejection) — best-effort formatting, the message is never lost.
   // Bound to the tool's own ToolApi (not the channel's SendApi) via the send
   // callable, so the inline keyboard rides along in `other` on both attempts.
-  const reply_markup = buildInlineKeyboard(params.buttons, params.singleUse ?? true);
+  // A multi-select keyboard swaps the per-tap prefixes for toggle ones and appends
+  // the Done control; singleUse is meaningless there (Done submits and clears).
+  const reply_markup = multiSelect
+    ? buildMultiSelectKeyboard(params.buttons, new Set())
+    : buildInlineKeyboard(params.buttons, params.singleUse ?? true);
   const messageId = await sendEntitiesOrFallback(
     (text, other) => deps.api.sendMessage(deps.chatId, text, other),
     toTelegramEntities(params.prompt),
@@ -500,9 +517,19 @@ export const handleSendMessageWithButtons = async (
       .join(" | ")}]`,
   );
 
-  deps.log.debug({ tool: "send_message_with_buttons", messageId }, "telegram buttons sent");
+  // A multi-select's selection state lives in the channel: seed it so option taps toggle and the
+  // Done tap submits. Single-select keyboards stay stateless — the wire carries everything.
+  if (multiSelect) deps.multiSelects.seed(messageId, params.buttons);
 
-  return `Buttons sent (message_id: ${messageId})`;
+  deps.log.debug(
+    { tool: "send_message_with_buttons", messageId, multiSelect },
+    "telegram buttons sent",
+  );
+
+  return multiSelect
+    ? `Multi-select buttons sent (message_id: ${messageId}) — option taps toggle a ✅ on the ` +
+        "keyboard; the Done tap returns the whole selection as one message"
+    : `Buttons sent (message_id: ${messageId})`;
 };
 
 // ---- registration -----------------------------------------------------------------
@@ -558,8 +585,18 @@ When the user taps a button, you will receive a turn explicitly framed as
 so you can distinguish taps from typed input. Use this for structured prompts
 like yes/no, multiple-choice, or confirm/cancel.
 
+Set multiSelect: true when the user should pick SEVERAL options at once (e.g.
+which articles to save from a digest): each option tap toggles a ✅ on that
+option and updates the keyboard in place — intermediate taps never reach you —
+and a Done button is appended automatically. Only the Done tap comes back, as
+one turn listing every selected value in displayed order (an empty selection is
+reported as "without selecting any option"). singleUse is ignored in this mode:
+Done always submits and clears the keyboard. Don't prefix labels with ✅
+yourself — that marker is reserved for selected options.
+
 Per-button value must be at most 58 UTF-8 bytes; labels must be non-empty; at
-least one row with at least one button is required; at most 100 buttons total.`;
+least one row with at least one button is required; at most 100 buttons total
+(99 options in multi-select mode — the Done control takes one slot).`;
 
 const textResult = (text: string) => ({
   content: [{ type: "text" as const, text }],

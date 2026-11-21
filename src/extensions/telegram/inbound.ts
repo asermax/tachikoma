@@ -174,3 +174,55 @@ export const mapButtonTap = (value: string, messageId: number | null): InboundMe
   media: [],
   metadata: { buttonValue: value, ...(messageId != null ? { messageId } : {}) },
 });
+
+/**
+ * Frame a multi-select Done submission: the whole selection arrives as one turn, values listed in
+ * displayed order. An empty selection is explicit ("without selecting any option") rather than an
+ * absence — the user finished the prompt while nothing was selected. `metadata.buttonValues` marks
+ * the turn as button-driven, so the channel's ledger guard records no inbound row and the prompt's
+ * own ledger row (its label) survives for later replies/reactions.
+ */
+export const mapMultiSelectDone = (values: string[], messageId: number | null): InboundMessage => {
+  const selection =
+    values.length > 0
+      ? `selecting: ${values.map((value) => `\`${value}\``).join(", ")}.`
+      : "without selecting any option.";
+
+  return {
+    text: `The user finished the multi-select prompt you displayed, ${selection}`,
+    channel: CHANNEL_NAME,
+    receivedAt: new Date(),
+    media: [],
+    metadata: { buttonValues: values, ...(messageId != null ? { messageId } : {}) },
+  };
+};
+
+/**
+ * Frame an option tap on a multi-select prompt whose selection state is lost (most likely a
+ * restart). The tap still carries meaning — the named value — but the full selection is unknown,
+ * so the agent is told the user may need to re-pick rather than acting on one fragment.
+ */
+export const mapMultiSelectStateLostToggle = (
+  value: string,
+  messageId: number | null,
+): InboundMessage => ({
+  text:
+    `The user tapped the option \`${value}\` on your multi-select prompt, but its selection ` +
+    "state was lost (most likely after a restart), so the full selection is unknown — they may " +
+    "need to re-pick.",
+  channel: CHANNEL_NAME,
+  receivedAt: new Date(),
+  media: [],
+  metadata: { buttonValue: value, ...(messageId != null ? { messageId } : {}) },
+});
+
+/** The Done-tap counterpart of a lost selection: nothing was recorded, so the user may need to re-pick. */
+export const mapMultiSelectStateLostDone = (messageId: number | null): InboundMessage => ({
+  text:
+    "The user tapped Done on your multi-select prompt, but its selection state was lost " +
+    "(most likely after a restart), so nothing was recorded — they may need to re-pick.",
+  channel: CHANNEL_NAME,
+  receivedAt: new Date(),
+  media: [],
+  metadata: { buttonValues: [], ...(messageId != null ? { messageId } : {}) },
+});

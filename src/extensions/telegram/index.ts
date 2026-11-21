@@ -11,6 +11,7 @@ import { expandHome } from "../../workspace.ts";
 import { defineExtension } from "../api.ts";
 import { type MessageRouting, TelegramChannel } from "./channel.ts";
 import { ensureMediaDir } from "./media.ts";
+import { MultiSelectRegistry } from "./multiselect.ts";
 import { TelegramMessageStore } from "./store.ts";
 import { registerTelegramTools } from "./tools.ts";
 import { TELEGRAM_USAGE } from "./usage.ts";
@@ -85,6 +86,10 @@ export default defineExtension<TelegramConfig>({
 
     const store = new TelegramMessageStore(app.db, app.log);
 
+    // Multi-select button prompts keep their selection state here: the send_message_with_buttons
+    // tool seeds it at send, the channel toggles/submits it on tap (one shared instance).
+    const multiSelects = new MultiSelectRegistry();
+
     // The routing for the message just produced/received: the live trunk leaf entry id (recorded post-
     // append, so it exists) + the live branch id (`nextBranchId`, the same id the branch gets when it
     // later collapses, so an id written mid-branch resolves to the same branch).
@@ -108,6 +113,7 @@ export default defineExtension<TelegramConfig>({
       mediaDir,
       stop: () => app.sessions.abortExchange(),
       store,
+      multiSelects,
       currentRouting,
     });
 
@@ -132,6 +138,7 @@ export default defineExtension<TelegramConfig>({
         getLastInboundMessageId: () => channel.lastInboundMessageId,
         requestPin: () => channel.requestPin(),
         store,
+        multiSelects,
         currentRouting,
       });
     });

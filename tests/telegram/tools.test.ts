@@ -519,6 +519,7 @@ describe("handleSendMessageWithButtons", () => {
         treeEntryId: string;
         branchId: string;
       } | null,
+    multiSelects: { seed: vi.fn() },
     ...overrides,
   });
 
@@ -666,15 +667,105 @@ describe("handleSendMessageWithButtons", () => {
 
     expect(api.sendMessage).not.toHaveBeenCalled();
   });
+
+  it("builds a multi-select keyboard with the Done control and seeds the selection state", async () => {
+    const api = fakeApi();
+    const seed = vi.fn();
+
+    const result = await handleSendMessageWithButtons(buttonDeps(api, { multiSelects: { seed } }), {
+      prompt: "Which articles should I save?",
+      buttons: [
+        [
+          { label: "Yes", value: "yes" },
+          { label: "No", value: "no" },
+        ],
+      ],
+      multiSelect: true,
+    });
+
+    expect(result).toBe(
+      "Multi-select buttons sent (message_id: 11) — option taps toggle a ✅ on the keyboard; " +
+        "the Done tap returns the whole selection as one message",
+    );
+    const payload = toTelegramEntities("Which articles should I save?");
+    expect(api.sendMessage).toHaveBeenCalledWith(42, payload.text, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Yes", callback_data: "btnM:yes" },
+            { text: "No", callback_data: "btnM:no" },
+          ],
+          [{ text: "Done", callback_data: "btnD:" }],
+        ],
+      },
+      entities: payload.entities,
+    });
+    // The registry gets the layout as sent (rows preserved) so re-renders keep it.
+    expect(seed).toHaveBeenCalledWith(11, [
+      [
+        { label: "Yes", value: "yes" },
+        { label: "No", value: "no" },
+      ],
+    ]);
+  });
+
+  it("ignores singleUse in multi-select mode", async () => {
+    const api = fakeApi();
+
+    await handleSendMessageWithButtons(buttonDeps(api), {
+      prompt: "Pick",
+      buttons: [[{ label: "A", value: "a" }]],
+      singleUse: true,
+      multiSelect: true,
+    });
+
+    expect(api.sendMessage).toHaveBeenCalledWith(
+      42,
+      expect.any(String),
+      expect.objectContaining({
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "A", callback_data: "btnM:a" }],
+            [{ text: "Done", callback_data: "btnD:" }],
+          ],
+        },
+      }),
+    );
+  });
+
+  it("rejects multi-select layouts beyond 99 options or carrying the marker before sending", async () => {
+    const api = fakeApi();
+    const base = buttonDeps(api);
+
+    const many = Array.from({ length: 100 }, (_, index) => [
+      { label: `b${index}`, value: `v${index}` },
+    ]);
+    await expect(
+      handleSendMessageWithButtons(base, { prompt: "x", buttons: many, multiSelect: true }),
+    ).rejects.toThrow(/exceeds the cap \(99\)/);
+
+    await expect(
+      handleSendMessageWithButtons(base, {
+        prompt: "x",
+        buttons: [[{ label: "✅ Yes", value: "yes" }]],
+        multiSelect: true,
+      }),
+    ).rejects.toThrow(/reserved for selected options/);
+
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    expect(base.multiSelects.seed).not.toHaveBeenCalled();
+  });
 });
 
 describe("callback data packing", () => {
   it("round-trips values for both keyboard modes", () => {
     expect(unpackCallbackData(packCallbackData("yes", true))).toEqual({
+      kind: "tap",
       value: "yes",
       singleUse: true,
     });
     expect(unpackCallbackData(packCallbackData("no", false))).toEqual({
+      kind: "tap",
       value: "no",
       singleUse: false,
     });

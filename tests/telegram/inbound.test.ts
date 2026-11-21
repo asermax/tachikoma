@@ -5,6 +5,9 @@ import {
   commandToken,
   mapButtonTap,
   mapMediaMessage,
+  mapMultiSelectDone,
+  mapMultiSelectStateLostDone,
+  mapMultiSelectStateLostToggle,
   mapReaction,
   mapTextMessage,
   messageRef,
@@ -428,5 +431,47 @@ describe("buildAttachment", () => {
       description: "Photo (800 × 600, 117 KB)",
       metadata: { width: 800, height: 600, fileSize: 120_000 },
     });
+  });
+});
+
+describe("multi-select framings", () => {
+  it("frames a Done submission with the selected values in displayed order", () => {
+    const inbound = mapMultiSelectDone(["a", "c"], 9);
+
+    expect(inbound.text).toBe(
+      "The user finished the multi-select prompt you displayed, selecting: `a`, `c`.",
+    );
+    expect(inbound.metadata).toEqual({ buttonValues: ["a", "c"], messageId: 9 });
+  });
+
+  it("frames an explicit empty selection", () => {
+    const inbound = mapMultiSelectDone([], 9);
+
+    expect(inbound.text).toBe(
+      "The user finished the multi-select prompt you displayed, without selecting any option.",
+    );
+    expect(inbound.metadata).toEqual({ buttonValues: [], messageId: 9 });
+  });
+
+  it("omits the message id when absent", () => {
+    expect(mapMultiSelectDone(["a"], null).metadata).toEqual({ buttonValues: ["a"] });
+    expect(mapMultiSelectStateLostToggle("x", null).metadata).toEqual({ buttonValue: "x" });
+    expect(mapMultiSelectStateLostDone(null).metadata).toEqual({ buttonValues: [] });
+  });
+
+  it("frames a degraded option tap with the state-lost note", () => {
+    const inbound = mapMultiSelectStateLostToggle("x", 5);
+
+    expect(inbound.text).toContain("tapped the option `x`");
+    expect(inbound.text).toContain("selection state was lost");
+    expect(inbound.metadata).toEqual({ buttonValue: "x", messageId: 5 });
+  });
+
+  it("frames a degraded Done tap", () => {
+    const inbound = mapMultiSelectStateLostDone(5);
+
+    expect(inbound.text).toContain("tapped Done");
+    expect(inbound.text).toContain("nothing was recorded");
+    expect(inbound.metadata).toEqual({ buttonValues: [], messageId: 5 });
   });
 });
