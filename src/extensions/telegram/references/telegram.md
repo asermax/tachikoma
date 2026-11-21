@@ -11,7 +11,7 @@ when a bot token and chat are configured (`[extensions.telegram]`).
 | `react_to_message` | Lightweight acknowledgements — an emoji reaction (e.g. 👍 on a quick confirmation) instead of a full reply. Only a fixed emoji set is accepted |
 | `pin_message` | Making the last response easy to find again (reminders, important info) |
 | `unpin_message` | Clearing a pin that is no longer relevant |
-| `send_message_with_buttons` | Structured choices (yes/no, multiple choice, confirm/cancel) as tappable inline buttons instead of asking the person to type an option. Their tap comes back as a message routed to the branch the button's message belongs to |
+| `send_message_with_buttons` | Structured choices (yes/no, multiple choice, confirm/cancel) as tappable inline buttons instead of asking the person to type an option. Their tap comes back as a message routed to the branch the button's message belongs to. With `multiSelect: true` the person can pick several options at once: option taps toggle a ✅ on the keyboard (never reaching you) and only the appended Done button's tap comes back — as one message listing every selected value (an empty selection is reported explicitly) |
 
 ## Conversation behavior
 
@@ -23,7 +23,11 @@ message's id (e.g. `The user reacted ❤ to a previous message (message_id: 42).
 a `Replied to:`/`Reacted to:` quote of its content; `send_telegram_file` names the same ids in
 its result (`File sent: chart.png (message_id: 12)` for one file,
 `Files sent: a.png, b.png (message_id: 12, 13)` for an album), so a later notification
-referencing one of those ids is the person reacting to or answering that file. `/stop` in the chat aborts your
+referencing one of those ids is the person reacting to or answering that file. Button taps
+arrive framed (`The user tapped the option …` / `The user finished the multi-select prompt
+you displayed, selecting: …`); multi-select selection state lives in the channel, so if it is
+ever lost (e.g. after a restart) the tap you receive says so — ask the person to re-pick.
+`/stop` in the chat aborts your
 running exchange. Long exchanges can be rendered compactly (activity collapsed to markers)
 per `collapseIntensiveWork` / `intensiveWorkThreshold`, and completed replies can be pushed
 as a notification (`pushNotifications`, `pushNotificationMinSeconds`) when the exchange
