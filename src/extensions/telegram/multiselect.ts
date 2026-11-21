@@ -15,6 +15,12 @@ export type FinishResult =
   | { status: "duplicate" }
   | { status: "unknown" };
 
+/** The outcome of an option tap: the toggled live state, a first tap on lost state, or a drop. */
+export type ToggleResult =
+  | { status: "toggled"; state: MultiSelectState }
+  | { status: "unknown" }
+  | { status: "dropped" };
+
 /**
  * Bounds registry growth: this is a single-user chat, so more than a handful of concurrently
  * open multi-select prompts is unrealistic — 25 covers it while capping memory from abandoned
@@ -58,25 +64,30 @@ export class MultiSelectRegistry {
   }
 
   /**
-   * Toggle a value's selection and return the live state (authoritative at render time), or null
-   * when the message has no registered state (restart, eviction, already submitted) — callers
-   * degrade. A value that is not among the prompt's options no-ops rather than corrupting the
-   * selection.
+   * Toggle a value's selection, owning the tap lifecycle the way `finish` owns Done's: a live
+   * entry toggles and yields the live state (authoritative at render time; a value not among
+   * the prompt's options no-ops rather than corrupting the selection); a finished prompt is
+   * `dropped` (acked, nothing submitted); a prompt with no registered state (restart, eviction)
+   * is claimed as finished and reported `unknown`, so only the first such tap degrades.
    */
-  toggle(messageId: number, value: string): MultiSelectState | null {
+  toggle(messageId: number, value: string): ToggleResult {
+    if (this.finished.has(messageId)) return { status: "dropped" };
+
     const state = this.live.get(messageId);
-    if (state == null) return null;
-
-    const known = state.rows.flat().some((option) => option.value === value);
-    if (!known) return state;
-
-    if (state.selected.has(value)) {
-      state.selected.delete(value);
-    } else {
-      state.selected.add(value);
+    if (state == null) {
+      return this.markFinished(messageId) ? { status: "unknown" } : { status: "dropped" };
     }
 
-    return state;
+    const known = state.rows.flat().some((option) => option.value === value);
+    if (known) {
+      if (state.selected.has(value)) {
+        state.selected.delete(value);
+      } else {
+        state.selected.add(value);
+      }
+    }
+
+    return { status: "toggled", state };
   }
 
   /**
@@ -111,10 +122,10 @@ export class MultiSelectRegistry {
   }
 
   /**
-   * Mark a prompt terminal. Returns whether this call newly marked it — the degraded tap paths
-   * use the return as a claim so concurrent taps on a stateless message submit one turn, not many.
+   * Mark a prompt terminal. Returns whether this call newly marked it — `toggle`/`finish` use
+   * the return as a claim so concurrent taps on a stateless message submit one turn, not many.
    */
-  markFinished(messageId: number): boolean {
+  private markFinished(messageId: number): boolean {
     if (this.finished.has(messageId)) return false;
 
     this.finished.add(messageId);

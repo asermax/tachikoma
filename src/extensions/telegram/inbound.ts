@@ -163,17 +163,43 @@ export const mapReaction = (
 };
 
 /**
+ * The envelope every button-prompt turn shares: no media, and the tapped message's id only when
+ * one is resolvable.
+ */
+const buttonTurn = (
+  text: string,
+  metadata: Record<string, unknown>,
+  messageId: number | null,
+): InboundMessage => ({
+  text,
+  channel: CHANNEL_NAME,
+  receivedAt: new Date(),
+  media: [],
+  metadata: { ...metadata, ...(messageId != null ? { messageId } : {}) },
+});
+
+/**
+ * Whether a turn was produced by a button prompt — a single-select tap (`buttonValue`) or a
+ * multi-select submission (`buttonValues`) — rather than typed input. The channel's ledger guard
+ * reads this to record no inbound row for the turn, so the prompt message's own row survives for
+ * later replies/reactions.
+ */
+export const isButtonDrivenTurn = (metadata: Record<string, unknown>): boolean =>
+  metadata.buttonValue != null || metadata.buttonValues != null;
+
+/**
  * Frame a button tap so the agent can distinguish it from typed input. A tap on an earlier branch's
  * button is routed to that branch by the channel (forced shift + context injection), so no inline
  * prompt recovery is needed here.
  */
-export const mapButtonTap = (value: string, messageId: number | null): InboundMessage => ({
-  text: `The user tapped the option \`${value}\` out of the options you displayed.`,
-  channel: CHANNEL_NAME,
-  receivedAt: new Date(),
-  media: [],
-  metadata: { buttonValue: value, ...(messageId != null ? { messageId } : {}) },
-});
+export const mapButtonTap = (value: string, messageId: number | null): InboundMessage =>
+  buttonTurn(
+    `The user tapped the option \`${value}\` out of the options you displayed.`,
+    {
+      buttonValue: value,
+    },
+    messageId,
+  );
 
 /**
  * Frame a multi-select Done submission: the whole selection arrives as one turn, values listed in
@@ -188,13 +214,13 @@ export const mapMultiSelectDone = (values: string[], messageId: number | null): 
       ? `selecting: ${values.map((value) => `\`${value}\``).join(", ")}.`
       : "without selecting any option.";
 
-  return {
-    text: `The user finished the multi-select prompt you displayed, ${selection}`,
-    channel: CHANNEL_NAME,
-    receivedAt: new Date(),
-    media: [],
-    metadata: { buttonValues: values, ...(messageId != null ? { messageId } : {}) },
-  };
+  return buttonTurn(
+    `The user finished the multi-select prompt you displayed, ${selection}`,
+    {
+      buttonValues: values,
+    },
+    messageId,
+  );
 };
 
 /**
@@ -205,24 +231,20 @@ export const mapMultiSelectDone = (values: string[], messageId: number | null): 
 export const mapMultiSelectStateLostToggle = (
   value: string,
   messageId: number | null,
-): InboundMessage => ({
-  text:
+): InboundMessage =>
+  buttonTurn(
     `The user tapped the option \`${value}\` on your multi-select prompt, but its selection ` +
-    "state was lost (most likely after a restart), so the full selection is unknown — they may " +
-    "need to re-pick.",
-  channel: CHANNEL_NAME,
-  receivedAt: new Date(),
-  media: [],
-  metadata: { buttonValue: value, ...(messageId != null ? { messageId } : {}) },
-});
+      "state was lost (most likely after a restart), so the full selection is unknown — they may " +
+      "need to re-pick.",
+    { buttonValue: value },
+    messageId,
+  );
 
 /** The Done-tap counterpart of a lost selection: nothing was recorded, so the user may need to re-pick. */
-export const mapMultiSelectStateLostDone = (messageId: number | null): InboundMessage => ({
-  text:
+export const mapMultiSelectStateLostDone = (messageId: number | null): InboundMessage =>
+  buttonTurn(
     "The user tapped Done on your multi-select prompt, but its selection state was lost " +
-    "(most likely after a restart), so nothing was recorded — they may need to re-pick.",
-  channel: CHANNEL_NAME,
-  receivedAt: new Date(),
-  media: [],
-  metadata: { buttonValues: [], ...(messageId != null ? { messageId } : {}) },
-});
+      "(most likely after a restart), so nothing was recorded — they may need to re-pick.",
+    { buttonValues: [] },
+    messageId,
+  );

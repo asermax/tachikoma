@@ -527,9 +527,9 @@ export const handleSendMessageWithButtons = async (
   );
 
   return multiSelect
-    ? `Multi-select buttons sent (message_id: ${messageId}) — option taps toggle a ✅ on the ` +
+    ? `Multi-select buttons sent ${messageRef(messageId)} — option taps toggle a ✅ on the ` +
         "keyboard; the Done tap returns the whole selection as one message"
-    : `Buttons sent (message_id: ${messageId})`;
+    : `Buttons sent ${messageRef(messageId)}`;
 };
 
 // ---- registration -----------------------------------------------------------------

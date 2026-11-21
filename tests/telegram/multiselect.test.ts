@@ -6,7 +6,11 @@ import {
   doneButtonLabel,
   unpackCallbackData,
 } from "../../src/extensions/telegram/buttons.ts";
-import { MultiSelectRegistry } from "../../src/extensions/telegram/multiselect.ts";
+import {
+  MultiSelectRegistry,
+  type MultiSelectState,
+  type ToggleResult,
+} from "../../src/extensions/telegram/multiselect.ts";
 
 const rows: ButtonSpec[][] = [
   [
@@ -67,12 +71,16 @@ describe("buildMultiSelectKeyboard", () => {
   });
 });
 
+/** Unwrap a toggle outcome to its live state (null when it did not toggle). */
+const toggledState = (result: ToggleResult): MultiSelectState | null =>
+  result.status === "toggled" ? result.state : null;
+
 describe("MultiSelectRegistry", () => {
   it("toggles values and returns the live state", () => {
     const registry = new MultiSelectRegistry();
     registry.seed(1, rows);
 
-    const state = registry.toggle(1, "yes");
+    const state = toggledState(registry.toggle(1, "yes"));
     expect([...(state?.selected ?? [])]).toEqual(["yes"]);
 
     // The live entry, not a snapshot: toggling back off is visible through the same reference.
@@ -84,12 +92,15 @@ describe("MultiSelectRegistry", () => {
     const registry = new MultiSelectRegistry();
     registry.seed(1, rows);
 
-    const state = registry.toggle(1, "unknown");
-    expect(state?.selected.size).toBe(0);
+    expect(toggledState(registry.toggle(1, "unknown"))?.selected.size).toBe(0);
   });
 
-  it("returns null for a message with no registered state", () => {
-    expect(new MultiSelectRegistry().toggle(404, "yes")).toBeNull();
+  it("degrades a stateless prompt: the first tap claims it, later taps are dropped", () => {
+    const registry = new MultiSelectRegistry();
+
+    expect(registry.toggle(404, "yes")).toEqual({ status: "unknown" });
+    expect(registry.isFinished(404)).toBe(true);
+    expect(registry.toggle(404, "no")).toEqual({ status: "dropped" });
   });
 
   it("submits selected values in displayed order and clears the state", () => {
@@ -110,26 +121,19 @@ describe("MultiSelectRegistry", () => {
     expect(registry.finish(404)).toEqual({ status: "duplicate" });
   });
 
-  it("claims degraded messages exactly once via markFinished", () => {
-    const registry = new MultiSelectRegistry();
-
-    expect(registry.markFinished(7)).toBe(true);
-    expect(registry.markFinished(7)).toBe(false);
-  });
-
   it("evicts the oldest never-submitted prompt beyond the cap", () => {
     const registry = new MultiSelectRegistry();
 
     for (let id = 1; id <= 26; id += 1) registry.seed(id, rows);
 
-    expect(registry.toggle(1, "yes")).toBeNull();
-    expect(registry.toggle(26, "yes")?.selected.has("yes")).toBe(true);
+    expect(registry.toggle(1, "yes")).toEqual({ status: "unknown" });
+    expect(toggledState(registry.toggle(26, "yes"))?.selected.has("yes")).toBe(true);
   });
 
   it("bounds the finished set the same way", () => {
     const registry = new MultiSelectRegistry();
 
-    for (let id = 1; id <= 26; id += 1) registry.markFinished(id);
+    for (let id = 1; id <= 26; id += 1) registry.finish(id);
 
     expect(registry.isFinished(1)).toBe(false);
     expect(registry.isFinished(26)).toBe(true);

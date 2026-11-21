@@ -9,6 +9,7 @@ import type { Logger } from "../../log.ts";
 import { buildMultiSelectKeyboard, unpackCallbackData } from "./buttons.ts";
 import { toTelegramEntities } from "./entities.ts";
 import {
+  isButtonDrivenTurn,
   mapButtonTap,
   mapMediaMessage,
   mapMultiSelectDone,
@@ -107,7 +108,7 @@ export interface TelegramChannelOptions {
    * toggled/submitted here on tap (shared instance — see index.ts wiring). Narrowed to the
    * surface the channel consumes, mirroring the store dependency (DES-002).
    */
-  multiSelects: Pick<MultiSelectRegistry, "toggle" | "finish" | "isFinished" | "markFinished">;
+  multiSelects: Pick<MultiSelectRegistry, "toggle" | "finish" | "isFinished">;
   /**
    * The trunk routing for the message just produced/received (live leaf entry + live branch id), or
    * null when no trunk is active. Read post-append so the tree entry id exists.
@@ -300,16 +301,10 @@ export class TelegramChannel implements Channel {
       }
 
       if (unpacked.singleUse && messageId != null) {
-        void this.bot.api
-          .editMessageReplyMarkup(this.options.chatId, messageId)
-          .catch((error) => runtime.log.warn({ err: error }, "keyboard removal failed"));
+        this.removeKeyboard(messageId);
       }
 
-      // Resolve the tapped button message to its branch. A tap on an earlier branch forces a shift
-      // (stamped in metadata for the boundary); an unrecorded target falls through to normal handling.
-      const reference = messageId != null ? this.options.store.resolve(String(messageId)) : null;
-
-      runtime.submit(this.applyForcedRouting(mapButtonTap(unpacked.value, messageId), reference));
+      this.submitButtonTurn(mapButtonTap(unpacked.value, messageId), messageId);
     });
 
     this.bot.on("message_reaction", async (ctx) => {
@@ -415,14 +410,17 @@ export class TelegramChannel implements Channel {
   /**
    * Toggle a multi-select option: flip the value's selection and re-render the keyboard in place
    * (✅ on selected labels, a live count on the Done control). Nothing is submitted — the agent
-   * never sees intermediate selections. The mutation is synchronous (atomic), and the re-render
-   * runs under the send mutex so consecutive taps render in order and never interleave with other
-   * channel sends. The keyboard is rebuilt inside the critical section from the live state, and a
-   * prompt finished while this render waited in the queue is left cleared — its selection was
-   * already submitted, so the keyboard must not come back. Render failures are best-effort:
-   * "message is not modified" is benign (toggling an option back reproduces the prior markup),
-   * anything else is warn-logged while the state change stands — the next tap re-renders from
-   * authoritative state.
+   * never sees intermediate selections. The registry owns the tap lifecycle: a toggled outcome
+   * renders, a finished prompt's tap is dropped, and a lost state (restart or eviction) degrades
+   * loudly — the registry's claim means only the first such tap submits a turn naming the tapped
+   * value and clears the unusable keyboard. The mutation is synchronous (atomic), and the
+   * re-render runs under the send mutex so consecutive taps render in order and never interleave
+   * with other channel sends. The keyboard is rebuilt inside the critical section from the live
+   * state, and a prompt finished while this render waited in the queue is left cleared — its
+   * selection was already submitted, so the keyboard must not come back. Render failures are
+   * best-effort: "message is not modified" is benign (toggling an option back reproduces the
+   * prior markup), anything else is warn-logged while the state change stands — the next tap
+   * re-renders from authoritative state.
    */
   private async handleMultiSelectToggle(value: string, messageId: number | null): Promise<void> {
     const log = this.log();
@@ -433,27 +431,21 @@ export class TelegramChannel implements Channel {
     }
 
     const registry = this.options.multiSelects;
-    if (registry.isFinished(messageId)) {
-      log.debug({ messageId }, "multi-select toggle after submission; dropped");
+    const outcome = registry.toggle(messageId, value);
+
+    if (outcome.status === "dropped") {
+      log.debug({ messageId }, "multi-select toggle on a finished prompt; dropped");
       return;
     }
 
-    const state = registry.toggle(messageId, value);
-    if (state == null) {
-      // State lost (restart or eviction): the prompt can never re-render, so degrade loudly —
-      // submit a turn naming the tapped value, clear the unusable keyboard, mark it finished.
-      // markFinished doubles as a claim: only the first tap on a stateless message submits.
-      if (!registry.markFinished(messageId)) {
-        log.debug({ messageId }, "multi-select tap after degradation; dropped");
-        return;
-      }
-
+    if (outcome.status === "unknown") {
       log.info({ messageId, value }, "multi-select state missing; submitting degraded tap turn");
-      this.submitMultiSelectTurn(mapMultiSelectStateLostToggle(value, messageId), messageId);
-      this.clearKeyboard(messageId);
+      this.submitButtonTurn(mapMultiSelectStateLostToggle(value, messageId), messageId);
+      this.removeKeyboard(messageId);
       return;
     }
 
+    const { state } = outcome;
     await this.mutex.run(async () => {
       if (registry.isFinished(messageId)) return;
       try {
@@ -480,7 +472,7 @@ export class TelegramChannel implements Channel {
 
     if (messageId == null) {
       log.warn("multi-select Done without a resolvable message; submitting degraded turn");
-      this.runtimeOrThrow().submit(mapMultiSelectStateLostDone(null));
+      this.submitButtonTurn(mapMultiSelectStateLostDone(null), null);
       return;
     }
 
@@ -494,46 +486,44 @@ export class TelegramChannel implements Channel {
 
     if (result.status === "unknown") {
       log.info({ messageId }, "multi-select state missing on Done; submitting degraded turn");
-      this.submitMultiSelectTurn(mapMultiSelectStateLostDone(messageId), messageId);
-      this.clearKeyboard(messageId);
+      this.submitButtonTurn(mapMultiSelectStateLostDone(messageId), messageId);
+      this.removeKeyboard(messageId);
       return;
     }
 
     log.debug({ messageId, count: result.values.length }, "multi-select selection submitted");
-    this.submitMultiSelectTurn(mapMultiSelectDone(result.values, messageId), messageId);
-    this.clearKeyboard(messageId);
+    this.submitButtonTurn(mapMultiSelectDone(result.values, messageId), messageId);
+    this.removeKeyboard(messageId);
   }
 
   /**
-   * Submit a multi-select turn (a Done submission or a degraded tap) routed to the branch that
-   * owns the button message — the same ledger-resolved forced routing single taps use. The framed
-   * turn always carries button metadata (`buttonValue`/`buttonValues`), so respond() records no
-   * inbound row and the prompt's own ledger row survives for later replies/reactions.
+   * Submit a button turn — a single-select tap, a multi-select Done, or a degraded multi-select
+   * tap — routed to the branch that owns the button message: the ledger row resolves to a forced
+   * route (a tap on an earlier branch forces a shift, stamped in metadata for the boundary; an
+   * unrecorded target falls through to normal handling; a null message id can resolve nothing and
+   * submits bare). The framed turn always carries button metadata (`buttonValue`/`buttonValues`),
+   * so respond() records no inbound row and the prompt's own ledger row survives for later
+   * replies/reactions.
    */
-  private submitMultiSelectTurn(inbound: InboundMessage, messageId: number): void {
-    const reference = this.options.store.resolve(String(messageId));
+  private submitButtonTurn(inbound: InboundMessage, messageId: number | null): void {
+    const reference = messageId != null ? this.options.store.resolve(String(messageId)) : null;
     this.runtimeOrThrow().submit(this.applyForcedRouting(inbound, reference));
   }
 
   /**
-   * Remove a multi-select prompt's keyboard once its selection is submitted (or the prompt is
-   * unusable). Enqueued through the send mutex — not fired directly — so it orders after any
-   * toggle re-render still queued for the same message: once cleared, the keyboard stays cleared.
-   * Failures (including removing an already-cleared keyboard, a benign "not modified") are logged
-   * and swallowed — the selection turn is already submitted either way.
+   * Remove a button prompt's keyboard — a submitted multi-select or a single-use tap. Enqueued
+   * through the send mutex — not fired directly — so it orders after any toggle re-render still
+   * queued for the same message: once cleared, the keyboard stays cleared. Failures (including
+   * removing an already-cleared keyboard, a benign "message is not modified") are logged and
+   * swallowed — the tap turn is already submitted either way.
    */
-  private clearKeyboard(messageId: number): void {
-    const log = this.log();
+  private removeKeyboard(messageId: number): void {
     void this.mutex
-      .run(() =>
-        this.bot.api.editMessageReplyMarkup(this.options.chatId, messageId).catch((error) => {
-          if (isMessageNotModifiedError(error)) return;
-          log.warn({ err: error, messageId }, "multi-select keyboard removal failed");
-        }),
-      )
-      .catch((error) =>
-        log.warn({ err: error, messageId }, "multi-select keyboard removal failed"),
-      );
+      .run(() => this.bot.api.editMessageReplyMarkup(this.options.chatId, messageId))
+      .catch((error) => {
+        if (isMessageNotModifiedError(error)) return;
+        this.log().warn({ err: error, messageId }, "keyboard removal failed");
+      });
   }
 
   /**
@@ -702,11 +692,7 @@ export class TelegramChannel implements Channel {
       }
 
       const inboundId = message.metadata.messageId;
-      if (
-        typeof inboundId === "number" &&
-        message.metadata.buttonValue == null &&
-        message.metadata.buttonValues == null
-      ) {
+      if (typeof inboundId === "number" && !isButtonDrivenTurn(message.metadata)) {
         this.options.store.record(String(inboundId), routing, "incoming", {
           label: message.text,
         });
