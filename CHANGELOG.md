@@ -1,3 +1,10 @@
+# [3.83.0](https://github.com/asermax/tachikoma/compare/v3.82.0...v3.83.0) (2026-11-24)
+
+
+### Features
+
+* **issue-479:** wip add ([86cfcd8](https://github.com/asermax/tachikoma/commit/86cfcd8650799f7cc746eaf1ec3b683d0d039435))
+
 # [3.82.0](https://github.com/asermax/tachikoma/compare/v3.81.0...v3.82.0) (2026-11-21)
 
 
