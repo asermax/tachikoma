@@ -1,12 +1,7 @@
 allowBuilds:
   '@google/genai': false
-  better-sqlite3: true
+  better-sqlite3: false
   esbuild: true
   protobufjs: false
-minimumReleaseAgeExclude:
-  - 'better-sqlite3@12.10.1'
-  - '@earendil-works/pi-agent-core@0.79.6'
-  - '@earendil-works/pi-ai@0.79.6'
-  - '@earendil-works/pi-coding-agent@0.79.6'
-  - '@earendil-works/pi-tui@0.79.6'
+minimumReleaseAge: 1440
 savePrefix: ""

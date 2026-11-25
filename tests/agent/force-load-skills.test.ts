@@ -18,6 +18,7 @@ beforeEach(() => {
 });
 
 type Handler = (event: {
+  messageType: "user";
   prompt: string;
   systemPromptOptions: { skills?: Skill[] };
 }) => Promise<{ message: { customType: string; content: string; display: false } } | undefined>;
@@ -48,7 +49,7 @@ const makeSkill = (name: string, filePath: string): Skill =>
   }) as Skill;
 
 const fire = (handler: Handler, skills: Skill[]) =>
-  handler({ prompt: "task", systemPromptOptions: { skills } });
+  handler({ messageType: "user", prompt: "task", systemPromptOptions: { skills } });
 
 describe("forceLoadSkillsFactory", () => {
   it("injects every resolved skill's stripped body under the grounding preface", async () => {

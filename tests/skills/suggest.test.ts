@@ -29,8 +29,18 @@ const makeSkill = (
     disableModelInvocation: options.disableModelInvocation ?? false,
   }) as Skill;
 
+// pi fires `before_agent_start` as a union on `messageType`: a user-started run carries `prompt`,
+// and a run started by an idle custom message carries `message` and no `prompt`.
+type BeforeAgentStartEvent =
+  | { messageType: "user"; prompt: string; systemPromptOptions: { skills?: Skill[] } }
+  | {
+      messageType: "custom";
+      message: { customType: string; content: string };
+      systemPromptOptions: { skills?: Skill[] };
+    };
+
 type Handler = (
-  event: { prompt: string; systemPromptOptions: { skills?: Skill[] } },
+  event: BeforeAgentStartEvent,
   ctx: Pick<ExtensionContext, "sessionManager">,
 ) => Promise<{ message: { customType: string; content: string; display: false } } | undefined>;
 
@@ -88,8 +98,15 @@ const register = (
 const emptyCtx = (): Pick<ExtensionContext, "sessionManager"> =>
   ({ sessionManager: { getEntries: () => [], getLeafId: () => null } }) as never;
 
-const event = (prompt: string, skills: Skill[]) => ({
+const event = (prompt: string, skills: Skill[]): BeforeAgentStartEvent => ({
+  messageType: "user",
   prompt,
+  systemPromptOptions: { skills },
+});
+
+const customEvent = (skills: Skill[]): BeforeAgentStartEvent => ({
+  messageType: "custom",
+  message: { customType: "timer-finished", content: "The 25 minute timer finished." },
   systemPromptOptions: { skills },
 });
 
@@ -137,6 +154,19 @@ describe("registerSkillSuggestion", () => {
     expect(result).toBeUndefined();
     expect(classify).not.toHaveBeenCalled();
     expect(status).not.toHaveBeenCalled();
+  });
+
+  it("does nothing on a run started by a custom message, which has no prompt to classify", async () => {
+    const pdf = makeSkill("pdf-tools", "Work with PDFs");
+    const classify = vi.fn();
+    const { handler, status } = register({ classifier: { classify } });
+
+    const result = await handler(customEvent([pdf]), emptyCtx());
+
+    expect(result).toBeUndefined();
+    expect(classify).not.toHaveBeenCalled();
+    expect(status).not.toHaveBeenCalled();
+    expect(fakeLog.warn).not.toHaveBeenCalled();
   });
 
   it("injects a lightweight reminder instead of full content for a skill already injected this branch", async () => {

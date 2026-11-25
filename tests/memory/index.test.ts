@@ -182,7 +182,10 @@ describe("memory extension setup", () => {
     useFactory(pi as unknown as Parameters<ExtensionFactory>[0]);
 
     await handlers.session_start?.({}, {} as ExtensionContext);
-    const injection = (await handlers.before_agent_start?.({}, {} as ExtensionContext)) as {
+    const injection = (await handlers.before_agent_start?.(
+      { messageType: "user" },
+      {} as ExtensionContext,
+    )) as {
       message: { content: string };
     };
 

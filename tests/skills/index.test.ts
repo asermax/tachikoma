@@ -102,7 +102,11 @@ const setup = async (
       .map(
         ([, handler]) =>
           handler as (
-            event: { prompt: string; systemPromptOptions: { skills: unknown[] } },
+            event: {
+              messageType: "user";
+              prompt: string;
+              systemPromptOptions: { skills: unknown[] };
+            },
             ctx: {
               sessionManager: { getEntries: () => unknown[]; getLeafId: () => string | null };
             },
@@ -110,7 +114,11 @@ const setup = async (
       );
     for (const handler of handlers) {
       await handler(
-        { prompt: "do a thing", systemPromptOptions: { skills: skillCatalog } },
+        {
+          messageType: "user",
+          prompt: "do a thing",
+          systemPromptOptions: { skills: skillCatalog },
+        },
         { sessionManager: { getEntries: () => [], getLeafId: () => null } },
       );
     }

@@ -23,7 +23,7 @@ const drive = (factory: ReturnType<typeof provideContext>) => {
   return {
     beforeAgentStart: (systemPrompt = "BASE", ctx?: unknown) =>
       handlers.get("before_agent_start")?.(
-        { type: "before_agent_start", systemPrompt },
+        { type: "before_agent_start", messageType: "user", systemPrompt },
         ctx,
       ) as Promise<Result>,
   };

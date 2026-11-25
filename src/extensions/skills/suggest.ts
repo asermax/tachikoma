@@ -148,6 +148,9 @@ export const registerSkillSuggestion = (pi: ExtensionAPI, deps: SkillSuggestionD
   pi.on("session_compact", () => resetInjection("session compacted"));
 
   pi.on("before_agent_start", async (event, ctx): Promise<SkillSuggestionResult | undefined> => {
+    // Only a user-started run has a latest prompt to classify against.
+    if (event.messageType !== "user") return undefined;
+
     // A non-bare fork binds every pi factory, so this handler also fires inside the memory/context
     // post-processing forks; skip there so the classifier runs only on genuine top-level turns.
     if (isForking()) return undefined;
