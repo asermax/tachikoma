@@ -6,7 +6,7 @@
 
 ## Pattern
 
-A one-time workspace adaptation — a data migration, a store reshape, a format conversion — detects remaining work by inspecting the **presence of the pre-migration state itself** (rows in a table, files in a directory, non-empty content where the new shape is expected to be empty), and runs **idempotently** so a re-run after an interruption converges rather than duplicates. It writes **no persisted completion marker**: the resulting filesystem/database state *is* the "done" signal, reached only when the adapting step fully completes. A run that finds no remaining pre-migration state returns immediately (a fast no-op), so the same hook is safe on fresh installs and already-migrated workspaces.
+A one-time workspace adaptation — a data migration, a store reshape, a format conversion — detects remaining work by inspecting the **presence of the pre-migration state itself** (rows in a table, files in a directory, non-empty content where the new shape is expected to be empty), and runs **idempotently** so a re-run after an interruption converges rather than duplicates. It writes **no persisted completion marker**: the resulting filesystem/database state _is_ the "done" signal, reached only when the adapting step fully completes. A run that finds no remaining pre-migration state returns immediately (a fast no-op), so the same hook is safe on fresh installs and already-migrated workspaces.
 
 The critical correctness property: detect on the **old-state** presence, not the **new-state** presence. An interrupted pass that has written some new state but not finished removing the old must still read as "work remaining" so it re-runs cleanly; keying on new-state presence would falsely report "done" the moment any new state exists.
 

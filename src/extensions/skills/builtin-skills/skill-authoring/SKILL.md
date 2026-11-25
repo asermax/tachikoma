@@ -37,7 +37,6 @@ A `SKILL.md` file follows the Agent Skills standard: YAML frontmatter followed b
 name: my-skill
 description: "A clear description of what this skill does and when to use it"
 ---
-
 # Skill Title
 
 The skill's content goes here. Explain what the skill does,
@@ -46,10 +45,10 @@ when to use it, and how to use it.
 
 ### Frontmatter Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | No | Skill identifier. Defaults to the directory name. Same naming rules as directories. |
-| `description` | Yes | What the skill does and when it applies (max 1024 characters). Drives skill selection. |
+| Field         | Required | Description                                                                            |
+| ------------- | -------- | -------------------------------------------------------------------------------------- |
+| `name`        | No       | Skill identifier. Defaults to the directory name. Same naming rules as directories.    |
+| `description` | Yes      | What the skill does and when it applies (max 1024 characters). Drives skill selection. |
 
 ### Body Content
 
@@ -73,7 +72,7 @@ description: "A skill for skills"
 
 **Include synonyms** — cover different phrasings of the same intent.
 
-**Avoid false positives** — say what the skill does *not* cover when a term is ambiguous.
+**Avoid false positives** — say what the skill does _not_ cover when a term is ambiguous.
 
 ## Available Capabilities
 
@@ -90,16 +89,15 @@ tools:
   - read
   - grep
 ---
-
 You are a research scout. Given a topic, locate relevant files
 and produce a concise summary of what you found.
 ```
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `description` | Yes | What the agent does — shown to the main agent when choosing whom to delegate to. |
-| `name` | No | Agent identifier. Defaults to the file name without `.md`. |
-| `tools` | No | Tools available to the agent: a YAML list or a comma-separated string. Defaults to read-only tools (`read`, `grep`, `find`, `ls`). |
+| Field         | Required | Description                                                                                                                        |
+| ------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `description` | Yes      | What the agent does — shown to the main agent when choosing whom to delegate to.                                                   |
+| `name`        | No       | Agent identifier. Defaults to the file name without `.md`.                                                                         |
+| `tools`       | No       | Tools available to the agent: a YAML list or a comma-separated string. Defaults to read-only tools (`read`, `grep`, `find`, `ls`). |
 
 Agents are exposed through the `delegate_to_agent` tool, namespaced as `<skill>/<agent>` to avoid collisions. Discovery runs per agent session, so a newly added agent becomes available on the next session without a restart.
 
@@ -152,18 +150,18 @@ This prevents agents from shortcutting past workflows when they can see the raw 
 
 Add a **References** section as a table with consistent format:
 
-| Task | Reference |
-|------|-----------|
-| CLI commands | `references/cli.md` |
+| Task               | Reference             |
+| ------------------ | --------------------- |
+| CLI commands       | `references/cli.md`   |
 | Setup instructions | `references/setup.md` |
 
 ### If your skill has a CLI
 
 Move all commands to `references/cli.md`. Don't embed them in SKILL.md — only include a pointer in the **Key Paths** table:
 
-| What | Where |
-|------|-------|
-| **CLI** | `skills/my-skill/my-skill` — see `references/cli.md` |
+| What      | Where                                                                        |
+| --------- | ---------------------------------------------------------------------------- |
+| **CLI**   | `skills/my-skill/my-skill` — see `references/cli.md`                         |
 | **Tests** | `skills/my-skill/tests/` — run `node --test tests/` from the skill directory |
 
 Agents will shortcut past workflows if they can see the raw commands. The CLI is an implementation detail for workflows to use, not a routing surface.
@@ -192,7 +190,7 @@ Put essential information in the main body. Move detailed reference material to 
 
 ### Content Placement
 
-Progressive disclosure covers detail *altitude* — what belongs in the body versus a reference. Two placement rules cover where information *lives*:
+Progressive disclosure covers detail _altitude_ — what belongs in the body versus a reference. Two placement rules cover where information _lives_:
 
 - **Single source**: the same information — an explanation, a rule, a procedure — appears in exactly one place in the skill. When more than one section or file needs it, it lives in a `references/` file and each consumer points to it ("See `references/notation.md` for the tracking notation") rather than restating it. Duplicated copies drift apart when the information changes: one copy gets corrected, the other goes stale, and an agent following the stale copy behaves wrongly with no error signal.
 - **Conditional content**: information needed only in some situations — an edge-case rule, a rarely-used procedure, a platform-specific caveat — lives in a reference read only when its condition applies, never in the always-loaded body. Name the condition at the pointer ("If the build fails with `E_LOCK`, read `references/lock-errors.md`") so the body stays lean for every session that loads the skill.

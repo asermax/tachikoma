@@ -4,13 +4,13 @@ The long-term memory store under `memories/`. Owned by the memory extension.
 
 ## Stores
 
-| Store | Contents |
-|-------|----------|
-| `memories/episodic/` | Date-stamped conversation summaries (`YYYY-MM-DD.md`), consolidated into weekly `YYYY-WNN.md` and monthly `YYYY-MM.md` rollups over time |
-| `memories/topics/` | Everything worth remembering about a subject — reference facts, preferences, insights, decisions, and conclusions together — one topic per file, indexed in that store's `MEMORY.md` |
-| `memories/learnings/` | Recurring friction, hard constraints, hard-won lessons (experience, not knowledge), one theme per file, indexed in `MEMORY.md`; drafts are tentative, confirmed entries recurring |
-| `memories/transcripts/` | Archived raw conversation transcripts (retention-pruned, default 90 days) |
-| `memories/skill-evolution/` | Pattern pages and the impact ledger maintained by skill evolution — see its own guidance |
+| Store                       | Contents                                                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `memories/episodic/`        | Date-stamped conversation summaries (`YYYY-MM-DD.md`), consolidated into weekly `YYYY-WNN.md` and monthly `YYYY-MM.md` rollups over time                                             |
+| `memories/topics/`          | Everything worth remembering about a subject — reference facts, preferences, insights, decisions, and conclusions together — one topic per file, indexed in that store's `MEMORY.md` |
+| `memories/learnings/`       | Recurring friction, hard constraints, hard-won lessons (experience, not knowledge), one theme per file, indexed in `MEMORY.md`; drafts are tentative, confirmed entries recurring    |
+| `memories/transcripts/`     | Archived raw conversation transcripts (retention-pruned, default 90 days)                                                                                                            |
+| `memories/skill-evolution/` | Pattern pages and the impact ledger maintained by skill evolution — see its own guidance                                                                                             |
 
 ## How it is maintained
 

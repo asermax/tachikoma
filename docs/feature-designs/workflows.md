@@ -14,12 +14,14 @@ Explain how directory-based workflow definitions become database-persisted step 
 Agents are unreliable at executing long ordered procedures from prose alone: steps get skipped, order drifts, and context compaction erases progress. The workflow engine moves the source of truth out of the conversation — definitions live on disk inside skills, instance state lives in SQLite — and makes the tools the only way to transition state. Beyond the flat sequence, steps compose: a step can run another workflow to completion (`composes`), iterate one per agent-supplied item (`loop`), or gate on a natural-language predicate (`condition`). A cascade engine collapses these nested transitions into single tool calls so the agent experiences one continuous run addressed by a single top-level ID.
 
 **Constraints:**
+
 - State must survive context compaction, session replacement, and process restarts
 - Tool handlers must be testable without pi or a live model ([DES-002](../design/DES-002-extension-authoring.md))
 - Definitions are user-edited files; a running instance must not break when its definition is edited mid-flight
 - Tables follow the central drizzle schema/migration flow ([DES-001](../design/DES-001-unified-extension-api.md))
 
 **Interactions:**
+
 - Definitions live under `skills/<skill>/workflows/` inside skill packages ([skills](skills.md))
 - Tools are registered per agent session via `app.agent.use` (see [conversation-loop](conversation-loop.md))
 - Stale cleanup runs in the session-close post-processing pipeline (`app.sessions.registerProcessor`)
@@ -42,29 +44,31 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 
 ### Implementation Structure
 
-| Component | Responsibility | Key Decisions |
-|-----------|----------------|---------------|
-| `src/extensions/workflows/index.ts` | Wiring: config, repository, scratchpad bootstrap, graph validation, per-session tool registration, cleanup processor registration | `findWorkflow` closure binds the skills dir so tools never see paths; a bootstrap hook runs `validateWorkflowGraph` and logs rejections |
-| `src/extensions/workflows/loader.ts` | Parse workflow/step directories into `WorkflowDefinition`/`StepDefinition`; `loadAllWorkflows` for graph validation | Fresh filesystem read per call; invalid steps skipped with warnings, never fatal (missing `instructions.md`, missing/invalid `title`, or a non-boolean `required` each skip the step); `condition`/`composes`/`loop` parsed as optional strings; `skippable` kept as a deprecated alias of `required: false` |
-| `src/extensions/workflows/model.ts` | `STEP_STATES` const map, `StepStates`, `StepSnapshot`, `LoopState` | `StepSnapshot` carries `id`, `title`, `required`, the step *path*, and `condition`/`composes`/`loop`: the structural fields let the cascade read structure from the frozen snapshot, while `required`/`title`/`id` drive `validateTransition` (required-ness for skip validation) and response rendering — so a running workflow survives definition edits on disk |
-| `src/extensions/workflows/schema.ts` | `workflow_states` drizzle table | JSON columns for `step_states`, `definition_snapshot`, and `loop_state`; nullable `parent_workflow_id`/`parent_step_id` link children; indexes on skill/workflow, the active-lookup pair, and the parent lookup |
-| `src/extensions/workflows/composition.ts` | `resolveComposes`, `detectCycles`, `validateWorkflowGraph`; `Mutation`/`MutationBatch`/`CascadeOutcome`/`BreadcrumbPart` types | Pure, SDK/DB-free so cycle and reference validation are testable in isolation |
-| `src/extensions/workflows/cascade.ts` | `runCascade` (the engine), `validateTransition`, `stepToSnapshot`, `renderBreadcrumb` | Synchronous (better-sqlite3 is sync); stages a `MutationBatch` and throws on routing failure so state is untouched; a depth guard backstops cycles at runtime |
-| `src/extensions/workflows/repository.ts` | `WorkflowStateRepository` CRUD + chains + `applyMutationBatch`/`abortCascade` | Every read filters `deleted_at IS NULL`; `getActive`/`listActive` are top-level only; `getActiveChain` walks a stack; batch apply and abort run in a single transaction; `listStale` is subtree-aware |
-| `src/extensions/workflows/tools.ts` | The four `handle*` functions, nested query rendering, `registerWorkflowTools` (tool descriptions and prompt guidelines carry the agent-facing guidance) | Handlers are pure functions over `WorkflowToolDeps` — pi registration is a thin `execute` that wraps the string result |
-| `src/extensions/workflows/cleanup.ts` | `createStaleWorkflowCleanup` post-processor | Depends on `Pick<WorkflowStateRepository, "listStale" \| "abortCascade">`; uses `abortCascade` so a stale stack is torn down whole (root + descendants), never leaving orphan child rows; deletes the scratchpad only when the cascade removed at least one row; per-record error isolation |
+| Component                                 | Responsibility                                                                                                                                          | Key Decisions                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/extensions/workflows/index.ts`       | Wiring: config, repository, scratchpad bootstrap, graph validation, per-session tool registration, cleanup processor registration                       | `findWorkflow` closure binds the skills dir so tools never see paths; a bootstrap hook runs `validateWorkflowGraph` and logs rejections                                                                                                                                                                                                                            |
+| `src/extensions/workflows/loader.ts`      | Parse workflow/step directories into `WorkflowDefinition`/`StepDefinition`; `loadAllWorkflows` for graph validation                                     | Fresh filesystem read per call; invalid steps skipped with warnings, never fatal (missing `instructions.md`, missing/invalid `title`, or a non-boolean `required` each skip the step); `condition`/`composes`/`loop` parsed as optional strings; `skippable` kept as a deprecated alias of `required: false`                                                       |
+| `src/extensions/workflows/model.ts`       | `STEP_STATES` const map, `StepStates`, `StepSnapshot`, `LoopState`                                                                                      | `StepSnapshot` carries `id`, `title`, `required`, the step _path_, and `condition`/`composes`/`loop`: the structural fields let the cascade read structure from the frozen snapshot, while `required`/`title`/`id` drive `validateTransition` (required-ness for skip validation) and response rendering — so a running workflow survives definition edits on disk |
+| `src/extensions/workflows/schema.ts`      | `workflow_states` drizzle table                                                                                                                         | JSON columns for `step_states`, `definition_snapshot`, and `loop_state`; nullable `parent_workflow_id`/`parent_step_id` link children; indexes on skill/workflow, the active-lookup pair, and the parent lookup                                                                                                                                                    |
+| `src/extensions/workflows/composition.ts` | `resolveComposes`, `detectCycles`, `validateWorkflowGraph`; `Mutation`/`MutationBatch`/`CascadeOutcome`/`BreadcrumbPart` types                          | Pure, SDK/DB-free so cycle and reference validation are testable in isolation                                                                                                                                                                                                                                                                                      |
+| `src/extensions/workflows/cascade.ts`     | `runCascade` (the engine), `validateTransition`, `stepToSnapshot`, `renderBreadcrumb`                                                                   | Synchronous (better-sqlite3 is sync); stages a `MutationBatch` and throws on routing failure so state is untouched; a depth guard backstops cycles at runtime                                                                                                                                                                                                      |
+| `src/extensions/workflows/repository.ts`  | `WorkflowStateRepository` CRUD + chains + `applyMutationBatch`/`abortCascade`                                                                           | Every read filters `deleted_at IS NULL`; `getActive`/`listActive` are top-level only; `getActiveChain` walks a stack; batch apply and abort run in a single transaction; `listStale` is subtree-aware                                                                                                                                                              |
+| `src/extensions/workflows/tools.ts`       | The four `handle*` functions, nested query rendering, `registerWorkflowTools` (tool descriptions and prompt guidelines carry the agent-facing guidance) | Handlers are pure functions over `WorkflowToolDeps` — pi registration is a thin `execute` that wraps the string result                                                                                                                                                                                                                                             |
+| `src/extensions/workflows/cleanup.ts`     | `createStaleWorkflowCleanup` post-processor                                                                                                             | Depends on `Pick<WorkflowStateRepository, "listStale" \| "abortCascade">`; uses `abortCascade` so a stale stack is torn down whole (root + descendants), never leaving orphan child rows; deletes the scratchpad only when the cascade removed at least one row; per-record error isolation                                                                        |
 
 ## Key Decisions
 
 ### Freeze the step structure at start, read instruction bodies live
 
 **Choice**: `start_workflow` snapshots step IDs, titles, required flags, and paths into the record; `instructions.md` content is re-read from the snapshotted path each time a step activates.
-**Why**: A running instance must validate transitions against a stable step list even if the author reshuffles directories mid-run — but instruction *text* edits are harmless and useful to pick up (fixing a typo in step 3 while step 1 runs).
+**Why**: A running instance must validate transitions against a stable step list even if the author reshuffles directories mid-run — but instruction _text_ edits are harmless and useful to pick up (fixing a typo in step 3 while step 1 runs).
 **Alternatives Considered**:
+
 - Snapshot full instruction bodies: safest, but bloats rows and freezes harmless text fixes
 - No snapshot, always re-read structure: renamed or removed step directories would corrupt active instances
 
 **Consequences**:
+
 - Pro: definition edits apply cleanly to the next `start_workflow` (loader has no cache) without disturbing running instances
 - Con: deleting a step directory mid-run makes its instructions unreadable — the response then carries only the transition confirmation and step path
 
@@ -73,6 +77,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Choice**: `handleStartWorkflow`/`handleUpdateWorkflowState`/`handleQueryWorkflow`/`handleEndWorkflow` are exported functions over a `WorkflowToolDeps` bag; `registerWorkflowTools` only maps params and wraps results.
 **Why**: The state machine is the part worth testing exhaustively; with handlers free of pi types, `tests/workflows/tools.test.ts` exercises the full lifecycle against a real SQLite database and tmp-dir fixtures with no pi session.
 **Consequences**:
+
 - Pro: transition rules, cascade, and finalization are covered end-to-end in fast tests
 - Pro: errors are plain `throw`s — pi turns them into tool errors uniformly
 - Con: parameter schemas and handler signatures must be kept in sync by hand
@@ -82,6 +87,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Choice**: Ending, finalizing, and stale-cleaning all set `deleted_at`; every repository read filters it out.
 **Why**: Finished and expired instances keep an audit trail for debugging agent behavior, and "not found or no longer active" stays one uniform error path whether an ID was finished, aborted, or expired.
 **Consequences**:
+
 - Pro: no destructive cleanup; history is queryable directly in SQLite
 - Con: the table grows unboundedly until some future vacuum mechanism exists
 
@@ -90,6 +96,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Choice**: One tool with an optional `workflow_id` covers both state lookup and listing, instead of separate `get_workflow_state` and `list_active_workflows` tools.
 **Why**: They serve the same recovery moment ("what was I doing?"); a single tool with a natural narrowing parameter is one less name for the model to choose between.
 **Consequences**:
+
 - Pro: recovery guidance reduces to "call `query_workflow()` then `query_workflow(workflow_id=...)`"
 - Con: two response shapes behind one tool name
 
@@ -98,10 +105,12 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Choice**: `runCascade` walks the active chain entirely in memory — applying the transition, descending into spawned children, advancing parents when children finish — and emits an ordered `MutationBatch` (`update`/`create`/`softDelete`) that the repository applies in one transaction. It throws on any routing/validation failure before staging side effects.
 **Why**: A single agent tool call can ripple across several layers (complete a child's last step → finalize child → complete the parent's composition step → start the parent's next step → spawn the next loop iteration). Computing the whole effect first, then committing atomically, keeps nested state consistent even if a spawn fails mid-cascade — the batch rolls back and the agent sees an error with state untouched.
 **Alternatives Considered**:
+
 - Mutate the database step-by-step inside the walk: simpler to write, but a failure halfway leaves a half-advanced stack
 - Recurse with the model in the loop (one tool call per layer): defeats the "one continuous run" goal and multiplies latency
 
 **Consequences**:
+
 - Pro: nested transitions are all-or-nothing; handlers stay synchronous and pure over the chain
 - Con: the engine holds a mirror of the chain's mutable state, which must track the real records faithfully
 
@@ -110,6 +119,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Choice**: Children carry `parent_workflow_id`/`parent_step_id`; the agent only ever names the top-level ID, and the cascade resolves the announced step id against the active chain deepest-layer-first to find its owning layer. Completing the in-flight composes/loop step of a waiting layer (the suspended step whose child is live directly below it) ends that sub-workflow early: every layer below the owner is torn down, the step completes with loop bookkeeping frozen to fully iterated, and the owner auto-advances. Child IDs are rejected by `update_workflow_state` and `end_workflow`.
 **Why**: The agent should not have to track which sub-workflow it is "inside" — that is bookkeeping the engine already has. But the engine itself announces step ids in its own responses (halt messages, breadcrumbs, start guidance), and those announcements name parent-layer ids whenever a condition or loop step gates a composition — so an announced id must keep resolving and executing after a sub-workflow spawns (issue-467). Deepest-first resolution makes those ids usable, and early completion falls out of the same rule: the in-flight step is just a suspended layer's step whose child is live. One stable ID per run also means recovery (`query_workflow`) and abort have a single handle, and the one-active-instance rule cleanly applies to top-levels only.
 **Consequences**:
+
 - Pro: the agent drives arbitrarily deep nesting with one ID and a breadcrumb to orient, and every id the engine announces is a valid next call
 - Pro: early completion needs no separate tool or action — `complete` on the announced in-flight step id ends the run below it, and the response notes which sub-workflows ended early
 - Con: routing errors must name the deepest layer's workflow and valid steps, since the agent's mental model can lag the real depth; a colliding child step id shadows the parent's (deepest-first wins), so authoring keeps ids distinct per layer (the conventional `01-`, `02-` prefixes)
@@ -119,9 +129,10 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Choice**: A `loop` step spawns the target as a fresh composition child per item, tracking `{items, index}` in a `loop_state` JSON column on the parent; iteration N+1 spawns in the same call that finalizes N. A `condition` step halts auto-advance and asks the agent to `start` (passes) or `skip` (fails) — the agent is the evaluator, and a condition makes a required step skippable. The predicate is visible at every surface where a start decision is made: the halt, `start_workflow`'s first-step decision when a condition gates step one (the same block with the ordinal `first` where the halt says `next`, from a shared `renderConditionDecision` helper), and `(if: ...)` markers in the query views — one marker rendering (`stepListMarkers`) shared by the start step list, the state view, and the active-child lines. Skip is valid only while a step is pending, so the predicate must be visible before the step starts (issue-471).
 **Why**: Reusing the composition machinery means iterations inherit every step-level semantic (nested composition, conditions, snapshots) for free. Delegating condition evaluation to the agent avoids a second model round-trip inside a tool call and keeps the engine deterministic — it never calls a model. A decision surfaced only after start is a trap: the agent commits, reads the skip guidance, and can no longer skip (issue-471 — a condition-gated first step was directed to start unconditionally, and the predicate vanished with the halt response on the recovery path).
 **Alternatives Considered**:
+
 - Allow `skip` on a started step: rescues an agent that started blind, but a started step is committed work — retroactive skip discards partial runs and blurs the pending/started/completed/skipped state machine; the fix belongs at the guidance surface
 - Declaring skip windows in skill-package docs (a data-repo workaround was tried and failed): doc-level guidance does not fire at the decision point
-**Consequences**:
+  **Consequences**:
 - Pro: batch processes and branches need no new execution model; the engine stays model-free and testable
 - Pro: no blind starts — the start decision is made with the predicate in view on every surface, including recovery after context loss (the query markers are render-only: the view carries no directive, the agent evaluates the predicate itself)
 - Pro: the `workflow-authoring` guide's conditional-step pattern and the reference page carry the same rule ([DES-014](../design/DES-014-two-tier-agent-facing-documentation.md)), steering authors away from body-prose skip windows that are readable only after start
@@ -133,6 +144,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Choice**: `validateWorkflowGraph` runs once at bootstrap over every workflow, rejecting cycles, `composes`+`loop` steps, and missing/empty/rejected targets (rejection cascades). Because the loader reads fresh on every call, the cascade additionally caps nesting depth to backstop a cycle introduced by a mid-session edit.
 **Why**: A composition cycle would spin the cascade's auto-advance forever inside one tool call. Bootstrap validation gives authors early, specific warnings; the runtime depth guard guarantees termination regardless of edits between reloads.
 **Consequences**:
+
 - Pro: authoring mistakes surface at startup, not mid-run; infinite loops are structurally impossible
 - Con: a workflow edited to introduce a cycle after bootstrap fails at runtime with a depth error rather than a load-time warning until the next reload
 
@@ -141,19 +153,21 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 **Choice**: The stale-instance recovery path — a `start_workflow` rejection naming an existing instance, typically one interrupted in an earlier session — is carried by the guidance surfaces that fire there, not by new tool behavior. The rejection error carries a compact directive (inspect via `query_workflow` and the scratchpad → resume if it serves the request → surface the interrupted work and ask the user whether to resume or start fresh before ending it); `start_workflow`'s prompt guidelines state the never-silently-discard rule; `end_workflow`'s description directs surfacing what a discovered instance had done before ending it (both actions, `complete`/`abort`, discard the state and scratchpad identically — the engine treats them the same on an in-flight instance); and the reference page carries the canonical find → inspect → decide → surface procedure per [DES-014](../design/DES-014-two-tier-agent-facing-documentation.md), with the rejection message and the `workflow-authoring` skill as condensed echoes. The surfaces intentionally differ in strength: the rejection and the prompt guideline include the ask-the-user step, while the `end_workflow` description states only the surfacing rule (the user is already in the loop on that path). The query state views' current-step line names the step's `instructions.md` path (render-only, via the shared `currentStepLine` helper — `none` before any start, bare id when the snapshot no longer resolves the id), so a started step's instructions remain reachable after the tool result that carried them is compacted away (issue-474).
 **Why**: The recovery machinery (`query_workflow`, resume, `end_workflow`) is unchanged — a rejection whose only instruction is `end_workflow` invites silently discarding in-flight work, so the rule lives on the surfaces that fire at the decision point (the rejected re-start) and at the destructive moment (an agent that finds a stale instance via `query_workflow` and ends it without ever re-calling `start_workflow`). Instruction loss gets the same treatment: when the tool result that carried a started step's instructions is compacted away, the query state view's current-step line keeps them reachable. The recovery procedure itself stays out of the inline tier per DES-014; the budget and pointer-integrity gates are untouched, and the usage-sections content guard pins the reference page.
 **Alternatives Considered**:
+
 - Make `start_workflow` return the existing instance instead of rejecting: silently resolves an ambiguous intent (resume vs restart) and diverges from the one-active-instance invariant (spec R6)
-**Consequences**:
+  **Consequences**:
 - Pro: both discard paths — rejected re-start and discovered-then-ended — carry the rule
 - Con: the procedure lives in three prose carriers (rejection error, reference page, `workflow-authoring` skill); the reference page is canonical, and the usage-sections drift guard pins its content
 
 ### Driving mechanics ride the injected context; full teaching stays in the reference
 
 **Choice**: The injected usage section carries a compact driving model — top-level-id routing, instructions arriving in the result that starts a step, one line per mechanics-bearing marker (`loop` needs `items`, `if` halts for a start-or-skip decision, `composes` is driven with the same id), and the `query_workflow()` recovery entry — while the reference page's Driving a Workflow section carries the full teaching: lifecycle, instruction delivery, auto-advance, the per-step-type start/skip table, the early-end mechanic, and recovery. The split is enforced, not just documented: the usage-sections guard pins the inline fragments and `notInline`-pins "ends its sub-workflow early", and the prompt-references budget gate caps the inline tier.
-**Why**: The friction issue-474 reports is misuse at decision moments — starting a loop step without `items`, not knowing a condition step waits for an explicit decision, shying away from composed steps over id routing, expecting instructions before a step starts. DES-014's inline tier carries what the agent must never get wrong; mechanics that fire at decision moments qualify — a missing `items` or an unnoticed decision misroutes a run — so the compact form rides inline while the exhaustive detail stays behind the pointer. This treats misuse-causing *operating* rules as critical rules under DES-014, and its mechanics-detail category as the peripheral remainder (the kind the matrix demoted for boundary), not a ban on decision-moment mechanics; the DES-014 wording is clarified accordingly and this decision stands either way.
+**Why**: The friction issue-474 reports is misuse at decision moments — starting a loop step without `items`, not knowing a condition step waits for an explicit decision, shying away from composed steps over id routing, expecting instructions before a step starts. DES-014's inline tier carries what the agent must never get wrong; mechanics that fire at decision moments qualify — a missing `items` or an unnoticed decision misroutes a run — so the compact form rides inline while the exhaustive detail stays behind the pointer. This treats misuse-causing _operating_ rules as critical rules under DES-014, and its mechanics-detail category as the peripheral remainder (the kind the matrix demoted for boundary), not a ban on decision-moment mechanics; the DES-014 wording is clarified accordingly and this decision stands either way.
 **Alternatives Considered**:
+
 - Teach everything through the reference only: halt and decision moments arrive mid-run, often without the reference having been read — exactly the sessions the issue describes
 - Teach everything inline: would blow the DES-014 budget and duplicate what each tool result already demonstrates at the moment it matters
-**Consequences**:
+  **Consequences**:
 - Pro: every session can drive every step type without prior reading
 - Con: the inline tier now sits at 10,358 of the 10,500 canonicalized chars (the workflows section grew 653 → 952, the second-largest usage constant), leaving ~142 chars of global headroom
 
@@ -163,7 +177,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 
 **Given**: A three-step workflow where step `02-research` is `required: false`
 **When**: The agent skips `02-research`, completes `01-plan`, then completes `03-write`
-**Then**: Skipping auto-starts `01-plan` (the first *pending* step in snapshot order, not necessarily the one after the skipped step); completing `01-plan` auto-starts `03-write`; completing `03-write` finds nothing pending, soft-deletes the record, removes the scratchpad, and reports "2 completed, 1 skipped".
+**Then**: Skipping auto-starts `01-plan` (the first _pending_ step in snapshot order, not necessarily the one after the skipped step); completing `01-plan` auto-starts `03-write`; completing `03-write` finds nothing pending, soft-deletes the record, removes the scratchpad, and reports "2 completed, 1 skipped".
 
 ### Scenario: Recovery after context loss
 

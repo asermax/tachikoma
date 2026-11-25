@@ -6,14 +6,14 @@
 
 ## Pattern
 
-When conversational state must *change* on the pi session tree — which is **append-only** and has no update or delete primitive ([ADR-014](../architecture/ADR-014-session-source-of-truth.md)) — do not try to mutate or remove an existing entry. Instead **append a marker** custom entry naming the target id, and compute the **effective** state at read time by scanning the markers. The immutable entry stays on the file untouched; its observable state is whatever the latest marker set says it is.
+When conversational state must _change_ on the pi session tree — which is **append-only** and has no update or delete primitive ([ADR-014](../architecture/ADR-014-session-source-of-truth.md)) — do not try to mutate or remove an existing entry. Instead **append a marker** custom entry naming the target id, and compute the **effective** state at read time by scanning the markers. The immutable entry stays on the file untouched; its observable state is whatever the latest marker set says it is.
 
 Concretely: `appendState(session, MARKER_TYPE, { targetId })` writes the marker; a scan builds a `Set<string>` of marked target ids once per read pass; an `effective<State>(targetId, markedSet)` helper resolves the effective value. Because the marker list only grows (append-only), "marked" is monotonic and restart-safe — the markers reload natively with the session file.
 
 Two flavors recur:
 
 - **Idempotency / completion markers** — "this unit of work is done" (a branch extracted, a pipeline step run). A recovery pass scans the markers to skip work that already completed.
-- **Orphan / reclassification markers** — "treat this immutable entry as X now" (a summary a decision reversal orphaned). The entry's persisted `kind` is unchanged; its *effective* kind is computed from the marker so every consumer sees the new state through one chokepoint.
+- **Orphan / reclassification markers** — "treat this immutable entry as X now" (a summary a decision reversal orphaned). The entry's persisted `kind` is unchanged; its _effective_ kind is computed from the marker so every consumer sees the new state through one chokepoint.
 
 The critical correctness property: the marker is the **only** way the state changes — readers never consult a stale persisted field alone, they always merge it with the marker scan. Centralize the scan in one helper so every consumer (enumeration, query tools, extraction, recovery) computes effective state the same way.
 

@@ -2,7 +2,7 @@
 
 **A proactive personal assistant that remembers, learns, and takes initiative.**
 
-*Not just responding to commands — anticipating needs, managing context, and evolving through use.*
+_Not just responding to commands — anticipating needs, managing context, and evolving through use._
 
 Tachikoma is built in TypeScript on the pi agent SDK. The architecture sections describe the stack: a thin core shell where every feature ships as an extension.
 
@@ -11,11 +11,13 @@ Tachikoma is built in TypeScript on the pi agent SDK. The architecture sections 
 Current AI assistants are stateless and reactive. Every conversation starts from zero, the user must provide all context, and the assistant never acts unless asked. This creates a gap between what AI can do and what a truly helpful personal assistant should be.
 
 **Who experiences this:**
+
 - Users who interact with AI daily for personal productivity (notes, tasks, emails, planning)
 - Anyone who wants an assistant that knows them — their preferences, ongoing projects, communication style
 - People who need proactive help surfacing information and managing tasks without constant manual prompting
 
 **Current situation:**
+
 - **ChatGPT/Claude**: Powerful but stateless per-session; memory features are shallow (key-value facts, not real understanding)
 - **OpenClaw**: Tested — good infrastructure (Telegram, cron jobs) but the agent itself is too basic; waits for instructions, doesn't take initiative
 - **Custom agent frameworks (LangChain, CrewAI)**: Provide primitives but don't encode personal assistant patterns; still reactive by default
@@ -30,6 +32,7 @@ An opinionated personal assistant built on an embeddable agent SDK that maintain
 
 **Trigger**: User sends a message via Telegram or the terminal REPL
 **Steps**:
+
 1. On a new conversation, the pre-processing pipeline enriches the session with context gathered in parallel: the memory provider surfaces relevant past interactions and the projects provider injects current project state — each contributed by its extension
 2. The coordinator prompts a long-lived pi `AgentSession` — one in-process session per conversation, so continuity is the default rather than something reconstructed per message
 3. Skills are available through pi's progressive disclosure: skill descriptions live in the system prompt and the agent reads full instructions on demand when the topic calls for them
@@ -41,6 +44,7 @@ An opinionated personal assistant built on an embeddable agent SDK that maintain
 
 **Trigger**: Conversation boundary detected (topic shift on a new message, or idle timeout)
 **Steps**:
+
 1. On each incoming message, boundary detection analyzes whether the user is continuing the current topic or shifting to a new one; if a shift is detected, it also checks whether the new topic matches a recent past conversation that can be resumed
 2. Session closure triggers the post-processing pipeline with the completed conversation — processors read the session's JSONL transcript and run one-shot extraction via side-channel LLM calls
 3. Separate processors run in parallel, each extracting a different type of learning: episodic summaries (date-stamped conversation overviews), facts (knowledge about the user and the world), preferences (user likes, dislikes, and working style), and core context updates (refinements to the assistant's personality and understanding)
@@ -54,6 +58,7 @@ An opinionated personal assistant built on an embeddable agent SDK that maintain
 
 **Trigger**: User asks to work with external codebases, or the agent needs project context
 **Steps**:
+
 1. Projects are registered as tracked repositories in the workspace, each with its name, path, and current branch
 2. On startup, all registered projects are synchronized to their latest state automatically
 3. During conversations, the projects context provider surfaces current project state and exposes tools for registering and deregistering projects
@@ -66,6 +71,7 @@ An opinionated personal assistant built on an embeddable agent SDK that maintain
 
 **Trigger**: Scheduled time arrives, or the user creates a task during conversation
 **Steps**:
+
 1. Tasks are defined with cron schedules (recurring) or one-shot datetime targets, and the agent can create and manage them conversationally via tools
 2. **Session tasks** execute during the user's active session when idle — gated by a configurable idle period so they never interrupt active conversation. Prompts are injected into the live session and results are delivered as proactive messages through the active channel
 3. **Background tasks** execute autonomously in their own in-memory pi sessions, independent of whether the user is chatting. They run iteratively until the work is assessed as complete, and produce notification messages summarizing what was done
@@ -77,6 +83,7 @@ An opinionated personal assistant built on an embeddable agent SDK that maintain
 
 **Trigger**: User's message matches a domain where specialized knowledge is available
 **Steps**:
+
 1. Skills are packages following the Agent Skills standard — a `SKILL.md` with YAML frontmatter whose description advertises when the skill applies
 2. pi surfaces every skill's description in the system prompt (progressive disclosure); when the conversation enters a skill's domain, the agent reads the full instructions on demand
 3. A conversation-aware classifier augments this on each turn — it picks which loaded skills fit the latest message and proactively recommends the agent load them, so relevant expertise is pulled in even when the agent would not pick the skill itself
@@ -132,12 +139,14 @@ The workspace data contract is stable: markdown memories organized by type, SOUL
 A thin core shell plus first-party extensions covering the full assistant feature set (see [DELTAS.md](DELTAS.md) for open work):
 
 **Core shell + walking skeleton:**
+
 - Toolchain (Node type stripping, pnpm, Biome, vitest, just)
 - Configuration, logging, database, typed event bus, scheduler
 - Extension host with the `defineExtension`/`AppContext` contract
 - Coordinator with a long-lived pi session, channel registry, and REPL channel — a user can hold a conversation end to end
 
 **Sessions, boundary, memory, context:**
+
 - Database-backed session registry with lifecycle, rolling summaries, idle timeout
 - Boundary detection with topic-shift analysis, session replacement, and resumption (including cold-start)
 - Pre/post-processing pipelines with parallel execution and error isolation
@@ -145,16 +154,19 @@ A thin core shell plus first-party extensions covering the full assistant featur
 - Core context files injected into the system prompt, with post-session updates and periodic maintenance of the foundational files (SOUL.md / USER.md / AGENTS.md)
 
 **Skills, workflows, tasks:**
+
 - Skills via pi's native Agent Skills support with the workspace as a skill source, hot-reload, bundled agents, and the authoring guide
 - Workflow engine with directory-based definitions, persisted step state machine, lifecycle tools, and composition (sub-workflows, loops, and conditional steps)
 - Task system: cron and one-shot definitions, management tools, session (queued into the conversation) and background (autonomous) execution, plus an interactive await/respond flow (`ask_user` / `respond_to_task`) for background runs that pause for user input
 
 **Channels, projects, git:**
+
 - Full Telegram channel: streamed rendering, complete media support, push notifications, inbound reactions, and reply routing
 - Projects extension: registration tools, startup sync, context injection, commit/push on close
 - Git extension: workspace versioning after each session and fetch-rebase-push sync, with agent-driven rebase conflict resolution
 
 **Detached processes, notifications, external extensions, polish:**
+
 - Detached process supervision tools
 - Event-bus-driven notifications with buffered, idle-aware delivery and severity-based priority ordering
 - In-app self-update: scheduled version check and notify, an `upgrade_self` tool that installs and re-execs, and automatic rollback of a failed upgrade on the next boot
@@ -164,6 +176,7 @@ A thin core shell plus first-party extensions covering the full assistant featur
 ### Out of Scope
 
 Machinery that subprocess-based agent SDKs force on a host and pi makes unnecessary is deliberately absent:
+
 - Custom SDK transports (ARG_MAX tempfile workarounds) — pi is embedded in-process
 - Per-message client recreation, context persistence entries, and context reassembly — sessions are long-lived
 - Subprocess stderr capture — there is no subprocess
@@ -177,15 +190,18 @@ The long-term backlog builds on this foundation — see Future Considerations an
 ## Technical Context
 
 **Platform:**
+
 - Linux (primary development target)
 - Runs as a persistent background service
 - Single-user, self-hosted
 
 **Language/Runtime:**
+
 - TypeScript on Node.js >= 22.19 with native type stripping — no build step in development
 - pnpm for dependency management; Biome for lint/format; vitest for tests; just as task runner
 
 **Agent Framework:**
+
 - pi agent SDK (`@earendil-works/pi-coding-agent`, pinned exact) embedded via `createAgentSession`
 - One long-lived `AgentSession` per conversation; `AgentSessionRuntime` for boundary-driven replacement
 - pi extension API for tools, event hooks, and system prompt contributions; `pi-ai` for side-channel completions (boundary detection, summaries, extraction)
@@ -193,16 +209,19 @@ The long-term backlog builds on this foundation — see Future Considerations an
 - Tree-structured JSONL transcripts with fork support under the workspace `agentDir`
 
 **User Interaction:**
+
 - Telegram Bot API (via grammY) as primary interface — text, images, audio, voice, documents, stickers, video, and animations
 - Terminal REPL for local development and direct interaction
 
 **Workspace:**
+
 - A git-managed directory containing all persistent user data (memories, core context files, skill definitions)
 - Markdown files for memories, with retrieval during pre-processing
 - drizzle over `node:sqlite` for session, task, and workflow tracking; drizzle-kit for migrations
 - TOML configuration validated with TypeBox, auto-generated defaults on first run
 
 **External Systems:**
+
 - Telegram Bot API (communication)
 - LLM providers via pi's multi-provider model registry (Anthropic primary)
 - Local filesystem (git-managed workspace)
@@ -225,6 +244,7 @@ The long-term backlog builds on this foundation — see Future Considerations an
 Ideas beyond the delivered scope (not committing to these):
 
 **Long-standing backlog:**
+
 - Parallel conversation sessions
 - Delegation to autonomous long-running agents
 - Proactive nudges from past conversations (sensor framework, fatigue management)
@@ -234,19 +254,23 @@ Ideas beyond the delivered scope (not committing to these):
 - Secrets store and secure credential delivery to whitelisted commands
 
 **Advanced Memory:**
+
 - ACE Framework cycle: async session evaluation, pattern consolidation, memory curation
 - Embedding-based semantic similarity search for retrieval
 - Contradiction detection and resolution; memory decay and archival
 
 **Context Providers (beyond memory):**
+
 - Calendar, tasks, email, and notes providers
 - Dynamic/user-created providers via externally installed extensions
 
 **Channels and Interfaces:**
+
 - Web interface with chat and dashboard
 - Hardware presence (speaker with simple display)
 
 **Operational Tooling:**
+
 - CLI for querying internal state without starting a conversation
 - Transcript search and analysis tools
 - External command processor for remote management

@@ -25,7 +25,7 @@ One shared implementation: `src/git/agent-tools.ts` — the `AgentRunner` slice,
 
 ## Rationale
 
-The agent is better than the host at *judgment* (what belongs in a commit, how to resolve a hunk, how to word a change) and worse at *accounting* — it can misreport a SHA, forget a step, or claim work that failed. So the split is: agent drives (scoped, enumerated, self-correcting), host verifies (deterministic, from state that cannot lie). This is the git-shaped instance of deriving outcomes from observable state ([DES-006](DES-006-state-based-migration-detection.md)); the tool-grant mechanics follow [ADR-015](../architecture/ADR-015-subagent-extension-tool-grants.md).
+The agent is better than the host at _judgment_ (what belongs in a commit, how to resolve a hunk, how to word a change) and worse at _accounting_ — it can misreport a SHA, forget a step, or claim work that failed. So the split is: agent drives (scoped, enumerated, self-correcting), host verifies (deterministic, from state that cannot lie). This is the git-shaped instance of deriving outcomes from observable state ([DES-006](DES-006-state-based-migration-detection.md)); the tool-grant mechanics follow [ADR-015](../architecture/ADR-015-subagent-extension-tool-grants.md).
 
 ## Examples
 

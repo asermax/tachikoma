@@ -54,6 +54,7 @@ Critical: workflows are discovered by reading the skill's SKILL.md body, not by 
 ## Available Workflows
 
 ### feature-planning
+
 Use when planning a new feature. Steps through requirements analysis,
 design considerations, and implementation planning.
 ```
@@ -76,7 +77,6 @@ A step directory without an `instructions.md`, or whose frontmatter is missing a
 ---
 title: "Analyze Requirements"
 ---
-
 # Step Instructions
 
 The step's guidance goes here. Explain what the step does,
@@ -85,14 +85,14 @@ what to produce, and how to validate completion.
 
 ### Frontmatter Fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `title` | Yes | Human-readable step title (non-empty string) |
-| `required` | No | If `false`, the step may be skipped when not applicable (default: `true`) |
-| `condition` | No | Natural-language predicate; surfaced before the step starts so the agent decides start vs skip (see [Composing Workflows](#composing-workflows)) |
-| `composes` | No | Run another workflow to completion when this step activates |
-| `loop` | No | Run another workflow once per agent-supplied item |
-| `*` | No | Custom fields are preserved as step metadata but are not interpreted by the engine |
+| Field       | Required | Description                                                                                                                                      |
+| ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `title`     | Yes      | Human-readable step title (non-empty string)                                                                                                     |
+| `required`  | No       | If `false`, the step may be skipped when not applicable (default: `true`)                                                                        |
+| `condition` | No       | Natural-language predicate; surfaced before the step starts so the agent decides start vs skip (see [Composing Workflows](#composing-workflows)) |
+| `composes`  | No       | Run another workflow to completion when this step activates                                                                                      |
+| `loop`      | No       | Run another workflow once per agent-supplied item                                                                                                |
+| `*`         | No       | Custom fields are preserved as step metadata but are not interpreted by the engine                                                               |
 
 `skippable: true` is a deprecated alias for `required: false` — use `required` in new workflows. `composes` and `loop` are mutually exclusive on one step.
 
@@ -208,12 +208,15 @@ Each step should provide actionable guidance:
 
 ```markdown
 # Good: specific actions
+
 ## Your Task
+
 1. Read the feature request in `docs/feature-specs/my-feature.md`
 2. Identify the core requirements
 3. List any ambiguities or missing information
 
 ## Output
+
 Create a requirements checklist as a markdown file
 ```
 
@@ -225,6 +228,7 @@ Each step should define what "done" looks like:
 
 ```markdown
 ## Validation
+
 - [ ] All files pass linting
 - [ ] All tests pass
 - [ ] Type checking succeeds
@@ -241,7 +245,6 @@ so the run-or-skip decision is made before any work begins:
 title: "Configure Database"
 condition: "the project has no configured database (check for `config/database.toml`)"
 ---
-
 # Database Configuration
 
 Set up the database connection...

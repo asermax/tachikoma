@@ -8,7 +8,7 @@
 
 A feature's accumulated knowledge lives as **wiki-style markdown in a feature-owned directory** (memory's `memories/{episodic,topics,learnings}/`, skill-evolution's `memories/skill-evolution/`), with these conventions:
 
-- **`MEMORY.md` index** — one line per page (`- [Title](./slug.md): one-line summary`); the store's discovery surface. It is *structural even when blank*: the sweep never removes it.
+- **`MEMORY.md` index** — one line per page (`- [Title](./slug.md): one-line summary`); the store's discovery surface. It is _structural even when blank_: the sweep never removes it.
 - **One page per topic/pattern** — new evidence **updates the page** (dated Evidence sections where chronology matters) instead of spawning a duplicate; the index entry is rewritten when the page's one-liner changes, and never outlives the page.
 - **Size caps** (~50 lines per page) enforced by a periodic maintenance pass that also merges near-duplicates — so pages stay readable and prompts that quote them stay bounded.
 - **Empty-then-sweep deletion** — a page whose content was folded away becomes blank and is deleted after the run (`sweepEmptyMarkdown`, with a preserve list for other structural files).
@@ -52,7 +52,7 @@ await sweepEmptyMarkdown(storeDir, { preserve: [LEDGER_FILENAME] })
 
 ## Exceptions
 
-- **The episodic store** (memory) is date-stamped daily/weekly/monthly files with **no `MEMORY.md` index** — the conventions apply to *topic-shaped* stores; a date-partitioned archive is discovered by filename, not an index.
+- **The episodic store** (memory) is date-stamped daily/weekly/monthly files with **no `MEMORY.md` index** — the conventions apply to _topic-shaped_ stores; a date-partitioned archive is discovered by filename, not an index.
 - **Host-written ledgers** (`skill-impact-log.md`) share the directory but not the agent-writing path: deterministic markdown tables, written and rewritten by host code (see [DES-010](DES-010-agent-driven-git-host-verified.md) for why the agent never writes them).
 
 ## Related

@@ -11,14 +11,16 @@ This document explains how notifications are routed from producers to the user: 
 
 ## Problem Context
 
-Multiple extensions need to surface out-of-band information to the user (background task outcomes, future monitors), but pi has no notification concept — `ctx.ui.notify` only works in pi's own TUI/RPC modes ([pi-sdk-notes](../reference/pi-sdk-notes.md)), and user-facing UX flows through Tachikoma's channel layer. The coordinator's priority queue owns tier ordering and hold/drain timing ([conversation-loop.md](../feature-specs/conversation-loop.md)), so this extension only decides *what* gets delivered and *at which tier*.
+Multiple extensions need to surface out-of-band information to the user (background task outcomes, future monitors), but pi has no notification concept — `ctx.ui.notify` only works in pi's own TUI/RPC modes ([pi-sdk-notes](../reference/pi-sdk-notes.md)), and user-facing UX flows through Tachikoma's channel layer. The coordinator's priority queue owns tier ordering and hold/drain timing ([conversation-loop.md](../feature-specs/conversation-loop.md)), so this extension only decides _what_ gets delivered and _at which tier_.
 
 **Constraints:**
+
 - Producers must not depend on the notifications extension — emitting an app event must be enough (DES-001 `app.events`)
 - The `notify` event name is shared across producers; parsing is best-effort so a payload that is not a notification (no `text`) is skipped rather than rendered
 - Tier ordering and per-tier idle/max-hold timing are coordinator concerns reachable only through `app.channels.deliver`
 
 **Interactions:**
+
 - Tasks extension ([tasks.md](tasks.md)): background-task notices (failures, the stuck/expired sweeps, the `ask_user` pause) emit a `NotifyPayload` on `notify` and flow through this router; successful completion stays silent (the task agent self-reports via `notify_user`)
 - Detached-processes and self-update extensions: also emit `NotifyPayload`s on `notify` (process exits, available updates)
 - Conversation loop / channels ([conversation-loop.md](../feature-specs/conversation-loop.md), [telegram.md](../feature-specs/telegram.md)): all deliveries flow through `app.channels.deliver` and are rendered by the active channel
@@ -31,13 +33,13 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 
 ### Implementation Structure
 
-| Component | Responsibility | Key Decisions |
-|-----------|----------------|---------------|
-| `src/extensions/notifications/index.ts` | Wiring: router construction, event subscription, tool registration | Router takes `deliver` as a plain function so tests run without an app |
-| `src/extensions/notifications/payload.ts` | `parseNotifyPayload` plus re-exports of the event contract | Duck-typed parsing: `text` required, severity/source defaulted — never throws |
-| `src/extensions/notifications/router.ts` | Dedup guard, severity routing, flush-window batching, severity → delivery tier, shutdown drain | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty; `flushNow()` is the shutdown entry point (delegates to `flush()`); dedup state is an in-memory `Map<key, firstSeenMs>` pruned opportunistically; `SEVERITY_TIER` const map sets each delivery's `tier` (digest = highest over items) |
-| `src/extensions/notifications/format.ts` | Single-notification and digest text rendering | Source/time header block prefixes every notice; `Time:` rendered in the configured `scheduler.timezone` via the shared `formatTimestamp` util (the router receives the zone from the extension setup) |
-| `src/extensions/notifications/tools.ts` | `notify_user` agent tool | Emits the same `notify` event instead of delivering directly |
+| Component                                 | Responsibility                                                                                 | Key Decisions                                                                                                                                                                                                                                                                                                                        |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/extensions/notifications/index.ts`   | Wiring: router construction, event subscription, tool registration                             | Router takes `deliver` as a plain function so tests run without an app                                                                                                                                                                                                                                                               |
+| `src/extensions/notifications/payload.ts` | `parseNotifyPayload` plus re-exports of the event contract                                     | Duck-typed parsing: `text` required, severity/source defaulted — never throws                                                                                                                                                                                                                                                        |
+| `src/extensions/notifications/router.ts`  | Dedup guard, severity routing, flush-window batching, severity → delivery tier, shutdown drain | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty; `flushNow()` is the shutdown entry point (delegates to `flush()`); dedup state is an in-memory `Map<key, firstSeenMs>` pruned opportunistically; `SEVERITY_TIER` const map sets each delivery's `tier` (digest = highest over items) |
+| `src/extensions/notifications/format.ts`  | Single-notification and digest text rendering                                                  | Source/time header block prefixes every notice; `Time:` rendered in the configured `scheduler.timezone` via the shared `formatTimestamp` util (the router receives the zone from the extension setup)                                                                                                                                |
+| `src/extensions/notifications/tools.ts`   | `notify_user` agent tool                                                                       | Emits the same `notify` event instead of delivering directly                                                                                                                                                                                                                                                                         |
 
 ## Key Decisions
 
@@ -47,6 +49,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **Why**: Cross-extension signals stay best-effort — producers should not import notification types to emit, and a producer that puts a non-notification object on the event (no `text`) should be skipped rather than crash the router. A throwing or strict parser would couple every producer to this extension's schema.
 **Alternatives Considered**: A typed event payload enforced at emit time; separate event names per producer.
 **Consequences**:
+
 - Pro: Zero coupling for producers; malformed payloads degrade to debug logs, never crashes
 - Pro: A producer can share the event without risking a half-formed payload reaching the user as prose
 - Con: Typos in `text`/`severity` fail silently (downgrade or skip) rather than loudly
@@ -56,6 +59,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **Choice**: `NOTIFY_EVENT`, `SEVERITIES`, and the `NotifyPayload` type are defined in `src/events.ts`; this extension's `payload.ts` re-exports them.
 **Why**: Emitters live in other extensions (tasks, self-update, skill-evolution) — a neutral module keeps every import off this extension's directory while existing importers stay unchanged via the re-exports. The same module carries the tasks dispatch contract (`DISPATCH_BACKGROUND_TASK_EVENT`), one home for cross-extension app-event constants.
 **Consequences**:
+
 - Pro — no extension→extension imports for event contracts
 - Con — one more indirection for readers of `payload.ts`
 
@@ -65,6 +69,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **Why**: Digest formation needs notification semantics (severity, source, item count) that the generic `Delivery` type does not carry; tier ordering and timing need conversation state (exchange in flight, last-exchange time) that extensions cannot see. Splitting at the `Delivery` boundary keeps both sides simple — the router maps severity to a `tier`, the coordinator orders and times on it — instead of combining both roles in one buffer.
 **Alternatives Considered**: Delivering each notice individually and letting the coordinator batch (it has no format knowledge); the full legacy priority-buffer subsystem with its own ordering and preemption (rejected — the coordinator's tier queue covers it).
 **Consequences**:
+
 - Pro: One digest per burst instead of a message per notice; tier and timing logic stay in one place
 - Pro: Severity participates in queue ordering — urgent notices lead warnings, which lead info, when items drain together; cross-type deliveries (e.g. session tasks) order by the same `tier` field
 - Con: No preemption — ordering applies within a drained batch
@@ -76,6 +81,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **Why**: A producer or the agent can re-emit the same notice — e.g. a retry loop after a transient tool/API error — and without a guard each repeat reaches the user. Keying on the user-visible content (`source + text`) catches exactly the storms that matter; `source` alone is always present (defaulted to `unknown`), so the key never collapses to text-only. The window is short so a genuinely recurring condition still re-notifies once it passes.
 **Alternatives Considered**: Persisted dedup state (survives restart but needs a store and migration — overkill for an ephemeral guard); hashing the full payload including severity/title (would let a severity-only change slip an otherwise-identical storm through).
 **Consequences**:
+
 - Pro: Re-emit/retry loops collapse to a single delivery; zero producer coordination needed
 - Con: A legitimately repeated identical notice inside the window is silently dropped (logged, not delivered); state is per-process and reset on restart
 
@@ -84,6 +90,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **Choice**: The agent tool (bound only into background runs) emits a `NotifyPayload` with `source: "agent"` on the `notify` event rather than calling `app.channels.deliver` itself.
 **Why**: Background-agent notifications get severity routing, batching, and formatting for free, and stay observable to any other `notify` subscriber. The tool remains a thin validator (rejects empty text). It is background-only because the main conversational agent surfaces things by replying directly — an out-of-band notification from the live session would just wait in the queue behind its own reply.
 **Consequences**:
+
 - Pro: One code path for all notifications; tests assert on the emitted payload only
 - Con: A background-task notification reaches the user only at the next conversation idle (flush window + the tier's idle window); urgent only shortens the wait (Urgent tier), it does not interrupt an active exchange
 
@@ -93,8 +100,9 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **Why**: The flush timer is unref'd so it never fires during a clean shutdown, which previously stranded any notice still inside the window. Routing the drain through the coordinator's awaited shutdown digest (rather than delivering straight from the hook) keeps a single ordered exit path and lets the loop await the channel write before closing.
 **Alternatives Considered**: Delivering directly from the hook (would bypass the loop's ordering/awaiting and could race teardown); persisting pending notices to redeliver next run (overkill for ephemeral window contents).
 **Consequences**:
+
 - Pro: notices pending at shutdown reach the user instead of dying with the process
-- Con: an urgent notice that arrives *during* shutdown is held rather than sent immediately — it still goes out in the final flush, just not ahead of teardown
+- Con: an urgent notice that arrives _during_ shutdown is held rather than sent immediately — it still goes out in the final flush, just not ahead of teardown
 
 ## System Behavior
 

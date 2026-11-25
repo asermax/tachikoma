@@ -5,12 +5,12 @@ external extension.
 
 ## Tools
 
-| Tool | Role |
-|------|------|
-| `install_extension` | Clone a git source (or add a local path) and register it under an alias |
-| `update_extension` | Update an installed extension to its latest version |
-| `list_installed_extensions` | List what is installed |
-| `uninstall_extension` | Remove one by alias |
+| Tool                        | Role                                                                    |
+| --------------------------- | ----------------------------------------------------------------------- |
+| `install_extension`         | Clone a git source (or add a local path) and register it under an alias |
+| `update_extension`          | Update an installed extension to its latest version                     |
+| `list_installed_extensions` | List what is installed                                                  |
+| `uninstall_extension`       | Remove one by alias                                                     |
 
 All changes take effect on the next restart — the running process keeps its current set.
 Say so when the person installs or removes one.

@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-All components — core and extensions — log through a single pino root logger created in `src/log.ts`. Channels own stdout (the REPL renders conversation output there), so diagnostics must never land on stdout. Separately, users watching a conversation need progress feedback that is *not* a log line; that is `app.status()`.
+All components — core and extensions — log through a single pino root logger created in `src/log.ts`. Channels own stdout (the REPL renders conversation output there), so diagnostics must never land on stdout. Separately, users watching a conversation need progress feedback that is _not_ a log line; that is `app.status()`.
 
 ## Pattern
 
@@ -21,7 +21,7 @@ All components — core and extensions — log through a single pino root logger
 
 stderr is always written to file descriptor 2 (`pino.destination(2)`, or pino-pretty `destination: 2` when `pretty`). Rationale: the REPL channel renders agent output on stdout; interleaving logs would corrupt the conversation stream, and keeping stdout clean makes the process pipeable.
 
-When `logging.toFile` is set (default), the root logger fans out via `pino.multistream` to **both** stderr and a rotating JSON file under `{workspace}/.tachikoma/logs`. The file always receives raw JSON regardless of `pretty`, so a daemon run leaves a durable, shippable record while an operator still gets pretty stderr. Both the file sink and pino-pretty are wired as in-process *streams* (not transports) so they compose with multistream — transports run in a worker thread and can't be combined.
+When `logging.toFile` is set (default), the root logger fans out via `pino.multistream` to **both** stderr and a rotating JSON file under `{workspace}/.tachikoma/logs`. The file always receives raw JSON regardless of `pretty`, so a daemon run leaves a durable, shippable record while an operator still gets pretty stderr. Both the file sink and pino-pretty are wired as in-process _streams_ (not transports) so they compose with multistream — transports run in a worker thread and can't be combined.
 
 The file sink is a `pino-roll` stream (`buildPinoRoll` in `src/log.ts`, awaited at logger construction). It rotates **automatically while the process runs** by `logging.rotateFrequency` (`hourly`/`daily`, default daily — `pino-roll` does not support `weekly`), naming files `tachikoma.<YYYY-MM-DD>.<n>.log` and pointing a stable `current.log` symlink at the active file (tail that path regardless of the dated name). Retention is count-based: `retainedFiles()` converts `logging.retentionDays` to a file count for the period (`retentionDays × files-per-day`, e.g. 7 daily → 7, 7 hourly → 168), passed as `limit.count`; `limit.removeOtherLogFiles: true` makes pruning span all matching files in the dir so retention holds **across process restarts**, not just within one run. Effective retention is an upper bound (the active file isn't counted) — it errs toward keeping slightly more. Legacy files from the prior startup-rotation scheme (`tachikoma.log`, `tachikoma.<stamp>.log`) don't match the dated pattern and are **not** swept; they remain until removed manually.
 
@@ -49,12 +49,12 @@ log.warn({ err: error, skill, agent: file }, "failed to load skill agent — ski
 
 ### 5. Level discipline
 
-| Level | Use |
-|---|---|
-| `debug` | internal detail invisible to operators (pipeline status echoes, queue movements, action start lines, classifier decisions, per-item loop steps) |
-| `info` | normal lifecycle: startup, session open/close, job runs, deliveries, state-mutating tool invocations, and one-time-but-normal milestones (e.g. a successful legacy-data import) |
-| `warn` | unexpected but handled — the error-isolation paths (a failing context provider, processor, or event handler) log here and continue, **and any user-visible degradation** (a dropped status render, a lost message-routing record, a missed push notification) even when the code recovers |
-| `error` | an operation failed in a way that affects behavior (exchange failed, delivery failed) |
+| Level   | Use                                                                                                                                                                                                                                                                                       |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `debug` | internal detail invisible to operators (pipeline status echoes, queue movements, action start lines, classifier decisions, per-item loop steps)                                                                                                                                           |
+| `info`  | normal lifecycle: startup, session open/close, job runs, deliveries, state-mutating tool invocations, and one-time-but-normal milestones (e.g. a successful legacy-data import)                                                                                                           |
+| `warn`  | unexpected but handled — the error-isolation paths (a failing context provider, processor, or event handler) log here and continue, **and any user-visible degradation** (a dropped status render, a lost message-routing record, a missed push notification) even when the code recovers |
+| `error` | an operation failed in a way that affects behavior (exchange failed, delivery failed)                                                                                                                                                                                                     |
 
 The dominant pattern is `warn`: pipelines isolate per-item failures (DES-001), and isolation without a `warn` line is a silent failure.
 
@@ -69,8 +69,8 @@ one-time successful import is expected).
 
 ### 7. Action coverage
 
-Failure logging alone leaves the logs able to show *what broke* but not *what the system did on a
-successful run*. Consequential actions therefore log both a start and a result, and never fail
+Failure logging alone leaves the logs able to show _what broke_ but not _what the system did on a
+successful run_. Consequential actions therefore log both a start and a result, and never fail
 silently.
 
 - **Start + result.** Any consequential action — an LLM call, a session open/fork, a lifecycle
@@ -81,8 +81,8 @@ silently.
   per-item loop steps).
 
 - **Fail-soft visibility.** When a call has a fail-soft surface — it returns empty text on an error
-  `stopReason`, or sanitizes a failure into a user-facing string — the failure is logged *inside the
-  function that owns that surface*, before the fallback, and the function still behaves as before
+  `stopReason`, or sanitizes a failure into a user-facing string — the failure is logged _inside the
+  function that owns that surface_, before the fallback, and the function still behaves as before
   (log-and-rethrow / log-before-throw — logging is not a behavior change). The caller that wraps the
   call owns only the start/result envelope; it does not try to re-derive a failure the callee already
   swallowed. (Example: `SideRunner.complete`/`run` and `forkAndContinue` log the failure and rethrow;
@@ -111,7 +111,7 @@ silently.
 ## Exceptions
 
 - Failures before the root logger exists (config parse errors in `src/main.ts`) may write directly to `process.stderr`.
-- Tests fake loggers structurally (`{ warn: vi.fn() } as unknown as Logger`, see DES-003) — assertions on log output are reserved for behavior where the warning *is* the contract (error isolation).
+- Tests fake loggers structurally (`{ warn: vi.fn() } as unknown as Logger`, see DES-003) — assertions on log output are reserved for behavior where the warning _is_ the contract (error isolation).
 
 ## Related Patterns
 

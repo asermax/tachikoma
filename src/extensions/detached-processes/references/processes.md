@@ -5,13 +5,13 @@ extension.
 
 ## Tools
 
-| Tool | Role |
-|------|------|
-| `dispatch_detached_process` | Start a command detached, capturing output to files |
-| `query_process` | Check a process's state |
-| `read_process_output` | Read captured output — **both stdout and stderr** by default |
-| `rename_process` / `delete_process` | Manage the record |
-| `terminate_process` | Stop a running process |
+| Tool                                | Role                                                         |
+| ----------------------------------- | ------------------------------------------------------------ |
+| `dispatch_detached_process`         | Start a command detached, capturing output to files          |
+| `query_process`                     | Check a process's state                                      |
+| `read_process_output`               | Read captured output — **both stdout and stderr** by default |
+| `rename_process` / `delete_process` | Manage the record                                            |
+| `terminate_process`                 | Stop a running process                                       |
 
 Output capture is the reason the stderr default matters: many programs (Python logging,
 build tools, servers) write their useful output, errors, and progress to stderr, so a

@@ -10,7 +10,7 @@ When a run creates **throwaway resources inside a namespace the feature owns** â
 
 - runs from a `finally` (so it executes on every exit path) **and** on the no-work path (so a run that created nothing still sweeps â€” that is what heals a previous crashed run's orphans)
 - is safe to run when the namespace is empty (a no-op, not an error)
-- uses stable, derivable locations (a deterministic tmp dir, a fixed ref prefix) so the *next* run finds *this* run's orphans across process restarts
+- uses stable, derivable locations (a deterministic tmp dir, a fixed ref prefix) so the _next_ run finds _this_ run's orphans across process restarts
 - follows a fixed order when teardown has dependencies (worktrees before the branches they hold checked out, then `worktree prune` for administrative residue)
 
 The precondition is ownership: the sweep deletes **anything** in the namespace, so the namespace must be one the feature documents as its own (the `skill-evolution/<skill>-<slug>` branch-name rule does this).

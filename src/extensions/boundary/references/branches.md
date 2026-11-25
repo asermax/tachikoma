@@ -42,10 +42,10 @@ The person sees these decisions as small headers/reactions on the affected messa
 
 ## `/rollback`
 
-Reverses the most recent *automatic* topic shift or auto-checkpoint decision — the conversation
+Reverses the most recent _automatic_ topic shift or auto-checkpoint decision — the conversation
 returns to the message that triggered it, which is re-run with the corrected framing. Manual
 decisions (`/new`, `/checkpoint`) are not rollback targets, and neither is an automatic
-*summarize-to-checkpoint* (folding a tangent back has nothing to rewind). It requires that
+_summarize-to-checkpoint_ (folding a tangent back has nothing to rewind). It requires that
 exactly one user turn followed the decision — none (the triggering message was never answered)
 or more than one (a later turn happened) and the reversal is refused.
 

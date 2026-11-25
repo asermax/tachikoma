@@ -48,7 +48,7 @@ Extension tables not yet covered by the central `drizzle/` migrations are create
 
 ### 4. Real integration in temp dirs
 
-Where the unit's job *is* the external system, test against the real thing, sandboxed in `mkdtemp` directories:
+Where the unit's job _is_ the external system, test against the real thing, sandboxed in `mkdtemp` directories:
 
 - **git** (`tests/git/`, `tests/projects/`): run the real `git` binary via `runGit`. Helpers in `tests/git/helpers.ts` provide `initRepo` (repo-local identity, `commit.gpgsign false` so commits work anywhere), `commitFile`, and `setupRemotePair` (bare origin + two clones for ahead/behind/diverged topologies).
 - **processes** (`tests/detached-processes/`): spawn real OS processes and observe exit/output through the repository.

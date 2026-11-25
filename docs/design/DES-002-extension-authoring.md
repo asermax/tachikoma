@@ -21,31 +21,31 @@ tests/<name>/
   <topic>.test.ts # vitest, colocated fakes; no live LLM/network calls
 ```
 
-- `index.ts` should mostly *wire*: read config, register pieces on `app`. Logic lives in sibling modules that take their dependencies as narrow parameters (e.g. `Pick<SideRunner, "classify">`) so tests can fake them.
+- `index.ts` should mostly _wire_: read config, register pieces on `app`. Logic lives in sibling modules that take their dependencies as narrow parameters (e.g. `Pick<SideRunner, "classify">`) so tests can fake them.
 - **No direct imports between extension directories** (`src/extensions/<a>/` ↔ `src/extensions/<b>/`): each extension owns and registers its own pieces (processors, tools, crons), even when another extension's wiring is a natural-looking host. Shared helpers belong in a neutral module outside both extensions (e.g. `src/util/`, `src/agent/`); cross-extension signaling at runtime goes through `app.events.on/emit`. App-event contracts — the event-name constant and its payload type — live in neutral `src/events.ts`, so emitters and subscribers import the constant rather than each other's directories; an extension that already published a contract re-exports from there rather than breaking importers (e.g. `NOTIFY_EVENT`/`NotifyPayload`, `DISPATCH_BACKGROUND_TASK_EVENT`). This keeps extensions independently loadable and avoids import cycles.
 - Tables: export drizzle tables from `schema.ts`; they are aggregated centrally in `src/db/schema.ts` (one line: `export * from "../extensions/<name>/schema.ts"`). When you change `schema.ts`, generate the migration immediately with `pnpm exec drizzle-kit generate --name <descriptive_snake_case>` and commit it alongside the schema change — migrations are part of the implementation, never deferred to a later step. Follow the `NNNN_descriptive.sql` naming convention (e.g. `0005_tasks_pi_session_file`).
 - Registration: the extension is added to `src/extensions/index.ts` load order centrally — do not edit that file from a feature branch of work.
 
 ## The AppContext (see `src/extensions/api.ts` for the source of truth)
 
-| Need | Use |
-|---|---|
-| feature config | `configSchema` (TypeBox) + `app.extensionConfig` — section `[extensions.<name>]` |
-| startup init | `app.bootstrap("hook-name", fn)` — idempotent, fail = abort startup |
-| inject a context section as a hidden message | `app.agent.use(provideContext(provide, "custom-type"), { sessionScopes })` — `provide` is a string or `(ctx) => string \| Promise<string>` (empty → no injection); an extension's usage section (DES-014) goes through this mode |
-| append a context section to the system prompt | `app.agent.use(provideContext(provide), { sessionScopes })` — same `provide`, no `customType` → appended to the turn's system prompt |
-| add agent tools / pi hooks | `app.agent.use((pi) => { pi.registerTool({...}); pi.on(...); })` |
-| cheap LLM side-calls | `app.agent.side.complete/classify` (typed via TypeBox schema) |
-| headless agent run | `app.agent.side.run({ prompt, system, tools, tier })` |
-| react after each exchange | `app.sessions.onExchange({ name, process })` |
-| work at session close | `app.sessions.registerProcessor({ name, phase?, process })` — phases main → preFinalize → finalize |
-| intercept inbound messages | `app.inbound.use(middleware)` |
-| periodic work | `app.scheduler.cron(name, pattern, fn)` / `.every(name, seconds, fn)` |
-| background output (queued, surfaced as an agent turn) | `app.channels.deliver({ text, tier: "urgent" \| "normal" \| "low" })` |
-| small persistent state | `app.state.get/set/delete` (namespaced KV) |
-| structured persistence | drizzle tables via `app.db` |
-| cross-extension signals | `app.events.on/emit`; event constants + payload types live in neutral `src/events.ts` |
-| progress lines | `app.status("…")` |
+| Need                                                  | Use                                                                                                                                                                                                                              |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| feature config                                        | `configSchema` (TypeBox) + `app.extensionConfig` — section `[extensions.<name>]`                                                                                                                                                 |
+| startup init                                          | `app.bootstrap("hook-name", fn)` — idempotent, fail = abort startup                                                                                                                                                              |
+| inject a context section as a hidden message          | `app.agent.use(provideContext(provide, "custom-type"), { sessionScopes })` — `provide` is a string or `(ctx) => string \| Promise<string>` (empty → no injection); an extension's usage section (DES-014) goes through this mode |
+| append a context section to the system prompt         | `app.agent.use(provideContext(provide), { sessionScopes })` — same `provide`, no `customType` → appended to the turn's system prompt                                                                                             |
+| add agent tools / pi hooks                            | `app.agent.use((pi) => { pi.registerTool({...}); pi.on(...); })`                                                                                                                                                                 |
+| cheap LLM side-calls                                  | `app.agent.side.complete/classify` (typed via TypeBox schema)                                                                                                                                                                    |
+| headless agent run                                    | `app.agent.side.run({ prompt, system, tools, tier })`                                                                                                                                                                            |
+| react after each exchange                             | `app.sessions.onExchange({ name, process })`                                                                                                                                                                                     |
+| work at session close                                 | `app.sessions.registerProcessor({ name, phase?, process })` — phases main → preFinalize → finalize                                                                                                                               |
+| intercept inbound messages                            | `app.inbound.use(middleware)`                                                                                                                                                                                                    |
+| periodic work                                         | `app.scheduler.cron(name, pattern, fn)` / `.every(name, seconds, fn)`                                                                                                                                                            |
+| background output (queued, surfaced as an agent turn) | `app.channels.deliver({ text, tier: "urgent" \| "normal" \| "low" })`                                                                                                                                                            |
+| small persistent state                                | `app.state.get/set/delete` (namespaced KV)                                                                                                                                                                                       |
+| structured persistence                                | drizzle tables via `app.db`                                                                                                                                                                                                      |
+| cross-extension signals                               | `app.events.on/emit`; event constants + payload types live in neutral `src/events.ts`                                                                                                                                            |
+| progress lines                                        | `app.status("…")`                                                                                                                                                                                                                |
 
 ## Style rules (enforced by the gates)
 

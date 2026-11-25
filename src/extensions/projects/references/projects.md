@@ -13,7 +13,7 @@ state is injected into your context — branch or detached commit, uncommitted-c
 
 Dirty projects are committed and pushed automatically: once `scheduler.commitDebounceMinutes`
 (default 5; `0` disables mid-session) of exchange quiet elapses, and always at trunk close —
-project commits land *before* the workspace commit, so updated submodule pointers are
+project commits land _before_ the workspace commit, so updated submodule pointers are
 committed together with the workspace in the same pass. Clean projects whose branch is ahead
 of their remote are pushed too. You never need to run git inside a project for this.
 

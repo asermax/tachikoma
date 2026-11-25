@@ -19,10 +19,10 @@ system-origin turns, delivery timing) and pointers to the core reference files i
 `src/agent/references/`. It does **not** include the user-editable SOUL.md/USER.md content.
 
 A prompt that is **a discrete task handed to a side-run** (a classifier, extractor, summarizer, or
-one-shot writer) is *not* a base prompt and stays co-located with the feature that owns it.
+one-shot writer) is _not_ a base prompt and stays co-located with the feature that owns it.
 
 **Per-extension context** (a subsystem's usage guidance, or user-editable identity content like
-SOUL.md/USER.md) is *not* the core base prompt: it supplements the standing identity rather than
+SOUL.md/USER.md) is _not_ the core base prompt: it supplements the standing identity rather than
 replacing pi's base. Each extension **owns its own text** (e.g. `src/extensions/<name>/usage.ts`, or
 the `context` extension's SOUL/USER files) and contributes it through the DES-001 seam
 `app.agent.use(provideContext(provide, customType?), { sessionScopes })`. The shared helper
@@ -34,8 +34,8 @@ layer the persona onto the core base prompt). The helper lives in core, but the 
 feature**. Scope each section to the sessions where it belongs (`["main", "background"]` vs main-only)
 — never describe a tool to an agent that cannot call it.
 
-The deciding predicate: *does this prompt stand in for pi's coding-agent identity for a whole
-execution context?* If yes → core `prompts.ts` + shared `OPERATIONAL_GUIDANCE`. If it is a
+The deciding predicate: _does this prompt stand in for pi's coding-agent identity for a whole
+execution context?_ If yes → core `prompts.ts` + shared `OPERATIONAL_GUIDANCE`. If it is a
 feature's own task instruction → inline in the feature. That predicate decides **where a prompt
 lives**. A second, content-level predicate governs **what the main base prompt may say**: it
 documents only the conversation substrate the core owns and never names an extension's tool or turn

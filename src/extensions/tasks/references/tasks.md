@@ -17,8 +17,8 @@ Scheduled work — the mechanics beyond the usage summary. Owned by the tasks ex
 ## Run limits and lifecycle
 
 - A background run iterates up to `backgroundMaxIterations` (default 10); a run that never
-declares a terminal outcome (`update_goal` `completed` / `not_completable`) fails at the
-cap — an omitted `goal` is derived from the prompt on the first run.
+  declares a terminal outcome (`update_goal` `completed` / `not_completable`) fails at the
+  cap — an omitted `goal` is derived from the prompt on the first run.
 - At most `backgroundMaxConcurrent` (default 3) runs execute at once; surplus instances wait
   for a free slot on a later tick.
 - A run held in `running` longer than `runningTimeoutSeconds` (default 30 min) is presumed

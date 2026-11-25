@@ -14,12 +14,14 @@ This document explains how the core shell is composed: the service construction 
 Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the main loops — every feature ships as an extension. The shell must therefore provide a small, stable set of process-scoped services (`AppContext`) that features can rely on, and a deterministic startup that loads features in a known order without core knowing what they are.
 
 **Constraints:**
+
 - Single-process, single-user app; no need for connection pooling or worker isolation
 - pi's API is never wrapped (DES-001) — the shell composes around pi, it does not abstract it
 - The workspace must stay compatible with legacy layouts, and pi state must not leak into the user's own `~/.pi` install
 - Extensions load before the channel starts, so anything they register must be in place before the first message
 
 **Interactions:**
+
 - The `AppContext` service table and extension lifetimes are defined in [DES-001](../design/DES-001-unified-extension-api.md); authoring conventions in [DES-002](../design/DES-002-extension-authoring.md)
 - The `Registrations` object filled here is consumed by the coordinator (middleware, processors, channels) and the `AgentManager` (pi factories — including extension context sections); the core base prompt is owned by `AgentManager` itself, not registered here — both documented in their own areas
 - Every feature extension depends on this shell; the `external` extension extends it at runtime via `app.registerExtension`
@@ -49,27 +51,27 @@ Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an un
 
 ### Implementation Structure
 
-| Component | Responsibility | Key Decisions |
-|-----------|----------------|---------------|
-| `src/main.ts` | CLI entry: `parseArgs` (`--channel`/`-c`, `--config`, `--help`), positional rejection (no subcommands — only the legacy `run` is tolerated), delegates to `runApp`, exits 1 on error | No CLI framework — `node:util` `parseArgs` covers three flags; unknown positionals fail fast rather than silently starting a daemon |
-| `src/app.ts` | `runApp`: fixed composition sequence, channel resolution, signal handling, shutdown ordering | One function owns the whole wiring; no DI container |
-| `src/config/schema.ts` | `ConfigSchema` (TypeBox) with nested-object defaults | `Type.Object(..., { default: {} })` per section so missing sections still get field defaults; model refs are `provider/model-id` strings |
-| `src/config/parse.ts` | `parseWithSchema`: `Clone` → `Default` → `Convert` → `Assert`, aggregating `Errors()` into one `ConfigError` | Shared by app config and per-extension config — one validation behavior everywhere |
-| `src/config/load.ts` | Resolve path (`XDG_CONFIG_HOME` aware), write `DEFAULT_CONFIG_TEMPLATE` on ENOENT, parse | The template itself is parsed on first run, guaranteeing template values equal built-in defaults |
-| `src/config/env.ts` | `applyConfigEnv`: write the `[env]` map onto `process.env`, overwriting existing vars; logs the applied keys only | Process env is the app-wide carrier — pi sessions, spawned tools, and detached processes all inherit it, so config env is set once at startup rather than threaded through services |
-| `src/log.ts` | `createRootLogger` (pino), `componentLogger` child binding `component` | Always stderr (fd 2) so REPL output on stdout stays clean |
-| `src/db/index.ts` | `createDatabase` (better-sqlite3 + drizzle, WAL, foreign keys), `runMigrations` | Migrations folder resolved relative to the source tree (`import.meta.dirname`) |
-| `src/db/core-schema.ts` | Core tables: `sessions`, `app_state` | `post_processing_state` is a JSON column mapping processor name → completed/failed |
-| `src/db/schema.ts` | Aggregate schema: core plus every first-party extension's `schema.ts` | Single module read by drizzle-kit (`drizzle.config.ts`) → one `drizzle/` migrations dir for the whole app |
-| `src/db/state.ts` | `KeyValueState`: namespaced JSON KV over `app_state` with upsert | Synchronous API; composite primary key (namespace, key) |
-| `src/events.ts` | `EventBus`: string-named events, unsubscribe closures, fire-and-forget emit | Handlers wrapped in `Promise.resolve().then()` for isolation; failures logged with event name |
-| `src/scheduler.ts` | `Scheduler`: named `cron`/`every` jobs returning `ScheduledJob` handles | croner with `timezone`, `protect` (overlap skip), `catch`; `guarded()` logs failures; name reuse stops the previous job |
-| `src/workspace.ts` | `Workspace`: root resolution (`expandHome`), `dataDir`, `piDir`, `sessionsDir`, `databaseFile`, `instanceLockFile`, `ensure()` | All derived paths are getters off the root; `ensure()` creates only the deepest chain |
-| `src/instance-lock.ts` | Single-instance lock: exclusive create (`wx`) + verify of `{workspace}/.tachikoma/instance.json`; stale takeover by pid liveness, `/proc` start-time identity, zombie state, corrupt content, or own pid; ownership-checked, idempotent release | Node core only — no flock, no new dependency; `/proc` optional (liveness-only fallback without it); the signal-0 liveness helper is the shared one in `src/util/is-alive.ts` (extensions import core, never the reverse; see [DES-001](../design/DES-001-unified-extension-api.md)) |
-| `src/extensions/api.ts` | `AppContext`, pipeline contracts (`ExchangeProcessor`, `PostProcessor`, `InboundMiddleware`), `defineExtension` | `defineExtension` is identity — purely a typing aid for the `C` config parameter |
-| `src/extensions/registrations.ts` | `Registrations`: mutable arrays/maps filled during setup, read by core at runtime | Plain data object — the seam between host and coordinator/agent |
-| `src/extensions/host.ts` | `ExtensionHost`: queue-based `load()`, per-extension `buildContext()`, `bootstrap()` | Context built fresh per extension: child logger, validated config section, namespaced KV state |
-| `src/extensions/index.ts` | `firstPartyExtensions` load order | `commands, context, memory, projects, git, boundary, skills, workflows, tasks, detached-processes, notifications, self-update, repl, telegram, external` (15 extensions) |
+| Component                         | Responsibility                                                                                                                                                                                                                                  | Key Decisions                                                                                                                                                                                                                                                                       |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main.ts`                     | CLI entry: `parseArgs` (`--channel`/`-c`, `--config`, `--help`), positional rejection (no subcommands — only the legacy `run` is tolerated), delegates to `runApp`, exits 1 on error                                                            | No CLI framework — `node:util` `parseArgs` covers three flags; unknown positionals fail fast rather than silently starting a daemon                                                                                                                                                 |
+| `src/app.ts`                      | `runApp`: fixed composition sequence, channel resolution, signal handling, shutdown ordering                                                                                                                                                    | One function owns the whole wiring; no DI container                                                                                                                                                                                                                                 |
+| `src/config/schema.ts`            | `ConfigSchema` (TypeBox) with nested-object defaults                                                                                                                                                                                            | `Type.Object(..., { default: {} })` per section so missing sections still get field defaults; model refs are `provider/model-id` strings                                                                                                                                            |
+| `src/config/parse.ts`             | `parseWithSchema`: `Clone` → `Default` → `Convert` → `Assert`, aggregating `Errors()` into one `ConfigError`                                                                                                                                    | Shared by app config and per-extension config — one validation behavior everywhere                                                                                                                                                                                                  |
+| `src/config/load.ts`              | Resolve path (`XDG_CONFIG_HOME` aware), write `DEFAULT_CONFIG_TEMPLATE` on ENOENT, parse                                                                                                                                                        | The template itself is parsed on first run, guaranteeing template values equal built-in defaults                                                                                                                                                                                    |
+| `src/config/env.ts`               | `applyConfigEnv`: write the `[env]` map onto `process.env`, overwriting existing vars; logs the applied keys only                                                                                                                               | Process env is the app-wide carrier — pi sessions, spawned tools, and detached processes all inherit it, so config env is set once at startup rather than threaded through services                                                                                                 |
+| `src/log.ts`                      | `createRootLogger` (pino), `componentLogger` child binding `component`                                                                                                                                                                          | Always stderr (fd 2) so REPL output on stdout stays clean                                                                                                                                                                                                                           |
+| `src/db/index.ts`                 | `createDatabase` (better-sqlite3 + drizzle, WAL, foreign keys), `runMigrations`                                                                                                                                                                 | Migrations folder resolved relative to the source tree (`import.meta.dirname`)                                                                                                                                                                                                      |
+| `src/db/core-schema.ts`           | Core tables: `sessions`, `app_state`                                                                                                                                                                                                            | `post_processing_state` is a JSON column mapping processor name → completed/failed                                                                                                                                                                                                  |
+| `src/db/schema.ts`                | Aggregate schema: core plus every first-party extension's `schema.ts`                                                                                                                                                                           | Single module read by drizzle-kit (`drizzle.config.ts`) → one `drizzle/` migrations dir for the whole app                                                                                                                                                                           |
+| `src/db/state.ts`                 | `KeyValueState`: namespaced JSON KV over `app_state` with upsert                                                                                                                                                                                | Synchronous API; composite primary key (namespace, key)                                                                                                                                                                                                                             |
+| `src/events.ts`                   | `EventBus`: string-named events, unsubscribe closures, fire-and-forget emit                                                                                                                                                                     | Handlers wrapped in `Promise.resolve().then()` for isolation; failures logged with event name                                                                                                                                                                                       |
+| `src/scheduler.ts`                | `Scheduler`: named `cron`/`every` jobs returning `ScheduledJob` handles                                                                                                                                                                         | croner with `timezone`, `protect` (overlap skip), `catch`; `guarded()` logs failures; name reuse stops the previous job                                                                                                                                                             |
+| `src/workspace.ts`                | `Workspace`: root resolution (`expandHome`), `dataDir`, `piDir`, `sessionsDir`, `databaseFile`, `instanceLockFile`, `ensure()`                                                                                                                  | All derived paths are getters off the root; `ensure()` creates only the deepest chain                                                                                                                                                                                               |
+| `src/instance-lock.ts`            | Single-instance lock: exclusive create (`wx`) + verify of `{workspace}/.tachikoma/instance.json`; stale takeover by pid liveness, `/proc` start-time identity, zombie state, corrupt content, or own pid; ownership-checked, idempotent release | Node core only — no flock, no new dependency; `/proc` optional (liveness-only fallback without it); the signal-0 liveness helper is the shared one in `src/util/is-alive.ts` (extensions import core, never the reverse; see [DES-001](../design/DES-001-unified-extension-api.md)) |
+| `src/extensions/api.ts`           | `AppContext`, pipeline contracts (`ExchangeProcessor`, `PostProcessor`, `InboundMiddleware`), `defineExtension`                                                                                                                                 | `defineExtension` is identity — purely a typing aid for the `C` config parameter                                                                                                                                                                                                    |
+| `src/extensions/registrations.ts` | `Registrations`: mutable arrays/maps filled during setup, read by core at runtime                                                                                                                                                               | Plain data object — the seam between host and coordinator/agent                                                                                                                                                                                                                     |
+| `src/extensions/host.ts`          | `ExtensionHost`: queue-based `load()`, per-extension `buildContext()`, `bootstrap()`                                                                                                                                                            | Context built fresh per extension: child logger, validated config section, namespaced KV state                                                                                                                                                                                      |
+| `src/extensions/index.ts`         | `firstPartyExtensions` load order                                                                                                                                                                                                               | `commands, context, memory, projects, git, boundary, skills, workflows, tasks, detached-processes, notifications, self-update, repl, telegram, external` (15 extensions)                                                                                                            |
 
 ## Key Decisions
 
@@ -78,10 +80,12 @@ Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an un
 **Choice**: better-sqlite3 under drizzle, with synchronous `KeyValueState` and registry call sites
 **Why**: A single-process personal agent has no concurrency that justifies async DB plumbing; synchronous calls keep pipeline code linear and drizzle's better-sqlite3 migrator runs inline before extensions load.
 **Alternatives Considered**:
+
 - `node:sqlite` (stdlib): newer, but weaker drizzle integration
 - libsql/async drivers: async ceremony with no payoff at this scale
 
 **Consequences**:
+
 - Pro: no `await` noise in state/registry accessors; migrations are a plain startup call
 - Pro: WAL mode keeps reads cheap alongside writes
 - Con: large queries would block the event loop (acceptable: the DB is tiny)
@@ -91,10 +95,12 @@ Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an un
 **Choice**: A plain `Registrations` data object is created before the host, handed to the `AgentManager` and `Coordinator` at construction, and filled by extensions during `setup()`
 **Why**: The coordinator and agent manager must exist before extensions load (extensions register against them via `AppContext`), but they only read the registries at runtime — after loading finished. Sharing a mutable object breaks the construction-order cycle without events or late binding.
 **Alternatives Considered**:
+
 - Constructing the coordinator after `host.load()`: forces every `AppContext` closure to defer through indirection anyway
 - Registration via the event bus: loses typing and ordering guarantees
 
 **Consequences**:
+
 - Pro: `AppContext` methods are one-line array pushes; trivially testable
 - Pro: load order directly determines pipeline order (providers, middleware, processors run in registration order)
 - Con: nothing prevents late registration after startup — by convention only `setup()` writes to it
@@ -104,10 +110,12 @@ Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an un
 **Choice**: All pi state (sessions, settings, models.json) lives under `{workspace}/.tachikoma/pi`, but `AuthStorage` falls back to the user's `~/.pi/agent/auth.json` unless a workspace-local `auth.json` has actual content
 **Why**: Tachikoma must never collide with a user's own pi install (session trees, settings), yet credentials are machine-level — forcing a second login for the same machine would be hostile.
 **Alternatives Considered**:
+
 - Fully isolated auth: duplicate logins, confusing token refresh
 - Sharing `~/.pi` entirely: Tachikoma's sessions and settings would pollute the user's pi
 
 **Consequences**:
+
 - Pro: deleting `.tachikoma/` removes all agent state; the user's pi is untouched
 - Pro: existing pi logins (including OAuth) just work
 - Con: the "has content" check is heuristic (file exists and size > 2 bytes)
@@ -117,11 +125,13 @@ Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an un
 **Choice**: `host.load()` iterates the queue by index while extensions may append to it via `app.registerExtension()`
 **Why**: External (third-party) extension loading is itself an extension (DES-001): the `external` extension imports configured modules during its own setup and enqueues them, so they load in the same pass with the same contract — no second loader, no special plugin phase.
 **Alternatives Considered**:
+
 - A separate plugin-loading phase after first-party load: duplicates the context-building logic and creates two extension kinds
 
 Setup failures are isolated by provenance. A first-party extension's `setup()` failure propagates and aborts startup (a core bug must surface). An external (third-party) extension is wrapped: its setup runs under `withTimeout` (default `DEFAULT_EXTERNAL_SETUP_TIMEOUT_MS = 30_000` ms, overridable per queued extension via `setupTimeoutMs`), and any throw or timeout is caught, logged as a warning ("external extension setup failed or timed out — skipping"), and that one extension is skipped while the rest of the pass continues. The same first-party-fails-hard / external-is-isolated rule governs bootstrap hooks (`bootstrap()`).
 
 **Consequences**:
+
 - Pro: one loading mechanism; external extensions get the exact same `AppContext` (minus migrations — they must use `app.state` per DES-001)
 - Pro: a broken or hanging third-party extension cannot abort startup or wedge the load loop
 - Con: load order of external extensions depends on where `external` sits in the first-party list (last, by design)
@@ -132,6 +142,7 @@ Setup failures are isolated by provenance. A first-party extension's `setup()` f
 **Why**: The bus carries cross-extension signals (`session:closed`, `status`, …) where the emitter must not care who listens or whether a listener is broken — a failing subscriber in one extension must never affect the emitting code path or sibling subscribers.
 
 **Consequences**:
+
 - Pro: emitters never await or try/catch; handler errors are uniformly logged with the event name
 - Con: no backpressure or completion signal — work that must complete before continuing belongs in the explicit pipelines (processors, hooks), not on the bus
 
@@ -140,11 +151,13 @@ Setup failures are isolated by provenance. A first-party extension's `setup()` f
 **Choice**: A JSON identity file at `{workspace}/.tachikoma/instance.json` (pid, start time, command line) created exclusively (`wx`) and verified by re-reading, with stale-takeover decided by pid liveness (signal 0) plus `/proc` start-time identity and zombie state when available. `runApp` acquires it after `workspace.ensure()` and before anything else is constructed, and releases it on every exit path.
 **Why**: Two processes on one workspace duplicate scheduled actions, conflict over Telegram long-polling (409), and corrupt shared trunk/session state — the workspace is the unit of shared mutable state, so it is also the lock scope. The file carries the holder identity (pid, start time, command line) the refusal message needs. Exclusive create + verify makes the stale-takeover race safe without inode tricks: only the winner's content survives at the path, the loser detects the foreign content and refuses, and release unlinks only what it still owns.
 **Alternatives Considered**:
+
 - flock / an advisory-lock dependency (e.g. proper-lockfile): Node core has no flock, and a new dependency buys no identity information for the error message
 - SQLite `BEGIN EXCLUSIVE` held for the process lifetime: an abuse of the write transaction, interacts with WAL, and cannot name the conflicting process
 - A machine-global lock keyed by bot token: guards only the rarer same-token-different-workspace case (Telegram's own 409 already surfaces it) and cannot help cross-machine sharing
 
 **Consequences**:
+
 - Pro: stale locks self-heal — a SIGKILLed or power-lost instance is taken over by the next boot with no operator action
 - Pro: the refusal message identifies exactly who holds the workspace
 - Con: without `/proc` (non-Linux) pid reuse cannot be detected — liveness alone decides
@@ -168,7 +181,7 @@ Setup failures are isolated by provenance. A first-party extension's `setup()` f
 
 **Given**: A first-party extension's bootstrap hook throws
 **When**: `host.bootstrap()` runs the hooks sequentially
-**Then**: The error propagates out of `runApp`; `main.ts` prints the stack and exits with code 1. No channel ever starts. On the next run the hook executes again (hooks are idempotent by convention, DES-002). An *external* extension's hook is instead isolated — caught, logged as a warning, and skipped — so a third-party hook failure never aborts startup.
+**Then**: The error propagates out of `runApp`; `main.ts` prints the stack and exits with code 1. No channel ever starts. On the next run the hook executes again (hooks are idempotent by convention, DES-002). An _external_ extension's hook is instead isolated — caught, logged as a warning, and skipped — so a third-party hook failure never aborts startup.
 
 ### Scenario: SIGINT during an idle conversation
 

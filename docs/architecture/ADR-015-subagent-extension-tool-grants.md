@@ -10,7 +10,7 @@ A delegated subagent (`delegate_to_agent` → `SideRunner.run`) runs in a **bare
 Delegations are tool-starved by a **double-block**:
 
 1. `selectExtensionFactories` returns `[]` for a bare session — no factory binds, so a factory-registered tool (e.g. a Firecrawl scrape/search extension) scoped to `main` is unreachable.
-2. The hard `tools` allowlist pi applies at session creation admits only the built-in names the run lists (`read`, `grep`, `find`, `ls`, `bash`, `edit`, `write`), masking any tool that *does* register — including **pi-native extensions**, which pi loads via `agentDir` discovery even into a bare session.
+2. The hard `tools` allowlist pi applies at session creation admits only the built-in names the run lists (`read`, `grep`, `find`, `ls`, `bash`, `edit`, `write`), masking any tool that _does_ register — including **pi-native extensions**, which pi loads via `agentDir` discovery even into a bare session.
 
 The assistant therefore cannot hand tool-dependent work — most concretely web research — to a parallel, isolated subagent, and is forced to run that work on the main session, burning main-session context.
 
@@ -18,7 +18,7 @@ The assistant therefore cannot hand tool-dependent work — most concretely web 
 
 - Isolation is preserved: the run stays in-memory, prompt-isolated (`isolatePrompt: true`), and disposed after the run. Granted tools execute inside that boundary, never in the main session.
 - Read-only built-ins stay the default; extension tools are opt-in per delegation and never granted by default.
-- The grant must be **source-agnostic**: a requested name resolves whether its provider is a Tachikoma factory opted into the new scope *or* a pi-native extension loaded from `.pi` / packages / settings.
+- The grant must be **source-agnostic**: a requested name resolves whether its provider is a Tachikoma factory opted into the new scope _or_ a pi-native extension loaded from `.pi` / packages / settings.
 - No secrets plumbing: a granted tool reaches its credentials the same way it does in the main session. No operator allowlist/denylist (out of scope).
 - The new scope must not enable delegation recursion — a subagent must not itself be able to delegate.
 
@@ -26,7 +26,7 @@ The assistant therefore cannot hand tool-dependent work — most concretely web 
 
 Add a **third session scope**, `subagent` (`SESSION_SCOPES.subagent`), meaning a delegated subagent run that requested extension tools. It threads through the existing scope machinery exactly as `background` did — `factoryBindingTargets` resolves it, `app.agent.use(f, { sessionScopes: […, "subagent"] })` routes the factory into a third list (`subagentFactories`), and a new `bindSubagentFactories` open-option makes `selectExtensionFactories` bind the `subagentFactories` with `{ scope: "subagent" }`. Opt-in granularity is **per-factory**, matching the scope model (scopes are a factory-level property); the three session types (main/background/subagent) remain mutually exclusive at open time, with background precedence preserved.
 
-Resolve requested tool names **source-agnostically at execute time**, against the *opened subagent session's* `AgentSession.getAllTools()` — a single membership check covers a Tachikoma-factory tool and a pi-native extension tool identically. An unresolved name throws a self-correcting error (of the same "list what is valid" form as the unknown-agent / unknown-built-in-tool errors) listing the grantable (non-builtin) names, **before any prompt runs**.
+Resolve requested tool names **source-agnostically at execute time**, against the _opened subagent session's_ `AgentSession.getAllTools()` — a single membership check covers a Tachikoma-factory tool and a pi-native extension tool identically. An unresolved name throws a self-correcting error (of the same "list what is valid" form as the unknown-agent / unknown-built-in-tool errors) listing the grantable (non-builtin) names, **before any prompt runs**.
 
 Narrow the active set with `AgentSession.setActiveToolsByName([...resolvedBuiltins, ...granted])`. To do this, the grant path opens the session **without** a `tools` allowlist (so every bound factory tool registers and is enumerable, mirroring the existing background path's "drop the allowlist so factory tools survive"), validates, then narrows to exactly the resolved built-ins plus the granted tools.
 

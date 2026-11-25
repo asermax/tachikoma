@@ -14,11 +14,13 @@ Explain why the REPL is a single-file readline channel rather than a full-featur
 The REPL is the walking-skeleton channel: it proves message-in/response-out end to end and remains the default developer surface. The Channel contract it implements is owned by the core ([core-shell](core-shell.md)); the coordinator pushes one `Exchange` event stream per message and background `Delivery` items (see [conversation-loop](conversation-loop.md)).
 
 **Constraints:**
+
 - Channels are thin — all logic lives in the coordinator; the channel only reads input and renders events
 - Must coexist with the app's signal-based shutdown (SIGINT/SIGTERM handled centrally)
 - Developer tool: functional beats fancy
 
 **Interactions:**
+
 - Registered via `app.channels.register`; the core shell selects and starts one channel per process
 - The [telegram](telegram.md) channel implements the same `Channel` interface for the user-facing surface
 
@@ -30,10 +32,10 @@ One class, `ReplChannel` in `src/extensions/repl/index.ts`, implementing `Channe
 
 ### Implementation Structure
 
-| Component | Responsibility | Key Decisions |
-|-----------|----------------|---------------|
-| `src/extensions/repl/index.ts` | `ReplChannel` (input loop + rendering, the optional `status()` method) and the `defineExtension` wiring | `node:readline` over a TUI library; streamed text is buffered per exchange and flushed through `renderMarkdown` so interrupting events flush a newline first; a `streaming` flag gates Ctrl-C between abort and exit; `thinking`/`tool-end` intentionally unrendered; a non-recoverable `error` appends `(<errorKind>, not recoverable)`; on `result` a dim `· $<cost> · <tokens> tokens` line prints before the blank-line re-prompt when `result` is present; `status(text)` prints a dim `· <text>` line |
-| `src/extensions/repl/markdown.ts` | `renderMarkdown`: pure markdown-to-ANSI line renderer | Line-oriented, zero-dependency; covers headings/bold/italic/inline-code/fences/lists; operates on finalized text rather than per-chunk because inline spans can straddle stream chunks; fence-delimiter lines (the ` ``` ` open/close) are consumed and never emitted — only the lines inside the fence are written (dim-styled) |
+| Component                         | Responsibility                                                                                          | Key Decisions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/extensions/repl/index.ts`    | `ReplChannel` (input loop + rendering, the optional `status()` method) and the `defineExtension` wiring | `node:readline` over a TUI library; streamed text is buffered per exchange and flushed through `renderMarkdown` so interrupting events flush a newline first; a `streaming` flag gates Ctrl-C between abort and exit; `thinking`/`tool-end` intentionally unrendered; a non-recoverable `error` appends `(<errorKind>, not recoverable)`; on `result` a dim `· $<cost> · <tokens> tokens` line prints before the blank-line re-prompt when `result` is present; `status(text)` prints a dim `· <text>` line |
+| `src/extensions/repl/markdown.ts` | `renderMarkdown`: pure markdown-to-ANSI line renderer                                                   | Line-oriented, zero-dependency; covers headings/bold/italic/inline-code/fences/lists; operates on finalized text rather than per-chunk because inline spans can straddle stream chunks; fence-delimiter lines (the ` ``` ` open/close) are consumed and never emitted — only the lines inside the fence are written (dim-styled)                                                                                                                                                                            |
 
 ## Key Decisions
 
@@ -42,10 +44,12 @@ One class, `ReplChannel` in `src/extensions/repl/index.ts`, implementing `Channe
 **Choice**: Use the Node standard library's readline; styling is hand-rolled ANSI escape constants and a small in-tree markdown renderer. No persistent history, no multiline composition.
 **Why**: The REPL only has to prove the channel contract end to end and stay a comfortable developer surface. A TUI framework is a heavy dependency for a single-screen loop; history and multiline editing are not worth the complexity here and are explicitly out of scope.
 **Alternatives Considered**:
+
 - ink / blessed style TUI: heavy dependency for a developer loop
 - A markdown library (e.g. marked-terminal): a runtime dependency where a ~70-line renderer covers the constructs the agent actually emits
 
 **Consequences**:
+
 - Pro: zero runtime dependencies; the channel stays small
 - Con: the markdown renderer is intentionally lossy on exotic syntax; no input history across runs; no multiline input
 
@@ -54,6 +58,7 @@ One class, `ReplChannel` in `src/extensions/repl/index.ts`, implementing `Channe
 **Choice**: `respond` accumulates `text` events into a buffer and renders it through `renderMarkdown` only when flushed — on the next non-text event or at `result` — rather than styling each chunk.
 **Why**: Markdown inline spans (`**bold**`, `` `code` ``) and block fences routinely straddle stream-chunk boundaries; per-chunk styling cannot know where a span ends. Buffering to a natural boundary gives the renderer a complete line set to work on. The trade-off — text appears in a burst at the flush point rather than truly character-by-character — is acceptable for a developer loop.
 **Consequences**:
+
 - Pro: correct rendering of multi-chunk markdown; the renderer stays a pure string→string function that is trivially unit-tested
 - Con: streamed text is not shown incrementally within a block; it lands when flushed
 
@@ -62,6 +67,7 @@ One class, `ReplChannel` in `src/extensions/repl/index.ts`, implementing `Channe
 **Choice**: A `streaming` flag is set for the duration of `respond`. The readline `SIGINT` handler aborts the in-flight exchange via the injected `abort()` callback (wired to `app.sessions.abortExchange()`, the same coordinator API Telegram's `/stop` uses) while streaming, and closes the interface when idle. The `close` handler still nulls the interface and self-signals SIGINT for the central shutdown path (covers Ctrl-D and the idle Ctrl-C case).
 **Why**: readline intercepts Ctrl-C and emits its own `SIGINT` event instead of letting the process default fire, so the channel owns the abort-vs-exit decision. Aborting only the exchange lets a developer stop a runaway response and keep typing, mirroring Telegram. Shutdown stays centrally owned by the app's signal handling; the channel does not fork it.
 **Consequences**:
+
 - Pro: mid-stream interrupt without losing the session; one shutdown path regardless of how exit is triggered
 - Con: the streaming/idle branch and the self-signal indirection take a moment to follow when reading the code
 

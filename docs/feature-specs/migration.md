@@ -18,26 +18,26 @@ Steps that touch user-editable content (config role models, skill frontmatter) a
 
 ## Requirements
 
-| ID | Requirement |
-|----|-------------|
-| R0 | Every step is self-detecting: it inspects the workspace for legacy markers and returns a no-op when none are present, so a pristine or already-adapted workspace incurs only detection cost |
-| R1 | The database step (`adaptLegacyDatabase`) runs first, before drizzle opens the database file; its failures propagate and abort startup. Every other step is best-effort: a failure is logged and startup continues |
-| R2 | Legacy task import (`adaptLegacyTasks`) runs after the live database is created and migrations are applied, reading from the backup the database step left behind |
-| R3 | Adaptation is idempotent: re-running on a workspace that was already adapted detects no legacy markers (or finds the one-time import flag already set) and changes nothing |
-| R4 | No legacy data is deleted. The legacy database is renamed to `tachikoma.legacy-backup.db`; the legacy config is copied to `<path>.legacy-backup` before being rewritten; context files are moved (not copied away) only when no destination conflict exists |
-| R5 | The legacy database is detected by the presence of an `alembic_version` or `schema_migrations` table; a database without either marker is left untouched |
-| R6 | When renaming the legacy database, its `-wal` and `-shm` sidecar journals are moved alongside the main file so the backup stays recoverable; an existing backup is never overwritten |
-| R7 | Legacy config is detected by old-shape markers (`[telegram]` table, a string `channel`, or old `[agent]` role keys) and translated into the new layout; the original is preserved in the backup and the reloaded `Config` is returned for the rest of startup |
-| R8 | Config role models are translated interactively: each legacy bare alias (e.g. `opus`) is offered as a provider-qualified id (`anthropic/opus`) and only set if confirmed; declined roles are left unset with a warning |
-| R9 | Config sections without a new-layout equivalent are dropped with an info log naming them; the only implicit carry-over is `tasks.timezone → scheduler.timezone` |
-| R9a | A legacy string `channel` is translated into `channels.default` |
-| R9b | The legacy `[logging]` section is translated into the new `logging` layout: `level` is carried over lowercased, and `console` (a boolean) is renamed to `pretty` |
-| R9c | A numeric legacy `[agent].session_resume_window` is translated into `sessions.resumeWindowSeconds` |
-| R10 | Legacy context files (`SOUL.md`, `USER.md`, `AGENTS.md`) under `context/` are moved to the workspace root; a file that already exists at the root is left in `context/` with a warning, and the `context/` directory is removed only once empty |
-| R11 | Skill frontmatter carrying legacy-only keys (`depends_on`, `version`) is offered for stripping interactively; declining keeps the files unchanged (the loader ignores the keys regardless) |
+| ID  | Requirement                                                                                                                                                                                                                                                                                                                                                             |
+| --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R0  | Every step is self-detecting: it inspects the workspace for legacy markers and returns a no-op when none are present, so a pristine or already-adapted workspace incurs only detection cost                                                                                                                                                                             |
+| R1  | The database step (`adaptLegacyDatabase`) runs first, before drizzle opens the database file; its failures propagate and abort startup. Every other step is best-effort: a failure is logged and startup continues                                                                                                                                                      |
+| R2  | Legacy task import (`adaptLegacyTasks`) runs after the live database is created and migrations are applied, reading from the backup the database step left behind                                                                                                                                                                                                       |
+| R3  | Adaptation is idempotent: re-running on a workspace that was already adapted detects no legacy markers (or finds the one-time import flag already set) and changes nothing                                                                                                                                                                                              |
+| R4  | No legacy data is deleted. The legacy database is renamed to `tachikoma.legacy-backup.db`; the legacy config is copied to `<path>.legacy-backup` before being rewritten; context files are moved (not copied away) only when no destination conflict exists                                                                                                             |
+| R5  | The legacy database is detected by the presence of an `alembic_version` or `schema_migrations` table; a database without either marker is left untouched                                                                                                                                                                                                                |
+| R6  | When renaming the legacy database, its `-wal` and `-shm` sidecar journals are moved alongside the main file so the backup stays recoverable; an existing backup is never overwritten                                                                                                                                                                                    |
+| R7  | Legacy config is detected by old-shape markers (`[telegram]` table, a string `channel`, or old `[agent]` role keys) and translated into the new layout; the original is preserved in the backup and the reloaded `Config` is returned for the rest of startup                                                                                                           |
+| R8  | Config role models are translated interactively: each legacy bare alias (e.g. `opus`) is offered as a provider-qualified id (`anthropic/opus`) and only set if confirmed; declined roles are left unset with a warning                                                                                                                                                  |
+| R9  | Config sections without a new-layout equivalent are dropped with an info log naming them; the only implicit carry-over is `tasks.timezone → scheduler.timezone`                                                                                                                                                                                                         |
+| R9a | A legacy string `channel` is translated into `channels.default`                                                                                                                                                                                                                                                                                                         |
+| R9b | The legacy `[logging]` section is translated into the new `logging` layout: `level` is carried over lowercased, and `console` (a boolean) is renamed to `pretty`                                                                                                                                                                                                        |
+| R9c | A numeric legacy `[agent].session_resume_window` is translated into `sessions.resumeWindowSeconds`                                                                                                                                                                                                                                                                      |
+| R10 | Legacy context files (`SOUL.md`, `USER.md`, `AGENTS.md`) under `context/` are moved to the workspace root; a file that already exists at the root is left in `context/` with a warning, and the `context/` directory is removed only once empty                                                                                                                         |
+| R11 | Skill frontmatter carrying legacy-only keys (`depends_on`, `version`) is offered for stripping interactively; declining keeps the files unchanged (the loader ignores the keys regardless)                                                                                                                                                                              |
 | R12 | Task definitions are imported preserving their legacy id, `schedule` (cron or one-shot), `last_fired_at → lastFiredAt`, `since`, and `created_at` so cron anchoring and stale-cron prevention carry over; an unparseable `last_fired_at` is dropped to null; the import is guarded by a one-time `legacy-task-definitions` flag and inserts skip ids that already exist |
-| R13 | A definition with an unrecognized schedule or task type is skipped with a warning; the import continues with the rest |
-| R14 | Interactive prompts run only on a TTY; a non-interactive startup answers every prompt "no" with a warning, so adaptation never blocks an unattended boot |
+| R13 | A definition with an unrecognized schedule or task type is skipped with a warning; the import continues with the rest                                                                                                                                                                                                                                                   |
+| R14 | Interactive prompts run only on a TTY; a non-interactive startup answers every prompt "no" with a warning, so adaptation never blocks an unattended boot                                                                                                                                                                                                                |
 
 ## What Is Deliberately Not Carried Over
 
@@ -57,6 +57,7 @@ All of this remains readable in `tachikoma.legacy-backup.db` for manual recovery
 Migration is woven into the startup sequence at two points around database creation: the file-level adaptations run before the database is opened, and the task import runs after it has been created and migrated.
 
 **Acceptance Criteria**:
+
 - Given startup, when migration runs, then `adaptLegacyDatabase` completes before `createDatabase`/`runMigrations`, and `adaptLegacyTasks` runs only after migrations have applied
 - Given the database step throws, then startup aborts (the failure propagates rather than being swallowed)
 - Given any non-database step throws, then the error is logged as a warning and startup continues
@@ -66,6 +67,7 @@ Migration is woven into the startup sequence at two points around database creat
 The legacy database is detected by schema markers and renamed out of the way so drizzle starts from a fresh file.
 
 **Acceptance Criteria**:
+
 - Given a database file containing `alembic_version` or `schema_migrations`, when the step runs, then the file and any `-wal`/`-shm` sidecars are renamed to `tachikoma.legacy-backup.db` (and `.db-wal`/`.db-shm`) and a warning is logged
 - Given a database file with neither marker, when the step runs, then it is left untouched
 - Given a backup already exists at the target path, when a legacy database is detected, then both files are left untouched with a warning (no overwrite)
@@ -76,6 +78,7 @@ The legacy database is detected by schema markers and renamed out of the way so 
 A legacy config is translated into the new shape, the original preserved, and the reloaded config handed back to startup.
 
 **Acceptance Criteria**:
+
 - Given a config with a `[telegram]` table, a string `channel`, or old `[agent]` role keys, when the step runs, then it is recognized as legacy and translated; a new-shape config returns null (no change)
 - Given translation runs, then the raw original is written to `<path>.legacy-backup` before the translated file (with a header pointing at the backup) overwrites the original, and the reloaded `Config` is returned
 - Given a legacy `[agent]` role with a bare alias `opus`, when the user is asked, then a "yes" sets the role to `anthropic/opus` and a "no" leaves it unset with a warning; an alias already containing `/` is offered verbatim
@@ -89,6 +92,7 @@ A legacy config is translated into the new shape, the original preserved, and th
 Identity files move from the legacy `context/` directory to the workspace root, where the current system reads them.
 
 **Acceptance Criteria**:
+
 - Given `context/SOUL.md` (or `USER.md`/`AGENTS.md`) exists and no same-named file is at the root, when the step runs, then the file is moved to the root
 - Given the file exists in both `context/` and the root, when the step runs, then the root file is kept, the old copy is left in `context/`, and a warning is logged
 - Given the `context/` directory is empty after the moves, then it is removed; a non-empty directory is left in place
@@ -98,6 +102,7 @@ Identity files move from the legacy `context/` directory to the workspace root, 
 Skill `SKILL.md` files carrying frontmatter keys only the legacy registry consumed are offered for cleanup.
 
 **Acceptance Criteria**:
+
 - Given one or more skills with `depends_on` or `version` in their frontmatter, when the user confirms, then those keys (and their continuation lines) are removed from each affected file
 - Given the user declines (or startup is non-interactive), then the files are left unchanged with a warning — the loader ignores the keys
 - Given no skill carries a legacy-only key, then the step is a no-op
@@ -107,6 +112,7 @@ Skill `SKILL.md` files carrying frontmatter keys only the legacy registry consum
 Definitions are ported from the backed-up legacy database into the live one, once.
 
 **Acceptance Criteria**:
+
 - Given the one-time `legacy-task-definitions` flag is not set and a legacy backup database exists, when the step runs, then each `task_definitions` row is inserted preserving its id, schedule, `last_fired_at` (as `lastFiredAt`), `since`, and `created_at`, and the flag is then set
 - Given the flag is already set, when the step runs, then nothing is imported (so definitions the user later deletes do not reappear)
 - Given a definition whose id already exists in the live database, when imported, then the insert is skipped (`onConflictDoNothing`)
@@ -118,5 +124,6 @@ Definitions are ported from the backed-up legacy database into the live one, onc
 All confirmations share one prompt primitive with a safe non-interactive default.
 
 **Acceptance Criteria**:
+
 - Given a TTY, when a step asks a yes/no question, then the prompt is shown on stderr and the answer parsed (`y`/`yes` → yes)
 - Given a non-interactive startup (no TTY), when any step asks, then the answer is "no" with a warning, so adaptation never blocks

@@ -8,7 +8,7 @@
 
 Post-conversation LLM work picks one of two shapes, selected by a single question: **does the work need the live conversation?**
 
-- **Conversation-aware fork** — `agent.forkAndContinue(branchFile, instruction, "processor", FILE_EDIT_TOOLS)`: the branch's turns live in the fork's history and the composed persona is intact, so the same assistant that had the conversation reflects on it. Used when the *evidence* is in the conversation: memory's per-branch extraction, skill-evolution's per-branch analysis.
+- **Conversation-aware fork** — `agent.forkAndContinue(branchFile, instruction, "processor", FILE_EDIT_TOOLS)`: the branch's turns live in the fork's history and the composed persona is intact, so the same assistant that had the conversation reflects on it. Used when the _evidence_ is in the conversation: memory's per-branch extraction, skill-evolution's per-branch analysis.
 - **Context-free headless run** — `side.run({ system, prompt, customTools })`: an ephemeral session with no persona and no conversation; the host assembles every input (store contents, diffs, pattern inventories) and scopes custom tools to exactly what the run needs. Used when the inputs are enumerable by the host: memory maintenance, skill-evolution maintenance and proposals, the git commit agent, the rebase resolver, task-goal extraction.
 
 The rule is mechanical: if the signal lives in what was said and tried (tool calls, thinking, workarounds), fork; if the host can write down the complete input as prompt sections, run headless. The pi-side mechanics of both shapes are documented canonically in [../reference/pi-sdk-notes.md](../reference/pi-sdk-notes.md) (Post-processing patterns) — this DES records the selection rule and the repo's consumers.
@@ -44,7 +44,7 @@ await side.run({ system: maintenancePrompt, prompt: storeContents, customTools: 
 
 ## Exceptions
 
-- A **conversation excerpt as an input** (boundary classification over recent messages, rolling summaries) is still the context-free shape: the excerpt is a host-assembled prompt section, not a live session history. The shape is about whether the run *continues* a session, not whether conversation text appears anywhere in the prompt.
+- A **conversation excerpt as an input** (boundary classification over recent messages, rolling summaries) is still the context-free shape: the excerpt is a host-assembled prompt section, not a live session history. The shape is about whether the run _continues_ a session, not whether conversation text appears anywhere in the prompt.
 - **Persistent background sessions** (`side.openBackgroundSession`) are a third mechanism but not a third shape for post-processing: they serve multi-turn interactive task runs, not post-conversation work.
 
 ## Related

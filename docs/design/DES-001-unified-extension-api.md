@@ -8,7 +8,7 @@ Accepted
 
 Tachikoma's defining architectural bet on this stack: the core is only the main loops — config, logging, database, event bus, scheduler, channel registry, session registry, coordinator, and the extension host. Every feature (memory, boundary detection, skills, tasks, projects, git, channels, …) ships as an extension.
 
-pi already has an extension system (`ExtensionAPI`), but it is *session-scoped*: extensions are instantiated per agent session and rebound when sessions are replaced. Tachikoma features also need *process-scoped* capabilities pi deliberately does not provide: cron scheduling, database access, channel delivery, cross-session lifecycle (open/close/resume), and post-session processing pipelines.
+pi already has an extension system (`ExtensionAPI`), but it is _session-scoped_: extensions are instantiated per agent session and rebound when sessions are replaced. Tachikoma features also need _process-scoped_ capabilities pi deliberately does not provide: cron scheduling, database access, channel delivery, cross-session lifecycle (open/close/resume), and post-session processing pipelines.
 
 The unified extension API gives one extension format that spans both lifetimes, instead of forcing features to split into "a pi extension plus a separately-wired app module".
 
@@ -28,15 +28,23 @@ export default defineExtension({
 
   async setup(app) {
     // ---- process-scoped (runs once at startup) ----
-    app.bootstrap("memory", async () => { /* idempotent init */ });
+    app.bootstrap("memory", async () => {
+      /* idempotent init */
+    });
     app.scheduler.cron("0 3 * * *", () => maintenanceTick(app));
     app.sessions.registerProcessor({ name: "episodic", phase: "main", process: extractEpisodic });
-    app.agent.use(provideContext(injectIndex, "memory-index"), { sessionScopes: ["main", "background"] });
+    app.agent.use(provideContext(injectIndex, "memory-index"), {
+      sessionScopes: ["main", "background"],
+    });
 
     // ---- session-scoped (factory invoked for every agent session) ----
     app.agent.use((pi) => {
-      pi.registerTool({ /* ... */ });
-      pi.on("tool_call", async (event) => { /* ... */ });
+      pi.registerTool({
+        /* ... */
+      });
+      pi.on("tool_call", async (event) => {
+        /* ... */
+      });
     });
   },
 });
@@ -44,33 +52,33 @@ export default defineExtension({
 
 ### Lifetimes
 
-| Scope | Mechanism | Lives |
-|---|---|---|
-| Process | `setup(app)` + everything registered on `app` | once, from startup to shutdown |
-| Agent session | factories passed to `app.agent.use(factory)` | per pi `AgentSession`; re-instantiated when the coordinator replaces the session (topic boundary, resume) |
+| Scope         | Mechanism                                     | Lives                                                                                                     |
+| ------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Process       | `setup(app)` + everything registered on `app` | once, from startup to shutdown                                                                            |
+| Agent session | factories passed to `app.agent.use(factory)`  | per pi `AgentSession`; re-instantiated when the coordinator replaces the session (topic boundary, resume) |
 
 Session factories receive pi's native `ExtensionAPI` (unmodified) plus their **binding session type**: the host wraps each factory to pass `{ scope }` — `"main"` or `"background"`, matching the `sessionScopes` the factory was registered with — so a factory can adapt to its context (e.g. a background-scoped factory suppresses a user-facing surface its session has no streaming renderer for). pi's `ExtensionAPI` itself is never wrapped or renamed, so everything pi documents in its extensions guide applies verbatim. The host passes the wrapped factories to `DefaultResourceLoader({ extensionFactories })` whenever it creates a session.
 
 ### AppContext services
 
-| Service | Purpose |
-|---|---|
-| `app.config` | full validated app config (read-only) |
-| `app.extensionConfig` | this extension's `[extensions.<name>]` section, validated against `configSchema`, defaults applied |
-| `app.workspace` | workspace root path + helpers (`resolve`, `ensureDir`) |
-| `app.log` | pino child logger bound to `component: <name>` (DES-002) |
-| `app.db` | shared drizzle database handle |
-| `app.state` | namespaced key-value store (per-extension, db-backed) for state that does not warrant tables |
-| `app.events` | typed app event bus (publish/subscribe across extensions and core) |
-| `app.scheduler` | croner-backed jobs: `cron(expr, fn, opts)`, `every(seconds, fn)`; all jobs named and owned by the extension |
-| `app.sessions` | session registry access + lifecycle hooks: `onOpen`, `onExchange`, `registerProcessor` (post-processing), `current()`, `close()`, `openNew()`, `resume(id)` |
-| `app.channels` | `register(channel)` for channel extensions; `deliver({ text, tier: "urgent" \| "normal" \| "low", metadata })` for background output (queued, surfaced as an agent turn), or `deliver({ text, immediate: true })` for a synchronous channel ack |
-| `app.agent` | `use(factory, { sessionScopes })` (pi extension factories — a context section uses this same form with `provideContext(provide, customType?)` as the factory), `models` (tier lookup: agent/searcher/processor/classifier), `side` (headless side sessions for extraction/background work) |
-| `app.git` | high-level git operations over the core git helpers (`src/git/`): `commitAll(options)`, `smartPush(cwd, remote, branch, { log?, resolver? })`, `smartPull(cwd, remote, branch, { log?, resolver? })`; `log` defaults to the extension logger. Lets extensions (projects, memory) consume git without depending on the git extension; low-level `runGit`/`runGitCapture` may be imported from `src/git/git.ts` directly, and the agent-backed `createGitResolver` resolver factory from `src/git/resolve.ts` |
-| `app.bootstrap(name, hook)` | ordered, idempotent startup hooks |
-| `app.onShutdown(name, hook)` | hook run once during shutdown, before the coordinator's final delivery drain (so it can push queued output into that drain); error-isolated |
-| `app.requestRestart(restart)` | deferred process-restart thunk (`() => never`, re-execs); run only after the current exchange completes and the coordinator's graceful drain + channel/scheduler teardown finish, so the in-flight response and post-exchange work are never cut short. Used by the `restart_self` / `upgrade_self` tools; first-write-wins |
-| `app.status(text)` | progress line surfaced through the active channel during processing |
+| Service                       | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.config`                  | full validated app config (read-only)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `app.extensionConfig`         | this extension's `[extensions.<name>]` section, validated against `configSchema`, defaults applied                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `app.workspace`               | workspace root path + helpers (`resolve`, `ensureDir`)                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `app.log`                     | pino child logger bound to `component: <name>` (DES-002)                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `app.db`                      | shared drizzle database handle                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `app.state`                   | namespaced key-value store (per-extension, db-backed) for state that does not warrant tables                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `app.events`                  | typed app event bus (publish/subscribe across extensions and core)                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `app.scheduler`               | croner-backed jobs: `cron(expr, fn, opts)`, `every(seconds, fn)`; all jobs named and owned by the extension                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `app.sessions`                | session registry access + lifecycle hooks: `onOpen`, `onExchange`, `registerProcessor` (post-processing), `current()`, `close()`, `openNew()`, `resume(id)`                                                                                                                                                                                                                                                                                                                                                 |
+| `app.channels`                | `register(channel)` for channel extensions; `deliver({ text, tier: "urgent" \| "normal" \| "low", metadata })` for background output (queued, surfaced as an agent turn), or `deliver({ text, immediate: true })` for a synchronous channel ack                                                                                                                                                                                                                                                             |
+| `app.agent`                   | `use(factory, { sessionScopes })` (pi extension factories — a context section uses this same form with `provideContext(provide, customType?)` as the factory), `models` (tier lookup: agent/searcher/processor/classifier), `side` (headless side sessions for extraction/background work)                                                                                                                                                                                                                  |
+| `app.git`                     | high-level git operations over the core git helpers (`src/git/`): `commitAll(options)`, `smartPush(cwd, remote, branch, { log?, resolver? })`, `smartPull(cwd, remote, branch, { log?, resolver? })`; `log` defaults to the extension logger. Lets extensions (projects, memory) consume git without depending on the git extension; low-level `runGit`/`runGitCapture` may be imported from `src/git/git.ts` directly, and the agent-backed `createGitResolver` resolver factory from `src/git/resolve.ts` |
+| `app.bootstrap(name, hook)`   | ordered, idempotent startup hooks                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `app.onShutdown(name, hook)`  | hook run once during shutdown, before the coordinator's final delivery drain (so it can push queued output into that drain); error-isolated                                                                                                                                                                                                                                                                                                                                                                 |
+| `app.requestRestart(restart)` | deferred process-restart thunk (`() => never`, re-execs); run only after the current exchange completes and the coordinator's graceful drain + channel/scheduler teardown finish, so the in-flight response and post-exchange work are never cut short. Used by the `restart_self` / `upgrade_self` tools; first-write-wins                                                                                                                                                                                 |
+| `app.status(text)`            | progress line surfaced through the active channel during processing                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 ### Pipelines
 
