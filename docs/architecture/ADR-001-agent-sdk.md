@@ -9,7 +9,7 @@ Tachikoma needs an agent runtime that is native to TypeScript, embeds in-process
 
 ## Decision
 
-Build on the **pi agent SDK** (`@earendil-works/pi-coding-agent`), embedded via `createAgentSession`, with `@earendil-works/pi-ai` for side-channel completions (boundary detection, summaries, extraction). The version is **pinned exact** (currently 0.79.3) and re-verified against the shipped docs and `.d.ts` on every upgrade.
+Build on the **pi agent SDK** (`@earendil-works/pi-coding-agent`), embedded via `createAgentSession`, with `@earendil-works/pi-ai` for side-channel completions (boundary detection, summaries, extraction). The version is **pinned exact** (currently 1.6.0, with `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` pinned to the same version) and re-verified against the shipped docs and `.d.ts` on every upgrade.
 
 Key properties driving the choice:
 
@@ -41,7 +41,7 @@ exactly Tachikoma's own.
 ### Negative
 
 - **Pre-1.0 churn**: the API moves fast; mitigated by pinning the exact version and maintaining verified SDK notes (`docs/reference/pi-sdk-notes.md`) that are re-checked on every bump
-- **No MCP support, by design**: acceptable — plain `registerTool()` registrations cover every current tool need; connecting to external MCP servers would require new work if ever wanted
+- **No MCP support, by design**: acceptable — SDK sessions do not load pi's built-in MCP, codemode and tool-search extensions, and Tachikoma adds none of them. Plain `registerTool()` registrations cover every current tool need; connecting to external MCP servers would mean opting into pi's MCP extension, which is a decision of its own
 - Smaller ecosystem and community than the Claude Agent SDK
 
 ## Alternatives Considered

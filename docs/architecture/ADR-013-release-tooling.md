@@ -21,6 +21,8 @@ The release runs from `.github/workflows/publish.yml`:
 
 `just release` (`pnpm semantic-release`) remains available for local/manual invocation, but the canonical release path is CI on `master`.
 
+`semantic-release` stays on 25.x, pinned at `25.0.9`. Version 26 requires Node 26.13 or later, and the release workflow runs Node 24 in both of its jobs, as the CI workflow does. 25.x is the newest line whose Node requirement the release workflow meets. The pin moves to 26 together with the workflows' Node version.
+
 The initial 2.0.0 release was created manually (version set, build, publish, `v2.0.0` tag + GitHub release): the codebase replaced an earlier implementation whose 1.x tags share this repository, and semantic-release would otherwise have started an unreachable-tag history at v1.0.0, colliding with them. With `v2.0.0` reachable on `master`, semantic-release picks it up as the baseline for every subsequent release.
 
 ## Consequences
@@ -37,9 +39,11 @@ The initial 2.0.0 release was created manually (version set, build, publish, `v2
 - Requires the `NPM_TOKEN` repo secret to be provisioned and kept valid
 - Releases depend on commit message discipline (conventional commits)
 - A misconfigured secret surfaces only at release time, in CI
+- semantic-release is held on 25.x until the workflows move to Node 26.13 or later, so what 26.x adds waits for that
 
 ## Alternatives Considered
 
+- **Upgrading Node for semantic-release 26**: moving the CI and release workflows to Node 26.13 or later would change the runtime the release is built and tested on. The Node baseline belongs to [ADR-002](ADR-002-runtime-and-package-manager.md) and moves by its own decision; the release tool follows it
 - **Local-only `just release`**: removes the CI/secret dependency, but every maintainer needs npm auth and a GitHub token locally, the release is not reproducible across machines, and there is no enforced quality gate before publish
 - **commit-and-tag-version**: local bump+changelog+tag, but no publish/GitHub release; replaced before first release
 - **Tag-triggered GitHub Action publish**: splits the flow across local tagging and CI publishing, and double-publishes when combined with semantic-release's own tagging

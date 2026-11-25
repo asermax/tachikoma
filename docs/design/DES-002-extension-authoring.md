@@ -51,11 +51,12 @@ tests/<name>/
 
 - TypeScript with **`.ts` extensions in relative imports** (Node runs sources directly).
 - **No constructor parameter properties** (`constructor(private x …)`) — `erasableSyntaxOnly` forbids them; declare fields explicitly.
-- Schemas: **`typebox`** (the 1.x package) — never `@sinclair/typebox`. String unions via `StringEnum` from `@earendil-works/pi-ai`.
+- Schemas: **`typebox`** (the 1.x package) — never `@sinclair/typebox`. String unions via `StringEnum` from `src/util/string-enum.ts`; pi-ai's `StringEnum` is a pi-schema schema, not a TypeBox one, and does not type-check here.
 - Null checks with `value == null` / `value != null`. No TS `enum` — const maps + derived types.
 - Named exports; arrow functions assigned to consts; airy grouping with blank lines around control structures.
 - Comments only for non-obvious WHY; never narrate the next line.
 - Tool registration: tools the LLM calls go through `pi.registerTool` with TypeBox `parameters`, `promptSnippet` for the system-prompt line, guidelines naming the tool explicitly. Throw from `execute` to signal errors. Truncate large outputs with pi's `truncateHead/truncateTail`.
+- Tool parameters must stay plain JSON Schema: pi validates them as JSON Schema (pi-schema) and ignores the TypeBox features beyond it. No `Type.Refine`, `Type.Codec`, `Type.BigInt()` or `Type.Void()` in a `parameters` schema — check such a constraint in `execute`. `tests/schema-guard.test.ts` fails on a registered schema that is not plain JSON Schema, and on a tool it cannot reach. A tool built outside a registered factory is reached through an exported schema or one of the builders that test names; a tool-shaped object literal in `src` whose tool the guard did not collect fails the test with its file and line.
 - Long-form prompts live as module-level template constants near their use — except agent-facing usage guidance, which follows [DES-014](DES-014-two-tier-agent-facing-documentation.md): a lean `usage.ts` constant plus a `references/<topic>.md` page, never a long inline constant.
 - Workspace paths via `app.workspace.resolve(...)`; internal state under `app.workspace.dataDir`.
 - External processes: `node:child_process` (`execFile` promisified) — no shell strings unless unavoidable.
