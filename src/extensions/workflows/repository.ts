@@ -144,12 +144,14 @@ export class WorkflowStateRepository {
       .all();
 
     return candidates.filter((root) => {
-      const subtreeMax = this.getActiveChain(root.id).reduce(
-        (max, layer) => (layer.updatedAt > max ? layer.updatedAt : max),
-        root.updatedAt,
+      // Newest `updatedAt` in the subtree, compared as milliseconds: the column is a `Date`, and
+      // Math.max() — which biome's recommended useMathMinMax asks for (ADR-010) — takes numbers.
+      const subtreeMax = Math.max(
+        root.updatedAt.getTime(),
+        ...this.getActiveChain(root.id).map((layer) => layer.updatedAt.getTime()),
       );
 
-      return subtreeMax < cutoff;
+      return subtreeMax < cutoff.getTime();
     });
   }
 
