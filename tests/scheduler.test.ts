@@ -232,6 +232,37 @@ describe("Scheduler.cron", () => {
     scheduler.stopAll();
   });
 
+  it("does not fire an interval job whose times are inside a DST gap", async () => {
+    // 01:59 in New York, one minute before the clock jumps from 02:00 to 03:00 on 2026-03-08.
+    const start = new Date("2026-03-08T06:59:00Z");
+    vi.useFakeTimers({ now: start });
+    const scheduler = new Scheduler(createLogger(), "America/New_York");
+
+    const inGap = vi.fn();
+    const firedAt: Date[] = [];
+    const afterGap = vi.fn(() => {
+      firedAt.push(new Date());
+    });
+    scheduler.cron("in-gap", "*/30 2 * * *", inGap);
+    scheduler.cron("after-gap", "*/30 3 * * *", afterGap);
+
+    // Through 04:00:01 local, and not to the end of the day. croner re-arms a timer every 30
+    // seconds, and the next run of the job in the gap is 02:00 the following day, which
+    // tests/tasks/schedule.test.ts pins.
+    await vi.advanceTimersByTimeAsync(Date.parse("2026-03-08T08:00:01Z") - start.getTime());
+
+    // 02:00 and 02:30 do not exist on this day. croner 11 skips them, and Tachikoma adopts that as
+    // it is; tests/tasks/schedule.test.ts says why. croner 10.0.1 fired the job at 03:00. The job
+    // on the next hour fires at 03:00 and 03:30, so the scheduler was running all along.
+    expect(inGap).not.toHaveBeenCalled();
+    expect(firedAt.map((date) => date.toISOString())).toEqual([
+      "2026-03-08T07:00:00.000Z",
+      "2026-03-08T07:30:00.000Z",
+    ]);
+
+    scheduler.stopAll();
+  });
+
   it("runs an hourly job on the second occurrence of a repeated hour in a DST fall-back overlap", async () => {
     // 00:30 in New York on 2026-11-01. The clock falls back from 02:00 to 01:00 at 06:00Z, so
     // 01:00 comes at 05:00Z and again at 06:00Z. croner 10 skipped the second one.

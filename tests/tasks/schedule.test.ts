@@ -143,6 +143,50 @@ describe("the next run across a spring-forward gap", () => {
     expect(runs.map(iso)).toEqual(["2026-03-08T07:00:00.000Z", "2026-03-09T06:30:00.000Z"]);
     expect(runs.map((run) => wallClock(run, NEW_YORK))).toEqual(["03:00", "02:30"]);
   });
+
+  // An interval job is handled the other way round, and Tachikoma adopts that as it is. It is the
+  // rule of Vixie cron, whose crontab(5) says that a time which does not exist never matches. The
+  // croner decision of this delta takes croner 11 with a pin for each of its scheduling changes
+  // and no production change, and these two cases are that pin for the gap.
+  it("skips an interval job for the whole day when all of its times are in the gap", () => {
+    const job = new Cron("*/30 2 * * *", { timezone: NEW_YORK });
+
+    // 02:00 and 02:30 do not exist on 2026-03-08, so the job does not run that day. croner 10.0.1
+    // gave 03:00 and 03:30 instead.
+    expect(nextCronRun("*/30 2 * * *", NEW_YORK, from)).toEqual(
+      new Date("2026-03-09T06:00:00.000Z"),
+    );
+
+    // The next day it is back on its own wall time.
+    const runs = job.nextRuns(2, from);
+
+    expect(runs.map(iso)).toEqual(["2026-03-09T06:00:00.000Z", "2026-03-09T06:30:00.000Z"]);
+    expect(runs.map((run) => wallClock(run, NEW_YORK))).toEqual(["02:00", "02:30"]);
+  });
+
+  it("skips only the times in the gap when the job has times outside it too", () => {
+    const job = new Cron("*/30 1-3 * * *", { timezone: NEW_YORK });
+
+    // 01:00, 01:30, 03:00 and 03:30 exist and run. 02:00 and 02:30 do not, and are skipped, where
+    // croner 10.0.1 moved them to 03:00 and 03:30, times the job already has. So the day has these
+    // four runs, and the fifth is 01:00 the next day.
+    const runs = job.nextRuns(5, from);
+
+    expect(runs.map(iso)).toEqual([
+      "2026-03-08T06:00:00.000Z",
+      "2026-03-08T06:30:00.000Z",
+      "2026-03-08T07:00:00.000Z",
+      "2026-03-08T07:30:00.000Z",
+      "2026-03-09T05:00:00.000Z",
+    ]);
+    expect(runs.map((run) => wallClock(run, NEW_YORK))).toEqual([
+      "01:00",
+      "01:30",
+      "03:00",
+      "03:30",
+      "01:00",
+    ]);
+  });
 });
 
 describe("the next run across a fall-back overlap", () => {
