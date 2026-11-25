@@ -33,8 +33,12 @@ import { Workspace } from "../src/workspace.ts";
 /**
  * The schema guard (DLT-186 S4, R15). pi validates tool arguments as JSON Schema, so a schema that
  * is anything else — a TypeBox kind JSON cannot express, a class instance, a function — compiles
- * and type-checks, and fails only when the model calls the tool. This suite makes that a test
- * failure by collecting every schema Tachikoma hands to pi or to its own validators.
+ * and type-checks. The model's call is no reliable check either: pi-schema converts a `bigint`
+ * parameter (`"42"` to `42n`, `null` to `0n`) and takes `null` for `Type.Undefined()` as
+ * `undefined`, so the parameter behaves in a way JSON Schema does not define, and only the
+ * JavaScript-only kinds, such as `Type.Void()` and `Type.Function()`, reject every argument. This
+ * suite makes each of them a test failure by collecting every schema Tachikoma hands to pi or to
+ * its own validators.
  *
  * Nothing here runs a tool, a model or a session: the extensions load on a stubbed host, each
  * factory binds against a recording `pi` whose only job is to keep what is registered, and the
@@ -361,8 +365,10 @@ const declaredTypes = function* (node: unknown): Generator<string> {
  * Fail unless `schema` is plain JSON Schema, naming `label` when it is not. Two checks, because
  * either alone lets something through. The JSON round-trip, unchanged, catches what JSON cannot
  * carry, such as a function or a class instance. The `type` allowlist catches what JSON carries
- * fine but pi-schema rejects every value of, such as the `{ type: "bigint" }` that `Type.BigInt()`
- * serializes to.
+ * fine but behaves, under pi-schema, in a way JSON Schema does not define: a `Type.BigInt()`
+ * parameter, `{ type: "bigint" }`, takes `"42"` and gives the tool `42n`, and `null` gives `0n`; a
+ * `Type.Undefined()` parameter takes `null` as `undefined`. Only the JavaScript-only kinds, such as
+ * `Type.Void()` and `Type.Function()`, reject every argument.
  */
 const expectPlainJsonSchema = (label: string, schema: unknown): void => {
   expect(schema, `${label}: has no schema`).toBeTypeOf("object");
