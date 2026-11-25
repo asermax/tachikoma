@@ -1,4 +1,3 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
@@ -7,6 +6,7 @@ import { buildBackgroundSystemPrompt } from "../../agent/prompts.ts";
 import { lastAssistantText, type SideRunner } from "../../agent/side-run.ts";
 import { NOTIFY_EVENT, type NotifyPayload, SEVERITIES } from "../../events.ts";
 import type { Logger } from "../../log.ts";
+import { StringEnum } from "../../util/string-enum.ts";
 import type { PostProcessorContext } from "../api.ts";
 import type { TaskRepository } from "./repository.ts";
 import type { TaskInstanceRecord } from "./schema.ts";
@@ -173,6 +173,24 @@ const requireNonEmpty = (value: string | undefined, message: string): string => 
   return trimmed;
 };
 
+// Parameter schemas of the two per-run tools built in `executeBackgroundInstance`. Exported so a
+// test can check their JSON Schema without opening a background session. The tools themselves
+// stay per run: each `execute` closes over that run's flag.
+export const AskUserParams = Type.Object({
+  question: Type.String({ description: "The question to put to the user" }),
+});
+
+export const UpdateGoalParams = Type.Object({
+  // StringEnum discriminator — NOT a Type.Union of literals. Tachikoma's StringEnum
+  // (src/util/string-enum.ts) emits a flat `enum` for Google/Gemini API compatibility, and a flat
+  // object with Optional per-variant fields avoids anyOf/oneOf entirely.
+  status: StringEnum(["completed", "not_completable"] as const),
+  goalRestated: Type.Optional(Type.String({ description: "Required when status='completed'." })),
+  evidence: Type.Optional(Type.String({ description: "Required when status='completed'." })),
+  summary: Type.Optional(Type.String({ description: "Required when status='completed'." })),
+  reason: Type.Optional(Type.String({ description: "Required when status='not_completable'." })),
+});
+
 /** Execute one background instance through the goal-driven self-declaration loop. */
 export const executeBackgroundInstance = async (
   deps: ExecutorDeps,
@@ -270,9 +288,7 @@ export const executeBackgroundInstance = async (
       label: "Ask User",
       description:
         "Ask the user a blocking question and pause the task until they reply. Use ONLY when you genuinely cannot proceed without their input — not for questions you can answer from available context. After calling this, stop working: the task suspends and resumes automatically once the user responds.",
-      parameters: Type.Object({
-        question: Type.String({ description: "The question to put to the user" }),
-      }),
+      parameters: AskUserParams,
       execute: async (_id, params) => {
         pendingQuestion = params.question;
 
@@ -297,20 +313,7 @@ export const executeBackgroundInstance = async (
         "check is met (evidence), and summarize what you accomplished (summary). " +
         "status='not_completable': give the reason. This tool cannot edit the goal text — it only records a " +
         "terminal status.",
-      parameters: Type.Object({
-        // StringEnum discriminator — NOT a Type.Union of literals. pi uses StringEnum for
-        // Google/Gemini API compatibility (per pi-sdk-notes), and a flat object with Optional
-        // per-variant fields avoids anyOf/oneOf entirely.
-        status: StringEnum(["completed", "not_completable"] as const),
-        goalRestated: Type.Optional(
-          Type.String({ description: "Required when status='completed'." }),
-        ),
-        evidence: Type.Optional(Type.String({ description: "Required when status='completed'." })),
-        summary: Type.Optional(Type.String({ description: "Required when status='completed'." })),
-        reason: Type.Optional(
-          Type.String({ description: "Required when status='not_completable'." }),
-        ),
-      }),
+      parameters: UpdateGoalParams,
       execute: async (_id, params) => {
         // In-tool validation: the JSON Schema alone cannot encode "evidence required iff
         // status=completed", so this validator closes that gap. On an incomplete declaration

@@ -1,8 +1,8 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
+import { StringEnum } from "../../util/string-enum.ts";
 import { NOTIFY_EVENT, type NotifyPayload, SEVERITIES } from "./payload.ts";
 
 export type NotifyEmitter = (event: string, payload: NotifyPayload) => void;

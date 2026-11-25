@@ -1,8 +1,8 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
+import { StringEnum } from "../../util/string-enum.ts";
 import { type DefinitionPatch, isTerminalStatus, type TaskRepository } from "./repository.ts";
 import { formatInTimezone, formatSchedule, parseSchedule } from "./schedule.ts";
 import type { TaskDefinitionRecord } from "./schema.ts";

@@ -1,5 +1,6 @@
-import { StringEnum } from "@earendil-works/pi-ai";
 import { type Static, Type } from "typebox";
+
+import { StringEnum } from "../util/string-enum.ts";
 
 export const ThinkingLevelSchema = StringEnum(
   ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const,

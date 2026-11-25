@@ -15,9 +15,9 @@ export class ConfigError extends Error {}
  * No `Clean` step is included: config is intentionally tolerant of unknown keys. The root
  * `ConfigSchema.extensions` is a `Type.Record(..., Type.Unknown())` whose sections are validated
  * later, per-extension, in the host — a global `Clean` would strip that passthrough and break
- * extension config. (StringEnum, the project's union-of-literals helper, lives in pi-ai and drops
- * falsy `default` values; if a falsy enum default is ever needed, use `Type.Union` with a default
- * instead.)
+ * extension config. (StringEnum, the project's union-of-literals helper, lives in
+ * `src/util/string-enum.ts` and drops falsy `default` values; if a falsy enum default is ever
+ * needed, use `Type.Union` with a default instead.)
  */
 export const parseWithSchema = <S extends TSchema>(
   schema: S,

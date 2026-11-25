@@ -1,12 +1,12 @@
 import { constants, totalmem } from "node:os";
 
-import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionFactory, truncateTail } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
 import { formatTimestamp } from "../../util/dates.ts";
 import { isAlive } from "../../util/is-alive.ts";
+import { StringEnum } from "../../util/string-enum.ts";
 import { type ScopeInspector, scopeUnitName } from "./cgroup.ts";
 import type { ProcessLimiter } from "./limits.ts";
 import {

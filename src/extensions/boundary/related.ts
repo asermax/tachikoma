@@ -16,7 +16,8 @@ import type { BranchRecord } from "../../sessions/trunk.ts";
 
 export const RELATED_BRANCH_CUSTOM_TYPE = "tachikoma-related-branch";
 
-const BranchMatchSchema = Type.Object({
+// Exported so tests can check the classify schema without running a matcher.
+export const BranchMatchSchema = Type.Object({
   branchId: Type.Union([Type.String(), Type.Null()]),
   reason: Type.String(),
 });
