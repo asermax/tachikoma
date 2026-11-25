@@ -21,18 +21,13 @@ const NOW = new Date("2026-06-01T12:00:00Z");
 const iso = (date: Date): string => date.toISOString();
 
 // The wall clock of an instant in a timezone, as "HH:mm".
-const wallClock = (date: Date, timezone: string): string => {
-  const parts = new Intl.DateTimeFormat("en-US", {
+const wallClock = (date: Date, timezone: string): string =>
+  new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
     hourCycle: "h23",
     hour: "2-digit",
     minute: "2-digit",
-  }).formatToParts(date);
-  const field = (type: Intl.DateTimeFormatPartTypes): string | undefined =>
-    parts.find((part) => part.type === type)?.value;
-
-  return `${field("hour")}:${field("minute")}`;
-};
+  }).format(date);
 
 // What parseSchedule throws for a schedule, or null when it accepts the schedule.
 const rejection = (raw: string): Error | null => {
@@ -121,7 +116,7 @@ describe("the next run outside a DST transition", () => {
   ])("computes the next run of %j in %s", (expression, timezone, expected, local) => {
     const next = nextCronRun(expression, timezone, NOW);
 
-    expect(next?.toISOString()).toBe(new Date(expected).toISOString());
+    expect(next).toEqual(new Date(expected));
     expect(next && wallClock(next, timezone)).toBe(local);
   });
 });

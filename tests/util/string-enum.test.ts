@@ -81,14 +81,6 @@ const CAPTURED = {
     enum: ["complete", "abort"],
     description: "Whether the workflow ended successfully or was abandoned",
   },
-  noOptions: {
-    type: "string",
-    enum: ["a", "b"],
-  },
-  emptyDefault: {
-    type: "string",
-    enum: ["", "a"],
-  },
 };
 
 // What a provider receives: the serialized schema, read back as plain data.
@@ -96,7 +88,7 @@ const serialized = (schema: unknown): unknown => JSON.parse(JSON.stringify(schem
 
 describe("StringEnum", () => {
   it("serializes to type and enum when given no options", () => {
-    expect(serialized(StringEnum(["a", "b"]))).toEqual(CAPTURED.noOptions);
+    expect(serialized(StringEnum(["a", "b"]))).toEqual({ type: "string", enum: ["a", "b"] });
   });
 
   it.each(Object.entries(CAPTURED))(
@@ -121,8 +113,14 @@ describe("StringEnum", () => {
   });
 
   it("drops a falsy description or default instead of emitting it", () => {
-    expect(serialized(StringEnum(["a", "b"], { description: "" }))).toEqual(CAPTURED.noOptions);
-    expect(serialized(StringEnum(["", "a"], { default: "" }))).toEqual(CAPTURED.emptyDefault);
+    expect(serialized(StringEnum(["a", "b"], { description: "" }))).toEqual({
+      type: "string",
+      enum: ["a", "b"],
+    });
+    expect(serialized(StringEnum(["", "a"], { default: "" }))).toEqual({
+      type: "string",
+      enum: ["", "a"],
+    });
   });
 });
 

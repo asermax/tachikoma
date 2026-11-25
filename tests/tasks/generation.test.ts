@@ -118,21 +118,14 @@ describe("cron instance generation", () => {
     expect(instances[0]?.prompt).toBe("every minute");
   });
 
-  // croner 11 pins (S5).
-  it("skips a stored definition whose expression croner rejects, logging its id", () => {
+  // croner 11 pins (S5). croner 10.0.1 accepted the second expression: it read SUN6 as day 6, so a
+  // database written before the upgrade can hold it. croner 11 requires a name to stand alone.
+  it.each(["SUN6 * * * *", "0 0 * * SUN6"])("skips a stored %j, logging its id", (expression) => {
     const rejected = repository.createDefinition({
       name: "rejected",
-      schedule: { type: "cron", expression: "SUN6 * * * *" },
+      schedule: { type: "cron", expression },
       taskType: "session",
       prompt: "never",
-    });
-    // croner 10.0.1 accepted this one. It read SUN6 as day 6, so a database written before the
-    // upgrade can hold it. croner 11 requires a name to stand alone.
-    const noLongerAccepted = repository.createDefinition({
-      name: "no longer accepted",
-      schedule: { type: "cron", expression: "0 0 * * SUN6" },
-      taskType: "session",
-      prompt: "never either",
     });
     const valid = repository.createDefinition({
       name: "valid",
@@ -146,10 +139,6 @@ describe("cron instance generation", () => {
 
     expect(fakeLog.error).toHaveBeenCalledWith(
       { definitionId: rejected.id, err: expect.anything() },
-      "error processing definition",
-    );
-    expect(fakeLog.error).toHaveBeenCalledWith(
-      { definitionId: noLongerAccepted.id, err: expect.anything() },
       "error processing definition",
     );
 

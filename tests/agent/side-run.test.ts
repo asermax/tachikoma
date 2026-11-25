@@ -561,13 +561,11 @@ describe("SideRunner.classify", () => {
     const { manager } = makeManager();
     const runner = new SideRunner(manager, makeLogger());
 
-    const rejection = await runner
-      .classify({ system: "s", user: "u", schema })
-      .catch((error: unknown) => error);
+    const rejection = runner.classify({ system: "s", user: "u", schema });
 
-    expect(rejection).toBeInstanceOf(ConfigError);
-    expect((rejection as Error).message).toBe(
-      "Invalid classification output:\n  /: must have required properties label",
+    await expect(rejection).rejects.toBeInstanceOf(ConfigError);
+    await expect(rejection).rejects.toThrow(
+      new Error("Invalid classification output:\n  /: must have required properties label"),
     );
     expect(completeSimpleMock).toHaveBeenCalledTimes(2);
   });

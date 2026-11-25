@@ -7,15 +7,11 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import { selectExtensionFactories } from "../src/agent/manager.ts";
 import { parseWithSchema } from "../src/config/parse.ts";
 import { ConfigSchema } from "../src/config/schema.ts";
 import { createDatabase, runMigrations } from "../src/db/index.ts";
 import { EventBus } from "../src/events.ts";
-import {
-  type AgentExtensionFactory,
-  SESSION_SCOPES,
-  type SessionScope,
-} from "../src/extensions/api.ts";
 import { BranchMatchSchema } from "../src/extensions/boundary/related.ts";
 import { ExtensionHost, type HostServices } from "../src/extensions/host.ts";
 import { firstPartyExtensions } from "../src/extensions/index.ts";
@@ -81,17 +77,6 @@ const createLog = (): MockLog => {
 /** The fake logger, where a signature asks for pino's. */
 const asLogger = (log: MockLog): Logger => log as unknown as Logger;
 
-/** The message of the error `fn` throws. Fails the test when it throws nothing. */
-const messageThrownBy = (fn: () => unknown): string => {
-  try {
-    fn();
-  } catch (error) {
-    return (error as Error).message;
-  }
-
-  throw new Error("expected the call to throw");
-};
-
 // ---- where the schemas come from ------------------------------------------------------------------
 
 /** A tool definition as the recordings care to see it. */
@@ -106,15 +91,13 @@ const COMMIT_AGENT = "createCommitAgent";
 const GIT_RESOLVER = "createGitResolver";
 const PROPOSAL_TOOLS = "buildProposalTools";
 
-const asTools =
-  (source: string) =>
-  (tools: readonly RegisteredTool[]): Collected[] =>
-    tools.map((tool) => ({
-      name: tool.name,
-      family: "tool parameters",
-      source,
-      schema: tool.parameters,
-    }));
+const asTools = (source: string, tools: readonly RegisteredTool[]): Collected[] =>
+  tools.map((tool) => ({
+    name: tool.name,
+    family: "tool parameters",
+    source,
+    schema: tool.parameters,
+  }));
 
 /**
  * The slice of pi's `ExtensionAPI` a Tachikoma factory uses while it binds, and no more: a factory
@@ -130,25 +113,29 @@ const recordingPi = (registered: RegisteredTool[]): ExtensionAPI =>
   }) as unknown as ExtensionAPI;
 
 /**
- * Bind every registered factory once per scope it is registered under, the way the agent manager
- * does: `piFactories` into main sessions, `backgroundFactories` into background runs and
- * `subagentFactories` into delegated runs. A factory may adapt to its scope, so each binding is
- * recorded on its own.
+ * Every kind of session that binds extension factories, each with the options `AgentManager.open`
+ * passes for it: a main session, a background task run and a delegated subagent run.
+ */
+const SESSION_KINDS = [
+  ["main", {}],
+  ["background", { bare: true, bindBackgroundFactories: true }],
+  ["subagent", { bare: true, bindSubagentFactories: true }],
+] as const;
+
+/**
+ * Bind every factory the agent manager binds into each kind of session, once per scope it is
+ * registered under: `selectExtensionFactories` is the manager's own rule, and hands each factory its
+ * scope. A factory may adapt to its scope, so each binding is recorded on its own.
  */
 const collectRegisteredTools = async (regs: Registrations): Promise<Collected[]> => {
-  const lists: readonly (readonly [SessionScope, readonly AgentExtensionFactory[]])[] = [
-    [SESSION_SCOPES.main, regs.piFactories],
-    [SESSION_SCOPES.background, regs.backgroundFactories],
-    [SESSION_SCOPES.subagent, regs.subagentFactories],
-  ];
   const collected: Collected[] = [];
 
-  for (const [scope, factories] of lists) {
-    for (const factory of factories) {
+  for (const [scope, options] of SESSION_KINDS) {
+    for (const factory of selectExtensionFactories(options, regs)) {
       const registered: RegisteredTool[] = [];
-      await factory(recordingPi(registered), { scope });
+      await factory(recordingPi(registered));
 
-      collected.push(...asTools(`${REGISTRIES}, ${scope} scope`)(registered));
+      collected.push(...asTools(`${REGISTRIES}, ${scope} scope`, registered));
     }
   }
 
@@ -219,7 +206,7 @@ const toolsHandedToRun = async (
   const run = vi.fn<AgentRunner["run"]>(async () => ({ text: "" }));
   await start(run);
 
-  return run.mock.calls.flatMap(([{ customTools }]) => asTools(source)(customTools ?? []));
+  return run.mock.calls.flatMap(([{ customTools }]) => asTools(source, customTools ?? []));
 };
 
 /** The tools the headless agents carry, which never pass through `app.agent.use`. */
@@ -239,7 +226,8 @@ const collectOutsideFactories = async (dir: string, log: MockLog): Promise<Colle
     await createGitResolver({ run })(dir, "main", asLogger(log));
   });
 
-  const proposalTools = asTools(PROPOSAL_TOOLS)(
+  const proposalTools = asTools(
+    PROPOSAL_TOOLS,
     buildProposalTools({
       workspaceRoot: dir,
       tmpDir: join(dir, "proposals"),
@@ -415,8 +403,11 @@ beforeAll(async () => {
 const namesFrom = (source: string): string[] =>
   collected.filter((entry) => entry.source === source).map((entry) => entry.name);
 
-const registeredNames = (): string[] =>
-  collected.filter((entry) => entry.source.startsWith(REGISTRIES)).map((entry) => entry.name);
+/** The schemas that reached the guard through the registries. */
+const registered = (): Collected[] =>
+  collected.filter((entry) => entry.source.startsWith(REGISTRIES));
+
+const registeredNames = (): string[] => registered().map((entry) => entry.name);
 
 const toolNames = (): Set<string> =>
   new Set(
@@ -430,8 +421,7 @@ describe("schema guard", () => {
     });
 
     it("gives every registered tool a parameter schema", () => {
-      const withoutParameters = collected
-        .filter((entry) => entry.source.startsWith(REGISTRIES))
+      const withoutParameters = registered()
         .filter((entry) => entry.schema == null || typeof entry.schema !== "object")
         .map(labelOf);
 
@@ -505,7 +495,7 @@ describe("schema guard", () => {
 
       // `Type.BigInt()` serializes as `{ type: "bigint" }` and comes back unchanged.
       expect(JSON.parse(JSON.stringify(bigInt))).toStrictEqual(bigInt);
-      expect(messageThrownBy(() => expectPlainJsonSchema("self-test", bigInt))).toContain(
+      expect(() => expectPlainJsonSchema("self-test", bigInt)).toThrow(
         'self-test: type "bigint" is not JSON Schema',
       );
     });
@@ -513,7 +503,7 @@ describe("schema guard", () => {
     it("rejects what JSON cannot carry", () => {
       const withFunction = Type.Object({ path: Type.String(), check: () => true });
 
-      expect(messageThrownBy(() => expectPlainJsonSchema("self-test", withFunction))).toContain(
+      expect(() => expectPlainJsonSchema("self-test", withFunction)).toThrow(
         "self-test: is not plain JSON",
       );
     });
@@ -593,20 +583,22 @@ describe("validateToolArguments", () => {
   });
 
   it("rejects a malformed call with a message the model can act on", () => {
-    expect(messageThrownBy(() => validate({ limit: "ten", tags: [], severity: "loud" }))).toBe(
-      [
-        'Validation failed for tool "pin_tool":',
-        "  - path: missing",
-        "  - limit: expected number, got string",
-        '  - severity: expected one of ["info","warning","urgent"]',
-        "",
-        "Received arguments:",
-        "{",
-        '  "limit": "ten",',
-        '  "tags": [],',
-        '  "severity": "loud"',
-        "}",
-      ].join("\n"),
+    expect(() => validate({ limit: "ten", tags: [], severity: "loud" })).toThrow(
+      new Error(
+        [
+          'Validation failed for tool "pin_tool":',
+          "  - path: missing",
+          "  - limit: expected number, got string",
+          '  - severity: expected one of ["info","warning","urgent"]',
+          "",
+          "Received arguments:",
+          "{",
+          '  "limit": "ten",',
+          '  "tags": [],',
+          '  "severity": "loud"',
+          "}",
+        ].join("\n"),
+      ),
     );
   });
 });

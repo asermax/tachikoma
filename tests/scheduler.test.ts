@@ -211,23 +211,21 @@ describe("Scheduler.cron", () => {
     const scheduler = new Scheduler(createLogger(), "America/New_York");
 
     const firedAt: Date[] = [];
-    const fn = vi.fn(() => {
+    scheduler.cron("gap", "30 2 * * *", () => {
       firedAt.push(new Date());
     });
-    scheduler.cron("gap", "30 2 * * *", fn);
 
     // 02:30 does not exist on this day. The job waits for 03:00, the end of the gap, where
     // croner 10 ran it at 03:30.
     await vi.advanceTimersByTimeAsync(59_000);
-    expect(fn).not.toHaveBeenCalled();
+    expect(firedAt).toEqual([]);
 
     await vi.advanceTimersByTimeAsync(2000);
-    expect(fn).toHaveBeenCalledTimes(1);
     expect(firedAt.map((date) => date.toISOString())).toEqual(["2026-03-08T07:00:00.000Z"]);
 
     // Nothing at 03:30, and nothing until tomorrow's 02:30.
     await vi.advanceTimersByTimeAsync(3_600_000);
-    expect(fn).toHaveBeenCalledTimes(1);
+    expect(firedAt).toHaveLength(1);
 
     scheduler.stopAll();
   });
@@ -240,11 +238,10 @@ describe("Scheduler.cron", () => {
 
     const inGap = vi.fn();
     const firedAt: Date[] = [];
-    const afterGap = vi.fn(() => {
+    scheduler.cron("in-gap", "*/30 2 * * *", inGap);
+    scheduler.cron("after-gap", "*/30 3 * * *", () => {
       firedAt.push(new Date());
     });
-    scheduler.cron("in-gap", "*/30 2 * * *", inGap);
-    scheduler.cron("after-gap", "*/30 3 * * *", afterGap);
 
     // Through 04:00:01 local, and not to the end of the day. croner re-arms a timer every 30
     // seconds, and the next run of the job in the gap is 02:00 the following day, which
@@ -271,15 +268,13 @@ describe("Scheduler.cron", () => {
     const scheduler = new Scheduler(createLogger(), "America/New_York");
 
     const firedAt: Date[] = [];
-    const fn = vi.fn(() => {
+    scheduler.cron("hourly", "0 * * * *", () => {
       firedAt.push(new Date());
     });
-    scheduler.cron("hourly", "0 * * * *", fn);
 
     // Just past the third expected run.
     await vi.advanceTimersByTimeAsync(Date.parse("2026-11-01T08:00:01Z") - start.getTime());
 
-    expect(fn).toHaveBeenCalledTimes(3);
     expect(firedAt.map((date) => date.toISOString())).toEqual([
       "2026-11-01T06:00:00.000Z",
       "2026-11-01T07:00:00.000Z",
