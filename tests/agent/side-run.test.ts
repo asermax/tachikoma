@@ -4,6 +4,7 @@ import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentManager } from "../../src/agent/manager.ts";
 import { extractJson, lastAssistantText, SideRunner } from "../../src/agent/side-run.ts";
+import { ConfigError } from "../../src/config/parse.ts";
 import type { Logger } from "../../src/log.ts";
 
 const completeSimpleMock = vi.fn();
@@ -532,6 +533,42 @@ describe("SideRunner.classify", () => {
     const runner = new SideRunner(manager, makeLogger());
 
     await expect(runner.classify({ system: "s", user: "u", schema })).rejects.toBeInstanceOf(Error);
+    expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+  });
+
+  // Parsing the JSON is not enough: the reply is then checked against the schema by Tachikoma's
+  // own `parseWithSchema`, so a well-formed reply with the wrong shape takes the same retry path.
+  it("retries once when the reply is valid JSON that fails the schema, then succeeds", async () => {
+    completeSimpleMock
+      .mockResolvedValueOnce(assistantMessage("{}"))
+      .mockResolvedValueOnce(assistantMessage('{"label":"d"}'));
+
+    const log = makeLogger();
+    const { manager } = makeManager();
+    const runner = new SideRunner(manager, log);
+
+    expect(await runner.classify({ system: "s", user: "u", schema })).toEqual({ label: "d" });
+    expect(completeSimpleMock).toHaveBeenCalledTimes(2);
+    expect(log.debug).toHaveBeenCalledWith(
+      { err: expect.any(ConfigError) },
+      "classification parse failed — retrying once",
+    );
+  });
+
+  it("rejects with ConfigError when both replies fail the schema", async () => {
+    completeSimpleMock.mockResolvedValue(assistantMessage("{}"));
+
+    const { manager } = makeManager();
+    const runner = new SideRunner(manager, makeLogger());
+
+    const rejection = await runner
+      .classify({ system: "s", user: "u", schema })
+      .catch((error: unknown) => error);
+
+    expect(rejection).toBeInstanceOf(ConfigError);
+    expect((rejection as Error).message).toBe(
+      "Invalid classification output:\n  /: must have required properties label",
+    );
     expect(completeSimpleMock).toHaveBeenCalledTimes(2);
   });
 
