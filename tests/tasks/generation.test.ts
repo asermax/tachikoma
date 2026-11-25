@@ -117,6 +117,69 @@ describe("cron instance generation", () => {
     expect(instances).toHaveLength(1);
     expect(instances[0]?.prompt).toBe("every minute");
   });
+
+  // croner 11 pins (S5).
+  it("skips a stored definition whose expression croner rejects, logging its id", () => {
+    const rejected = repository.createDefinition({
+      name: "rejected",
+      schedule: { type: "cron", expression: "SUN6 * * * *" },
+      taskType: "session",
+      prompt: "never",
+    });
+    // croner 10.0.1 accepted this one. It read SUN6 as day 6, so a database written before the
+    // upgrade can hold it. croner 11 requires a name to stand alone.
+    const noLongerAccepted = repository.createDefinition({
+      name: "no longer accepted",
+      schedule: { type: "cron", expression: "0 0 * * SUN6" },
+      taskType: "session",
+      prompt: "never either",
+    });
+    const valid = repository.createDefinition({
+      name: "valid",
+      schedule: { type: "cron", expression: "* * * * *" },
+      taskType: "session",
+      prompt: "every minute",
+    });
+
+    current = new Date("2026-06-12T10:31:00Z");
+    tick();
+
+    expect(fakeLog.error).toHaveBeenCalledWith(
+      { definitionId: rejected.id, err: expect.anything() },
+      "error processing definition",
+    );
+    expect(fakeLog.error).toHaveBeenCalledWith(
+      { definitionId: noLongerAccepted.id, err: expect.anything() },
+      "error processing definition",
+    );
+
+    // The rest of the pass is still evaluated.
+    const instances = repository.queryInstances({});
+    expect(instances).toHaveLength(1);
+    expect(instances[0]).toMatchObject({ definitionId: valid.id, prompt: "every minute" });
+  });
+
+  it("generates nothing for a stored expression that can never match, without logging an error", () => {
+    // No February has a 30th day.
+    const definition = repository.createDefinition({
+      name: "never",
+      schedule: { type: "cron", expression: "0 0 30 2 *" },
+      taskType: "session",
+      prompt: "never",
+    });
+
+    current = new Date("2026-06-12T10:31:00Z");
+    tick();
+    current = new Date("2026-07-12T10:31:00Z");
+    tick();
+
+    expect(repository.queryInstances({})).toHaveLength(0);
+    expect(fakeLog.error).not.toHaveBeenCalled();
+    expect(repository.getDefinition(definition.id)).toMatchObject({
+      enabled: true,
+      lastFiredAt: null,
+    });
+  });
 });
 
 describe("one-shot instance generation", () => {

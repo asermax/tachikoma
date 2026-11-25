@@ -111,6 +111,22 @@ describe("handleCreateTask", () => {
     ).toThrow(/Invalid schedule/);
   });
 
+  // croner 11 pin (S5): a day name glued to a digit. croner 10.0.1 accepted the second
+  // expression, reading SUN6 as day 6, and scheduled the task for Saturdays.
+  it.each(["SUN6 * * * *", "0 0 * * SUN6"])("rejects %j and stores no definition", (schedule) => {
+    expect(() =>
+      handleCreateTask(deps, {
+        name: "sunday at six",
+        schedule,
+        type: "session",
+        prompt: "nope",
+      }),
+    ).toThrow(/Invalid schedule/);
+
+    expect(repository.listEnabledDefinitions()).toHaveLength(0);
+    expect(repository.listDisabledDefinitions()).toHaveLength(0);
+  });
+
   it("rejects a one-shot datetime in the past", () => {
     expect(() =>
       handleCreateTask(deps, {
@@ -173,6 +189,33 @@ describe("handleUpdateTask", () => {
     expect(updated?.lastFiredAt).toBeNull();
     expect(updated?.schedule).toEqual({ type: "cron", expression: "0 18 * * *" });
   });
+
+  // croner 11 pin (S5). An accepted schedule edit resets lastFiredAt, so a rejected one must
+  // stop before that.
+  it.each(["SUN6 * * * *", "0 0 * * SUN6"])(
+    "rejects %j and leaves the definition untouched",
+    (schedule) => {
+      const definition = repository.createDefinition({
+        name: "task",
+        schedule: { type: "cron", expression: "0 9 * * *" },
+        taskType: "session",
+        prompt: "prompt",
+      });
+      repository.updateDefinition(definition.id, { lastFiredAt: current });
+      const before = repository.getDefinition(definition.id);
+
+      expect(() => handleUpdateTask(deps, { task_id: definition.id, schedule })).toThrow(
+        /Invalid schedule/,
+      );
+
+      const after = repository.getDefinition(definition.id);
+      expect(after).toEqual(before);
+      expect(after).toMatchObject({
+        schedule: { type: "cron", expression: "0 9 * * *" },
+        lastFiredAt: current,
+      });
+    },
+  );
 
   it("throws for an unknown task id", () => {
     expect(() => handleUpdateTask(deps, { task_id: "missing" })).toThrow(
