@@ -30,7 +30,7 @@ Use **drizzle-orm** over **better-sqlite3**, with **drizzle-kit** for generated,
 
 ### Negative
 
-- Native dependency: installs need a prebuilt binary or a node-gyp toolchain on Node-version bumps (pnpm requires the build to be allow-listed via `allowBuilds`)
+- Native dependency: better-sqlite3 loads the prebuilt binary it ships (`prebuilds/<platform>-<arch>.node`) and its build is denied in `allowBuilds` ([ADR-002](ADR-002-runtime-and-package-manager.md)), so no node-gyp toolchain is needed; a platform without a prebuilt binary would need the build allowed and a toolchain
 - drizzle-orm is pre-1.0; minor-version churn is possible — validated by tests
 - Synchronous queries block the event loop; acceptable for this workload but worth watching if any query grows hot
 

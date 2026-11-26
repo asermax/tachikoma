@@ -107,7 +107,7 @@ Shutdown is the reverse tail: a `ShutdownController` aborts on a signal or an un
 
 ### Isolated pi agent dir with shared-credential fallback
 
-**Choice**: All pi state (sessions, settings, models.json) lives under `{workspace}/.tachikoma/pi`, but `AuthStorage` falls back to the user's `~/.pi/agent/auth.json` unless a workspace-local `auth.json` has actual content
+**Choice**: All pi state (sessions, settings, models.json) lives under `{workspace}/.tachikoma/pi`. Credentials are resolved by one process-wide pi `ModelRuntime`, which `AgentManager` creates with an `authPath` only when a workspace-local `auth.json` has actual content; without one, pi falls back to the user's `~/.pi/agent/auth.json` and provider environment variables
 **Why**: Tachikoma must never collide with a user's own pi install (session trees, settings), yet credentials are machine-level — forcing a second login for the same machine would be hostile.
 **Alternatives Considered**:
 
@@ -198,7 +198,7 @@ Setup failures are isolated by provenance. A first-party extension's `setup()` f
 ## Notes
 
 - `logging.pretty` is an explicit config flag (default `true`), not environment detection; service deployments set `pretty = false` for JSON lines
-- Overlap protection (`protect`) applies to `cron()` jobs via croner; `every()` intervals have no overlap guard, only error guarding, and are `unref`'d so they never keep the process alive
+- Overlap protection (`protect`) covers both job kinds, because both are croner jobs: a `cron()` job passes `protect: true`, and an `every()` job is a croner interval job (`interval: seconds`) whose `protect` callback logs the skipped tick at debug. `every()` jobs are `unref`'d so they never keep the process alive
 - One-shot scheduling is not a core `Scheduler` capability; the tasks extension parses ISO datetimes into one-shot task schedules with croner directly (`src/extensions/tasks/schedule.ts`)
 - `app.sessions` exposes `close()`/`listResumable()` but no direct resume — resuming happens through inbound middleware (`InboundContext.resumeSession`), keeping session replacement under coordinator control
 - The host-owned pi factory (`coordinator.hostFactory()`) is pushed into `regs.piFactories` before extensions load, so context-block injection via `before_agent_start` is always bound first

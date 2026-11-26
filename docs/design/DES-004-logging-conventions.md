@@ -91,7 +91,7 @@ silently.
 - **Tool boundary.** A state-mutating agent tool logs a semantic `info` line on entry (with key
   params) and a `warn({ err, …params })` before re-throwing. The adapter's generic
   tool-start/tool-end events are for correlation only — they do not carry the tool's semantics, so the
-  tool still logs its own action. (pi has no MCP layer; tools are in-process — see DES-001.)
+  tool still logs its own action. (Tachikoma has no MCP layer; tools are in-process — see DES-001.)
 
 - **Correlation + duration.** Start and result lines for a long-running action carry the joining id
   (`sessionId`/`trunkId`/`branchId`/`instanceId`/`toolCallId`) and the result line a `durationMs`

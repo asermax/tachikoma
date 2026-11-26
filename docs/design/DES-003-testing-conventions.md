@@ -34,6 +34,8 @@ The same pattern covers `Completer` (`Pick<SideRunner, "complete">`), `Runner` (
 
 Do not reach for `vi.mock()` module replacement — if a dependency is hard to fake, narrow the seam in the module under test instead.
 
+vitest clears every mock's call history before each test (`clearMocks` is on by default), so what a mock records while the suite loads — in `beforeAll`, for example — is read where it is recorded, not in a later test.
+
 ### 3. Database tests: real SQLite, temp dirs, DDL mirrors
 
 Database-touching tests use a **real SQLite file in a temp directory** — never an abstraction over the DB:

@@ -203,6 +203,18 @@ A background run can pause for input: the in-run `ask_user` tool flips the insta
 **When**: `update_task` applies the patch
 **Then**: `lastFiredAt` resets to null and `since` is stamped to now; the next tick anchors at the current hour but advances past `since`, so only occurrences after the edit can fire.
 
+### Scenario: a schedule that can never match
+
+**Given**: A definition whose cron expression has no possible occurrence, such as `0 0 30 2 *`
+**When**: The generation pass evaluates it
+**Then**: `nextCronRun` is `null`; the definition generates nothing and no error is logged, and the other definitions are evaluated as usual.
+
+### Scenario: a daily schedule inside a DST gap
+
+**Given**: A fixed-time cron definition such as `30 2 * * *` and a configured timezone with DST
+**When**: Its wall-clock time falls inside a spring-forward gap
+**Then**: It fires at the first valid time after the gap (03:00 that day) and at its usual time again the next day. croner follows Vixie cron here — a wall-clock time that does not exist never matches — so an interval expression such as `*/30 2 * * *` has no run on that day. `tests/tasks/schedule.test.ts` pins both.
+
 ### Scenario: background run declares completion
 
 **Given**: A pending background instance with a goal

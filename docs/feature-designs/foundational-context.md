@@ -17,7 +17,7 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 
 - SOUL/USER reach the prompt through `provideContext` (system-prompt mode), whose `provide` may be async — but a simple synchronous `readFileSync` suffices here
 - pi already discovers AGENTS.md from the workspace root; duplicating it would inject it twice
-- The fork is tool-limited by a plain allowlist and there is no MCP — any agent-managed state must be a file (see `docs/reference/pi-sdk-notes.md`)
+- The fork is tool-limited by a plain allowlist and Tachikoma loads no MCP layer — any agent-managed state must be a file (see `docs/reference/pi-sdk-notes.md`)
 
 **Interactions:**
 
@@ -114,7 +114,7 @@ Each row records the coverage-pass decision (issue-445) for one agent-facing sur
 **Why**: The fork runs under a plain file-tool allowlist with no custom-tool transport, so the legacy implementation's dedicated MCP tools (`add_pending_signal`/`remove_pending_signal`) have nowhere to live — and they are unnecessary: a strict line format (`- **YYYY-MM-DD**: text`) lets the agent stage/promote/discard with the same `edit`/`write` tools it already uses for the context files. This is what unblocked the fork conversion: the pending-signals mechanism was already file-based, so no MCP porting was needed.
 **Alternatives Considered**:
 
-- Legacy MCP `add_pending_signal`/`remove_pending_signal` tools on the fork: pi has no MCP layer, and file edits cover the same need
+- Legacy MCP `add_pending_signal`/`remove_pending_signal` tools on the fork: Tachikoma loads no MCP layer, and file edits cover the same need
 - Database-backed signals: loses direct user inspectability and requires injection plumbing both ways
 
 **Consequences**:

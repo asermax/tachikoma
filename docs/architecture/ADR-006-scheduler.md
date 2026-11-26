@@ -17,7 +17,7 @@ Use **croner** for all in-process scheduling.
 
 Persistence is explicitly not the scheduler's job — task definitions and execution history live in the database (ADR-004); croner only owns the in-memory timing.
 
-Overrun protection is symmetric across both schedule kinds. Cron jobs rely on croner's `protect: true`. Interval (`every`) jobs are not croner-backed (they use a plain `setInterval`), so they wrap their callback in a single-flight guard: if the previous run is still active when the interval fires, the tick is skipped rather than overlapping itself. Manual `trigger()` always runs — it deliberately bypasses single-flight, since an explicit invocation should never be silently dropped.
+Overrun protection is symmetric across both schedule kinds, because both are croner jobs. Cron jobs pass `protect: true`. Interval (`every`) jobs use croner's `interval` option with a `protect` callback, so a tick that arrives while the previous run is still active is skipped and logged instead of overlapping itself. Manual `trigger()` always runs — it deliberately bypasses overrun protection, since an explicit invocation should never be silently dropped.
 
 ## Consequences
 
@@ -32,6 +32,8 @@ Overrun protection is symmetric across both schedule kinds. Cron jobs rely on cr
 
 - In-process only: schedules die with the process — catch-up logic for missed runs is ours, backed by the database
 - Long-horizon one-shot timers rely on the process staying up; restart catch-up is the safety net
+- Cron expressions are parsed by croner, strictly: an expression it rejects throws at construction. Tachikoma turns that into a `ScheduleError` when a schedule is written and into a logged error for that one definition on the tick, so a stored expression croner rejects is skipped on every tick until the definition is edited
+- croner follows Vixie cron across DST transitions: a wall-clock time that does not exist never matches, so a fixed-time job inside a spring-forward gap fires at the first valid time after the gap and an interval pattern skips the missing times. An expression that can never match has no next run (`nextRun()` is `null`, not an error), and an `every` interval is elapsed time, so a transition neither shortens nor stretches it. `tests/tasks/schedule.test.ts` and `tests/scheduler.test.ts` pin the behavior
 
 ## Alternatives Considered
 

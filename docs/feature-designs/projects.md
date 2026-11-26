@@ -16,7 +16,7 @@ The workspace is a single git repo holding memories, context, and configuration 
 **Constraints:**
 
 - The registry must live inside the workspace repo itself, not in the database — a fresh clone plus startup must reconstruct every project
-- pi has no MCP; agent-facing operations register through pi's `ExtensionAPI` (`registerTool`) per [DES-001](../design/DES-001-unified-extension-api.md)
+- Tachikoma has no MCP layer (SDK sessions do not load pi's built-in MCP extension); agent-facing operations register through pi's `ExtensionAPI` (`registerTool`) per [DES-001](../design/DES-001-unified-extension-api.md)
 - Startup and session close run unattended: per-project error isolation, deterministic fallbacks, no prompts
 - Project repos must end up on a real branch — `git submodule` checkouts default to detached HEAD, which would strand later commits
 
