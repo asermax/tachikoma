@@ -1,3 +1,11 @@
+# [3.84.0](https://github.com/asermax/tachikoma/compare/v3.83.0...v3.84.0) (2026-11-26)
+
+
+### Features
+
+* **deps:** upgrade to pi SDK 1.6 and latest dependencies ([f595738](https://github.com/asermax/tachikoma/commit/f595738b4d6cc74fe4a3cf74077ea6fd41626c03))
+* **DLT-186:** wip patch ([ba938df](https://github.com/asermax/tachikoma/commit/ba938df4112e85caedceba330e4f022b727be3d5))
+
 # [3.83.0](https://github.com/asermax/tachikoma/compare/v3.82.0...v3.83.0) (2026-11-24)
 
 
