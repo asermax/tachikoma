@@ -10,7 +10,9 @@ import { BRANCH_SUMMARY } from "../sessions/trunk.ts";
  * around branch summaries and custom entries is documented in one place.
  *
  * The verified pi seam is tracked in `docs/reference/pi-sdk-notes.md` and must be re-checked on a pi
- * upgrade.
+ * upgrade. That re-check covers how pi builds a request, not only the primitive signatures: since pi
+ * 0.86.0 a request is projected from the session file's leaf path, which is why every leaf move here
+ * is followed by a re-sync of the agent's in-memory transcript (`syncTranscriptToLeaf`).
  */
 
 /** Details we persist on every `branch_summary` entry so a collapsed branch stays walkable. */
@@ -41,16 +43,48 @@ export interface BranchSummaryDetails {
 }
 
 /**
+ * Bring the agent's in-memory transcript onto the leaf the session file now sits on.
+ *
+ * pi builds every request from the session file: the messages, the tools and the prompt sections the
+ * model may see are replayed from the leaf path. Whether anything new must be declared is decided
+ * against the in-memory transcript (`agent.state.messages`). pi re-syncs that transcript after every
+ * change it commits through the session layer, its own leaf navigation included. Every write made
+ * through `SessionManager` directly bypasses that layer, and a leaf move is the one that matters: it
+ * puts the leaf on a different path while the transcript still describes the old one. Re-seating onto
+ * a path with no system message — the trunk's summary chain — would then send requests with no tools
+ * while the in-memory transcript still reports them as declared. `refreshContext()` is pi's own
+ * re-sync: the transcript follows the leaf, together with the bookkeeping pi keeps beside it.
+ *
+ * Call only between exchanges: the in-memory transcript must be fully persisted, or the re-sync drops
+ * its unpersisted tail from the declaration baseline.
+ *
+ * It runs once the raw move has taken effect. If it threw, the session file would already carry the
+ * move — a collapse's summary entry and leaf, or a re-seat's leaf — and only the in-memory transcript
+ * would lag behind it.
+ */
+const syncTranscriptToLeaf = (session: AgentSession): void => {
+  session.refreshContext();
+};
+
+/**
  * Collapse the current branch into a `branch_summary` entry appended at `branchFromId` and re-seat
  * the leaf there. `fromHook` is always true (the summary is extension-generated, not pi-native).
- * Returns the new summary entry id (the advanced base).
+ * Returns the new summary entry id (the advanced base). The agent's in-memory transcript follows the
+ * leaf (`syncTranscriptToLeaf`), so the next request on the new base declares the prompt sections and
+ * tools again when its path carries none.
  */
 export const branchWithSummary = (
   session: AgentSession,
   branchFromId: string | null,
   summary: string,
   details: BranchSummaryDetails,
-): string => session.sessionManager.branchWithSummary(branchFromId, summary, details, true);
+): string => {
+  const summaryId = session.sessionManager.branchWithSummary(branchFromId, summary, details, true);
+
+  syncTranscriptToLeaf(session);
+
+  return summaryId;
+};
 
 export interface CollapseTangentOptions {
   /** The tangent's own `tangent-N` id (separate sequence from `topic-N`). */
@@ -158,12 +192,16 @@ export const sessionCreatedAt = (session: AgentSession): string | null =>
   session.sessionManager.getHeader()?.timestamp ?? null;
 
 /**
- * Re-seat the leaf onto an earlier entry so the next turn extends it. On `SessionManager.open`
- * pi sets the leaf to the LAST file entry, not the active branch tip — the trunk lifecycle uses
- * this to re-seat onto the current base after a reload (see ADR-014, R9).
+ * Re-seat the leaf onto an earlier entry so the next turn extends it, and bring the agent's in-memory
+ * transcript along (`syncTranscriptToLeaf`). On `SessionManager.open` pi sets the leaf to the LAST
+ * file entry, not the active branch tip — the trunk lifecycle uses this to re-seat onto the current
+ * base after a reload (see ADR-014, R9).
  */
-export const reseatLeaf = (session: AgentSession, entryId: string): void =>
+export const reseatLeaf = (session: AgentSession, entryId: string): void => {
   session.sessionManager.branch(entryId);
+
+  syncTranscriptToLeaf(session);
+};
 
 /** Persist extension state as a custom entry (out of LLM context); returns the entry id. */
 export const appendState = (session: AgentSession, customType: string, data: unknown): string =>

@@ -17,7 +17,7 @@ import {
 } from "../../src/agent/session-tree.ts";
 import { BRANCH_SUMMARY } from "../../src/sessions/trunk.ts";
 
-const makeSession = () => {
+const makeSession = (overrides: Record<string, unknown> = {}, refreshContext = vi.fn()) => {
   const sessionManager = {
     branchWithSummary: vi.fn(() => "summary-1"),
     getBranch: vi.fn(() => [{ id: "e1" }]),
@@ -28,8 +28,9 @@ const makeSession = () => {
     branch: vi.fn(),
     appendCustomEntry: vi.fn(() => "custom-1"),
     appendCustomMessageEntry: vi.fn(() => "msg-1"),
+    ...overrides,
   };
-  return { sessionManager } as unknown as AgentSession;
+  return { sessionManager, refreshContext } as unknown as AgentSession;
 };
 
 describe("session-tree helpers", () => {
@@ -72,6 +73,75 @@ describe("session-tree helpers", () => {
     const session = makeSession();
     reseatLeaf(session, "base-1");
     expect(session.sessionManager.branch).toHaveBeenCalledWith("base-1");
+  });
+
+  // A fake session can only show that the seam asks pi to re-sync, and when: what the re-sync does
+  // to the transcript is covered against the real SDK in `session-tree-projection.test.ts`.
+  it("branchWithSummary re-syncs the in-memory transcript once the leaf has moved", () => {
+    const calls: string[] = [];
+    const refreshContext = vi.fn(() => {
+      calls.push("re-sync");
+    });
+    const session = makeSession(
+      {
+        branchWithSummary: vi.fn(() => {
+          calls.push("move");
+          return "summary-1";
+        }),
+      },
+      refreshContext,
+    );
+
+    branchWithSummary(session, null, "summary text", {
+      customType: "branch-summary",
+      branchId: "topic-1",
+      originalLeafId: "leaf-9",
+      baseId: null,
+    });
+
+    // The re-sync reads the leaf the raw move left behind, so it has to run after the move.
+    expect(calls).toEqual(["move", "re-sync"]);
+    expect(refreshContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("reseatLeaf re-syncs the in-memory transcript", () => {
+    const session = makeSession();
+
+    reseatLeaf(session, "base-1");
+
+    expect(session.sessionManager.branch).toHaveBeenCalledWith("base-1");
+    expect(session.refreshContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("collapseTangent re-syncs the in-memory transcript (R5)", () => {
+    const session = makeSession();
+
+    collapseTangent(session, "checkpoint-1", "tangent summary", {
+      tangentId: "tangent-1",
+      originalLeafId: "leaf-9",
+    });
+
+    expect(session.refreshContext).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-sync when the leaf move throws", () => {
+    const throwing = (): never => {
+      throw new Error("Entry missing-1 not found");
+    };
+    const collapsed = makeSession({ branchWithSummary: vi.fn(throwing) });
+    const reseated = makeSession({ branch: vi.fn(throwing) });
+
+    expect(() =>
+      collapseTangent(collapsed, "missing-1", "tangent summary", {
+        tangentId: "tangent-1",
+        originalLeafId: "leaf-9",
+      }),
+    ).toThrow("Entry missing-1 not found");
+    expect(() => reseatLeaf(reseated, "missing-1")).toThrow("Entry missing-1 not found");
+
+    for (const session of [collapsed, reseated]) {
+      expect(session.refreshContext).not.toHaveBeenCalled();
+    }
   });
 
   it("collapseTangent delegates to branchWithSummary rooted at the checkpoint with tangent details (R5)", () => {

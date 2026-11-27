@@ -42,7 +42,11 @@ const makeSession = (overrides: Partial<Record<string, unknown>> = {}) => {
     ...overrides,
   };
 
-  return { session: { sessionManager } as unknown as AgentSession, custom, branchCalls };
+  return {
+    session: { sessionManager, refreshContext: vi.fn() } as unknown as AgentSession,
+    custom,
+    branchCalls,
+  };
 };
 
 describe("collapseCurrentTopic", () => {

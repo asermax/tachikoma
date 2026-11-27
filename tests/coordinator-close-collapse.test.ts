@@ -120,6 +120,7 @@ const makeCollapseSession = (sessionFile: string, initial: SessionEntry[]): Coll
       sessionFile,
       dispose: vi.fn(),
       messages: [],
+      refreshContext: vi.fn(),
       sessionManager,
     } as unknown as AgentSession,
     branchCalls,

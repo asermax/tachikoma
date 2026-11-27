@@ -90,6 +90,7 @@ const makeTrunk = (overrides: Partial<TrunkInbound> = {}): TrunkInbound => {
   const branchWithSummary = vi.fn().mockReturnValue("summary-id");
   const session = {
     systemPrompt: "you are helpful",
+    refreshContext: vi.fn(),
     sessionManager: {
       branchWithSummary,
       getBranch: () => [
@@ -147,6 +148,7 @@ const trunkWithBranch = (
 ): TrunkInbound => {
   const session = {
     systemPrompt: "you are helpful",
+    refreshContext: vi.fn(),
     sessionManager: {
       branchWithSummary: vi.fn().mockReturnValue("tangent-summary-id"),
       appendCustomEntry: vi.fn().mockReturnValue("c-1"),

@@ -100,6 +100,7 @@ const makeSession = (sessionFile: string | undefined, initial: SessionEntry[] = 
 
   return {
     sessionFile,
+    refreshContext: vi.fn(),
     sessionManager: {
       getEntries: () => [...entries],
       getEntry: (id: string) => entries.find((entry) => entry.id === id),

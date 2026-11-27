@@ -159,7 +159,10 @@ const makeSession = (initial: SessionEntry[] = []): FakeSession => {
   };
 
   return {
-    session: { sessionManager } as unknown as AgentSession,
+    session: {
+      sessionManager,
+      refreshContext: vi.fn(),
+    } as unknown as AgentSession,
     branchCalls,
     branchReseats,
     appendMessage: (entry: SessionEntry) => appendAt(entry, leafId),
