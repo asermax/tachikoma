@@ -10,6 +10,7 @@ import {
 } from "@earendil-works/pi-ai";
 import type { AgentSession, FileEntry } from "@earendil-works/pi-coding-agent";
 import {
+  buildSessionProjection,
   createAgentSession,
   DefaultResourceLoader,
   ModelRuntime,
@@ -22,10 +23,11 @@ import type { AgentManager } from "../../src/agent/manager.ts";
 import { appendInContextEntry, getLeafId, reseatLeaf } from "../../src/agent/session-tree.ts";
 import type { SideRunner } from "../../src/agent/side-run.ts";
 import { provideContext } from "../../src/agent/system-prompt-section.ts";
-import type { KeyValueState } from "../../src/db/state.ts";
+import { type AppDatabase, createDatabase, runMigrations } from "../../src/db/index.ts";
+import { KeyValueState } from "../../src/db/state.ts";
 import { collapseCurrentTopic } from "../../src/extensions/boundary/collapse.ts";
-import type { Logger } from "../../src/log.ts";
 import { openOrCreateTrunk, readBoomerangState, TrunkState } from "../../src/sessions/trunk.ts";
+import { fakeLogger } from "../git/helpers.ts";
 
 /**
  * The session-tree seam against pi's real session machinery.
@@ -48,8 +50,8 @@ const DAY = "2026-11-27";
  * `before_agent_start`, which renders the prompt sections into text; the plain shape leaves the
  * path's own system message in place, so its sections can be compared directly.
  */
-type Shape = "forced-prompt" | "plain";
-const SHAPES: readonly Shape[] = ["forced-prompt", "plain"];
+const SHAPES = ["forced-prompt", "plain"] as const;
+type Shape = (typeof SHAPES)[number];
 
 /** What a provider would have received, read the way pi reads a request. */
 interface RequestContext {
@@ -59,8 +61,6 @@ interface RequestContext {
 
 interface Trunk {
   session: AgentSession;
-  /** Every request this process sent, oldest first. */
-  requests: RequestContext[];
   file: () => string;
   /** Send one user message and return the request it produced. */
   ask: (text: string) => Promise<RequestContext>;
@@ -70,7 +70,6 @@ interface Trunk {
 }
 
 interface LeafReplay {
-  id: string;
   systemMessages: number;
   tools: number;
 }
@@ -80,15 +79,11 @@ let agentDir: string;
 let modelRuntime: ModelRuntime;
 let model: Model<Api>;
 let workDir: string;
+let db: AppDatabase;
 let trunkState: TrunkState;
 const openSessions: AgentSession[] = [];
 
-const log = {
-  debug: vi.fn(),
-  info: vi.fn(),
-  warn: vi.fn(),
-  error: vi.fn(),
-} as unknown as Logger;
+const log = fakeLogger();
 
 const completer = (): Pick<SideRunner, "complete"> =>
   ({
@@ -182,20 +177,6 @@ const collapseLiveBranch = async (session: AgentSession, branchId: string): Prom
   return collapsed.newBaseId;
 };
 
-/** The `app_state` store behind the trunk pointer. It outlives a process, so a test shares one. */
-const makeState = (): KeyValueState => {
-  const store = new Map<string, unknown>();
-  return {
-    get: <T>(key: string): T | null => (store.get(key) as T | undefined) ?? null,
-    set: <T>(key: string, value: T): void => {
-      store.set(key, value);
-    },
-    delete: (key: string): void => {
-      store.delete(key);
-    },
-  } as unknown as KeyValueState;
-};
-
 /** The session file, read with pi's own parser: the header followed by every entry. */
 const fileEntries = async (file: string): Promise<FileEntry[]> =>
   parseSessionEntries(await readFile(file, "utf8"));
@@ -216,7 +197,6 @@ const openTrunk = async (shape: Shape): Promise<Trunk> => {
 
   return {
     session,
-    requests,
     file: () => {
       const file = session.sessionFile;
       if (file == null) throw new Error("the trunk session has no file");
@@ -243,20 +223,14 @@ const openTrunk = async (shape: Shape): Promise<Trunk> => {
 
 /** Replay pi's own projection at every leaf of a session file. */
 const leafReplays = async (file: string): Promise<LeafReplay[]> => {
-  const entries = await fileEntries(file);
-  const parents = new Set(
-    entries.map((entry) => (entry.type === "session" ? null : entry.parentId)),
-  );
+  const entries = (await fileEntries(file)).filter((entry) => entry.type !== "session");
+  const parents = new Set(entries.map((entry) => entry.parentId));
 
   return entries
-    .filter((entry) => entry.type !== "session" && !parents.has(entry.id))
+    .filter((entry) => !parents.has(entry.id))
     .map((leaf) => {
-      if (leaf.type === "session") throw new Error("unreachable: the header is not a leaf");
-      const manager = SessionManager.inMemory(workDir, undefined, entries);
-      manager.branch(leaf.id);
-      const { messages } = manager.buildSessionProjection();
+      const { messages } = buildSessionProjection(entries, leaf.id);
       return {
-        id: leaf.id,
         systemMessages: messages.filter((message) => message.role === "system").length,
         tools: getCurrentTools(messages).length,
       };
@@ -302,11 +276,15 @@ describe("session-tree seam against pi's request projection", () => {
 
   beforeEach(async () => {
     workDir = await mkdtemp(join(tmpdir(), "tachi-projection-trunk-"));
-    trunkState = new TrunkState(makeState());
+    // The `app_state` store behind the trunk pointer outlives a process, so a test's reopens share it.
+    db = createDatabase(join(workDir, "test.db"));
+    runMigrations(db);
+    trunkState = new TrunkState(new KeyValueState(db, "trunk"));
   });
 
   afterEach(async () => {
     for (const session of openSessions.splice(0)) session.dispose();
+    db.$client.close();
     await rm(workDir, { recursive: true, force: true });
   });
 
@@ -323,18 +301,13 @@ describe("session-tree seam against pi's request projection", () => {
       await trunk.shift("topic-3");
       const fourth = await trunk.ask("topic 4");
 
-      expect([first, second, third, fourth].map((request) => request.tools)).toEqual([
-        TOOLS.length,
-        TOOLS.length,
-        TOOLS.length,
-        TOOLS.length,
-      ]);
+      for (const request of [first, second, third, fourth]) {
+        expect(request.tools).toBe(TOOLS.length);
+      }
       if (shape === "plain") {
-        expect([second, third, fourth].map((request) => request.sections)).toEqual([
-          first.sections,
-          first.sections,
-          first.sections,
-        ]);
+        for (const request of [second, third, fourth]) {
+          expect(request.sections).toEqual(first.sections);
+        }
       }
     },
     20_000,
@@ -361,10 +334,8 @@ describe("session-tree seam against pi's request projection", () => {
       const afterLaterRestart = await third.ask("topic 3, continued");
       expect(third.file()).toBe(file);
 
-      expect([afterRestart, afterLaterRestart].map((request) => request.tools)).toEqual([
-        TOOLS.length,
-        TOOLS.length,
-      ]);
+      expect(afterRestart.tools).toBe(TOOLS.length);
+      expect(afterLaterRestart.tools).toBe(TOOLS.length);
       if (shape === "plain") {
         // Same prompt sections as the first request after a collapse in a running process.
         expect(afterRestart.sections).toEqual(afterCollapse.sections);

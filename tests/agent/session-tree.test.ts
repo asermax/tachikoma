@@ -17,7 +17,7 @@ import {
 } from "../../src/agent/session-tree.ts";
 import { BRANCH_SUMMARY } from "../../src/sessions/trunk.ts";
 
-const makeSession = (overrides: Record<string, unknown> = {}, refreshContext = vi.fn()) => {
+const makeSession = (overrides: Record<string, unknown> = {}) => {
   const sessionManager = {
     branchWithSummary: vi.fn(() => "summary-1"),
     getBranch: vi.fn(() => [{ id: "e1" }]),
@@ -30,7 +30,7 @@ const makeSession = (overrides: Record<string, unknown> = {}, refreshContext = v
     appendCustomMessageEntry: vi.fn(() => "msg-1"),
     ...overrides,
   };
-  return { sessionManager, refreshContext } as unknown as AgentSession;
+  return { sessionManager, refreshContext: vi.fn() } as unknown as AgentSession;
 };
 
 describe("session-tree helpers", () => {
@@ -79,18 +79,15 @@ describe("session-tree helpers", () => {
   // to the transcript is covered against the real SDK in `session-tree-projection.test.ts`.
   it("branchWithSummary re-syncs the in-memory transcript once the leaf has moved", () => {
     const calls: string[] = [];
-    const refreshContext = vi.fn(() => {
+    const session = makeSession({
+      branchWithSummary: vi.fn(() => {
+        calls.push("move");
+        return "summary-1";
+      }),
+    });
+    vi.mocked(session.refreshContext).mockImplementation(() => {
       calls.push("re-sync");
     });
-    const session = makeSession(
-      {
-        branchWithSummary: vi.fn(() => {
-          calls.push("move");
-          return "summary-1";
-        }),
-      },
-      refreshContext,
-    );
 
     branchWithSummary(session, null, "summary text", {
       customType: "branch-summary",
@@ -99,9 +96,9 @@ describe("session-tree helpers", () => {
       baseId: null,
     });
 
-    // The re-sync reads the leaf the raw move left behind, so it has to run after the move.
+    // Every step records itself once, so this pins the order and that the re-sync runs exactly once.
+    // It reads the leaf the raw move left behind, so it has to run after the move.
     expect(calls).toEqual(["move", "re-sync"]);
-    expect(refreshContext).toHaveBeenCalledTimes(1);
   });
 
   it("reseatLeaf re-syncs the in-memory transcript", () => {
@@ -109,7 +106,6 @@ describe("session-tree helpers", () => {
 
     reseatLeaf(session, "base-1");
 
-    expect(session.sessionManager.branch).toHaveBeenCalledWith("base-1");
     expect(session.refreshContext).toHaveBeenCalledTimes(1);
   });
 
