@@ -1,3 +1,10 @@
+## [3.84.1](https://github.com/asermax/tachikoma/compare/v3.84.0...v3.84.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **agent:** re-sync the transcript after a session leaf move ([ff70746](https://github.com/asermax/tachikoma/commit/ff707461f1ad49833a3c37767d1ff4333716bc85)), closes [#484](https://github.com/asermax/tachikoma/issues/484)
+
 # [3.84.0](https://github.com/asermax/tachikoma/compare/v3.83.0...v3.84.0) (2026-11-26)
 
 
