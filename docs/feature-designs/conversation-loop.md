@@ -81,7 +81,7 @@ submit() ─ pending-input intercept (bare arg-command → prompt; pending arg �
 
 **Choice**: When reopening a same-day trunk, `openOrCreateTrunk` re-seats the leaf onto the boomerang snapshot's `currentTopicBaseId` (or the latest `branch_summary` as a fallback).
 **Why**: pi's `SessionManager.open` sets the leaf to the last file entry, not the active branch tip — so after a restart the next turn would otherwise extend a stale collapsed branch. Re-seating onto the current base keeps the live conversation on the current branch.
-**Consequences**: Pro — a restart mid-conversation resumes on the right branch. Con — depends on the append-only `branch(id)` re-seat being stable (tracked in `pi-sdk-notes.md`).
+**Consequences**: Pro — a restart mid-conversation resumes on the right branch. Con — depends on the append-only `branch(id)` re-seat being stable (tracked in `pi-sdk-notes.md`). The re-seat brings the agent's in-memory transcript onto the base, so the first request after a reopen declares the prompt sections and tools again (see [agent-integration](./agent-integration.md)).
 
 ### Serial new exchanges with mid-exchange steering
 

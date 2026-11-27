@@ -140,6 +140,24 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 - Pro: a follow-up inside the window can reuse the trunk's warm prompt cache, with no wiring of Tachikoma's own
 - Con: possible provider cost while the trunk sits idle after an exchange, for a model that declares a cache lifetime. The maintainer checks the logs a few minutes after an exchange for cache-warming errors
 
+### A leaf move re-syncs the agent's in-memory transcript
+
+**Choice**: The session-tree seam's two leaf-moving wrappers (`branchWithSummary`, `reseatLeaf`) end by calling pi's `session.refreshContext()`, which rebuilds the agent's in-memory transcript from the session file's projection at the new leaf. They do not write the prompt sections or tool declarations themselves: pi persists those at the next request, on any path that lacks them.
+**Why**: pi builds each request from the session file's leaf path, tools and prompt sections included, but decides what to declare by diffing against the in-memory transcript, and it re-syncs that transcript only after changes it commits through its own session layer. A raw leaf move onto a trunk's summary chain — which carries no system message — leaves the transcript reporting everything as declared, so the request goes out with no tools and the model prints tool calls as text or answers with nothing. The seam is the one place that wraps leaf moves, so the rule holds for every caller: the topic collapse, the same-day reopen, a rollback rewind and the tangent fold.
+**Alternatives Considered**:
+
+- Assigning the projection to `session.agent.state.messages` by hand: the same transcript, without the bookkeeping pi keeps beside it, which `refreshContext()` also refills
+- Writing a copy of the current system message at collapse time: duplicates pi's declaration logic and couples the seam to that entry's shape
+- Rooting the summary chain under the session's first system message: a file-layout change that needs a migration for trunks already on disk and still leaves the in-memory transcript out of step with the file
+- Routing collapses through pi's public `navigateTree()`: it navigates to an existing entry, so it cannot express a collapse onto a fresh root summary, and it moves summarization into an extension event, which breaks the collapse's no-partial-writes contract
+
+**Consequences**:
+
+- Pro: every request on the trunk carries the tool set and the prompt sections, whatever path it is built from, and it is independent of how many collapses or restarts came before
+- Pro: a re-seat onto a path that already declares the tools writes nothing extra
+- Con: one system-message entry is persisted per collapse and per same-day restart, carrying a full copy of the prompt sections and the tool declarations
+- Con: the rule assumes leaf moves happen between exchanges, when the in-memory transcript is fully persisted; the seam documents the precondition and does not enforce it
+
 ## System Behavior
 
 ### Scenario: Provider failure mid-exchange
@@ -166,6 +184,12 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 **When**: An exchange ends and the trunk stays open
 **Then**: pi may keep the prompt cache warm for up to 30 minutes, sending a refresh only while it expects the refresh to pay for itself. Each refresh is persisted as a `cache_warm` usage entry and left out of the exchange's reported usage. Forks and headless runs do not warm, because they are disposed when they finish.
 
+### Scenario: The first request after a leaf move
+
+**Given**: A trunk whose leaf sits, after a topic collapse or a same-day reopen, on a path with no system message of its own
+**When**: The next message is prompted
+**Then**: The request declares the session's full tool set and prompt sections. The leaf move re-syncs the agent's in-memory transcript onto the new path, so pi finds nothing declared there and persists one system message as the first entry under the new base, ahead of the user message. A rollback rewind onto a path that already declares the tools adds no second declaration.
+
 ### Scenario: Headless extraction run
 
 **Given**: A post-processor calls `app.agent.side.run({ prompt, tools: ["read"], tier: "processor" })`
@@ -177,4 +201,4 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 - `SettingsManager.create(workspace.root, workspace.piDir)` keeps pi settings inside the data dir alongside auth and `models.json` — nothing under `~/.pi` is written unless the machine-level auth store is the active one. pi's `cacheWarming` setting is read from this directory's `settings.json` (`{workspace}/.tachikoma/pi/settings.json`) and nowhere else in the tree: it is a global setting, and Tachikoma sets none.
 - No tier has a built-in default: all four `[agent]` fields are `Type.Optional(Type.String())` with no schema default (`src/config/schema.ts`). The `provider/model-id` strings shown in the generated config template (`main`/`searcher` → `anthropic/claude-opus-4-5`, `processor`/`classifier` → `anthropic/claude-haiku-4-5`) are commented-out example values, not active defaults. An unset chain defers to pi's own resolution (settings `defaultProvider`/`defaultModel`, else the first credentialed model).
 - `run()` returns only final text; structured output from tool-using runs would need pi's `terminate: true` pattern, deliberately not built yet.
-- The session-tree seam (`src/agent/session-tree.ts`) wraps the append-only `SessionManager` primitives [ADR-014](../architecture/ADR-014-session-source-of-truth.md) adopted for the trunk model: `branchWithSummary` (collapse + re-seat), `reseatLeaf` (`branch(id)` — move the leaf to an earlier entry), and `appendState`/`appendInContextEntry` (`appendCustomEntry`/`appendCustomMessageEntry`). There is no delete primitive; `/rollback`'s rewind is a `branch(id)` re-seat that leaves the wrong-framing exchange as an inert off-path branch. The verified surface is tracked in `docs/reference/pi-sdk-notes.md` and re-checked on upgrade.
+- The session-tree seam (`src/agent/session-tree.ts`) wraps the append-only `SessionManager` primitives [ADR-014](../architecture/ADR-014-session-source-of-truth.md) adopted for the trunk model: `branchWithSummary` (collapse + re-seat), `reseatLeaf` (`branch(id)` — move the leaf to an earlier entry), and `appendState`/`appendInContextEntry` (`appendCustomEntry`/`appendCustomMessageEntry`). There is no delete primitive; `/rollback`'s rewind is a `branch(id)` re-seat that leaves the wrong-framing exchange as an inert off-path branch. The verified surface is tracked in `docs/reference/pi-sdk-notes.md` and re-checked on upgrade. Both leaf-moving wrappers end by re-syncing the agent's in-memory transcript from the file's projection (see the key decision above); `tests/agent/session-tree-projection.test.ts` runs them against a real, offline pi session.

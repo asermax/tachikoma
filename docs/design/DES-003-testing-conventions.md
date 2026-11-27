@@ -54,12 +54,13 @@ Where the unit's job _is_ the external system, test against the real thing, sand
 
 - **git** (`tests/git/`, `tests/projects/`): run the real `git` binary via `runGit`. Helpers in `tests/git/helpers.ts` provide `initRepo` (repo-local identity, `commit.gpgsign false` so commits work anywhere), `commitFile`, and `setupRemotePair` (bare origin + two clones for ahead/behind/diverged topologies).
 - **processes** (`tests/detached-processes/`): spawn real OS processes and observe exit/output through the repository.
+- **pi sessions** (`tests/agent/session-tree-projection.test.ts`): a real `AgentSession` that reaches no model — an isolated agent dir whose `auth.json` only satisfies the auth preflight, a model from the built-in catalog, and `session.agent.streamFunction` replaced by a recorder that reads the provider-facing context with `getCurrentSystemMessage()` and `getCurrentTools()`. Use it where a unit's job is what pi puts in a request or how it moves a leaf; a fake `sessionManager` shows neither.
 
 Clean up temp dirs in `afterEach` with `rm(dir, { recursive: true, force: true })`.
 
 ### 5. No live LLM or network
 
-Tests never call a model or the network. `SideRunner` is always faked through its `Pick<>` seams; Telegram tests fake the Bot API surface; pi sessions are never created in tests. If a behavior seems to require a live model, the unit is cut wrong — split the prompt-assembly/parsing logic from the call.
+Tests never call a model or the network. `SideRunner` is always faked through its `Pick<>` seams; Telegram tests fake the Bot API surface; a pi session a test does build (see §4) runs against a recording stream function in an isolated agent dir, so it reaches neither. If a behavior seems to require a live model, the unit is cut wrong — split the prompt-assembly/parsing logic from the call.
 
 ### 6. Async and time
 
@@ -70,7 +71,7 @@ Tests never call a model or the network. `SideRunner` is always faked through it
 ## Rationale
 
 1. **Structural fakes**: `Pick<>` seams document exactly what a module needs, keep fakes one object literal long, and break loudly at compile time when the real interface changes — unlike patch-by-path mocking.
-2. **Real SQLite/git/processes**: the behaviors under test (migrations, rebase topologies, PID lifecycles) live in those systems; faking them tests the fake.
+2. **Real SQLite/git/processes/pi sessions**: the behaviors under test (migrations, rebase topologies, PID lifecycles, what a request carries) live in those systems; faking them tests the fake.
 3. **DDL mirrors**: let extension tests run before central migration generation (DES-002 forbids running `drizzle-kit generate` from feature work) without committing throwaway migrations.
 4. **Mirrored layout**: finding the tests for any module is mechanical.
 
