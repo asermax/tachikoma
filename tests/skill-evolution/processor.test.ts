@@ -18,7 +18,12 @@ import {
   impactLogPath,
   skillEvolutionDir,
 } from "../../src/extensions/skill-evolution/layout.ts";
-import { ProposalRunError, proposalTmpDir } from "../../src/extensions/skill-evolution/propose.ts";
+import {
+  type ProposalAgentDeps,
+  ProposalRunError,
+  proposalTmpDir,
+  type ReportedProposal,
+} from "../../src/extensions/skill-evolution/propose.ts";
 import type { ReconcileCompleted } from "../../src/extensions/skill-evolution/reconcile.ts";
 import {
   DEFAULT_POST_WORK_PROMPT,
@@ -155,6 +160,28 @@ const seedPatternPages = async (...names: string[]): Promise<void> => {
     await writeFile(join(dir, name), `# ${name}\n\n## Problem\nfriction.\n`, "utf8");
   }
 };
+
+/** Overwrite the ledger with the given data rows, behind the fixed table header. */
+const writeLedgerRows = async (rows: readonly string[]): Promise<void> =>
+  writeFile(
+    impactLogPath(workspace),
+    [
+      "| Date | Skill | Pattern | Branch | Tip | Description | Status |",
+      "| ---- | ----- | ------- | ------ | --- | ----------- | ------ |",
+      ...rows,
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+// 150 ledger rows naming pattern pages that are not on disk — swept by the maintenance pass long
+// after their proposals — in all three statuses, mixed.
+const RETIRED_ROW_STATUSES = Object.values(IMPACT_LOG_STATUSES);
+const RETIRED_ROWS = Array.from({ length: 150 }, (_, index) => {
+  const status = RETIRED_ROW_STATUSES[index % RETIRED_ROW_STATUSES.length];
+
+  return `| 2027-03-01 | deploy | [retired-${index}](./retired-${index}.md) | skill-evolution/retired-${index} | tip-${index} | proposal ${index} | ${status ?? IMPACT_LOG_STATUSES.proposed} |`;
+});
 
 describe("skill-evolution-trunk-close (structural stage fakes)", () => {
   it("registers as a main-phase processor with the Evolving skills label", () => {
@@ -296,6 +323,50 @@ describe("skill-evolution-trunk-close (structural stage fakes)", () => {
     // The sweep is exactly-once-per-run: on the proposing path it belongs to verification's
     // `finally` (faked away here), so the processor itself must not have swept too.
     expect(stages.sweep).not.toHaveBeenCalled();
+  });
+
+  it("a ledger of rows naming absent pages raises no warning — volume does not grow with history", async () => {
+    await ensureSkillEvolutionLayout(workspace, fakeLogger());
+    const dir = skillEvolutionDir(workspace);
+    await writeFile(join(dir, "deploy-env-flag.md"), "# deploy-env-flag\n", "utf8");
+    // 150 rows name pattern pages the maintenance pass swept long ago; none of them is on disk.
+    await writeLedgerRows(RETIRED_ROWS);
+
+    const proposal = vi.fn<(deps: ProposalAgentDeps) => Promise<ReportedProposal[]>>(
+      async () => [],
+    );
+
+    const { log } = await runProcessor({ stages: fakeStages({ proposal }) }, stubTrunk());
+
+    expect(proposal).toHaveBeenCalledTimes(1);
+    expect(proposal.mock.calls[0]?.[0]).toMatchObject({ eligible: ["deploy-env-flag.md"] });
+    // The rows are history, not anomalies: nothing at warn, one aggregate line at debug.
+    expect(log.warn).not.toHaveBeenCalled();
+    expect(log.debug).toHaveBeenCalledWith({ rows: 150, withoutLivePage: 150 }, expect.any(String));
+  });
+
+  it("a malformed row still warns exactly once beside rows naming absent pages", async () => {
+    await ensureSkillEvolutionLayout(workspace, fakeLogger());
+    const dir = skillEvolutionDir(workspace);
+    await writeFile(join(dir, "deploy-env-flag.md"), "# deploy-env-flag\n", "utf8");
+    // The last row carries an unknown status — malformed at parse time.
+    await writeLedgerRows([
+      ...RETIRED_ROWS,
+      "| 2027-03-01 | deploy | [broken](./broken.md) | skill-evolution/broken | tip | desc | maybe |",
+    ]);
+
+    const proposal = vi.fn<(deps: ProposalAgentDeps) => Promise<ReportedProposal[]>>(
+      async () => [],
+    );
+
+    const { log } = await runProcessor({ stages: fakeStages({ proposal }) }, stubTrunk());
+
+    expect(proposal.mock.calls[0]?.[0]).toMatchObject({ eligible: ["deploy-env-flag.md"] });
+    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(log.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ path: impactLogPath(workspace) }),
+      "impact-log row is malformed — skipped",
+    );
   });
 
   it("at least one verified proposal dispatches exactly once; the status lines bracket the run", async () => {

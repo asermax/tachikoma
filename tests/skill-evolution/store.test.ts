@@ -103,6 +103,35 @@ describe("impact-log round-trip", () => {
       }),
     ]);
   });
+
+  it("a status write-back keeps every row, including rows whose pattern page is not on disk", async () => {
+    // No pattern page exists in this temp dir — both rows name a page that is absent.
+    const settled = entry({
+      tip: "tip-settled",
+      status: IMPACT_LOG_STATUSES.accepted,
+    });
+    const open = entry({
+      pattern: "review-checklist.md",
+      branch: "skill-evolution/review-checklist",
+      tip: "tip-open",
+    });
+
+    await writeImpactLog(logPath(), [settled, open]);
+
+    // Reconciliation's write path: parse, rewrite one status, write the whole ledger back.
+    const rows = await readImpactLog(logPath(), fakeLog);
+    await writeImpactLog(
+      logPath(),
+      updateEntryStatus(rows, open.branch, open.tip, IMPACT_LOG_STATUSES.accepted),
+    );
+
+    const reread = await readImpactLog(logPath(), fakeLog);
+
+    expect(reread).toHaveLength(2);
+    expect(reread[0]).toEqual(settled);
+    expect(reread[1]?.status).toBe(IMPACT_LOG_STATUSES.accepted);
+    expect(fakeLog.warn).not.toHaveBeenCalled();
+  });
 });
 
 describe("lenient parsing", () => {
@@ -189,23 +218,67 @@ describe("filterEligible", () => {
 
       expect(eligible).toEqual(["pattern-b.md"]);
     }
+
+    // Every row names a live page: nothing to warn about and nothing to aggregate.
+    expect(fakeLog.warn).not.toHaveBeenCalled();
+    expect(fakeLog.debug).not.toHaveBeenCalled();
   });
 
   it("keeps every pattern when the log is empty", () => {
     expect(filterEligible(["pattern-a.md"], [], fakeLog)).toEqual(["pattern-a.md"]);
+
+    expect(fakeLog.debug).not.toHaveBeenCalled();
   });
 
-  it("warns and skips rows whose linked pattern page no longer exists on disk", () => {
+  it("treats a row naming no live page as history in any status — no warn, one aggregate", () => {
+    const absent = Object.values(IMPACT_LOG_STATUSES).map((status, index) =>
+      entry({ pattern: `retired-${index}.md`, status }),
+    );
+
     const eligible = filterEligible(
-      ["pattern-a.md"],
-      [entry({ pattern: "deleted-by-user.md" })],
+      ["pattern-a.md", "pattern-b.md"],
+      // One row names a live page, so the two counts in the aggregate differ.
+      [...absent, entry({ pattern: "pattern-a.md" })],
       fakeLog,
     );
 
-    expect(eligible).toEqual(["pattern-a.md"]);
-    expect(fakeLog.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ pattern: "deleted-by-user.md" }),
-      "impact-log row references a missing pattern page — skipped",
+    expect(eligible).toEqual(["pattern-b.md"]);
+    expect(fakeLog.warn).not.toHaveBeenCalled();
+    expect(fakeLog.debug).toHaveBeenCalledTimes(1);
+    expect(fakeLog.debug).toHaveBeenCalledWith(
+      { rows: 4, withoutLivePage: 3 },
+      "impact-ledger rows without a live pattern page — history, nothing blocked",
     );
+  });
+
+  it("warns once for a reference that can never name a page, and blocks nothing", () => {
+    const unresolvable = [
+      "deploy-env-flag",
+      "sub/deploy-env-flag.md",
+      MEMORY_INDEX_FILENAME,
+      IMPACT_LOG_FILENAME,
+    ];
+
+    for (const pattern of unresolvable) {
+      vi.clearAllMocks();
+
+      const eligible = filterEligible(
+        ["pattern-a.md"],
+        [entry({ pattern, branch: "skill-evolution/broken-reference" })],
+        fakeLog,
+      );
+
+      expect(eligible).toEqual(["pattern-a.md"]);
+      expect(fakeLog.warn).toHaveBeenCalledTimes(1);
+      expect(fakeLog.warn).toHaveBeenCalledWith(
+        { pattern, branch: "skill-evolution/broken-reference" },
+        "impact-log row's pattern reference cannot name a pattern page — it blocks nothing",
+      );
+      // Still a row without a live page: it is counted, never dropped.
+      expect(fakeLog.debug).toHaveBeenCalledWith(
+        { rows: 1, withoutLivePage: 1 },
+        expect.any(String),
+      );
+    }
   });
 });

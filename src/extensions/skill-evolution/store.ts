@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 import type { Logger } from "../../log.ts";
-import { fileExists, listMarkdown } from "../../util/markdown-store.ts";
+import { fileExists, listMarkdown, MEMORY_INDEX_FILENAME } from "../../util/markdown-store.ts";
 
 /**
  * The skill-impact ledger: the store's one host-written file. Every row is a verified proposal
@@ -180,10 +180,25 @@ export const listPatternPages = async (dir: string): Promise<string[]> =>
   (await listMarkdown(dir)).filter((name) => name !== IMPACT_LOG_FILENAME);
 
 /**
+ * Whether `name` can name a pattern page at all — the only shape `listPatternPages` returns: a
+ * `.md` basename that is neither of the store's structural files.
+ */
+const canNamePatternPage = (name: string): boolean =>
+  name.endsWith(".md") &&
+  !name.includes("/") &&
+  name !== MEMORY_INDEX_FILENAME &&
+  name !== IMPACT_LOG_FILENAME;
+
+/**
  * The never-re-proposed rule, enforced input-side (R1/R8): a pattern page carrying ANY ledger
- * entry — `proposed`, `accepted`, or `rejected` — is dropped from the proposal candidates. A
- * row whose linked pattern page no longer exists on disk (user-edited store) is warned and
- * skipped: it can only block a pattern that isn't a candidate anyway. Never fatal.
+ * entry — `proposed`, `accepted`, or `rejected` — is dropped from the proposal candidates.
+ *
+ * The ledger is append-only, so a row outlives its page: the maintenance pass empties a page once
+ * its pattern is fixed or merged away and the sweep removes the file, while the row stays as the
+ * record. A row naming no live page is that history — it names no candidate, so it blocks
+ * nothing and is not an anomaly, whatever its status and whatever removed the page. Only a
+ * reference that can never name a page is warned: that is a broken row, not a retired pattern,
+ * and it is kept rather than skipped because its git facts are still real. Never fatal.
  */
 export const filterEligible = (
   patterns: readonly string[],
@@ -192,17 +207,30 @@ export const filterEligible = (
 ): string[] => {
   const pages = new Set(patterns);
   const blocked = new Set<string>();
+  let withoutLivePage = 0;
 
   for (const row of logRows) {
-    if (!pages.has(row.pattern)) {
-      log.warn(
-        { pattern: row.pattern, branch: row.branch },
-        "impact-log row references a missing pattern page — skipped",
-      );
+    if (pages.has(row.pattern)) {
+      blocked.add(row.pattern);
       continue;
     }
 
-    blocked.add(row.pattern);
+    withoutLivePage += 1;
+
+    if (!canNamePatternPage(row.pattern)) {
+      log.warn(
+        { pattern: row.pattern, branch: row.branch },
+        "impact-log row's pattern reference cannot name a pattern page — it blocks nothing",
+      );
+    }
+  }
+
+  // One line per run, not one per row: the count grows with history, the log must not.
+  if (withoutLivePage > 0) {
+    log.debug(
+      { rows: logRows.length, withoutLivePage },
+      "impact-ledger rows without a live pattern page — history, nothing blocked",
+    );
   }
 
   return patterns.filter((pattern) => !blocked.has(pattern));
