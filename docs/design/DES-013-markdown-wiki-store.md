@@ -2,7 +2,7 @@
 
 **Scope**: Project-wide
 **Date**: 2026-08-30
-**Last Updated**: 2026-08-30
+**Last Updated**: 2026-11-28
 
 ## Pattern
 
@@ -14,6 +14,7 @@ A feature's accumulated knowledge lives as **wiki-style markdown in a feature-ow
 - **Empty-then-sweep deletion** — a page whose content was folded away becomes blank and is deleted after the run (`sweepEmptyMarkdown`, with a preserve list for other structural files).
 - **Conventions are agent-enforced through shared prompt sections** — one store-conventions block reused by every prompt that touches the store, so every writer follows the same rules.
 - **Deterministic facts never go through the agent** — SHAs, dates, statuses, and other bookkeeping belong in a host-written structural file (skill-evolution's `skill-impact-log.md`), never in an agent-written page.
+- **Ledger rows outlive the pages they name** — a host-written ledger is append-only, so a row stays after its page is folded away and swept; a row naming no live page is history (it resolves nothing and blocks nothing), not a dangling reference to repair or warn about. This is the one place inside a wiki store where a reference outlives its target; the index-entry rule above still holds for agent-written pages. A reference that cannot name a page at all is the one broken shape — a broken row, warned and kept, never skipped like a malformed one.
 - **Seeding is skip-if-exists** — the layout bootstrap creates dirs and structural files only when absent, so user edits survive.
 - **Parsing is lenient** — the store is user-editable; malformed rows/entries are logged and skipped, never fatal.
 
@@ -35,6 +36,9 @@ memories/<store>/
 
 // host sweep after each writer run
 await sweepEmptyMarkdown(storeDir, { preserve: [LEDGER_FILENAME] })
+
+// reading a ledger whose pages were swept
+rowNamingNoLivePage → history: no warn, one debug aggregate    // the end state of a handled pattern
 ```
 
 **Why**: Discovery, authority (one page per topic), bounded size, and no husks are each enforced by exactly one convention — and the sweep preserves the structural files that make the store navigable.
@@ -46,6 +50,7 @@ await sweepEmptyMarkdown(storeDir, { preserve: [LEDGER_FILENAME] })
 // index entries left behind for swept pages                    // ❌ the index points at nothing
 // an agent-written ledger of SHAs/statuses                     // ❌ LLM-written SHAs are a defect class
 // strict table/entry parsing that throws on user edits         // ❌ the store is user-editable; skip, log
+// warn (or prune) per ledger row whose page was swept          // ❌ the normal end state of every handled pattern
 ```
 
 **Why**: Per-incident pages defeat the index and duplicate themes; stale index entries break discovery; agent-written deterministic facts introduce exactly the drift the ledger exists to prevent; strict parsing turns user edits into crashes.
