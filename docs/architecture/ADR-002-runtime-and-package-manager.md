@@ -46,3 +46,4 @@ pnpm runs no dependency's build unless the repository decides on it. `allowBuild
 
 - Related: [ADR-016](ADR-016-minimum-release-age.md), the other policy kept in `pnpm-workspace.yaml`, and [ADR-004](ADR-004-persistence-layer.md) for better-sqlite3's denied build
 - Where the rule was read: pnpm 11.3.0's own distribution (`pkgRequiresBuild` and `filesIncludeInstallScripts` in `dist/worker.js`, `handleIgnoredBuilds` in `installing/commands`) and three probe installs
+- Where the Node floor is also load-bearing: `process.execve` (experimental, Stability 1) exists since v22.15.0 and is what replaces the process in place on a `restart_self` / `upgrade_self` and the boot-time rollback (see [self-update](../feature-designs/self-update.md)). A floor below 22.15 would take the re-exec away with it

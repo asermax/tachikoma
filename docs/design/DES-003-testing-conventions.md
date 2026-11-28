@@ -12,7 +12,7 @@ This document establishes the testing conventions for this repo's stack: vitest 
 
 ### 1. Directory structure
 
-Tests mirror the source layout: extension tests live in `tests/<extension>/<topic>.test.ts`, matching `src/extensions/<extension>/<topic>.ts`; core tests sit at the `tests/` root (`config.test.ts`, `db.test.ts`, `events.test.ts`, `adapter.test.ts`, `smoke.test.ts`). Shared per-area fixtures go in `tests/<extension>/setup.ts` or `helpers.ts` — plain modules imported explicitly, never auto-loaded.
+Tests mirror the source layout: extension tests live in `tests/<extension>/<topic>.test.ts`, matching `src/extensions/<extension>/<topic>.ts`; core tests sit at the `tests/` root (`config.test.ts`, `db.test.ts`, `events.test.ts`, `adapter.test.ts`, `smoke.test.ts`). Shared per-area fixtures go in `tests/<extension>/setup.ts` or `helpers.ts` — plain modules imported explicitly, never auto-loaded. A fixture that must run as a process of its own is a script under `tests/<extension>/fixtures/`, shares its contract through the area's `setup.ts`, and is spawned, never imported.
 
 Naming: `describe("<function or unit>")` blocks with `it("<behavior in plain prose>")` cases. Import test APIs by name from `vitest` (`describe`, `it`, `expect`, `vi`) — no globals.
 
