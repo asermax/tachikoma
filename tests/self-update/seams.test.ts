@@ -123,18 +123,22 @@ describe("ProcessRestarter", () => {
     expect(JSON.parse(await readFile(lock, "utf8"))).toMatchObject({ pid: fixture.child.pid });
   }, 20_000);
 
-  it("re-execs the given command line and environment", () => {
+  it("re-execs the given command line and environment", async () => {
     const execve = recordingExecve();
-    const argv = ["/usr/bin/node", "/app/main.js", "--channel", "telegram"];
+    // An executable the test creates, not the test runner's node: the restarter checks the
+    // path it is given, and no host keeps node where a test may assume.
+    const execPath = join(await tempDir(), "node");
+    await writeFile(execPath, "", { mode: 0o755 });
+    const argv = [execPath, "/app/main.js", "--channel", "telegram"];
     const env = { PATH: "/bin", HOME: "/home/tachikoma" };
 
-    expect(() =>
-      new ProcessRestarter(fakeLog, { execve, execPath: "/usr/bin/node", argv, env }).restart(),
-    ).toThrow("__execve__");
+    expect(() => new ProcessRestarter(fakeLog, { execve, execPath, argv, env }).restart()).toThrow(
+      "__execve__",
+    );
 
-    expect(execve).toHaveBeenCalledWith("/usr/bin/node", argv, env);
+    expect(execve).toHaveBeenCalledWith(execPath, argv, env);
     expect(fakeLog.warn).toHaveBeenCalledWith(
-      { execPath: "/usr/bin/node" },
+      { execPath },
       "re-executing process to load the new version",
     );
   });
