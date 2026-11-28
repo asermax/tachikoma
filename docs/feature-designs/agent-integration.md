@@ -140,22 +140,39 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 - Pro: a follow-up inside the window can reuse the trunk's warm prompt cache, with no wiring of Tachikoma's own
 - Con: possible provider cost while the trunk sits idle after an exchange, for a model that declares a cache lifetime. The maintainer checks the logs a few minutes after an exchange for cache-warming errors
 
+### The summary chain descends from the session's system message
+
+**Choice**: The session-tree seam appends a branch summary that has no summary above it under the session's system message — the root-most declaration on the live branch's path — rather than as a parentless root. Topic summaries extend the one before them and a tangent summary hangs at its checkpoint, so every summary descends from the day's declaration.
+**Why**: pi builds each request from the session file's leaf path, tools and prompt sections included, and replays them from the system messages on that path. A summary chain that starts at the day's system message carries them on every path the trunk can continue from — the chain, a rollback rewind, a reopen's re-seat — and a collapse adds no declaration of its own; a leaf moved onto such a path without the seam still sends the full tool set. The append-only trunk model this rides on is [ADR-014](../architecture/ADR-014-session-source-of-truth.md)'s, and the verified pi mechanism is tracked in `docs/reference/pi-sdk-notes.md`.
+**Alternatives Considered**:
+
+- A parentless first summary, with the re-sync alone: every collapse and every same-day restart persists a full copy of the prompt sections and the tool declarations, and the trunk's context depends on the re-sync rather than on the tree's shape
+- Hanging the summary under the latest system message on the path: a declaration pi wrote mid-topic sits below the topic's own turns, so the summary would carry them onto the trunk
+- Resolving the first summary's parent at each caller: `null` already means "no summary above" to the coordinator, the reopen and rollback alike, so the seam is the one place that has to know which entry it names
+- Rewriting the summaries of trunks already on disk into the rooted shape: it touches markers keyed by summary id, rollback targets and the channel ledger, for a file that is closed at midnight; the re-sync covers those trunks instead
+
+**Consequences**:
+
+- Pro: every request on such a trunk carries the tool set and the prompt sections from its own path, whatever path it is built from, and a collapse or a restart persists no copy of them
+- Pro: the property holds by construction — a collapse, a rollback rewind or a reopen lands on a path that already declares the tools
+- Con: a first-topic summary's `details.baseId` is `null`, which says that no summary is above it but not that its parent is the system message
+
 ### A leaf move re-syncs the agent's in-memory transcript
 
 **Choice**: The session-tree seam's two leaf-moving wrappers (`branchWithSummary`, `reseatLeaf`) end by calling pi's `session.refreshContext()`, which rebuilds the agent's in-memory transcript from the session file's projection at the new leaf. They do not write the prompt sections or tool declarations themselves: pi persists those at the next request, on any path that lacks them.
-**Why**: pi builds each request from the session file's leaf path, tools and prompt sections included, but decides what to declare by diffing against the in-memory transcript, and it re-syncs that transcript only after changes it commits through its own session layer. A raw leaf move onto a trunk's summary chain — which carries no system message — leaves the transcript reporting everything as declared, so the request goes out with no tools and the model prints tool calls as text or answers with nothing. The seam is the one place that wraps leaf moves, so the rule holds for every caller: the topic collapse, the same-day reopen, a rollback rewind and the tangent fold.
+**Why**: pi builds each request from the session file's leaf path, tools and prompt sections included, but decides what to declare by diffing against the in-memory transcript, and it re-syncs that transcript only after changes it commits through its own session layer. A leaf move made through `SessionManager` directly leaves the transcript on the old path, and a request built from a path that declares less than the transcript reports goes out with the difference missing: every tool on a trunk whose chain starts at a parentless summary, or one tool switched on inside an abandoned topic. The seam is the one place that wraps leaf moves, so the rule holds for every caller: the topic collapse, the same-day reopen, a rollback rewind and the tangent fold.
 **Alternatives Considered**:
 
 - Assigning the projection to `session.agent.state.messages` by hand: the same transcript, without the bookkeeping pi keeps beside it, which `refreshContext()` also refills
 - Writing a copy of the current system message at collapse time: duplicates pi's declaration logic and couples the seam to that entry's shape
-- Rooting the summary chain under the session's first system message: a file-layout change that needs a migration for trunks already on disk and still leaves the in-memory transcript out of step with the file
+- Ending the re-sync once the chain is rooted: a trunk whose chain starts at a parentless summary sends requests with no tools after its next collapse or reopen, and a tool switched on inside an abandoned topic is missing from every later topic
 - Routing collapses through pi's public `navigateTree()`: it navigates to an existing entry, so it cannot express a collapse onto a fresh root summary, and it moves summarization into an extension event, which breaks the collapse's no-partial-writes contract
 
 **Consequences**:
 
-- Pro: every request on the trunk carries the tool set and the prompt sections, whatever path it is built from, and it is independent of how many collapses or restarts came before
-- Pro: a re-seat onto a path that already declares the tools writes nothing extra
-- Con: one system-message entry is persisted per collapse and per same-day restart, carrying a full copy of the prompt sections and the tool declarations
+- Pro: every request on the trunk carries the tool set and the prompt sections, whatever path it is built from, including on a trunk whose chain starts at a parentless summary
+- Pro: on a chain that descends from the system message the re-sync writes nothing extra, and a tool switched on inside an abandoned topic comes back as a small delta
+- Con: on a trunk whose chain starts at a parentless summary, one system-message entry is persisted per collapse and per same-day restart, carrying a full copy of the prompt sections and the tool declarations
 - Con: the rule assumes leaf moves happen between exchanges, when the in-memory transcript is fully persisted; the seam documents the precondition and does not enforce it
 
 ## System Behavior
@@ -184,11 +201,11 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 **When**: An exchange ends and the trunk stays open
 **Then**: pi may keep the prompt cache warm for up to 30 minutes, sending a refresh only while it expects the refresh to pay for itself. Each refresh is persisted as a `cache_warm` usage entry and left out of the exchange's reported usage. Forks and headless runs do not warm, because they are disposed when they finish.
 
-### Scenario: The first request after a leaf move
+### Scenario: The first request after a topic collapse
 
-**Given**: A trunk whose leaf sits, after a topic collapse or a same-day reopen, on a path with no system message of its own
+**Given**: A trunk whose leaf sits, after a topic collapse, on the day's summary chain
 **When**: The next message is prompted
-**Then**: The request declares the session's full tool set and prompt sections. The leaf move re-syncs the agent's in-memory transcript onto the new path, so pi finds nothing declared there and persists one system message as the first entry under the new base, ahead of the user message. A rollback rewind onto a path that already declares the tools adds no second declaration.
+**Then**: The request carries the session's full tool set and prompt sections, replayed from the system message the chain descends from, and pi writes no new declaration. On a trunk whose chain starts at a parentless summary, the leaf move re-syncs the agent's in-memory transcript onto the new path and pi finds nothing declared there, so it persists one system message as the first entry under the new base, ahead of the user message. A rollback rewind onto a path that already declares the tools adds no new declaration.
 
 ### Scenario: Headless extraction run
 
@@ -201,4 +218,4 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 - `SettingsManager.create(workspace.root, workspace.piDir)` keeps pi settings inside the data dir alongside auth and `models.json` — nothing under `~/.pi` is written unless the machine-level auth store is the active one. pi's `cacheWarming` setting is read from this directory's `settings.json` (`{workspace}/.tachikoma/pi/settings.json`) and nowhere else in the tree: it is a global setting, and Tachikoma sets none.
 - No tier has a built-in default: all four `[agent]` fields are `Type.Optional(Type.String())` with no schema default (`src/config/schema.ts`). The `provider/model-id` strings shown in the generated config template (`main`/`searcher` → `anthropic/claude-opus-4-5`, `processor`/`classifier` → `anthropic/claude-haiku-4-5`) are commented-out example values, not active defaults. An unset chain defers to pi's own resolution (settings `defaultProvider`/`defaultModel`, else the first credentialed model).
 - `run()` returns only final text; structured output from tool-using runs would need pi's `terminate: true` pattern, deliberately not built yet.
-- The session-tree seam (`src/agent/session-tree.ts`) wraps the append-only `SessionManager` primitives [ADR-014](../architecture/ADR-014-session-source-of-truth.md) adopted for the trunk model: `branchWithSummary` (collapse + re-seat), `reseatLeaf` (`branch(id)` — move the leaf to an earlier entry), and `appendState`/`appendInContextEntry` (`appendCustomEntry`/`appendCustomMessageEntry`). There is no delete primitive; `/rollback`'s rewind is a `branch(id)` re-seat that leaves the wrong-framing exchange as an inert off-path branch. The verified surface is tracked in `docs/reference/pi-sdk-notes.md` and re-checked on upgrade. Both leaf-moving wrappers end by re-syncing the agent's in-memory transcript from the file's projection (see the key decision above); `tests/agent/session-tree-projection.test.ts` runs them against a real, offline pi session.
+- The session-tree seam (`src/agent/session-tree.ts`) wraps the append-only `SessionManager` primitives [ADR-014](../architecture/ADR-014-session-source-of-truth.md) adopted for the trunk model: `branchWithSummary` (collapse + re-seat), `reseatLeaf` (`branch(id)` — move the leaf to an earlier entry), and `appendState`/`appendInContextEntry` (`appendCustomEntry`/`appendCustomMessageEntry`). There is no delete primitive; `/rollback`'s rewind is a `branch(id)` re-seat that leaves the wrong-framing exchange as an inert off-path branch. The verified surface is tracked in `docs/reference/pi-sdk-notes.md` and re-checked on upgrade. A summary with no summary above it is appended under the session's system message (`branchWithSummary`) — or, when the live path carries no system message, left a parentless root, as pi writes it — and both leaf-moving wrappers end by re-syncing the agent's in-memory transcript from the file's projection (see the key decisions above); `tests/agent/session-tree-projection.test.ts` runs them against a real, offline pi session.
