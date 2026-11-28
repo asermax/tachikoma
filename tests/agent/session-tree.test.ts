@@ -84,17 +84,18 @@ describe("session-tree helpers", () => {
     const session = makeSession({
       getBranch: vi.fn(() => [declaration("sys-1"), { id: "summary-1" }]),
     });
-
-    branchWithSummary(session, "summary-1", "summary text", {
+    const secondTopic: BranchSummaryDetails = {
       ...firstTopic,
       branchId: "topic-2",
       baseId: "summary-1",
-    });
+    };
+
+    branchWithSummary(session, "summary-1", "summary text", secondTopic);
 
     expect(session.sessionManager.branchWithSummary).toHaveBeenCalledWith(
       "summary-1",
       "summary text",
-      expect.objectContaining({ baseId: "summary-1" }),
+      secondTopic,
       true,
     );
   });
@@ -149,12 +150,7 @@ describe("session-tree helpers", () => {
       calls.push("re-sync");
     });
 
-    branchWithSummary(session, null, "summary text", {
-      customType: "branch-summary",
-      branchId: "topic-1",
-      originalLeafId: "leaf-9",
-      baseId: null,
-    });
+    branchWithSummary(session, null, "summary text", firstTopic);
 
     // Every step records itself once, so this pins the order and that the re-sync runs exactly once.
     // It reads the leaf the raw move left behind, so it has to run after the move.

@@ -65,13 +65,14 @@ const SHAPES = ["forced-prompt", "plain"] as const;
 type Shape = (typeof SHAPES)[number];
 
 /**
- * A tool that is registered when the session opens and switched on by a test between two turns: the
- * way an extension adds a tool while a topic runs.
+ * A tool that every session registers inactive and a test switches on between two turns: the way an
+ * extension adds a tool while a topic runs.
  */
 const lateTool: ToolDefinition = {
   name: LATE_TOOL,
   label: "Late",
   description: "A tool switched on while a topic runs.",
+  defaultActive: false,
   parameters: Type.Object({}, { additionalProperties: false }),
   async execute() {
     return { content: [{ type: "text", text: "late" }], details: undefined };
@@ -85,11 +86,6 @@ interface RequestContext {
   /** Their names, for the cases that look for one tool. */
   toolNames: string[];
   sections: string[];
-}
-
-interface SessionOptions {
-  /** Register the late tool, inactive until a test switches it on. */
-  lateTool?: boolean;
 }
 
 interface Trunk {
@@ -161,11 +157,7 @@ const recordingStream =
   };
 
 const openSession =
-  (
-    requests: RequestContext[],
-    shape: Shape,
-    sessionOptions: SessionOptions = {},
-  ): AgentManager["open"] =>
+  (requests: RequestContext[], shape: Shape): AgentManager["open"] =>
   async (options) => {
     const sessionFile = options?.sessionFile;
     const loader = new DefaultResourceLoader({
@@ -187,9 +179,9 @@ const openSession =
       cwd: workDir,
       agentDir,
       model,
-      // A hard `tools` allowlist filters custom tools out, so the late-tool variant leaves it out and
-      // names the active set after open instead.
-      ...(sessionOptions.lateTool ? { customTools: [lateTool] } : { tools: TOOLS }),
+      // Opened without a `tools` allowlist, as production does: an allowlist would filter the late
+      // tool out. The active set is named after open instead.
+      customTools: [lateTool],
       resourceLoader: loader,
       sessionManager:
         sessionFile == null
@@ -199,7 +191,7 @@ const openSession =
       modelRuntime,
     });
     await session.bindExtensions({});
-    if (sessionOptions.lateTool) session.setActiveToolsByName(TOOLS);
+    session.setActiveToolsByName(TOOLS);
     session.agent.streamFunction = recordingStream(requests);
     openSessions.push(session);
     return session;
@@ -219,17 +211,24 @@ const collapseLiveBranch = async (session: AgentSession, branchId: string): Prom
   return collapsed.newBaseId;
 };
 
+/**
+ * pi's collapse on its own, the seam bypassed: a summary at `base`, the leaf moved onto it and no
+ * re-sync.
+ */
+const rawCollapse = (session: AgentSession, base: string | null): string =>
+  session.sessionManager.branchWithSummary(base, "A summary of the abandoned branch.", {}, true);
+
 /** The session file, read with pi's own parser: the header followed by every entry. */
 const fileEntries = async (file: string): Promise<FileEntry[]> =>
   parseSessionEntries(await readFile(file, "utf8"));
 
 /** Open today's trunk the way the coordinator does: fresh, or reopened and re-seated onto its base. */
-const openTrunk = async (shape: Shape, sessionOptions: SessionOptions = {}): Promise<Trunk> => {
+const openTrunk = async (shape: Shape): Promise<Trunk> => {
   const requests: RequestContext[] = [];
 
   const { session } = await openOrCreateTrunk(
     {
-      agent: { open: openSession(requests, shape, sessionOptions) },
+      agent: { open: openSession(requests, shape) },
       trunk: trunkState,
       now: () => new Date(`${DAY}T12:00:00.000Z`),
       timezone: "UTC",
@@ -497,20 +496,14 @@ describe("session-tree seam against pi's request projection", () => {
 
     // Both moves bypass the seam, so nothing re-syncs the in-memory transcript. The bases are the
     // ones the seam picks: the day's declaration, then the summary before.
-    const { sessionManager } = trunk.session;
-    const systemId = sessionManager
+    const systemId = trunk.session.sessionManager
       .getBranch()
       .find((entry) => entry.type === "message" && entry.message.role === "system")?.id;
     if (systemId == null) throw new Error("the trunk carries no system message");
 
-    const firstSummary = sessionManager.branchWithSummary(
-      systemId,
-      "A summary of the abandoned branch.",
-      {},
-      true,
-    );
+    const firstSummary = rawCollapse(trunk.session, systemId);
     const second = await trunk.ask("topic 2");
-    sessionManager.branchWithSummary(firstSummary, "A summary of the abandoned branch.", {}, true);
+    rawCollapse(trunk.session, firstSummary);
     const third = await trunk.ask("topic 3");
 
     expect(second.tools).toBe(TOOLS.length);
@@ -524,12 +517,7 @@ describe("session-tree seam against pi's request projection", () => {
     const first = await openTrunk("plain");
     await first.ask("topic 1");
     const { session } = first;
-    const rootless = session.sessionManager.branchWithSummary(
-      null,
-      "A summary of the abandoned branch.",
-      {},
-      true,
-    );
+    const rootless = rawCollapse(session, null);
     writeBoomerangState(session, {
       currentTopicBaseId: rootless,
       lastDecision: "shift",
@@ -555,7 +543,7 @@ describe("session-tree seam against pi's request projection", () => {
   });
 
   it("declares again, as a delta, a tool switched on inside an abandoned topic", async () => {
-    const trunk = await openTrunk("plain", { lateTool: true });
+    const trunk = await openTrunk("plain");
     expect((await trunk.ask("topic 1")).toolNames).toEqual(TOOLS);
 
     trunk.session.setActiveToolsByName([...TOOLS, LATE_TOOL]);
@@ -563,12 +551,9 @@ describe("session-tree seam against pi's request projection", () => {
     await trunk.shift("topic-1");
     const next = await trunk.ask("topic 2");
 
-    const withLateTool = expect.arrayContaining([...TOOLS, LATE_TOOL]);
-    expect(switchedOn.toolNames).toEqual(withLateTool);
-    expect(switchedOn.tools).toBe(TOOLS.length + 1);
+    expect(switchedOn.toolNames).toEqual([...TOOLS, LATE_TOOL]);
     // The next topic carries the tool again, declared by a delta that holds only it.
-    expect(next.toolNames).toEqual(withLateTool);
-    expect(next.tools).toBe(TOOLS.length + 1);
+    expect(next.toolNames).toEqual([...TOOLS, LATE_TOOL]);
     expect(await declarationsIn(trunk.file())).toEqual([TOOLS, [LATE_TOOL], [LATE_TOOL]]);
   });
 });
