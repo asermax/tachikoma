@@ -1,3 +1,10 @@
+## [3.84.2](https://github.com/asermax/tachikoma/compare/v3.84.1...v3.84.2) (2026-11-28)
+
+
+### Bug Fixes
+
+* **agent:** root the trunk's summary chain at the system message ([51a8392](https://github.com/asermax/tachikoma/commit/51a8392742592bbe370dd7211b063ce9906864fe))
+
 ## [3.84.1](https://github.com/asermax/tachikoma/compare/v3.84.0...v3.84.1) (2026-11-27)
 
 
