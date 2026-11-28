@@ -11,8 +11,10 @@ import { BRANCH_SUMMARY } from "../sessions/trunk.ts";
  *
  * The verified pi seam is tracked in `docs/reference/pi-sdk-notes.md` and must be re-checked on a pi
  * upgrade. That re-check covers how pi builds a request, not only the primitive signatures: since pi
- * 0.86.0 a request is projected from the session file's leaf path, which is why every leaf move here
- * is followed by a re-sync of the agent's in-memory transcript (`syncTranscriptToLeaf`).
+ * 0.86.0 a request is projected from the session file's leaf path, and its prompt sections and tools
+ * are replayed from the system messages on it. Two conventions keep a request complete (see
+ * `rootDeclarationId` and `syncTranscriptToLeaf`): the summary chain descends from the session's
+ * system message, and every leaf move brings the agent's in-memory transcript onto the new leaf.
  */
 
 /** Details we persist on every `branch_summary` entry so a collapsed branch stays walkable. */
@@ -34,7 +36,11 @@ export interface BranchSummaryDetails {
    * `getBranchEntries`/`AgentManager.branchFile` for `ask_branch` and per-branch extraction.
    */
   originalLeafId: string;
-  /** The base (current trunk tip) the branch extended; extraction slices from here forward. */
+  /**
+   * The base (current trunk tip) the branch extended; extraction slices from here forward. `null` when
+   * no summary precedes it: the branch that starts the day's trunk. Its entry then hangs under the
+   * session's system message (see `branchWithSummary`); the `null` says only that no summary is above.
+   */
   baseId: string | null;
   /** Why the shift happened (classifier/forced reason), for provenance. */
   reason?: string;
@@ -50,10 +56,17 @@ export interface BranchSummaryDetails {
  * against the in-memory transcript (`agent.state.messages`). pi re-syncs that transcript after every
  * change it commits through the session layer, its own leaf navigation included. Every write made
  * through `SessionManager` directly bypasses that layer, and a leaf move is the one that matters: it
- * puts the leaf on a different path while the transcript still describes the old one. Re-seating onto
- * a path with no system message — the trunk's summary chain — would then send requests with no tools
- * while the in-memory transcript still reports them as declared. `refreshContext()` is pi's own
- * re-sync: the transcript follows the leaf, together with the bookkeeping pi keeps beside it.
+ * puts the leaf on a different path while the transcript still describes the old one. Left there, a
+ * request built from a path that declares less than the transcript reports goes out with the
+ * difference missing — every tool, on a path with no system message. `refreshContext()` is pi's own
+ * re-sync: the transcript follows the leaf, together with the bookkeeping pi keeps beside it, and pi's
+ * diff then declares exactly what the new path lacks.
+ *
+ * The trunk's summary chain descends from the session's system message (`rootDeclarationId`), so the
+ * path already carries the prompt sections and tools after a collapse or a reopen onto it, and there
+ * is nothing to declare. The re-sync still earns its place where that is not so: on a trunk whose
+ * chain was written before it was rooted, which gets a full declaration again, and for a tool switched
+ * on inside the abandoned topic, which comes back as a small delta on the next one.
  *
  * Call only between exchanges: the in-memory transcript must be fully persisted, or the re-sync drops
  * its unpersisted tail from the declaration baseline.
@@ -67,11 +80,32 @@ const syncTranscriptToLeaf = (session: AgentSession): void => {
 };
 
 /**
+ * The entry a summary with no summary above it hangs under: the session's system message, the
+ * root-most declaration on the live branch's path. pi replays a request's prompt sections and tool
+ * declarations from the system messages on the leaf path, so a summary chain that starts there
+ * carries them on every path the trunk can continue from — the chain itself, a rollback rewind, a
+ * reopen's re-seat. It is the root-most one on purpose: a later system message (a tool switched on
+ * mid-topic) sits below the topic's own turns, so a summary hung under it would carry them onto the
+ * trunk.
+ *
+ * `null` when the live path carries no system message; the summary is then a parentless root, as pi
+ * writes it.
+ */
+const rootDeclarationId = (session: AgentSession): string | null =>
+  getBranchEntries(session).find(
+    (entry) => entry.type === "message" && entry.message.role === "system",
+  )?.id ?? null;
+
+/**
  * Collapse the current branch into a `branch_summary` entry appended at `branchFromId` and re-seat
  * the leaf there. `fromHook` is always true (the summary is extension-generated, not pi-native).
  * Returns the new summary entry id (the advanced base). The agent's in-memory transcript follows the
- * leaf (`syncTranscriptToLeaf`), so the next request on the new base declares the prompt sections and
- * tools again when its path carries none.
+ * leaf (`syncTranscriptToLeaf`).
+ *
+ * A `null` base — a topic summary with no summary above it — is rooted at the session's system message
+ * (`rootDeclarationId`) instead of becoming a parentless root, so the topic chain descends from the day's
+ * declaration. A summary with a base extends it and a tangent summary hangs at its checkpoint; both
+ * already descend from that entry.
  */
 export const branchWithSummary = (
   session: AgentSession,
@@ -79,7 +113,13 @@ export const branchWithSummary = (
   summary: string,
   details: BranchSummaryDetails,
 ): string => {
-  const summaryId = session.sessionManager.branchWithSummary(branchFromId, summary, details, true);
+  // Resolved before the move, while the leaf is still on the live branch.
+  const summaryId = session.sessionManager.branchWithSummary(
+    branchFromId ?? rootDeclarationId(session),
+    summary,
+    details,
+    true,
+  );
 
   syncTranscriptToLeaf(session);
 

@@ -8,7 +8,7 @@ import {
   getCurrentSystemMessage,
   getCurrentTools,
 } from "@earendil-works/pi-ai";
-import type { AgentSession, FileEntry } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, FileEntry, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
   buildSessionProjection,
   createAgentSession,
@@ -18,6 +18,7 @@ import {
   SessionManager,
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentManager } from "../../src/agent/manager.ts";
 import { appendInContextEntry, getLeafId, reseatLeaf } from "../../src/agent/session-tree.ts";
@@ -26,7 +27,12 @@ import { provideContext } from "../../src/agent/system-prompt-section.ts";
 import { type AppDatabase, createDatabase, runMigrations } from "../../src/db/index.ts";
 import { KeyValueState } from "../../src/db/state.ts";
 import { collapseCurrentTopic } from "../../src/extensions/boundary/collapse.ts";
-import { openOrCreateTrunk, readBoomerangState, TrunkState } from "../../src/sessions/trunk.ts";
+import {
+  openOrCreateTrunk,
+  readBoomerangState,
+  TrunkState,
+  writeBoomerangState,
+} from "../../src/sessions/trunk.ts";
 import { fakeLogger } from "../git/helpers.ts";
 
 /**
@@ -37,11 +43,16 @@ import { fakeLogger } from "../git/helpers.ts";
  * `AgentSession` through the production leaf moves (the topic collapse, the same-day reopen, a
  * rollback-style rewind) and read what a provider would have received.
  *
+ * The trunk's summary chain descends from the session's system message, so every path the trunk
+ * continues from carries the day's declaration (its prompt sections and tool declarations). The seam's
+ * re-sync after a leaf move keeps the in-memory transcript on that path.
+ *
  * No model is called and nothing touches the network: the session's stream function is replaced with
  * a recorder, and the credential on disk only satisfies `prompt()`'s auth preflight.
  */
 
 const TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+const LATE_TOOL = "late_tool";
 /** A model from pi's built-in catalog. The version is pinned, so the entry is stable. */
 const MODEL = { provider: "anthropic", id: "claude-sonnet-4-5" } as const;
 const DAY = "2026-11-27";
@@ -53,10 +64,32 @@ const DAY = "2026-11-27";
 const SHAPES = ["forced-prompt", "plain"] as const;
 type Shape = (typeof SHAPES)[number];
 
+/**
+ * A tool that is registered when the session opens and switched on by a test between two turns: the
+ * way an extension adds a tool while a topic runs.
+ */
+const lateTool: ToolDefinition = {
+  name: LATE_TOOL,
+  label: "Late",
+  description: "A tool switched on while a topic runs.",
+  parameters: Type.Object({}, { additionalProperties: false }),
+  async execute() {
+    return { content: [{ type: "text", text: "late" }], details: undefined };
+  },
+};
+
 /** What a provider would have received, read the way pi reads a request. */
 interface RequestContext {
+  /** How many tools the request declares. */
   tools: number;
+  /** Their names, for the cases that look for one tool. */
+  toolNames: string[];
   sections: string[];
+}
+
+interface SessionOptions {
+  /** Register the late tool, inactive until a test switches it on. */
+  lateTool?: boolean;
 }
 
 interface Trunk {
@@ -113,8 +146,10 @@ const recordingStream =
   (requests: RequestContext[]): AgentSession["agent"]["streamFunction"] =>
   (streamModel, context) => {
     const system = getCurrentSystemMessage(context.messages);
+    const toolNames = getCurrentTools(context.messages).map((tool) => tool.name);
     requests.push({
-      tools: getCurrentTools(context.messages).length,
+      tools: toolNames.length,
+      toolNames,
       sections: Object.keys(system?.sections ?? {}).sort(),
     });
 
@@ -126,7 +161,11 @@ const recordingStream =
   };
 
 const openSession =
-  (requests: RequestContext[], shape: Shape): AgentManager["open"] =>
+  (
+    requests: RequestContext[],
+    shape: Shape,
+    sessionOptions: SessionOptions = {},
+  ): AgentManager["open"] =>
   async (options) => {
     const sessionFile = options?.sessionFile;
     const loader = new DefaultResourceLoader({
@@ -148,7 +187,9 @@ const openSession =
       cwd: workDir,
       agentDir,
       model,
-      tools: TOOLS,
+      // A hard `tools` allowlist filters custom tools out, so the late-tool variant leaves it out and
+      // names the active set after open instead.
+      ...(sessionOptions.lateTool ? { customTools: [lateTool] } : { tools: TOOLS }),
       resourceLoader: loader,
       sessionManager:
         sessionFile == null
@@ -158,6 +199,7 @@ const openSession =
       modelRuntime,
     });
     await session.bindExtensions({});
+    if (sessionOptions.lateTool) session.setActiveToolsByName(TOOLS);
     session.agent.streamFunction = recordingStream(requests);
     openSessions.push(session);
     return session;
@@ -182,12 +224,12 @@ const fileEntries = async (file: string): Promise<FileEntry[]> =>
   parseSessionEntries(await readFile(file, "utf8"));
 
 /** Open today's trunk the way the coordinator does: fresh, or reopened and re-seated onto its base. */
-const openTrunk = async (shape: Shape): Promise<Trunk> => {
+const openTrunk = async (shape: Shape, sessionOptions: SessionOptions = {}): Promise<Trunk> => {
   const requests: RequestContext[] = [];
 
   const { session } = await openOrCreateTrunk(
     {
-      agent: { open: openSession(requests, shape) },
+      agent: { open: openSession(requests, shape, sessionOptions) },
       trunk: trunkState,
       now: () => new Date(`${DAY}T12:00:00.000Z`),
       timezone: "UTC",
@@ -237,11 +279,37 @@ const leafReplays = async (file: string): Promise<LeafReplay[]> => {
     });
 };
 
-/** How many system-message entries the file holds. A declaration is one such entry. */
-const countDeclarations = async (file: string): Promise<number> =>
-  (await fileEntries(file)).filter(
-    (entry) => entry.type === "message" && entry.message.role === "system",
-  ).length;
+/**
+ * The declarations in a session file, in file order, each as the tool names it adds. A declaration is
+ * a system-message entry; pi writes one per change it has to declare.
+ */
+const declarationsIn = async (file: string): Promise<string[][]> => {
+  const names: string[][] = [];
+
+  for (const entry of await fileEntries(file)) {
+    if (entry.type !== "message" || entry.message.role !== "system") continue;
+    names.push((entry.message.toolsAdded ?? []).map((tool) => tool.name));
+  }
+
+  return names;
+};
+
+/** Entry kinds along a session file's path from root to `leafId`: a message by its role. */
+const pathKinds = async (file: string, leafId: string): Promise<string[]> => {
+  const entries = (await fileEntries(file)).filter((entry) => entry.type !== "session");
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  const kinds: string[] = [];
+
+  for (
+    let entry = byId.get(leafId);
+    entry;
+    entry = entry.parentId ? byId.get(entry.parentId) : undefined
+  ) {
+    kinds.push(entry.type === "message" ? entry.message.role : entry.type);
+  }
+
+  return kinds.reverse();
+};
 
 const expectTranscriptOnLeaf = (session: AgentSession): void => {
   expect(session.agent.state.messages).toEqual(
@@ -324,18 +392,20 @@ describe("session-tree seam against pi's request projection", () => {
       const file = first.file();
       first.dispose();
 
-      // A restart right after a collapse: the file's last entry sits on a path with no system message.
+      // A restart right after a collapse.
       const second = await openTrunk(shape);
       const afterRestart = await second.ask("topic 3");
       second.dispose();
 
-      // A restart after a turn: the file's last entry now sits on a path that carries one.
+      // A restart after a turn.
       const third = await openTrunk(shape);
       const afterLaterRestart = await third.ask("topic 3, continued");
       expect(third.file()).toBe(file);
 
       expect(afterRestart.tools).toBe(TOOLS.length);
       expect(afterLaterRestart.tools).toBe(TOOLS.length);
+      // The trunk's path carries the day's declaration, so neither reopen adds one.
+      expect(await declarationsIn(file)).toHaveLength(1);
       if (shape === "plain") {
         // Same prompt sections as the first request after a collapse in a running process.
         expect(afterRestart.sections).toEqual(afterCollapse.sections);
@@ -357,12 +427,12 @@ describe("session-tree seam against pi's request projection", () => {
     first.dispose();
 
     const reopened = await openTrunk("plain");
-    const before = await countDeclarations(reopened.file());
+    const before = (await declarationsIn(reopened.file())).length;
 
     reseatLeaf(reopened.session, preDecisionLeaf);
     const request = await reopened.ask("topic 1, picked up again");
 
-    expect(await countDeclarations(reopened.file())).toBe(before);
+    expect((await declarationsIn(reopened.file())).length).toBe(before);
     expect(request.tools).toBe(TOOLS.length);
   });
 
@@ -378,7 +448,7 @@ describe("session-tree seam against pi's request projection", () => {
     expectTranscriptOnLeaf(reopened.session);
   });
 
-  it("replays a system message and the full tool set at every leaf of a twice-collapsed trunk", async () => {
+  it("replays one system message and the full tool set at every leaf of a twice-collapsed trunk", async () => {
     const trunk = await openTrunk("plain");
     await trunk.ask("topic 1");
     await trunk.shift("topic-1");
@@ -391,8 +461,114 @@ describe("session-tree seam against pi's request projection", () => {
     // Each finished topic ends on its own leaf: the abandoned tip, then the next one.
     expect(leaves).toHaveLength(3);
     for (const leaf of leaves) {
-      expect(leaf.systemMessages).toBeGreaterThan(0);
+      expect(leaf.systemMessages).toBe(1);
       expect(leaf.tools).toBe(TOOLS.length);
     }
+    // One declaration serves the whole day: a collapse writes none of its own.
+    expect(await declarationsIn(trunk.file())).toHaveLength(1);
+  });
+
+  it("hangs the first summary under the session's system message and keeps earlier topics' turns off the trunk", async () => {
+    const trunk = await openTrunk("plain");
+    await trunk.ask("topic 1");
+    await trunk.shift("topic-1");
+    await trunk.ask("topic 2");
+    await trunk.shift("topic-2");
+
+    const leaf = getLeafId(trunk.session);
+    if (leaf == null) throw new Error("the trunk has no leaf");
+
+    const kinds = await pathKinds(trunk.file(), leaf);
+    // From the day's declaration on: the summaries in order, then the boomerang snapshot the shift
+    // wrote and the pointer it injected. No turn of either earlier topic is on the path a new topic
+    // continues from.
+    expect(kinds.slice(kinds.indexOf("system"))).toEqual([
+      "system",
+      "branch_summary",
+      "branch_summary",
+      "custom",
+      "custom_message",
+    ]);
+  });
+
+  it("sends the full tool set after leaf moves made directly through SessionManager", async () => {
+    const trunk = await openTrunk("plain");
+    await trunk.ask("topic 1");
+
+    // Both moves bypass the seam, so nothing re-syncs the in-memory transcript. The bases are the
+    // ones the seam picks: the day's declaration, then the summary before.
+    const { sessionManager } = trunk.session;
+    const systemId = sessionManager
+      .getBranch()
+      .find((entry) => entry.type === "message" && entry.message.role === "system")?.id;
+    if (systemId == null) throw new Error("the trunk carries no system message");
+
+    const firstSummary = sessionManager.branchWithSummary(
+      systemId,
+      "A summary of the abandoned branch.",
+      {},
+      true,
+    );
+    const second = await trunk.ask("topic 2");
+    sessionManager.branchWithSummary(firstSummary, "A summary of the abandoned branch.", {}, true);
+    const third = await trunk.ask("topic 3");
+
+    expect(second.tools).toBe(TOOLS.length);
+    expect(third.tools).toBe(TOOLS.length);
+    expect(await declarationsIn(trunk.file())).toHaveLength(1);
+  });
+
+  it("still sends the full tool set from a trunk whose first summary is a parentless root", async () => {
+    // A trunk written before the chain was rooted. 3.84.x collapsed its first topic onto a parentless
+    // summary and re-synced, so the next request declared a copy of the system message under it.
+    const first = await openTrunk("plain");
+    await first.ask("topic 1");
+    const { session } = first;
+    const rootless = session.sessionManager.branchWithSummary(
+      null,
+      "A summary of the abandoned branch.",
+      {},
+      true,
+    );
+    writeBoomerangState(session, {
+      currentTopicBaseId: rootless,
+      lastDecision: "shift",
+      relatedBranchId: null,
+      checkpointId: null,
+      lastAutoDecision: null,
+    });
+    session.refreshContext();
+    await first.ask("topic 2");
+    const file = first.file();
+    first.dispose();
+
+    const reopened = await openTrunk("plain");
+    expect(reopened.file()).toBe(file);
+
+    // A reopen onto the rootless base, then a collapse on the chain it started.
+    const afterReopen = await reopened.ask("topic 2, continued");
+    await reopened.shift("topic-2");
+    const afterCollapse = await reopened.ask("topic 3");
+
+    expect(afterReopen.tools).toBe(TOOLS.length);
+    expect(afterCollapse.tools).toBe(TOOLS.length);
+  });
+
+  it("declares again, as a delta, a tool switched on inside an abandoned topic", async () => {
+    const trunk = await openTrunk("plain", { lateTool: true });
+    expect((await trunk.ask("topic 1")).toolNames).toEqual(TOOLS);
+
+    trunk.session.setActiveToolsByName([...TOOLS, LATE_TOOL]);
+    const switchedOn = await trunk.ask("topic 1, more");
+    await trunk.shift("topic-1");
+    const next = await trunk.ask("topic 2");
+
+    const withLateTool = expect.arrayContaining([...TOOLS, LATE_TOOL]);
+    expect(switchedOn.toolNames).toEqual(withLateTool);
+    expect(switchedOn.tools).toBe(TOOLS.length + 1);
+    // The next topic carries the tool again, declared by a delta that holds only it.
+    expect(next.toolNames).toEqual(withLateTool);
+    expect(next.tools).toBe(TOOLS.length + 1);
+    expect(await declarationsIn(trunk.file())).toEqual([TOOLS, [LATE_TOOL], [LATE_TOOL]]);
   });
 });

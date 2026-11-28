@@ -33,6 +33,17 @@ const makeSession = (overrides: Record<string, unknown> = {}) => {
   return { sessionManager, refreshContext: vi.fn() } as unknown as AgentSession;
 };
 
+/** A declaration: the system-message entry pi replays a request's prompt sections and tools from. */
+const declaration = (id: string): SessionEntry =>
+  ({ type: "message", id, message: { role: "system" } }) as unknown as SessionEntry;
+
+const firstTopic: BranchSummaryDetails = {
+  customType: "branch-summary",
+  branchId: "topic-1",
+  originalLeafId: "leaf-9",
+  baseId: null,
+};
+
 describe("session-tree helpers", () => {
   it("branchWithSummary always marks the entry as hook-generated", () => {
     const session = makeSession();
@@ -48,6 +59,55 @@ describe("session-tree helpers", () => {
       "base-1",
       "summary text",
       details,
+      true,
+    );
+  });
+
+  it("roots a first summary under the session's system message, not as a parentless root", () => {
+    const session = makeSession({
+      getBranch: vi.fn(() => [declaration("sys-1"), { id: "turn-1" }]),
+    });
+
+    expect(branchWithSummary(session, null, "summary text", firstTopic)).toBe("summary-1");
+
+    // Only the entry's parent changes. The details still say that no summary is above it.
+    expect(session.sessionManager.branchWithSummary).toHaveBeenCalledWith(
+      "sys-1",
+      "summary text",
+      firstTopic,
+      true,
+    );
+    expect(firstTopic.baseId).toBeNull();
+  });
+
+  it("extends the base it is given even when the path carries a system message", () => {
+    const session = makeSession({
+      getBranch: vi.fn(() => [declaration("sys-1"), { id: "summary-1" }]),
+    });
+
+    branchWithSummary(session, "summary-1", "summary text", {
+      ...firstTopic,
+      branchId: "topic-2",
+      baseId: "summary-1",
+    });
+
+    expect(session.sessionManager.branchWithSummary).toHaveBeenCalledWith(
+      "summary-1",
+      "summary text",
+      expect.objectContaining({ baseId: "summary-1" }),
+      true,
+    );
+  });
+
+  it("writes a parentless root when the live path carries no system message", () => {
+    const session = makeSession();
+
+    branchWithSummary(session, null, "summary text", firstTopic);
+
+    expect(session.sessionManager.branchWithSummary).toHaveBeenCalledWith(
+      null,
+      "summary text",
+      firstTopic,
       true,
     );
   });
