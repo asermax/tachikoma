@@ -102,10 +102,9 @@ const rootDeclarationId = (session: AgentSession): string | null =>
  * Returns the new summary entry id (the advanced base). The agent's in-memory transcript follows the
  * leaf (`syncTranscriptToLeaf`).
  *
- * A `null` base — a topic summary with no summary above it — is rooted at the session's system message
- * (`rootDeclarationId`) instead of becoming a parentless root, so the topic chain descends from the day's
- * declaration. A summary with a base extends it and a tangent summary hangs at its checkpoint; both
- * already descend from that entry.
+ * A `null` base is rooted at the session's system message (`rootDeclarationId`) instead of becoming
+ * a parentless root, so the topic chain descends from the day's declaration. A summary with a base
+ * extends it and a tangent summary hangs at its checkpoint; both already descend from that entry.
  */
 export const branchWithSummary = (
   session: AgentSession,
