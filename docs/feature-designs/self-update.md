@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains how Tachikoma updates itself in place: how a self-modifying, long-running process safely installs a new version of its own package and re-execs onto it, and how it recovers — automatically rolling back — when a new version fails to come up. The central design concern is testability of a subsystem whose real operations (install a global package, replace the running process) cannot run in a unit test, so the design is built around injectable seams that isolate those operations from the pure decision logic.
+This document explains how Tachikoma updates itself in place: how a self-modifying, long-running process safely installs a new version of its own package and re-execs onto it, and how it recovers — automatically rolling back — when a new version fails to come up. The central design concern is testability of a subsystem whose real operations (install a global package, replace the running process) cannot run inside the test process, so the design is built around injectable seams that isolate those operations from the pure decision logic.
 
 ## Problem Context
 
@@ -15,7 +15,7 @@ Tachikoma ships as the global npm package `@asermax/tachikoma`. Keeping a self-h
 
 **Constraints:**
 
-- The three dangerous operations — fetch the latest version, install a version globally, re-exec the process — have global side effects, so they are isolated behind interfaces and the logic around them tested against fakes (task seam requirement; DES-003 testing conventions). The registry and install seams are exercised only through fakes; the re-exec's mechanics are proven in a child process of their own (see Seams)
+- The three dangerous operations — fetch the latest version, install a version globally, re-exec the process — have global side effects, so they are isolated behind interfaces and the logic around them tested against fakes (task seam requirement; DES-003 testing conventions)
 - State must survive the re-exec boundary: the "an upgrade is in progress" marker is written by one process and read by its successor. It lives in the extension's namespaced KV state (`src/db/state.ts`) — the SQLite DB persists across the restart — so no dedicated table or drizzle migration is introduced
 - An upgrade that fails _after_ restart cannot be detected by the upgrading process (it is gone); only the next boot can notice, so rollback is a startup concern, not an upgrade concern
 - Auto-update must not loop: a version that rolled back must not be re-notified or re-attempted until something newer supersedes it
@@ -66,7 +66,7 @@ Every orchestrator (`runCheck`, `runUpgrade`, `reconcileStartup`) takes these as
 ### Seams isolate the dangerous ops; decisions are pure
 
 **Choice**: Split the subsystem into pure decision functions (`version.ts`, `decisions.ts`) and thin orchestrators (`checker.ts`, `upgrade.ts`, `startup.ts`) that wire three injectable seams (`RegistryClient`, `Installer`, `Restarter`). The real seam implementations contain no branching beyond error handling.
-**Why**: Installing a global package and re-execing the process cannot run in a unit test and have machine-global side effects. Pushing every decision (is this newer? should we notify? proceed/rollback?) into total, synchronous functions makes the logic exhaustively testable, and keeps the untestable code so thin that "tested logic + thin shell" gives high confidence.
+**Why**: Installing a global package and re-execing the process cannot run inside the test process and have machine-global side effects. Pushing every decision (is this newer? should we notify? proceed/rollback?) into total, synchronous functions makes the logic exhaustively testable, and keeps the untestable code so thin that "tested logic + thin shell" gives high confidence.
 **Alternatives Considered**: One class performing fetch/compare/install/restart with internal methods stubbed in tests via mocking the child-process module (brittle, couples tests to Node internals); shelling out to `npm` for both the version check and install (an extra process per check, and no clean seam boundary).
 **Consequences**:
 
@@ -127,6 +127,6 @@ Every orchestrator (`runCheck`, `runUpgrade`, `reconcileStartup`) takes these as
 
 - Pro: One process after any number of restarts, and the pre-restart memory is released before the successor boots
 - Pro: A boot-time rollback completes in one boot — the successor reclaims the lock recorded under its own pid
-- Pro: The re-exec's mechanics are testable in a child process (`tests/self-update/seams.test.ts`)
+- Pro: The re-exec's mechanics are testable in a child process
 - Con: `process.execve` is experimental (stability 1). The project relies on it being in every supported Node version, so the Node floor in ADR-002 also guards it
 - Con: The exec runs no exit handlers and flushes no pending I/O, so log lines buffered right before a restart are not written. A restart that throws after a deferred request leaves the tool's marker for the next boot to reconcile: a `restart_self` marker yields a "back online" notice, and an `upgrade_self` marker — its install already succeeded, so the next boot runs the installed target — is reconciled as a successful upgrade. Node CLI flags in `process.execArgv` are not replayed

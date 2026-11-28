@@ -107,8 +107,9 @@ export class CommandInstaller implements Installer {
 /** The process operations the real restarter performs. Tests substitute them. */
 export interface RestarterDeps {
   /**
-   * Replaces this process with `file`. Absent on platforms without `process.execve`
-   * (Windows, IBM i).
+   * Replaces this process with `file`. Node defines it on every platform and throws
+   * where the platform has no `execve(2)` (Windows, IBM i); only its type declaration
+   * is optional.
    */
   execve: typeof process.execve;
   /** The node binary to re-enter. */
@@ -130,14 +131,11 @@ const platformRestarterDeps = (): RestarterDeps => ({
 /**
  * Replaces the current process with a fresh boot of the same command line, so the
  * successor keeps this process's pid, parent, process group and stdio on every
- * launcher. The pre-restart image is gone before the successor runs: it holds no
- * memory and nothing waits on the successor — unlike a spawned replacement, which
- * leaves this process alive as its parent.
+ * launcher, and the pre-restart image is gone before the successor runs — a spawned
+ * replacement would keep this process alive as its parent.
  *
  * `process.execve` swaps the image without running exit handlers or flushing
- * pending I/O, and it is experimental. On Node < 26.1 a failed `execve(2)` aborts
- * the process instead of throwing, so the executable is checked first and an
- * impossible restart surfaces as a thrown error.
+ * pending I/O, and it is experimental. An impossible restart throws instead.
  */
 export class ProcessRestarter implements Restarter {
   private readonly log: Logger;
