@@ -251,17 +251,14 @@ describe("filterEligible", () => {
     );
   });
 
-  it("warns once for a reference that can never name a page, and blocks nothing", () => {
-    const unresolvable = [
-      "deploy-env-flag",
-      "sub/deploy-env-flag.md",
-      MEMORY_INDEX_FILENAME,
-      IMPACT_LOG_FILENAME,
-    ];
-
-    for (const pattern of unresolvable) {
-      vi.clearAllMocks();
-
+  it.each([
+    "deploy-env-flag",
+    "sub/deploy-env-flag.md",
+    MEMORY_INDEX_FILENAME,
+    IMPACT_LOG_FILENAME,
+  ])(
+    "warns once for a reference that can never name a page (%s), and blocks nothing",
+    (pattern) => {
       const eligible = filterEligible(
         ["pattern-a.md"],
         [entry({ pattern, branch: "skill-evolution/broken-reference" })],
@@ -279,6 +276,6 @@ describe("filterEligible", () => {
         { rows: 1, withoutLivePage: 1 },
         expect.any(String),
       );
-    }
-  });
+    },
+  );
 });

@@ -173,21 +173,22 @@ export const writeImpactLog = async (
 ): Promise<void> => writeFile(path, formatImpactLog(rows), "utf8");
 
 /**
- * Pattern pages in the store dir: everything markdown except the `MEMORY.md` index (excluded by
- * `listMarkdown`) and the impact ledger (this store's second non-page file).
- */
-export const listPatternPages = async (dir: string): Promise<string[]> =>
-  (await listMarkdown(dir)).filter((name) => name !== IMPACT_LOG_FILENAME);
-
-/**
- * Whether `name` can name a pattern page at all — the only shape `listPatternPages` returns: a
- * `.md` basename that is neither of the store's structural files.
+ * Whether `name` can name a pattern page at all: a `.md` basename that is neither of the store's
+ * structural files. `listPatternPages` filters by it, so the inventory and the ledger check share
+ * one definition of a pattern page.
  */
 const canNamePatternPage = (name: string): boolean =>
   name.endsWith(".md") &&
   !name.includes("/") &&
   name !== MEMORY_INDEX_FILENAME &&
   name !== IMPACT_LOG_FILENAME;
+
+/**
+ * Pattern pages in the store dir: everything markdown except the `MEMORY.md` index (excluded by
+ * `listMarkdown`) and the impact ledger (this store's second non-page file).
+ */
+export const listPatternPages = async (dir: string): Promise<string[]> =>
+  (await listMarkdown(dir)).filter(canNamePatternPage);
 
 /**
  * The never-re-proposed rule, enforced input-side (R1/R8): a pattern page carrying ANY ledger
