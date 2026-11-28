@@ -62,7 +62,8 @@ export const ConfigSchema = Type.Object({
     {
       timezone: Type.Optional(Type.String()),
       // Hour (0–23, scheduler tz) the nightly trunk-close cron fires. 04:00 matches the slot the
-      // former core-context maintenance cron used; close only happens when no exchange is in flight.
+      // former core-context maintenance cron used; close only happens when no exchange is in flight
+      // and no trunk has already closed that day.
       nightlyCloseHour: Type.Number({ default: 4 }),
       // Minutes of exchange quiet before pending workspace + registered-project changes are
       // committed and pushed in the background (trailing-edge debounce — every exchange resets the

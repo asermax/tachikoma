@@ -111,8 +111,10 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
     await coordinator.recoverStaleTrunks();
 
     // Nightly trunk close in the scheduler timezone: fires the close pipeline only when no
-    // exchange is in flight. The lazy stale-day backstop in `ensureTrunk` remains the correctness path
-    // if the process is down at this hour.
+    // exchange is in flight and no trunk has already closed today (stale-trunk recovery above, the
+    // lazy backstop, an explicit close), so the nightly close runs at most once per local day. The
+    // lazy stale-day backstop in `ensureTrunk` remains the correctness path if the process is down at
+    // this hour.
     scheduler.cron("trunk-nightly-close", `0 ${config.scheduler.nightlyCloseHour} * * *`, () =>
       coordinator.closeTrunkIfDue(),
     );

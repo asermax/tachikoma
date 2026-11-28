@@ -115,11 +115,14 @@ export interface BoomerangState {
 
 const ACTIVE_KEY = "active";
 const UNCLOSED_KEY = "unclosed";
+const LAST_CLOSE_KEY = "lastClose";
 
 /**
  * Pointer + unclosed index over `app_state`. Enforces the write-ordering invariant (ADR-014): a trunk
  * is added to `unclosed` BEFORE it becomes `active`, and removed from `unclosed` ONLY after every
- * completion marker is present — so a crash can never lose a trunk from recovery.
+ * completion marker is present — so a crash can never lose a trunk from recovery. The namespace also
+ * carries the advisory last-close record ({@link TrunkState.recordClose}), which holds no such
+ * invariant: losing it can only re-enable one redundant nightly close.
  */
 export class TrunkState {
   private readonly state: KeyValueState;
@@ -175,6 +178,23 @@ export class TrunkState {
    */
   retireTrunk(file: string): void {
     this.removeUnclosed(file);
+  }
+
+  /**
+   * The ISO instant of the most recent trunk close, or null when none is recorded. The nightly close
+   * reads it to yield to a close that already ran on the same local day
+   * (`Coordinator.closeTrunkIfDue`).
+   */
+  getLastCloseAt(): string | null {
+    return this.state.get<string>(LAST_CLOSE_KEY);
+  }
+
+  /**
+   * Record that a trunk close ran at the ISO instant `at`, replacing any earlier record. Pure
+   * bookkeeping beside the pointer and the `unclosed` index: nothing is retired or cleared here.
+   */
+  recordClose(at: string): void {
+    this.state.set<string>(LAST_CLOSE_KEY, at);
   }
 }
 

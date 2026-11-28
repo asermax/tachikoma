@@ -638,15 +638,37 @@ export class Coordinator {
   }
 
   /**
-   * Nightly-close trigger: close the live trunk only when one is active AND no exchange is in flight.
-   * The coordinator loop is serial, so checking `exchanging` here is enough — a fired cron during a
-   * live exchange is skipped (the lazy stale-day backstop in `ensureTrunk` closes it next day instead).
+   * Nightly-close trigger: close the live trunk only when one is active, no exchange is in flight, AND
+   * no trunk close has run on today's local date. The coordinator loop is serial, so checking
+   * `exchanging` here is enough — a fired cron during a live exchange is skipped (the lazy stale-day
+   * backstop in `ensureTrunk` closes it next day instead). A close that already ran today (stale-trunk
+   * recovery after a restart, the lazy backstop, an explicit close) makes the tick a no-op, so the
+   * nightly cron runs at most one close pipeline per local day: the trunk opened after that close
+   * stays live until the next night's tick extracts it. Only this trigger reads the record — the
+   * other close paths always run.
    */
   async closeTrunkIfDue(): Promise<void> {
     if (this.active == null || this.exchanging) {
       this.log.debug(
         { active: this.active != null, exchanging: this.exchanging },
         "nightly close skipped — no idle trunk",
+      );
+      return;
+    }
+
+    // Keyed on the local date the close RAN, not on the closed trunk's day: a stale trunk closed after
+    // midnight still carries yesterday's label, and the cron closes a yesterday-labeled trunk every
+    // night. A close on an earlier date never suppresses — that tick is the first one due for the
+    // trunk opened after it.
+    const lastCloseAt = this.trunkState.getLastCloseAt();
+
+    if (
+      lastCloseAt != null &&
+      localDay(() => new Date(lastCloseAt), this.timezone) === localDay(this.now, this.timezone)
+    ) {
+      this.log.info(
+        { lastCloseAt, day: this.active.day, sessionFile: this.active.sessionFile },
+        "nightly close skipped — a trunk already closed today",
       );
       return;
     }
@@ -690,7 +712,8 @@ export class Coordinator {
 
   /**
    * Run the close pipeline over a trunk: finalize the live branch (so the extraction pipeline picks it
-   * up), dispose the live session, post-process the trunk, then retire it from the unclosed index. The
+   * up), dispose the live session, record when the close ran (the nightly close yields to it for the
+   * rest of the local day), post-process the trunk, then retire it from the unclosed index. The
    * retire happens ONLY after post-processing completes (the write-ordering invariant's second half) so
    * a crash mid-close keeps the trunk recoverable.
    *
@@ -722,6 +745,12 @@ export class Coordinator {
       this.events.emit("session:closed", { sessionFile: trunk.sessionFile, day: trunk.day });
 
       if (collapseOk) {
+        // Recorded only here, past the live-branch collapse: the collapse reports failure by returning
+        // null (it never throws) and the session is disposed either way, so a record beside `dispose()`
+        // would count a close that left the trunk unclosed. Written before post-processing on purpose —
+        // a pipeline that starts and then fails or crashes did run, and counts for the day.
+        this.trunkState.recordClose(this.now().toISOString());
+
         failures = await this.runPostProcessing(trunk);
       } else {
         failures = 1;
