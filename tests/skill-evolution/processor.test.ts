@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -33,6 +33,7 @@ import {
   IMPACT_LOG_STATUSES,
   type ImpactLogEntry,
   readImpactLog,
+  writeImpactLog,
 } from "../../src/extensions/skill-evolution/store.ts";
 import { gitVerifyDeps } from "../../src/extensions/skill-evolution/verify.ts";
 import { runGit } from "../../src/git/git.ts";
@@ -161,27 +162,17 @@ const seedPatternPages = async (...names: string[]): Promise<void> => {
   }
 };
 
-/** Overwrite the ledger with the given data rows, behind the fixed table header. */
-const writeLedgerRows = async (rows: readonly string[]): Promise<void> =>
-  writeFile(
-    impactLogPath(workspace),
-    [
-      "| Date | Skill | Pattern | Branch | Tip | Description | Status |",
-      "| ---- | ----- | ------- | ------ | --- | ----------- | ------ |",
-      ...rows,
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-
-// 150 ledger rows naming pattern pages that are not on disk — swept by the maintenance pass long
-// after their proposals — in all three statuses, mixed.
-const RETIRED_ROW_STATUSES = Object.values(IMPACT_LOG_STATUSES);
-const RETIRED_ROWS = Array.from({ length: 150 }, (_, index) => {
-  const status = RETIRED_ROW_STATUSES[index % RETIRED_ROW_STATUSES.length];
-
-  return `| 2027-03-01 | deploy | [retired-${index}](./retired-${index}.md) | skill-evolution/retired-${index} | tip-${index} | proposal ${index} | ${status ?? IMPACT_LOG_STATUSES.proposed} |`;
-});
+// Ledger rows naming pattern pages that are not on disk — swept by the maintenance pass long after
+// their proposals — one per status.
+const RETIRED_ROWS: ImpactLogEntry[] = Object.values(IMPACT_LOG_STATUSES).map((status, index) => ({
+  date: "2027-03-01",
+  skill: "deploy",
+  pattern: `retired-${index}.md`,
+  branch: `skill-evolution/retired-${index}`,
+  tip: `tip-${index}`,
+  description: `proposal ${index}`,
+  status,
+}));
 
 describe("skill-evolution-trunk-close (structural stage fakes)", () => {
   it("registers as a main-phase processor with the Evolving skills label", () => {
@@ -326,11 +317,8 @@ describe("skill-evolution-trunk-close (structural stage fakes)", () => {
   });
 
   it("a ledger of rows naming absent pages raises no warning — volume does not grow with history", async () => {
-    await ensureSkillEvolutionLayout(workspace, fakeLogger());
-    const dir = skillEvolutionDir(workspace);
-    await writeFile(join(dir, "deploy-env-flag.md"), "# deploy-env-flag\n", "utf8");
-    // 150 rows name pattern pages the maintenance pass swept long ago; none of them is on disk.
-    await writeLedgerRows(RETIRED_ROWS);
+    await seedPatternPages("deploy-env-flag.md");
+    await writeImpactLog(impactLogPath(workspace), RETIRED_ROWS);
 
     const proposal = vi.fn<(deps: ProposalAgentDeps) => Promise<ReportedProposal[]>>(
       async () => [],
@@ -342,18 +330,19 @@ describe("skill-evolution-trunk-close (structural stage fakes)", () => {
     expect(proposal.mock.calls[0]?.[0]).toMatchObject({ eligible: ["deploy-env-flag.md"] });
     // The rows are history, not anomalies: nothing at warn, one aggregate line at debug.
     expect(log.warn).not.toHaveBeenCalled();
-    expect(log.debug).toHaveBeenCalledWith({ rows: 150, withoutLivePage: 150 }, expect.any(String));
+    expect(log.debug).toHaveBeenCalledWith({ rows: 3, withoutLivePage: 3 }, expect.any(String));
   });
 
   it("a malformed row still warns exactly once beside rows naming absent pages", async () => {
-    await ensureSkillEvolutionLayout(workspace, fakeLogger());
-    const dir = skillEvolutionDir(workspace);
-    await writeFile(join(dir, "deploy-env-flag.md"), "# deploy-env-flag\n", "utf8");
-    // The last row carries an unknown status — malformed at parse time.
-    await writeLedgerRows([
-      ...RETIRED_ROWS,
-      "| 2027-03-01 | deploy | [broken](./broken.md) | skill-evolution/broken | tip | desc | maybe |",
-    ]);
+    await seedPatternPages("deploy-env-flag.md");
+    await writeImpactLog(impactLogPath(workspace), RETIRED_ROWS);
+    // The last row carries an unknown status — malformed at parse time, so the formatter that
+    // wrote the rows above cannot produce it.
+    await appendFile(
+      impactLogPath(workspace),
+      "| 2027-03-01 | deploy | [broken](./broken.md) | skill-evolution/broken | tip | desc | maybe |\n",
+      "utf8",
+    );
 
     const proposal = vi.fn<(deps: ProposalAgentDeps) => Promise<ReportedProposal[]>>(
       async () => [],
