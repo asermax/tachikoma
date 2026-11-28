@@ -1,3 +1,10 @@
+## [3.84.4](https://github.com/asermax/tachikoma/compare/v3.84.3...v3.84.4) (2026-11-28)
+
+
+### Bug Fixes
+
+* **skill-evolution:** stop warning on ledger rows for retired patterns ([83e992a](https://github.com/asermax/tachikoma/commit/83e992ac1f8ac876334ee8c9dda7f3adc6f90611))
+
 ## [3.84.3](https://github.com/asermax/tachikoma/compare/v3.84.2...v3.84.3) (2026-11-28)
 
 
