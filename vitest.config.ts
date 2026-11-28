@@ -12,7 +12,8 @@ export default defineConfig({
       // the composition root, extension wiring (defineExtension+setup that only
       // registers hooks), pure type declarations, drizzle schema definitions,
       // agent prompt-text constants, thin I/O seams (their orchestration is
-      // tested against fakes), and the interactive migration prompt.
+      // tested against fakes; the restarter's real exec runs in a child process
+      // coverage cannot see), and the interactive migration prompt.
       exclude: [
         "src/main.ts",
         "src/app.ts",

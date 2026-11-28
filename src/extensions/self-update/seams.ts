@@ -1,4 +1,5 @@
 import { execFile, spawnSync } from "node:child_process";
+import { accessSync, constants } from "node:fs";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,23 +104,75 @@ export class CommandInstaller implements Installer {
   }
 }
 
-/** Re-execs the current Node process with the same entrypoint and argv. */
+/** The process operations the real restarter performs. Tests substitute them. */
+export interface RestarterDeps {
+  /**
+   * Replaces this process with `file`. Absent on platforms without `process.execve`
+   * (Windows, IBM i).
+   */
+  execve: typeof process.execve;
+  /** The node binary to re-enter. */
+  execPath: string;
+  /** The successor's command line; `argv[0]` is the binary. */
+  argv: readonly string[];
+  /** The successor's environment. */
+  env: NodeJS.ProcessEnv;
+}
+
+/** The running process as the restarter finds it. */
+const platformRestarterDeps = (): RestarterDeps => ({
+  execve: process.execve,
+  execPath: process.execPath,
+  argv: process.argv,
+  env: process.env,
+});
+
+/**
+ * Replaces the current process with a fresh boot of the same command line, so the
+ * successor keeps this process's pid, parent, process group and stdio on every
+ * launcher. The pre-restart image is gone before the successor runs: it holds no
+ * memory and nothing waits on the successor — unlike a spawned replacement, which
+ * leaves this process alive as its parent.
+ *
+ * `process.execve` swaps the image without running exit handlers or flushing
+ * pending I/O, and it is experimental. On Node < 26.1 a failed `execve(2)` aborts
+ * the process instead of throwing, so the executable is checked first and an
+ * impossible restart surfaces as a thrown error.
+ */
 export class ProcessRestarter implements Restarter {
   private readonly log: Logger;
+  private readonly deps: RestarterDeps;
 
-  constructor(log: Logger) {
+  constructor(log: Logger, deps: RestarterDeps = platformRestarterDeps()) {
     this.log = log;
+    this.deps = deps;
   }
 
   restart(): never {
-    this.log.warn("re-executing process to load the new version");
+    const { execve, execPath, argv, env } = this.deps;
 
-    // Node has no execv; spawnSync runs the replacement to completion in-line so
-    // the parent never proceeds past this call, then we exit with the child's
-    // code. stdio is inherited so the new process owns the same terminal/pipes.
-    const result = spawnSync(process.execPath, process.argv.slice(1), { stdio: "inherit" });
+    this.log.warn({ execPath }, "re-executing process to load the new version");
 
-    process.exit(result.status ?? 0);
+    if (execve == null) {
+      throw new Error(
+        "cannot re-exec: process.execve is unavailable on this platform — restart Tachikoma manually",
+      );
+    }
+
+    // On Node < 26.1 a failed execve(2) aborts the process instead of throwing, so
+    // an impossible restart fails here first, where the caller can still exit cleanly.
+    try {
+      accessSync(execPath, constants.X_OK);
+    } catch (error) {
+      throw new Error(
+        `cannot re-exec ${execPath}: ${error instanceof Error ? error.message : error}`,
+      );
+    }
+
+    // Nothing after this line runs once the exec succeeds. `return` is what marks the end
+    // point unreachable for TypeScript: a bare call through a destructured local is not
+    // recognised as never-returning.
+    return execve(execPath, argv, env);
   }
 }
 
