@@ -184,6 +184,25 @@ describe("TrunkState pointer + unclosed index", () => {
     expect(trunk.listUnclosed()).toEqual([]);
     expect(trunk.getActive()).not.toBeNull();
   });
+
+  it("records the last close on its own key, apart from the pointer and the unclosed index", () => {
+    const trunk = new TrunkState(makeState());
+
+    // No trunk has closed yet.
+    expect(trunk.getLastCloseAt()).toBeNull();
+
+    trunk.recordClose("2026-06-15T04:00:00.000Z");
+    expect(trunk.getLastCloseAt()).toBe("2026-06-15T04:00:00.000Z");
+
+    // Only the most recent close matters to the nightly trigger: a later close replaces the record.
+    trunk.recordClose("2026-06-16T04:00:00.000Z");
+    expect(trunk.getLastCloseAt()).toBe("2026-06-16T04:00:00.000Z");
+
+    // The record is bookkeeping, not trunk identity: writing it touches neither the pointer nor the
+    // index, and clearing those leaves it in place.
+    expect(trunk.getActive()).toBeNull();
+    expect(trunk.listUnclosed()).toEqual([]);
+  });
 });
 
 describe("localDay", () => {

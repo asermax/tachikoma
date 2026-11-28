@@ -217,8 +217,9 @@ describe("Coordinator trunk close — live-branch collapse", () => {
     expect(captured[0]).toMatchObject({ branchId: "topic-1", originalLeafId: "a1" });
     expect(getBranchRecords(session?.session as AgentSession)).toHaveLength(1);
 
-    // A clean close retires the trunk.
+    // A clean close retires the trunk and records when it ran — the coordinator clock at the close.
     expect(trunkState.listUnclosed()).toEqual([]);
+    expect(trunkState.getLastCloseAt()).toBe("2026-06-15T10:00:00.000Z");
   });
 
   it("skips the collapse when the live branch has no assistant turn", async () => {
@@ -270,8 +271,11 @@ describe("Coordinator trunk close — live-branch collapse", () => {
 
     // The summary threw before any branch_summary was written…
     expect(getSession(file)?.branchCalls).toHaveLength(0);
-    // …so the trunk stays unclosed for the next recovery to retry rather than retiring with content lost.
+    // …so the trunk stays unclosed for the next recovery to retry rather than retiring with content lost…
     expect(trunkState.listUnclosed()).toEqual([file]);
+    // …and no close is recorded: the trunk was not closed, so this must not count as the day's close
+    // (the nightly trigger yields only to a close that ran).
+    expect(trunkState.getLastCloseAt()).toBeNull();
   });
 
   it("is idempotent — a second close does not re-collapse", async () => {

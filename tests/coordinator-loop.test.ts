@@ -2,7 +2,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 
 import type { AgentManager } from "../src/agent/manager.ts";
 import type { Channel, Exchange } from "../src/channels/types.ts";
@@ -41,6 +41,7 @@ interface FakeSession {
     getEntries: () => unknown[];
     getLeafId: () => string | null;
     getBranch: (fromId?: string) => unknown[];
+    getHeader: () => { timestamp: string } | null;
   };
 }
 
@@ -61,6 +62,7 @@ const createSession = (overrides: Partial<FakeSession> = {}): FakeSession => ({
     getEntries: () => [],
     getLeafId: () => null,
     getBranch: () => [],
+    getHeader: () => null,
   },
   ...overrides,
 });
@@ -84,11 +86,12 @@ const makeCoordinator = (
   agent: AgentManager,
   regs: Registrations = createRegistrations(),
   now: () => Date = () => new Date(),
+  timezone: string = "UTC",
 ) => {
   const log = createFakeLog();
   const trunkState = new TrunkState(new KeyValueState(db, "trunk"));
   const events = new EventBus(log);
-  const coordinator = new Coordinator(trunkState, agent, regs, events, log, "UTC", now);
+  const coordinator = new Coordinator(trunkState, agent, regs, events, log, timezone, now);
 
   return { coordinator, trunkState, events, log };
 };
@@ -1260,6 +1263,343 @@ describe("Coordinator.closeTrunkIfDue (nightly close trigger)", () => {
 
     controller.abort();
     await loop;
+  });
+
+  describe("at most one close pipeline per local day", () => {
+    const CORDOBA = "America/Argentina/Cordoba"; // UTC-3 year-round
+
+    interface Trunk {
+      file: string;
+      session: FakeSession;
+    }
+
+    interface Night {
+      coordinator: Coordinator;
+      trunkState: TrunkState;
+      /** The trunk left over from an earlier day, when the process starts with one. */
+      stale: Trunk | null;
+      /** Trunks this process opened, in order. */
+      trunks: Trunk[];
+      /** User texts of the exchanges that ran, in order. */
+      processed: string[];
+      /** The attached channel's lifecycle message; each close ends it with one "Trunk closed" line. */
+      lifecycleStatus: Mock<(text: string, fresh?: boolean) => Promise<void>>;
+      pipelineRuns: () => number;
+      /** The trunk this process last used `file` for: one it opened, or one it reopened. */
+      trunkAt: (file: string) => Trunk | undefined;
+      setClock: (iso: string) => void;
+    }
+
+    const makeTrunk = (file: string): Trunk => ({
+      file,
+      session: createSession({ sessionFile: file }),
+    });
+
+    /**
+     * One process over the shared temp database, its clock starting at `at`. Every trunk gets its own
+     * fake session and its own file on disk: recovery, the lazy backstop, and a same-day reopen all
+     * check `existsSync` first, and a missing file is retired without running the pipeline.
+     */
+    const createNight = async (options: {
+      timezone: string;
+      at: string;
+      /** Leaves a trunk of that day active when the process starts. */
+      staleDay?: string;
+    }): Promise<Night> => {
+      let current = new Date(options.at);
+
+      const staleFile = join(dir, "yesterday.jsonl");
+      const stale = makeTrunk(staleFile);
+      const trunks = new Map<string, Trunk>();
+      const opened: Trunk[] = [];
+
+      if (options.staleDay != null) {
+        await writeFile(staleFile, "");
+        trunks.set(staleFile, stale);
+      }
+
+      const agent = {
+        open: vi.fn(async (openedBy?: { sessionFile?: string }) => {
+          // Opened by file: this trunk's session, made on first sight for a trunk the process did not
+          // open itself (a stale one, or one reopened after a restart).
+          const file = openedBy?.sessionFile;
+
+          if (file != null) {
+            const trunk = trunks.get(file) ?? makeTrunk(file);
+
+            trunks.set(file, trunk);
+            return trunk.session;
+          }
+
+          const trunk = makeTrunk(join(dir, `trunk-${opened.length + 1}.jsonl`));
+
+          await writeFile(trunk.file, "");
+          trunks.set(trunk.file, trunk);
+          opened.push(trunk);
+
+          return trunk.session;
+        }),
+      } as unknown as AgentManager;
+
+      const processed: string[] = [];
+      let pipelineRuns = 0;
+
+      const regs = createRegistrations();
+      regs.exchangeProcessors.push({
+        name: "rec",
+        process: async (ctx) => {
+          processed.push(ctx.userText);
+        },
+      });
+      regs.postProcessors.push({
+        name: "count-close",
+        phase: "main",
+        process: async () => {
+          pipelineRuns += 1;
+        },
+      });
+
+      const lifecycleStatus = vi.fn(async (_text: string, _fresh?: boolean) => {});
+      const { coordinator, trunkState } = makeCoordinator(
+        db,
+        agent,
+        regs,
+        () => current,
+        options.timezone,
+      );
+
+      if (options.staleDay != null) {
+        trunkState.promoteToActive({
+          sessionFile: staleFile,
+          day: options.staleDay,
+          openedAt: options.at,
+        });
+      }
+
+      return {
+        coordinator,
+        trunkState,
+        stale: options.staleDay != null ? stale : null,
+        trunks: opened,
+        processed,
+        lifecycleStatus,
+        pipelineRuns: () => pipelineRuns,
+        trunkAt: (file) => trunks.get(file),
+        setClock: (iso) => {
+          current = new Date(iso);
+        },
+      };
+    };
+
+    /** How many "Trunk closed" lines reached the channel's lifecycle message: one per close that ran. */
+    const closedMessages = (night: Night): number =>
+      night.lifecycleStatus.mock.calls.filter(([text]) => text === "Trunk closed").length;
+
+    /** Attach a channel whose lifecycle message is observable. */
+    const attach = (night: Night): void => {
+      night.coordinator.attachChannel(createChannel({ lifecycleStatus: night.lifecycleStatus }));
+    };
+
+    /** Run the coordinator loop until the returned stop aborts and awaits it. */
+    const startLoop = (coordinator: Coordinator): (() => Promise<void>) => {
+      const controller = new AbortController();
+      const loop = coordinator.run(controller.signal);
+
+      return async () => {
+        controller.abort();
+        await loop;
+      };
+    };
+
+    /**
+     * Send a message and wait until its exchange has fully settled. `exchanging` clears a few
+     * microtasks after the processors record the text; the macrotask wait makes that explicit instead
+     * of relying on when the poll observed the record. A tick that lands first is skipped by the idle
+     * guard, which would let a skip case pass with the once-a-day guard removed.
+     */
+    const say = async (night: Night, text: string): Promise<void> => {
+      night.coordinator.submit(textMsg(text));
+      await vi.waitFor(() => expect(night.processed).toContain(text));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    };
+
+    /** Move the clock to `at`, then fire the nightly cron. */
+    const tick = async (night: Night, at: string): Promise<void> => {
+      night.setClock(at);
+      await night.coordinator.closeTrunkIfDue();
+    };
+
+    it("skips the close when a trunk already closed today — the trunk opened after it closes the next night", async () => {
+      // The night of 2026-11-28 in Córdoba: an upgrade restart at 01:10 recovers yesterday's trunk,
+      // a message at 01:26 opens today's, and the 04:00 cron must not close that one too.
+      const night = await createNight({
+        timezone: CORDOBA,
+        at: "2026-11-28T04:10:00Z",
+        staleDay: "2026-11-27",
+      });
+
+      // 01:10: startup recovery closes yesterday's trunk, before any channel is attached.
+      await night.coordinator.recoverStaleTrunks();
+      expect(night.stale?.session.dispose).toHaveBeenCalledTimes(1);
+
+      attach(night);
+      const stop = startLoop(night.coordinator);
+
+      // 01:26: the next message opens a fresh trunk for today.
+      night.setClock("2026-11-28T04:26:00Z");
+      await say(night, "still up");
+      const live = night.trunks[0];
+      expect(night.trunkState.getActive()?.sessionFile).toBe(live?.file);
+      // The recovery's own lifecycle message, buffered until the channel attached.
+      await vi.waitFor(() => expect(closedMessages(night)).toBe(1));
+
+      // 04:00: skipped — today's pipeline already ran at 01:10.
+      await tick(night, "2026-11-28T07:00:00Z");
+
+      expect(live?.session.dispose).not.toHaveBeenCalled();
+      expect(night.pipelineRuns()).toBe(1);
+      expect(night.trunkState.getActive()?.sessionFile).toBe(live?.file);
+      expect(closedMessages(night)).toBe(1);
+
+      // 04:00 the next night: the trunk closes there, so its branches are extracted.
+      await tick(night, "2026-11-29T07:00:00Z");
+
+      expect(live?.session.dispose).toHaveBeenCalledTimes(1);
+      expect(night.pipelineRuns()).toBe(2);
+      expect(closedMessages(night)).toBe(2);
+      expect(night.trunkState.getActive()).toBeNull();
+
+      await stop();
+    });
+
+    it("keeps skipping at the nightly hour after a restart between the early close and the cron", async () => {
+      // Process 1: the early close at 01:11, then the trunk opened after it at 01:26.
+      const first = await createNight({
+        timezone: "UTC",
+        at: "2026-06-15T01:11:00Z",
+        staleDay: "2026-06-14",
+      });
+      attach(first);
+      await first.coordinator.recoverStaleTrunks();
+      const stopFirst = startLoop(first.coordinator);
+      first.setClock("2026-06-15T01:26:00Z");
+      await say(first, "before the restart");
+      const live = first.trunks[0];
+      await stopFirst();
+
+      // Process 2 (02:00): nothing of process 1 is in memory, only the database is shared.
+      const second = await createNight({ timezone: "UTC", at: "2026-06-15T02:00:00Z" });
+      attach(second);
+      await second.coordinator.recoverStaleTrunks();
+      const stopSecond = startLoop(second.coordinator);
+      await say(second, "after the restart");
+
+      // The same trunk reopened, on a session this process made for the file.
+      const reopened = second.trunkAt(live?.file ?? "");
+      expect(reopened).toBeDefined();
+      expect(second.trunks).toEqual([]);
+
+      await tick(second, "2026-06-15T04:00:00Z");
+
+      expect(reopened?.session.dispose).not.toHaveBeenCalled();
+      expect(second.pipelineRuns()).toBe(0);
+      expect(second.trunkState.getActive()?.sessionFile).toBe(live?.file);
+
+      await stopSecond();
+    });
+
+    it("closes a trunk opened earlier the same night when no trunk closed today", async () => {
+      // After a quiet day the first message at 01:26 opens a trunk that the 04:00 cron closes that
+      // same night: the rule is keyed on a recorded close, not on how old the trunk is.
+      const night = await createNight({ timezone: "UTC", at: "2026-06-15T01:26:00Z" });
+      attach(night);
+      const stop = startLoop(night.coordinator);
+      await say(night, "first message of the day");
+      const live = night.trunks[0];
+
+      await tick(night, "2026-06-15T04:00:00Z");
+
+      expect(live?.session.dispose).toHaveBeenCalledTimes(1);
+      expect(night.pipelineRuns()).toBe(1);
+
+      await stop();
+    });
+
+    it("closes at the nightly hour when the last close was on the previous day (recovery after downtime)", async () => {
+      // Down over the 04:00 tick; started at 09:00, recovery closes yesterday's trunk then.
+      const night = await createNight({
+        timezone: "UTC",
+        at: "2026-06-14T09:00:00Z",
+        staleDay: "2026-06-13",
+      });
+      attach(night);
+      await night.coordinator.recoverStaleTrunks();
+      const stop = startLoop(night.coordinator);
+      night.setClock("2026-06-14T10:00:00Z");
+      await say(night, "a full day of conversation");
+      const live = night.trunks[0];
+
+      // The next night's tick is the first one due for this trunk, 19 hours after the recovery close.
+      await tick(night, "2026-06-15T04:00:00Z");
+
+      expect(live?.session.dispose).toHaveBeenCalledTimes(1);
+      expect(night.pipelineRuns()).toBe(2);
+
+      await stop();
+    });
+
+    it("compares the close's local date in the configured timezone (an evening close is the previous day's at the next 04:00 tick)", async () => {
+      // 21:00 on the 28th in Córdoba.
+      const night = await createNight({ timezone: CORDOBA, at: "2026-11-29T00:00:00Z" });
+      attach(night);
+      const stop = startLoop(night.coordinator);
+      await say(night, "that evening");
+      const evening = night.trunks[0];
+
+      // 22:00 on the 28th locally is already 01:00 UTC on the 29th.
+      night.setClock("2026-11-29T01:00:00Z");
+      await night.coordinator.closeTrunk();
+      expect(evening?.session.dispose).toHaveBeenCalledTimes(1);
+
+      // 22:30: the conversation continues on a new trunk.
+      night.setClock("2026-11-29T01:30:00Z");
+      await say(night, "later that evening");
+      const later = night.trunks[1];
+
+      // 04:00 on the 29th locally (07:00 UTC). By UTC the 22:00 close is on the 29th, the tick's own
+      // date; in the configured zone it is the 28th's close, and this tick is the first one due.
+      await tick(night, "2026-11-29T07:00:00Z");
+
+      expect(later?.session.dispose).toHaveBeenCalledTimes(1);
+      expect(night.pipelineRuns()).toBe(2);
+
+      await stop();
+    });
+
+    it("counts a lazy stale-day close — the same day's nightly cron is skipped", async () => {
+      const night = await createNight({
+        timezone: "UTC",
+        at: "2026-06-15T02:00:00Z",
+        staleDay: "2026-06-14",
+      });
+      attach(night);
+      const stop = startLoop(night.coordinator);
+
+      // The first message finds yesterday's trunk still active and closes it lazily before opening
+      // today's.
+      await say(night, "hello");
+      const live = night.trunks[0];
+      expect(night.stale?.session.dispose).toHaveBeenCalledTimes(1);
+      expect(night.pipelineRuns()).toBe(1);
+
+      await tick(night, "2026-06-15T04:00:00Z");
+
+      expect(live?.session.dispose).not.toHaveBeenCalled();
+      expect(night.pipelineRuns()).toBe(1);
+      expect(night.trunkState.getActive()?.sessionFile).toBe(live?.file);
+
+      await stop();
+    });
   });
 });
 
