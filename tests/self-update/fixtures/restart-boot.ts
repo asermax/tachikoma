@@ -9,8 +9,7 @@
  * for the variables that drive it.
  */
 import { randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { setTimeout as delay } from "node:timers/promises";
+import { appendFileSync, existsSync } from "node:fs";
 
 import { ProcessRestarter } from "../../../src/extensions/self-update/seams.ts";
 import { acquireInstanceLock } from "../../../src/instance-lock.ts";
@@ -25,80 +24,38 @@ const record = (entry: BootRecord): void => {
   appendFileSync(recordPath, `${JSON.stringify(entry)}\n`);
 };
 
-/**
- * Process group from `/proc/self/stat`; null where `/proc` is absent. An exec never
- * changes it, so the pid equality already carries the guarantee.
- */
-const pgid = (): number | null => {
-  try {
-    const raw = readFileSync("/proc/self/stat", "utf8");
-    return Number(raw.slice(raw.lastIndexOf(")") + 2).split(/\s+/)[2]);
-  } catch {
-    return null;
-  }
-};
-
 const identity = () => ({
   pid: process.pid,
   ppid: process.ppid,
-  pgid: pgid(),
   argv: process.argv.slice(2),
 });
 
-const bootsSoFar = existsSync(recordPath)
-  ? readFileSync(recordPath, "utf8")
-      .split("\n")
-      .filter((line) => line !== "").length
-  : 0;
+// Both boots take the workspace lock when asked, as runApp does at boot: the predecessor
+// acquires it, the successor — which kept the pid — reclaims it. A refusal throws, and
+// node exits non-zero with the error on stderr.
+const lockPath = env[RESTART_BOOT.lock];
+if (lockPath != null) await acquireInstanceLock(lockPath);
 
-if (bootsSoFar >= 1) {
-  // The successor: report what it found, then hold until the test releases it if asked.
-  let lock = "not-held";
-  let lockRefused = false;
-  if (env[RESTART_BOOT.lock] != null) {
-    try {
-      await acquireInstanceLock(env[RESTART_BOOT.lock] as string);
-      lock = "acquired";
-    } catch (error) {
-      lockRefused = true;
-      lock = `refused: ${error instanceof Error ? error.message.split("\n")[0] : error}`;
-    }
-  }
-
+if (existsSync(recordPath)) {
+  // The successor: report what it found.
   record({
-    boot: bootsSoFar,
     ...identity(),
     carried: env[RESTART_BOOT.carried] ?? null,
-    lock,
+    lock: lockPath != null ? "acquired" : "not-held",
   });
 
-  if (env[RESTART_BOOT.ready] != null) {
-    await new Promise<void>((resolve) => {
-      process.stdout.write(`${RESTART_BOOT.stdoutLine}\n`, () => resolve());
-    });
-    writeFileSync(env[RESTART_BOOT.ready] as string, "ready");
-  }
-
-  const release = env[RESTART_BOOT.release];
-  const deadline = Date.now() + 15_000;
-  while (release != null && !existsSync(release)) {
-    // The test never released the successor: fail instead of hanging.
-    if (Date.now() > deadline) process.exit(4);
-    await delay(20);
-  }
-
-  process.exit(lockRefused ? 3 : Number(env[RESTART_BOOT.exitCode] ?? 0));
+  await new Promise<void>((resolve) => {
+    process.stdout.write(`${RESTART_BOOT.stdoutLine}\n`, () => resolve());
+  });
+  process.exit(Number(env[RESTART_BOOT.exitCode] ?? 0));
 }
 
-// The predecessor: hold the workspace lock if asked to (as runApp does at boot), then re-exec.
-if (env[RESTART_BOOT.lock] != null) await acquireInstanceLock(env[RESTART_BOOT.lock] as string);
-
+// The predecessor: assign the variable the successor must find, then re-exec.
 const assigned = randomBytes(8).toString("hex");
-record({ boot: 0, ...identity(), assigned });
+record({ ...identity(), assigned });
 process.env[RESTART_BOOT.carried] = assigned;
 
 new ProcessRestarter({ warn: () => {} } as unknown as Logger).restart();
 
-// Not reached while the restarter works: a record from here means the process was never replaced.
-record({ boot: 0, ...identity(), unreachable: true });
+// Not reached while the restarter works: this exit code says the process was never replaced.
 process.exit(99);
