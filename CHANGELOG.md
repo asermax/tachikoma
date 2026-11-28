@@ -1,3 +1,10 @@
+## [3.84.3](https://github.com/asermax/tachikoma/compare/v3.84.2...v3.84.3) (2026-11-28)
+
+
+### Bug Fixes
+
+* **self-update:** replace the process in place on restart ([aecdc19](https://github.com/asermax/tachikoma/commit/aecdc19abe732cb2d412222e1fd7f1a0d66308c2))
+
 ## [3.84.2](https://github.com/asermax/tachikoma/compare/v3.84.1...v3.84.2) (2026-11-28)
 
 
